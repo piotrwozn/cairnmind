@@ -1,0 +1,688 @@
+"""`cairnmind setup PROFILE`: where storage and the memory models run (#74).
+
+A profile is validated and tested before anything is saved, then written only through the functions the existing
+commands use, so every check they make still runs:
+
+- the memory models: memory_models.check_role (the test), configure_role (the check and the save of `models set`),
+  knowledge_mode.turn_on; a model server on another computer needs the consent and HTTPS that normalize_memory_model
+  asks, and `ollama_url` is never written here;
+- the database this installation only connects to: database_credentials (the private password file, https for
+  another host, never root there, the version, the sign-in, create_user of `db create-user`), and save_storage, the
+  one writer these settings have, which writes five named fields and never a password;
+- the engine on this machine: engine_docker.choose_engine_mode and engine.start_command, as `init` and
+  `engine start` call them;
+- the writer of a store (store_writer): only read here. A store another installation writes makes this one a reader;
+  `cairnmind store takeover` stays a person's separate act.
+
+Nothing is saved when a test fails. When a step of the change fails, config.json is put back as it was. Every
+sentence is an English constant with its Polish in MESSAGES; an item is (template, values), and a value may itself be
+an item, or a list of them.
+"""
+from __future__ import annotations
+
+import asyncio
+import fcntl
+import json
+import os
+import tempfile
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Callable
+from urllib.parse import urlsplit
+
+from . import (database_credentials, database_mode, engine, engine_docker, knowledge_mode, memory_egress,
+               memory_models, store_writer, topology)
+from .arcade import ArcadeError
+from .config import Settings, env_names
+from .ollama import OllamaUnavailable
+from .terminal_safe import safe_text
+
+PROFILES = ("local", "remote-db", "remote")
+STORAGE_FIELDS = ("arcade_url", "arcade_connect_url", "arcade_user", "arcade_database", "arcade_password_file",
+                  "arcade_ca_file")
+# The variables that replace a setting setup saves; an empty one names nothing where Settings.load says so.
+SETTINGS_VARIABLES = {"arcade_url": "ARCADE_URL", "arcade_connect_url": "ARCADE_CONNECT_URL",
+                      "arcade_user": "ARCADE_USER", "arcade_database": "ARCADE_DATABASE",
+                      "arcade_password_file": "ARCADE_PASSWORD_FILE", "arcade_ca_file": "ARCADE_CA_FILE",
+                      "arcade_password": "ARCADE_PASSWORD", "ollama_url": "OLLAMA_URL"}
+EMPTY_IS_UNSET = frozenset({"ARCADE_CONNECT_URL", "ARCADE_PASSWORD", "OLLAMA_URL"})
+REMOTE_OPTIONS = ("url", "user", "database", "password_file")
+MODEL_OPTIONS = ("models_url", "provider", "chat_model", "embedding_model")
+OPTION_NAMES = {"url": "--url", "user": "--user", "database": "--database", "password_file": "--password-file",
+                "ca_file": "--ca-file", "admin_password_file": "--admin-password-file", "models_url": "--models-url",
+                "provider": "--provider", "chat_model": "--chat-model", "embedding_model": "--embedding-model",
+                "credential_ref": "--credential-ref", "allow_remote": "--allow-remote", "backup": "--backup",
+                "empty": "--empty"}
+LONG = frozenset({"error", "reason", "advice", "problem", "text"})  # values that are whole sentences of other modules
+
+# Refusals and option errors
+SERVICE_RUNS = ("The knowledge service of this data directory is running; run `cairnmind stop` first, then this "
+                "command again. Nothing was changed.")
+IN_SESSION = ("A coding session cannot change where storage and models run; only a person can, outside the session. "
+              "Nothing was changed.")
+VARIABLE_SET = ("{variable} is set in this shell and would replace what setup saves; unset it and run setup again. "
+                "Nothing was changed.")
+UNKNOWN_PROFILE = "Unknown profile {profile}: choose local, remote-db or remote."
+NEEDS = "`cairnmind setup {profile}` needs these options: {options}."
+NOT_FOR = "{option} does not go with `cairnmind setup {profile}`."
+WITHOUT_PROFILE = "{option} goes with a profile: `cairnmind setup local`, `remote-db` or `remote`."
+BOTH_CHOICES = "Choose one of --backup and --empty."
+COMBINATION = ("`cairnmind setup {profile}` runs the memory models on this computer and takes no model options. Models "
+               "on another computer with this storage are not a profile: run `cairnmind setup {profile}`, then "
+               "`cairnmind models set` once for chat and once for embedding, with --allow-remote. `cairnmind setup "
+               "remote` moves storage and models together.")
+BACK_NEEDS_CHOICE = ("Going back to a store on this machine needs a choice about the data of the store at {url}: "
+                     "--backup FILE takes a backup of it into FILE and restores that into the store on this machine; "
+                     "--empty uses the store on this machine without that data. The store at {url} is left as it is "
+                     "either way. Nothing was changed.")
+ALREADY_LOCAL = ("Storage already runs on this machine; --backup and --empty are only for going back from a store this "
+                 "installation only connects to. Nothing was changed.")
+BACKUP_EXISTS = "{path} already exists; name a new file for the backup. Nothing was changed."
+ADDRESS_INVALID = ("The address must start with http:// or https:// and name a host, with no user, password, query or "
+                   "fragment.")
+STORAGE_REFUSED = "The store at {url} cannot be used: {error} Nothing was saved."
+SIGN_IN_REFUSED = "The sign-in was refused{advice}"
+QUERY_FAILED = "The test query failed (status {status})."
+MODEL_REFUSED = "The {role} model {model} at {url} cannot be used: {error} Nothing was saved."
+MODELS_HERE_NEEDED = ("`cairnmind setup {profile}` runs the {role} model on this computer, and the Ollama at {url} "
+                      "cannot serve {model}: {error} Install the model there (`ollama pull {model}`), then run this "
+                      "again. Nothing was saved.")
+INVALID_ROLE = ("The settings of the {role} model cannot be read: {error} Fix them with `cairnmind models set --role "
+                "{role}`. Nothing was changed.")
+REMOTE_NOT_READABLE = "The store at {url} cannot be read for the backup: {error} Nothing was changed."
+VERBATIM = "{text}"  # a sentence another module wrote and translates; the one constant without its own Polish
+
+# Tests, plan and result
+TEST_STORAGE_OK = ("Tested: ArcadeDB at {url} answers with version {version}, and the user {user} signs in to the "
+                   "database {database}.")
+TEST_STORAGE_CREATE = ("Not tested yet: the user {user} cannot sign in to the database {database} on ArcadeDB at {url}. "
+                       "With --yes, --admin-password-file first creates them as `cairnmind db create-user` does, and "
+                       "the test runs then.")
+TEST_READABLE = "Tested: the store at {url} can be read for the backup."
+TEST_MODEL_OK = "Tested: the {role} model {model} at {url} answers."
+CHANGE_STORAGE_REMOTE = ("Storage: from {before} to ArcadeDB at {url}, which this installation only connects to: user "
+                         "{user}, database {database}, password read from {password_file}.")
+CHANGE_CA = "Its certificate is checked against {ca_file}."
+BEFORE_LOCAL = "the engine on this machine"
+BEFORE_REMOTE = "ArcadeDB at {url}"
+CHANGE_STORAGE_LOCAL = ("Storage: from ArcadeDB at {before} to the engine on this machine at {url}, with the database "
+                        "{database}.")
+ENGINE_START = ("The engine on this machine will be started ({engine}). Nothing is installed: the native engine needs "
+                "`cairnmind engine install` done before; in Docker a missing engine image is downloaded, which is said "
+                "when it happens.")
+ENGINE_NATIVE = "native, Java 21"
+ENGINE_DOCKER = "in Docker"
+ENGINE_CHOSEN = "native with Java 21, or in Docker when Java 21 is not found, as `cairnmind init` chooses"
+LOCAL_DATA_FOUND = ("The store on this machine still holds the database {database} from before; with --empty it is "
+                    "used as it was left, with nothing from the store at {url}.")
+LOCAL_DATA_NEW = "The store on this machine has no database {database}; with --empty it starts empty."
+BACKUP_PLAN = ("The backup: the store at {url} is read into {path}, and nothing is written to it; the file is checked, "
+               "then restored into the store on this machine, whose current contents first go to a safety backup in "
+               "backups/.")
+CHANGE_MODEL = "The {role} model: from {before} to {after}."
+MODEL_AT = "{model} at {url}"
+AGENT_ON = "The knowledge agent will be turned on; it is disabled now (deterministic-only mode)."
+SENDS = ("{host} will receive your questions and the memory text of the classes {classes} (memory_remote_classes); "
+         "nothing else leaves this computer.")
+SENDS_NO_TEXT = "{host} will receive your questions and no memory text (memory_remote_classes is empty)."
+REBUILD_VECTORS = ("To rebuild: the vectors, because the embedding model changes from {before} to {after}. Run "
+                   "`cairnmind rebuild-vectors PROJECT` for each project after the change; the earlier vectors are kept "
+                   "apart and never searched with the new model.")
+WRITER_KEEP = "Writer: this installation already writes the store at {url}."
+WRITER_NEW = ("Writer: no installation writes the store at {url} yet; this installation becomes its writer when it first "
+              "opens it (`cairnmind init`).")
+WRITER_OTHER = ("Writer: another installation writes the store at {url}, so this installation will only read it; setup "
+                "does not take it over. {reason}")
+WRITER_NOT_READ = ("Writer: it cannot be read yet ({reason}). The store decides when this installation first opens it: "
+                   "this installation becomes the writer when none is recorded, and only reads when another "
+                   "installation writes it.")
+LEFT_LOCAL_STORE = ("Left as it is: the store on this machine, in {path}. This installation stops using it, and it is "
+                    "not copied to the new store. To take its data along, run `cairnmind backup FILE` before this "
+                    "command, and `cairnmind init` and `cairnmind restore FILE` after it.")
+LEFT_ENGINE = ("Left as it is: the engine this data directory started on this machine; it is not used any more, and "
+               "`cairnmind engine stop` stops it.")
+LEFT_REMOTE_STORE = "Left as it is: the store at {url}; nothing in it is changed or deleted."
+LEFT_WRITER_NOTE = ("This installation stays named as its writer; another installation that should write it runs "
+                    "`cairnmind store takeover --yes`.")
+LEFT_MODEL_SERVER = "Left as it is: the model server at {url}; nothing is sent to it any more."
+NOTHING_TO_DO = ("Storage and the memory models already run as `cairnmind setup {profile}` says; nothing to change.")
+NOT_APPLIED = "Nothing was changed. To make these changes, run the same command with --yes."
+BACKING_UP = "Writing a backup of the store at {url} into {path}; nothing is written to that store."
+ENGINE_STARTING = "Starting the engine on this machine."
+RESTORING = "Restoring {path} into the store on this machine."
+BACKUP_WRITTEN = "Backup written and checked: {path}."
+USER_CREATED = "Created on ArcadeDB at {url}: the user {user}, with rights on the database {database} only."
+USER_EXISTED = ("The user {user} and the database {database} already existed on ArcadeDB at {url}; nothing was created "
+                "there.")
+ENGINE_STARTED = "The engine on this machine answers ({engine})."
+RESTORED = "Restored {path} into the store on this machine; its earlier contents are in a safety backup in {backups}."
+SAVED = "Saved in {config}."
+NEXT_REMOTE = "Next: `cairnmind init` opens the new store; then start Cairnmind as usual."
+NEXT_LOCAL = "Next: start Cairnmind as usual."
+NEXT_LOCAL_EMPTY = "Next: `cairnmind init` opens the store on this machine; then start Cairnmind as usual."
+STEP_STORAGE = "saving the storage settings"
+STEP_ENGINE = "starting the engine on this machine"
+STEP_RESTORE = "the restore"
+STEP_MODEL = "saving the {role} model"
+STEP_AGENT = "turning the knowledge agent on"
+PUT_BACK = "The change stopped at {step}: {error} config.json was put back as it was.{notes}"
+PUT_BACK_FAILED = ("The change stopped at {step}: {error} config.json could NOT be put back ({reason}); check it "
+                   "before you start Cairnmind.{notes}")
+KEPT_BACKUP = "The backup {path} is kept."
+ENGINE_LEFT = "The engine on this machine was started and is left running; `cairnmind engine stop` stops it."
+BACKUP_FAILED = "The backup of the store at {url} failed: {error} Nothing was changed."
+BACKUP_CHECK_FAILED = "The backup {path} did not pass its check: {error} The file is kept; nothing was changed."
+
+MESSAGES = {
+    SERVICE_RUNS: "Usługa wiedzy tego katalogu danych działa; najpierw uruchom `cairnmind stop`, a potem to polecenie ponownie. Nic nie zostało zmienione.",
+    IN_SESSION: "Sesja programistyczna nie może zmienić miejsca działania bazy i modeli; może to zrobić tylko człowiek, poza sesją. Nic nie zostało zmienione.",
+    VARIABLE_SET: "{variable} jest ustawiona w tej powłoce i zastąpiłaby to, co zapisze setup; usuń ją i uruchom setup ponownie. Nic nie zostało zmienione.",
+    UNKNOWN_PROFILE: "Nieznany profil {profile}: wybierz local, remote-db albo remote.",
+    NEEDS: "`cairnmind setup {profile}` wymaga tych opcji: {options}.",
+    NOT_FOR: "{option} nie pasuje do `cairnmind setup {profile}`.",
+    WITHOUT_PROFILE: "{option} podaje się razem z profilem: `cairnmind setup local`, `remote-db` albo `remote`.",
+    BOTH_CHOICES: "Wybierz jedno z --backup i --empty.",
+    COMBINATION: "`cairnmind setup {profile}` uruchamia modele pamięci na tym komputerze i nie przyjmuje opcji modeli. Modele na innym komputerze przy tej bazie to nie profil: uruchom `cairnmind setup {profile}`, a potem `cairnmind models set` raz dla chat i raz dla embedding, z --allow-remote. `cairnmind setup remote` przenosi bazę i modele razem.",
+    BACK_NEEDS_CHOICE: "Powrót do bazy na tym komputerze wymaga decyzji o danych bazy pod adresem {url}: --backup PLIK zapisuje jej kopię zapasową do PLIKU i odtwarza ją w bazie na tym komputerze; --empty używa bazy na tym komputerze bez tych danych. Baza pod adresem {url} w obu przypadkach zostaje bez zmian. Nic nie zostało zmienione.",
+    ALREADY_LOCAL: "Baza już działa na tym komputerze; --backup i --empty służą tylko do powrotu z bazy, z którą ta instalacja tylko się łączy. Nic nie zostało zmienione.",
+    BACKUP_EXISTS: "{path} już istnieje; podaj nowy plik na kopię zapasową. Nic nie zostało zmienione.",
+    ADDRESS_INVALID: "Adres musi zaczynać się od http:// lub https:// i wskazywać host, bez użytkownika, hasła, zapytania i fragmentu.",
+    STORAGE_REFUSED: "Nie można użyć bazy pod adresem {url}: {error} Nic nie zostało zapisane.",
+    SIGN_IN_REFUSED: "Logowanie zostało odrzucone{advice}",
+    QUERY_FAILED: "Zapytanie testowe nie powiodło się (status {status}).",
+    MODEL_REFUSED: "Nie można użyć modelu {role} {model} pod adresem {url}: {error} Nic nie zostało zapisane.",
+    MODELS_HERE_NEEDED: "`cairnmind setup {profile}` uruchamia model {role} na tym komputerze, a Ollama pod adresem {url} nie może udostępnić {model}: {error} Zainstaluj tam ten model (`ollama pull {model}`) i uruchom to ponownie. Nic nie zostało zapisane.",
+    INVALID_ROLE: "Nie można odczytać ustawień modelu {role}: {error} Popraw je poleceniem `cairnmind models set --role {role}`. Nic nie zostało zmienione.",
+    REMOTE_NOT_READABLE: "Nie można odczytać bazy pod adresem {url} do kopii zapasowej: {error} Nic nie zostało zmienione.",
+    TEST_STORAGE_OK: "Sprawdzono: ArcadeDB pod adresem {url} odpowiada w wersji {version}, a użytkownik {user} loguje się do bazy {database}.",
+    TEST_STORAGE_CREATE: "Jeszcze nie sprawdzono: użytkownik {user} nie może zalogować się do bazy {database} w ArcadeDB pod adresem {url}. Z --yes opcja --admin-password-file najpierw ich tworzy, tak jak `cairnmind db create-user`, i wtedy test się odbywa.",
+    TEST_READABLE: "Sprawdzono: bazę pod adresem {url} można odczytać do kopii zapasowej.",
+    TEST_MODEL_OK: "Sprawdzono: model {role} {model} pod adresem {url} odpowiada.",
+    CHANGE_STORAGE_REMOTE: "Baza: z {before} na ArcadeDB pod adresem {url}, z którą ta instalacja tylko się łączy: użytkownik {user}, baza {database}, hasło czytane z {password_file}.",
+    CHANGE_CA: "Jej certyfikat jest sprawdzany względem {ca_file}.",
+    BEFORE_LOCAL: "silnika na tym komputerze",
+    BEFORE_REMOTE: "ArcadeDB pod adresem {url}",
+    CHANGE_STORAGE_LOCAL: "Baza: z ArcadeDB pod adresem {before} na silnik na tym komputerze pod adresem {url}, z bazą {database}.",
+    ENGINE_START: "Silnik na tym komputerze zostanie uruchomiony ({engine}). Nic nie jest instalowane: silnik natywny wymaga wcześniejszego `cairnmind engine install`; w Dockerze brakujący obraz silnika jest pobierany, co zostaje wtedy powiedziane.",
+    ENGINE_NATIVE: "natywny, Java 21",
+    ENGINE_DOCKER: "w Dockerze",
+    ENGINE_CHOSEN: "natywny z Javą 21 albo w Dockerze, gdy Javy 21 nie ma, tak jak wybiera `cairnmind init`",
+    LOCAL_DATA_FOUND: "Baza na tym komputerze nadal ma bazę danych {database} sprzed zmiany; z --empty jest używana tak, jak została zostawiona, bez niczego z bazy pod adresem {url}.",
+    LOCAL_DATA_NEW: "Baza na tym komputerze nie ma bazy danych {database}; z --empty zaczyna pusta.",
+    BACKUP_PLAN: "Kopia zapasowa: baza pod adresem {url} jest czytana do {path}, bez żadnego zapisu do niej; plik jest sprawdzany, a potem odtwarzany w bazie na tym komputerze, której obecna zawartość najpierw trafia do kopii bezpieczeństwa w backups/.",
+    CHANGE_MODEL: "Model {role}: z {before} na {after}.",
+    MODEL_AT: "{model} pod adresem {url}",
+    AGENT_ON: "Agent wiedzy zostanie włączony; teraz jest wyłączony (tryb tylko deterministyczny).",
+    SENDS: "{host} będzie otrzymywać twoje pytania i tekst pamięci z klas {classes} (memory_remote_classes); nic więcej nie opuszcza tego komputera.",
+    SENDS_NO_TEXT: "{host} będzie otrzymywać twoje pytania, ale żadnego tekstu pamięci (memory_remote_classes jest puste).",
+    REBUILD_VECTORS: "Do przebudowania: wektory, bo model embeddingu zmienia się z {before} na {after}. Po zmianie uruchom `cairnmind rebuild-vectors PROJEKT` dla każdego projektu; wcześniejsze wektory są trzymane osobno i nigdy nie są przeszukiwane nowym modelem.",
+    WRITER_KEEP: "Zapisujący: ta instalacja już zapisuje bazę pod adresem {url}.",
+    WRITER_NEW: "Zapisujący: żadna instalacja jeszcze nie zapisuje bazy pod adresem {url}; ta instalacja zostanie zapisującą, gdy pierwszy raz ją otworzy (`cairnmind init`).",
+    WRITER_OTHER: "Zapisujący: bazę pod adresem {url} zapisuje inna instalacja, więc ta instalacja będzie ją tylko czytać; setup jej nie przejmuje. {reason}",
+    WRITER_NOT_READ: "Zapisujący: nie można go jeszcze odczytać ({reason}). Baza rozstrzyga to, gdy ta instalacja pierwszy raz ją otworzy: ta instalacja zostaje zapisującą, gdy żadnej nie zapisano, i tylko czyta, gdy zapisuje ją inna instalacja.",
+    LEFT_LOCAL_STORE: "Zostaje bez zmian: baza na tym komputerze, w {path}. Ta instalacja przestaje jej używać i nie jest ona kopiowana do nowej bazy. Aby zabrać jej dane, uruchom `cairnmind backup PLIK` przed tym poleceniem, a `cairnmind init` i `cairnmind restore PLIK` po nim.",
+    LEFT_ENGINE: "Zostaje bez zmian: silnik, który ten katalog danych uruchomił na tym komputerze; nie jest już używany, a `cairnmind engine stop` go zatrzymuje.",
+    LEFT_REMOTE_STORE: "Zostaje bez zmian: baza pod adresem {url}; nic w niej nie jest zmieniane ani usuwane.",
+    LEFT_WRITER_NOTE: "Ta instalacja pozostaje w niej zapisana jako zapisująca; inna instalacja, która ma ją zapisywać, uruchamia `cairnmind store takeover --yes`.",
+    LEFT_MODEL_SERVER: "Zostaje bez zmian: serwer modeli pod adresem {url}; nic więcej nie jest do niego wysyłane.",
+    NOTHING_TO_DO: "Baza i modele pamięci już działają tak, jak mówi `cairnmind setup {profile}`; nie ma czego zmieniać.",
+    NOT_APPLIED: "Nic nie zostało zmienione. Aby wprowadzić te zmiany, uruchom to samo polecenie z --yes.",
+    BACKING_UP: "Zapisywanie kopii zapasowej bazy pod adresem {url} do {path}; nic nie jest zapisywane do tej bazy.",
+    ENGINE_STARTING: "Uruchamianie silnika na tym komputerze.",
+    RESTORING: "Odtwarzanie {path} w bazie na tym komputerze.",
+    BACKUP_WRITTEN: "Kopia zapasowa zapisana i sprawdzona: {path}.",
+    USER_CREATED: "Utworzono w ArcadeDB pod adresem {url}: użytkownika {user} z uprawnieniami tylko do bazy {database}.",
+    USER_EXISTED: "Użytkownik {user} i baza {database} już istniały w ArcadeDB pod adresem {url}; nic tam nie utworzono.",
+    ENGINE_STARTED: "Silnik na tym komputerze odpowiada ({engine}).",
+    RESTORED: "Odtworzono {path} w bazie na tym komputerze; jej wcześniejsza zawartość jest w kopii bezpieczeństwa w {backups}.",
+    SAVED: "Zapisano w {config}.",
+    NEXT_REMOTE: "Dalej: `cairnmind init` otwiera nową bazę; potem uruchom Cairnmind jak zwykle.",
+    NEXT_LOCAL: "Dalej: uruchom Cairnmind jak zwykle.",
+    NEXT_LOCAL_EMPTY: "Dalej: `cairnmind init` otwiera bazę na tym komputerze; potem uruchom Cairnmind jak zwykle.",
+    STEP_STORAGE: "zapisywaniu ustawień bazy",
+    STEP_ENGINE: "uruchamianiu silnika na tym komputerze",
+    STEP_RESTORE: "odtwarzaniu",
+    STEP_MODEL: "zapisywaniu modelu {role}",
+    STEP_AGENT: "włączaniu agenta wiedzy",
+    PUT_BACK: "Zmiana zatrzymała się przy {step}: {error} config.json przywrócono do poprzedniego stanu.{notes}",
+    PUT_BACK_FAILED: "Zmiana zatrzymała się przy {step}: {error} config.json NIE udało się przywrócić ({reason}); sprawdź go, zanim uruchomisz Cairnmind.{notes}",
+    KEPT_BACKUP: "Kopia zapasowa {path} zostaje zachowana.",
+    ENGINE_LEFT: "Silnik na tym komputerze został uruchomiony i nadal działa; `cairnmind engine stop` go zatrzymuje.",
+    BACKUP_FAILED: "Kopia zapasowa bazy pod adresem {url} nie powiodła się: {error} Nic nie zostało zmienione.",
+    BACKUP_CHECK_FAILED: "Kopia zapasowa {path} nie przeszła sprawdzenia: {error} Plik zostaje zachowany; nic nie zostało zmienione.",
+}
+
+
+# --- Sentences ------------------------------------------------------------------------------------------------------
+
+def _value(key: str, value, language: str) -> str:
+    if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str) and isinstance(value[1], dict):
+        return render_one(value, language)  # a sentence inside a sentence
+    if isinstance(value, list):  # sentences that follow: each after a space, none when the list is empty
+        return "".join(" " + render_one(item, language) for item in value)
+    return safe_text(value, limit=600 if key in LONG else 200)
+
+
+def render_one(item: tuple[str, dict], language: str = "en") -> str:
+    """One sentence in ``language``; every value from settings, a server or an exception is made literal text."""
+    template, values = item
+    shown = {key: _value(key, value, language) for key, value in values.items()}
+    if language == "en":
+        return template.format(**shown)
+    from .terminal_i18n import tr  # imported here: terminal_i18n merges MESSAGES of this module
+    return tr(template, language, **shown)
+
+
+class Said(ValueError):
+    """A sentence of this module with its values, so the workspace can say it in Polish."""
+
+    def __init__(self, template: str, **values):
+        self.template, self.values = template, values
+        super().__init__(render_one((template, values), "en"))
+
+
+class SetupRefused(Said):
+    """Refused before anything changed (exit 2)."""
+
+
+class SetupFailed(Said):
+    """A step of the change failed; config.json was put back (exit 1)."""
+
+
+@dataclass(frozen=True)
+class Request:
+    profile: str
+    url: str | None = None
+    user: str | None = None
+    database: str | None = None
+    password_file: str | None = None
+    ca_file: str | None = None
+    admin_password_file: str | None = None
+    models_url: str | None = None
+    provider: str | None = None
+    chat_model: str | None = None
+    embedding_model: str | None = None
+    credential_ref: str | None = None
+    allow_remote: bool = False
+    backup: str | None = None
+    empty: bool = False
+
+
+def given_options(fields: dict) -> list[str]:
+    """The options a person typed, as typed (`--password-file`), in the order of OPTION_NAMES."""
+    return [OPTION_NAMES[name] for name in OPTION_NAMES if fields.get(name)]
+
+
+def option_problem(request: Request) -> Said | None:
+    """What is wrong with the options for the profile, as a sentence, or None (the command line's error, exit 2)."""
+    profile = request.profile
+    if profile not in PROFILES:
+        return Said(UNKNOWN_PROFILE, profile=profile)
+
+    def first(*names):
+        return next((OPTION_NAMES[name] for name in names if getattr(request, name)), None)
+    models = (*MODEL_OPTIONS, "credential_ref", "allow_remote")
+    if profile == "local":
+        found = first(*REMOTE_OPTIONS, "ca_file", "admin_password_file")
+        if found:
+            return Said(NOT_FOR, option=found, profile=profile)
+        if first(*models):
+            return Said(COMBINATION, profile=profile)
+        return Said(BOTH_CHOICES) if request.backup and request.empty else None
+    if first("backup", "empty"):
+        return Said(NOT_FOR, option=first("backup", "empty"), profile=profile)
+    if profile == "remote-db" and first(*models):
+        return Said(COMBINATION, profile=profile)
+    needed = REMOTE_OPTIONS if profile == "remote-db" else REMOTE_OPTIONS + MODEL_OPTIONS
+    if any(not getattr(request, name) for name in needed):
+        return Said(NEEDS, profile=profile, options=", ".join(OPTION_NAMES[name] for name in needed))
+    return None
+
+
+def environment_problem(settings) -> SetupRefused | None:
+    """A variable that replaces a setting setup saves would make the test and the saved value disagree (a later
+    process would use the variable): refused and named, never worked around."""
+    for variable in SETTINGS_VARIABLES.values():
+        named = next((key for key in env_names(variable)
+                      if (os.environ.get(key) if variable in EMPTY_IS_UNSET else key in os.environ)), None)
+        if named:
+            return SetupRefused(VARIABLE_SET, variable=named)
+    return None
+
+
+# --- Storage --------------------------------------------------------------------------------------------------------
+
+def remote_storage(settings, request) -> tuple[dict, Settings]:
+    """The five settings of a database this installation only connects to, and the settings that would result.
+
+    The password is read from the private file by the code every command uses (read_private_file: an absolute path, a
+    regular file of this user, mode 0600, not a link) into the candidate only; config.json gets the path."""
+    url = request.url
+    if not database_mode.savable(url):
+        raise SetupRefused(STORAGE_REFUSED, url=database_mode.shown(url), error=(ADDRESS_INVALID, {}))
+    password_file = os.path.abspath(os.path.expanduser(request.password_file))
+    ca_file = os.path.abspath(os.path.expanduser(request.ca_file)) if request.ca_file else ""
+    password, source, problem = database_credentials.resolve_password(
+        {"arcade_url": url, "arcade_password_file": password_file}, environ={})
+    candidate = replace(settings, arcade_connect_url=url, arcade_url=url, arcade_user=request.user,
+                        arcade_database=request.database, arcade_password_file=password_file,
+                        arcade_ca_file=ca_file, arcade_password=password,
+                        _origin={"password": source, "problem": problem, "kept": {}, "environment": {},
+                                 "database": "configured", "user": "configured", "connect_problem": None})
+    refused = database_credentials.problem(candidate)
+    if refused:
+        raise SetupRefused(STORAGE_REFUSED, url=database_mode.shown(url), error=refused)
+    return ({"arcade_connect_url": url, "arcade_user": request.user, "arcade_database": request.database,
+             "arcade_password_file": password_file, "arcade_ca_file": ca_file}, candidate)
+
+
+def save_storage(data_dir: Path, fields: dict) -> None:
+    """Change the named storage settings in config.json as stored, under the settings lock (as save_role does).
+
+    Settings in memory also hold environment values and a password read from a file; saving those would make them
+    permanent, so only these fields change, and never through Settings.save."""
+    assert set(fields) <= set(STORAGE_FIELDS), fields
+    path = data_dir / "config.json"
+    data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (data_dir / "config.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        values = json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(values, dict):
+            raise ValueError("config.json is not a settings object; nothing was saved.")
+        values.update(fields)
+        memory_models._write_json(path, values)
+
+
+def _put_back(path: Path, data: bytes) -> None:
+    """config.json as it was, byte for byte: atomic, owner-readable, under the settings lock."""
+    with (path.parent / "config.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        descriptor, name = tempfile.mkstemp(prefix=".config-", dir=path.parent)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(name, 0o600)
+            os.replace(name, path)
+        finally:
+            Path(name).unlink(missing_ok=True)
+
+
+def _storage_plan(settings, request, result) -> dict | None:
+    """The storage change, or None when storage stays as it is. Reads and tests; writes nothing."""
+    connect = database_mode.connect_only(settings)
+    if request.profile == "local":
+        if not connect:
+            if request.backup or request.empty:
+                raise SetupRefused(ALREADY_LOCAL)
+            return None
+        raise NotImplementedError("going back to this machine")
+    fields, candidate = remote_storage(settings, request)
+    if connect and all(getattr(settings, name) == value for name, value in fields.items()):
+        return None
+    return {"fields": fields, "candidate": candidate}
+
+
+def _writer_items(found: dict, url: str) -> list:
+    """What the store code will do at this installation's first open of the store, from a read-only look."""
+    role, reason = found.get("role"), found.get("reason", "")
+    if role == "writer":
+        items = [(WRITER_KEEP, {"url": url})]
+    elif role == "none":
+        items = [(WRITER_NEW, {"url": url})]
+    elif role in ("reader", "lost"):
+        items = [(WRITER_OTHER, {"url": url, "reason": reason})]
+    else:
+        items = [(WRITER_NOT_READ, {"url": url, "reason": reason})]
+    if found.get("problem"):  # a writer row that the journal head contradicts: said as it is
+        items.append((VERBATIM, {"text": found["problem"]}))
+    return items
+
+
+def _test_storage(plan, request, yes, result) -> None:
+    """Test the candidate store without saving anything; with --admin-password-file and --yes, create its user first."""
+    candidate = plan["candidate"]
+    url = database_mode.address(candidate)
+    named = {"url": url, "user": candidate.arcade_user, "database": candidate.arcade_database}
+    admin = None
+    if request.admin_password_file:
+        try:
+            admin = database_credentials.admin_password(os.path.abspath(os.path.expanduser(request.admin_password_file)))
+        except ValueError as exc:
+            raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
+    if admin is not None and yes:
+        try:
+            created = database_credentials.create_user(candidate, admin)
+        except (ValueError, ArcadeError) as exc:
+            raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
+        result["done"].append((USER_CREATED if created["created"] or created["database_created"] else USER_EXISTED,
+                               named))
+    block = database_credentials.doctor_block(candidate)
+    if block.get("available") is True and block.get("database_available") is True and not block.get("error"):
+        result["tests"].append((TEST_STORAGE_OK, {**named, "version": block.get("version", "")}))
+    elif admin is not None and not yes and block.get("available") is True and block.get("database_available") is False:
+        result["tests"].append((TEST_STORAGE_CREATE, named))  # the server answered; the user or database is not there yet
+    else:
+        if block.get("error"):
+            error = block["error"]
+        elif block.get("database_status") in (401, 403):
+            error = (SIGN_IN_REFUSED, {"advice": database_mode.sign_in_refused(candidate)})
+        else:
+            error = (QUERY_FAILED, {"status": block.get("database_status")})
+        raise SetupRefused(STORAGE_REFUSED, url=url, error=error)
+    result["writer"] = _writer_items(store_writer.inspect(candidate), url)
+
+
+# --- Models ---------------------------------------------------------------------------------------------------------
+
+def _current(settings, role: str) -> tuple[str, str, bool]:
+    """(model, address, on another computer) of one role now."""
+    row = memory_models.profile(settings, role)
+    url = row["base_url"] if row else settings.ollama_url
+    return (getattr(settings, memory_models.MODEL_FIELDS[role]), database_mode.shown(url),
+            not memory_models.is_loopback(url))
+
+
+def _move(settings, role: str, kwargs: dict) -> dict:
+    model, url, away = _current(settings, role)
+    return {"role": role, "kwargs": kwargs, "before": (model, url), "away": away}
+
+
+def model_moves(settings, request) -> list[dict]:
+    """The roles that change, each with the arguments of configure_role (`models set`); [] when none does."""
+    enabled = knowledge_mode.enabled(settings)  # an invalid knowledge_agent is refused with its own sentence
+    moves = []
+    if request.profile == "remote":
+        for role, model in (("chat", request.chat_model), ("embedding", request.embedding_model)):
+            kwargs = {"provider": request.provider, "model": model, "base_url": request.models_url,
+                      "credential_ref": request.credential_ref, "allow_remote": request.allow_remote}
+            kwargs = {key: value for key, value in kwargs.items() if value is not None}
+            row = {key: value for key, value in (("provider", request.provider), ("base_url", request.models_url),
+                                                 ("credential_ref", request.credential_ref)) if value is not None}
+            if request.allow_remote:
+                row["allow_remote"] = True
+            try:
+                wanted = memory_models.normalize_memory_model(row, role)
+            except ValueError as exc:
+                raise SetupRefused(MODEL_REFUSED, role=role, model=model,
+                                   url=database_mode.shown(request.models_url), error=str(exc)) from None
+            try:
+                same = enabled and memory_models.profile(settings, role) == wanted and (
+                    getattr(settings, memory_models.MODEL_FIELDS[role]) == model)
+            except ValueError:
+                same = False  # a stored profile that cannot be read is replaced
+            if not same:
+                moves.append(_move(settings, role, kwargs))
+        return moves
+    if not enabled:
+        return []  # nothing runs anywhere: the models stay off
+    defaults = {role: Settings.__dataclass_fields__[memory_models.MODEL_FIELDS[role]].default
+                for role in memory_models.ROLES}
+    for role in memory_models.ROLES:
+        try:
+            row = memory_models.profile(settings, role)
+        except ValueError as exc:
+            raise SetupRefused(INVALID_ROLE, role=role, error=str(exc)) from None
+        if row is None:
+            try:
+                memory_models.local_server(settings)  # an ollama_url on another computer is never written or used (#288)
+            except memory_models.RemoteServerRefused as exc:
+                raise SetupRefused(VERBATIM, text=str(exc)) from None
+        elif not memory_models.is_loopback(row["base_url"]):
+            moves.append(_move(settings, role, {"provider": "ollama", "model": defaults[role]}))
+    return moves
+
+
+def _test_models(settings, request, moves, result) -> None:
+    for move in moves:
+        role = move["role"]
+        try:
+            checked = asyncio.run(memory_models.check_role(settings, role, **move["kwargs"]))
+        except (ValueError, OllamaUnavailable) as exc:
+            model, url = move["kwargs"]["model"], database_mode.shown(
+                move["kwargs"].get("base_url") or settings.ollama_url)
+            if request.profile == "remote":
+                raise SetupRefused(MODEL_REFUSED, role=role, model=model, url=url, error=str(exc)) from None
+            raise SetupRefused(MODELS_HERE_NEEDED, profile=request.profile, role=role, url=url, model=model,
+                               error=str(exc)) from None
+        move["checked"] = checked
+        url = database_mode.shown(checked["row"]["base_url"])
+        move["after"] = (move["kwargs"]["model"], url)
+        result["tests"].append((TEST_MODEL_OK, {"role": role, "model": move["after"][0], "url": url}))
+
+
+# --- The plan -------------------------------------------------------------------------------------------------------
+
+def _at(model: str, url: str) -> tuple[str, dict]:
+    return (MODEL_AT, {"model": model, "url": url})
+
+
+def _plan_lines(settings, request, plan, moves, result) -> None:
+    changes, left = result["changes"], result["left_behind"]
+    was_connect = database_mode.connect_only(settings)
+    if plan and request.profile != "local":
+        fields = plan["fields"]
+        before = (BEFORE_REMOTE, {"url": database_mode.address(settings)}) if was_connect else (BEFORE_LOCAL, {})
+        changes.append((CHANGE_STORAGE_REMOTE, {"before": before, "url": database_mode.shown(fields["arcade_connect_url"]),
+                                                "user": fields["arcade_user"], "database": fields["arcade_database"],
+                                                "password_file": fields["arcade_password_file"]}))
+        if fields["arcade_ca_file"]:
+            changes.append((CHANGE_CA, {"ca_file": fields["arcade_ca_file"]}))
+        if not was_connect:
+            left.append((LEFT_LOCAL_STORE, {"path": settings.data_dir / "arcade"}))
+            if engine.local_process_recorded(settings) or engine_docker.container_recorded(settings):
+                left.append((LEFT_ENGINE, {}))
+    if plan and was_connect:
+        left.append((LEFT_REMOTE_STORE, {"url": database_mode.address(settings)}))
+        if store_writer.inspect(settings).get("role") == "writer":
+            left.append((LEFT_WRITER_NOTE, {}))
+    sent = False
+    for move in moves:
+        changes.append((CHANGE_MODEL, {"role": move["role"], "before": _at(*move["before"]),
+                                       "after": _at(*move["after"])}))
+        candidate = move["checked"]["candidate"]
+        if not sent and not memory_models.is_loopback(move["checked"]["row"]["base_url"]):
+            sent = True
+            sends = memory_egress.describe(candidate, move["role"])["sends"]
+            host = urlsplit(move["checked"]["row"]["base_url"]).hostname
+            changes.append((SENDS, {"host": host, "classes": ", ".join(sends)}) if sends
+                           else (SENDS_NO_TEXT, {"host": host}))
+        if move["role"] == "embedding" and move["before"] != move["after"]:
+            result["rebuild"].append((REBUILD_VECTORS, {"before": _at(*move["before"]), "after": _at(*move["after"])}))
+    if moves and not knowledge_mode.enabled(settings):
+        changes.append((AGENT_ON, {}))
+    for url in dict.fromkeys(move["before"][1] for move in moves if move["away"]):
+        left.append((LEFT_MODEL_SERVER, {"url": url}))
+
+
+# --- The change -----------------------------------------------------------------------------------------------------
+
+def _add_next(result, steps) -> None:
+    for step in steps:
+        if (VERBATIM, {"text": step}) not in result["next"]:
+            result["next"].append((VERBATIM, {"text": step}))
+
+
+def _apply(settings, request, plan, moves, result, say, state) -> None:
+    if plan and request.profile == "local":
+        raise NotImplementedError("going back to this machine")
+    for move in moves:
+        state["step"] = (STEP_MODEL, {"role": move["role"]})
+        report = asyncio.run(memory_models.configure_role(settings, move["role"], **move["kwargs"]))
+        _add_next(result, report["next"])
+    if request.profile == "remote" and moves:
+        state["step"] = (STEP_AGENT, {})
+        said = knowledge_mode.turn_on(settings)
+        if said:
+            result["done"].append((VERBATIM, {"text": said}))
+    if plan:
+        state["step"] = (STEP_STORAGE, {})
+        save_storage(settings.data_dir, plan["fields"])
+    result["done"].append((SAVED, {"config": settings.data_dir / "config.json"}))
+    result["next"].append((NEXT_REMOTE, {}) if plan else (NEXT_LOCAL, {}))
+
+
+def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) -> dict:
+    """Validate, test, plan and (with ``yes``) change. Raises SetupRefused before anything changed, SetupFailed
+    after config.json was put back. The result holds (template, values) items; see render."""
+    result: dict = {"profile": request.profile, "tests": [], "changes": [], "writer": [], "rebuild": [],
+                    "left_behind": [], "applied": False, "done": [], "next": [], "topology": None}
+    refused = environment_problem(settings)
+    if refused:
+        raise refused
+    plan = _storage_plan(settings, request, result)
+    moves = model_moves(settings, request)
+    if not plan and not moves:
+        result["done"].append((NOTHING_TO_DO, {"profile": request.profile}))
+        return result
+    _test_models(settings, request, moves, result)  # the models first: they write nothing anywhere
+    if plan and request.profile != "local":
+        _test_storage(plan, request, yes, result)
+    _plan_lines(settings, request, plan, moves, result)
+    if not yes:
+        return result
+    path = settings.data_dir / "config.json"
+    snapshot = path.read_bytes()
+    state: dict = {"step": None, "backup": None, "engine": False}
+    try:
+        _apply(settings, request, plan, moves, result, say, state)
+    except BaseException as exc:  # Ctrl-C too: the configuration is never left half changed
+        notes = [item for item in result["done"] if item[0] == USER_CREATED]
+        if state["backup"]:
+            notes.append((KEPT_BACKUP, {"path": state["backup"]}))
+        if state["engine"]:
+            notes.append((ENGINE_LEFT, {}))
+        try:
+            _put_back(path, snapshot)
+        except OSError as failure:
+            raise SetupFailed(PUT_BACK_FAILED, step=state["step"], error=str(exc), reason=str(failure),
+                              notes=notes) from exc
+        if not isinstance(exc, Exception):
+            raise
+        raise SetupFailed(PUT_BACK, step=state["step"], error=str(exc), notes=notes) from exc
+    result["applied"] = True
+    result["topology"] = topology.topology(Settings.load(settings.data_dir))
+    return result
+
+
+# --- Output ---------------------------------------------------------------------------------------------------------
+
+def render(result: dict, language: str = "en") -> list[str]:
+    """The text the command prints: tests, changes, writer, rebuild, left behind, then NOT_APPLIED or what was done."""
+    lines = [render_one(item, language) for key in ("tests", "changes", "writer", "rebuild", "left_behind", "done")
+             for item in result[key]]
+    if result["applied"]:
+        lines += [render_one(item, language) for item in result["next"]]
+        lines += ["", *topology.lines(result["topology"], language)]
+    elif result["changes"]:
+        lines.append(render_one((NOT_APPLIED, {}), language))
+    return lines
+
+
+def as_json(result: dict) -> dict:
+    """The result for --json: every sentence in English, and the three topology lines after a change."""
+    shown = {key: [render_one(item) for item in result[key]]
+             for key in ("tests", "changes", "writer", "rebuild", "left_behind", "done", "next")}
+    return {"profile": result["profile"], "applied": result["applied"], **shown,
+            "topology": (result["topology"] or {}).get("lines", [])}
