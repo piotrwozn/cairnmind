@@ -1918,6 +1918,27 @@ def eval_repository(ctx: typer.Context, root: RepositoryArg,
         raise typer.Exit(3 if result.get("status") == "not_run" else 1)
 
 
+@eval_app.command("injection")
+@initialized
+def eval_injection(ctx: typer.Context, fixture: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+                   runs: int = 3, report_dir: Path | None = None):
+    """Measure how often planted instructions in indexed sources are obeyed, in a throwaway database.
+
+    FIXTURE defaults to docs/evaluation/injection-fixture.json of the current directory. Needs Ollama with the configured models and a running engine. It only measures: exit 0 when measured, 3 when not run, 2 when the fixture is refused, 1 when it failed (an invariant broke, a path could not be measured, an error occurred).
+    """
+    from cairnmind.injection_evaluation import run_injection_evaluation
+    _not_run_without_models(ctx.obj, "cairnmind eval injection")
+    _managed_only(ctx.obj, "`cairnmind eval injection`")
+    path = fixture or Path("docs") / "evaluation" / "injection-fixture.json"
+    try:
+        result = run_injection_evaluation(ctx.obj, path, runs=runs, report_dir=report_dir)
+    except ValueError as exc:
+        refuse(_shortened(str(exc), 1000))  # the file or the log, not the command line (#244)
+    output({key: value for key, value in result.items() if key != "details"})
+    if result.get("status") != "measured":
+        raise typer.Exit(3 if result.get("status") == "not_run" else 1)
+
+
 def _not_run_without_models(settings, command: str) -> None:
     """An evaluation of the models in deterministic-only mode (#274): not run, exit 3, and nothing is asked."""
     from cairnmind.knowledge_mode import needs_models
