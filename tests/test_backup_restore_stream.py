@@ -61,6 +61,9 @@ def _backup_payload(store, tmp_path):
     as_person(store, project["id"], {"kind": "fact", "key": "quote", "content": "Zażółć \t tab </script>"},
               [source["id"]])
     payload = json.loads(gzip.decompress(store.backup(tmp_path / "base.cairnmind.json.gz").read_bytes()))["payload"]
+    # Backups of this version carry no vectors (#187); the reader still has to take them from an older file.
+    older = json.loads(gzip.decompress(FIXTURE_0_10_0.read_bytes()))["payload"]
+    payload.update({name: older[name] for name in ("embeddings", "vector_indexes", "vector_data")})
     payload["records"].append({"id": "task-1", "kind": "task", "project_id": project["id"], "source_ids": [source["id"]]})
     payload["plans"].append({"id": "plan-1", "project_id": project["id"], "step_ids": ["task-1"]})
     payload["check_runs"].append({"id": "run-1", "project_id": project["id"], "task_id": "task-1",
