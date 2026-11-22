@@ -18,6 +18,7 @@ from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Sta
 
 from . import terminal_theme
 from .config import Settings
+from .service_token import FOREIGN_SERVICE, foreign_service
 from .mcp_failure_notice import announce as announce_mcp_failures
 from .terminal_safe import plain
 from .terminal_connection_hints import NOT_STARTED, connection_hint
@@ -630,6 +631,11 @@ class SidebarApp(BasePanel):
     async def load_state(self):
         value = await self.request("GET", "/api/state")
         self.data = value
+        if value.get("foreign_service"):
+            # The service refused this directory's token: name it, as the command line does (#308).
+            text = self.t(FOREIGN_SERVICE).format(**foreign_service(self.settings))
+            if str(self.query_one("#panel-notice", Static).render()) != text:
+                self.notice(text, "error")
         self.projects = {p["id"]: p for p in value.get("projects", [])}
         self.render_projects()
         self.render_project()
@@ -1175,6 +1181,12 @@ class SidebarApp(BasePanel):
                 raise ValueError(self.t("Select a visible project first."))
             scope = (selected["project_id"], selected.get("worktree"))
             subject = notice_about(scope[0], selected.get("project_name"), scope[1])
+            status = await self.request("GET", "/api/status", params={"project": scope[0]})
+            if "models" in status:  # deterministic-only (#309): nothing to consent to, say what to do instead
+                from .first_start import PROCESS_OFF, PROCESS_RESTART, RESTART_FOR_MODELS
+                await self.clear_deferred_launch_error(scope)
+                self.notice_for(subject, PROCESS_RESTART if status.get("get_models") == RESTART_FOR_MODELS else PROCESS_OFF)
+                return
             approved = await self.push_screen_wait(ConfirmModal("Queue",
                 self.t("Use local models to process pending memory for this project only. No assistant is started.")
                 + "\n\n" + str(selected.get("project_name") or scope[0]), approve="Process memory"))
@@ -1187,15 +1199,20 @@ class SidebarApp(BasePanel):
                                         json={"project": scope[0], "worktree": scope[1]})
             if result.get("accepted") is not True or result.get("project_id") != scope[0]:
                 raise ValueError(self.t("Memory processing could not be enabled."))
-            current = await asyncio.to_thread(self.workspace.read)
-            if (current.get("project_id"), current.get("worktree")) == scope:
-                await asyncio.to_thread(self.workspace.update, {"launch_errors": [
-                    row for row in current.get("launch_errors", []) if row.get("code") != "background_inference_deferred"]},
-                    expected_revision=current["revision"])
+            if await self.clear_deferred_launch_error(scope):
                 self.notice_for(subject, "Memory processing enabled for this project." if result.get("worker_running") else
                                 result.get("notice") or "Background memory processing is disabled in this service.")
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice_for(subject, exc)
+
+    async def clear_deferred_launch_error(self, scope):
+        current = await asyncio.to_thread(self.workspace.read)
+        if (current.get("project_id"), current.get("worktree")) != scope:
+            return False
+        await asyncio.to_thread(self.workspace.update, {"launch_errors": [
+            row for row in current.get("launch_errors", []) if row.get("code") != "background_inference_deferred"]},
+            expected_revision=current["revision"])
+        return True
 
     @work(group="sidebar-settings", exclusive=True, exit_on_error=False)
     async def action_settings(self):

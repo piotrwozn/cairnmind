@@ -23,6 +23,7 @@ import urllib.request
 from . import process_identity
 from .arcade import ArcadeClient, ArcadeError
 from .config import Settings
+from .first_start import ENGINE_EXITED, ENGINE_NOT_INSTALLED, ENGINE_STARTED, ENGINE_STARTING, ENGINE_TIMED_OUT
 from .database_mode import (address, connect_only, describe, engine_mode, is_managed_url, refusal,  # noqa: F401
                             server_version, supported_versions, version_problem)
 
@@ -322,7 +323,7 @@ def start_engine(settings: Settings) -> dict:
             return existing
         home = runtime_dir(settings)
         if not (home / "lib").is_dir():
-            raise ArcadeError("ArcadeDB is not installed. Run cairnmind engine install first.")
+            raise ArcadeError(ENGINE_NOT_INSTALLED)
         java = resolve_java(settings)
         if not java:
             from .platform_hints import hint
@@ -381,7 +382,7 @@ def start_engine(settings: Settings) -> dict:
         for _ in range(120):
             if process.poll() is not None:
                 pid_file.unlink(missing_ok=True)
-                raise ArcadeError(f"ArcadeDB exited during startup. See {state / 'engine.log'}")
+                raise ArcadeError(ENGINE_EXITED.format(log=state / "engine.log", url=settings.arcade_url))
             status = engine_status(settings)
             if status["available"]:
                 return status
@@ -396,7 +397,7 @@ def start_engine(settings: Settings) -> dict:
             process.kill()
             process.wait()
         pid_file.unlink(missing_ok=True)
-        raise ArcadeError(f"ArcadeDB startup timed out. See {state / 'engine.log'}")
+        raise ArcadeError(ENGINE_TIMED_OUT.format(log=state / "engine.log"))
 
 
 def start_command(settings: Settings, *, docker: bool = False, native: bool = False, build: bool = False) -> dict:
@@ -437,11 +438,16 @@ def ensure_engine(settings: Settings) -> None:
     if status["available"] and not status.get("version_matches"):
         raise ArcadeError(f"ArcadeDB release does not match the pinned {settings.arcade_version}")
     if not status["available"]:
+        # Said before it starts, and that it keeps running only once it answers: a command that starts the
+        # engine in the background does not do it silently (#287).
+        mode = "Docker" if docker else "native"
+        print("cairnmind: " + ENGINE_STARTING.format(mode=mode, data_dir=settings.data_dir), file=sys.stderr)
         if docker:
             from .engine_docker import start_docker_engine
             start_docker_engine(settings)  # the stored image; never builds, never pulls
         else:
             start_engine(settings)
+        print("cairnmind: " + ENGINE_STARTED.format(mode=mode), file=sys.stderr)
 
 
 def local_process_recorded(settings: Settings) -> bool:

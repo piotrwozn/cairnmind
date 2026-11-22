@@ -224,6 +224,16 @@ def test_an_ollama_url_that_is_not_an_address_is_a_named_problem(tmp_path, offli
     assert status_words(place)[1] == ("error", True)
 
 
+def test_an_ollama_url_on_another_computer_is_the_refusal_not_a_server_that_receives_memory(tmp_path, offline):
+    # #301 refuses such an address before any request; the topology (and the doctor summary) must not say it
+    # receives questions and memory text (#287 merge).
+    place = topology(make(tmp_path, ollama_url="http://10.0.0.5:11434"))
+    assert place["models"]["problem"].startswith("chat: ") and "ollama_url" in place["models"]["problem"]
+    assert place["lines"][1].startswith("Memory models: they cannot be used: chat: ollama_url names 10.0.0.5")
+    assert "(Ollama at http://10.0.0.5" not in place["lines"][1] and "10.0.0.5" not in place["lines"][2]
+    assert status_words(place)[1] == ("error", True)
+
+
 def test_a_writer_row_that_the_journal_head_contradicts_is_not_called_the_writer(tmp_path, offline):
     problem = "the journal head names another installation; run cairnmind store takeover --yes"
     place = topology(make(tmp_path), writer={"role": "writer", "head_writer": "other", "problem": problem})
