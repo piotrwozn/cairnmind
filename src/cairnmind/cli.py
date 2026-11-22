@@ -2563,19 +2563,13 @@ def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
 
 
 @app.command()
-@initialized
 def forget(ctx: typer.Context, project: ProjectArg,
-           delete_project: Annotated[bool, typer.Option("--delete-project", help="Explicitly delete the project's data")] = False):
-    """Delete a project (or a removed project, by its id) and all its memory from the store. Backups are not changed; only a restore brings it back."""
-    if not delete_project:
-        raise typer.BadParameter("Deleting requires --delete-project. Existing backups stay unchanged.")
-    from cairnmind.project_removal import forget_target
-    store = store_for(ctx.obj)
-    pid = forget_target(store, project)["id"]
-    store.forget_project(pid)
-    from cairnmind.answer_log import forget as forget_answers
-    forget_answers(ctx.obj, pid)
-    output({"deleted": pid, "backups_unchanged": True})
+           delete_project: Annotated[bool, typer.Option(
+               "--delete-project", help="Kept so that a script gets the refusal; nothing is deleted.")] = False):
+    """Refused since 0.13.0: a person deletes a project's memory in the workspace (More, then Delete project memory)."""
+    from cairnmind.project_forget import CLI_REFUSED
+    # A person's act needs the open workspace's key and its consent dialog (#347): no settings, store or engine here.
+    refuse(CLI_REFUSED)
 
 
 @app.command()
