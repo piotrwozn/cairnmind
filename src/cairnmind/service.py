@@ -750,6 +750,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                   "background": {**background_status, "inference": inference_status()}, "pipeline_jobs": pipeline,
                   "inference_queue": inference.queue.qsize(), "cached_answers": len(cache),
                   "recent_job_errors": error_rows}
+        if not pid:  # what is left of a deleted project's memory (#347)
+            from cairnmind.project_forget import history
+            report["deleted_projects"] = await asyncio.to_thread(history, store)
         if not models_on:
             report.update(knowledge_mode.status_fields(pipeline, settings))
         return report
