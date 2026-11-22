@@ -895,11 +895,14 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["coding_profiles"] = coding_profiles_status(ctx.obj)
     from cairnmind.record_kinds import doctor_view
     result["projects"] = None  # how many are registered; None when the store cannot be read
+    result["project_folders"] = None  # the folders this machine cannot read, by project (#371); None likewise
     try:
         # What a person accepted as technical, per project, and how to withdraw it (#210).
         store = store_for_read(ctx.obj)
         result["accepted_record_kinds"] = doctor_view(store)
         result["projects"] = len(store.list_projects())
+        from cairnmind.project_folders import unavailable
+        result["project_folders"] = unavailable(store)
     except Exception as exc:  # noqa: BLE001 - doctor reports a store it cannot read, it does not stop
         result.setdefault("accepted_record_kinds", {"unavailable": type(exc).__name__})
     from cairnmind.topology import topology
@@ -1137,7 +1140,13 @@ def project_root(ctx: typer.Context, project: ProjectArg, path: FolderArg):
 @initialized
 def index(ctx: typer.Context, project: ProjectArg):
     """Index the project's files again through the service, which it starts when needed."""
-    output(request(ctx.obj, "POST", "/ingest", json={"project": project}))
+    result = request(ctx.obj, "POST", "/ingest", json={"project": project})
+    output(result)
+    # A folder that is not on this machine is not an index that worked: named, and the exit code says so (#371).
+    if isinstance(result, dict) and result.get("unavailable"):
+        for folder in result["unavailable"]:
+            typer.echo(f"Cairnmind: {folder['message']}", err=True)
+        raise typer.Exit(1)
 
 
 @app.command("import")

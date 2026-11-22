@@ -740,7 +740,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pid = store.resolve_project(project)["id"]
         rows = await asyncio.to_thread(store.query,
             "SELECT path FROM project_roots WHERE project_id=:project ORDER BY path", {"project": pid})
-        return {"roots": [row["path"] for row in rows]}
+        from cairnmind.project_folders import unavailable
+        return {"roots": [row["path"] for row in rows],
+                "unavailable": await asyncio.to_thread(unavailable, store, pid)}
 
     @app.get("/status", dependencies=auth)
     async def status(project: str | None = None):
@@ -750,6 +752,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pipeline = await asyncio.to_thread(store.job_summary, pid)
         writer = await asyncio.to_thread(store.writer_state)
         from cairnmind.database_mode import address, describe
+        from cairnmind.project_folders import unavailable
         from cairnmind.topology import topology
         # The service's own settings, loaded when it started; its model servers are not asked here, so the
         # evaluation reads "not checked" (cairnmind doctor checks it).
@@ -757,7 +760,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                   "topology": topology(settings, writer=writer),
                   "background": {**background_status, "inference": inference_status()}, "pipeline_jobs": pipeline,
                   "inference_queue": inference.queue.qsize(), "cached_answers": len(cache),
-                  "recent_job_errors": error_rows}
+                  "recent_job_errors": error_rows,
+                  "unavailable_folders": await asyncio.to_thread(unavailable, store, pid)}
         if not pid:  # what is left of a deleted project's memory (#347)
             from cairnmind.project_forget import history
             report["deleted_projects"] = await asyncio.to_thread(history, store)

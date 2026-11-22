@@ -252,3 +252,78 @@ def test_two_projects_from_the_same_files_share_no_rows(tmp_path):
     for table in ("sources", "chunks", "nodes", "edges", "jobs"):
         assert ids(store, table, other) and not ids(store, table, pid) & ids(store, table, other), table
     assert project_folders.unavailable(store) == []
+
+
+def lost_folder(tmp_path):
+    """A store whose only project has its folder removed, as on a machine that never had it."""
+    store, pid, root, record = indexed(tmp_path)
+    shutil.rmtree(root)
+    return store, pid, root
+
+
+def test_status_doctor_and_index_name_the_unavailable_folder(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from cairnmind import api_runtime, cli, doctor_attention, integrations, store_writer
+    from test_first_start_round2 import healthy
+    store, pid, root = lost_folder(tmp_path)
+    sentence = project_folders.message(store.resolve_project(pid), {"root": str(root), "state": "missing"})
+    entries = project_folders.unavailable(store)
+    assert [(e["project"], e["root"], e["state"], e["message"]) for e in entries] == [
+        ("cairnmind", str(root), "missing", sentence)]
+    # The service says it in /status (every project, or the one asked for) and in /project-roots.
+    settings = Settings.load(store.data_dir)
+    headers = {"Authorization": f"Bearer {settings.token}"}
+    with TestClient(create_app(settings, ollama=LocalModelFixture())) as client:
+        assert client.get("/status", headers=headers).json()["unavailable_folders"] == entries
+        assert client.get("/status", params={"project": "cairnmind"}, headers=headers).json()[
+            "unavailable_folders"] == entries
+        assert client.get("/project-roots", params={"project": pid}, headers=headers).json()["unavailable"] == entries
+    # doctor: a note under "Notes:", the full report carries the entries, and the exit code does not change.
+    monkeypatch.setattr(cli, "service_alive", lambda s: False)
+    monkeypatch.setattr(integrations, "doctor", lambda s: dict(healthy()))
+    monkeypatch.setattr(store_writer, "inspect", lambda s: {"role": "writer"})
+    monkeypatch.setattr(api_runtime, "coding_profiles_status", lambda s: [])
+    monkeypatch.setattr(cli, "store_for_read", lambda s: store)
+    for terminal in (True, False):
+        monkeypatch.setattr(cli, "_stdout_is_terminal", lambda: terminal)
+        shown = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "doctor"])
+        assert shown.exit_code == 0, shown.output
+        if terminal:
+            lines = shown.output.splitlines()
+            assert lines[lines.index(doctor_attention.NOTES) + 1] == f"  - {sentence}"
+        else:
+            assert json.loads(shown.output)["project_folders"] == entries
+    monkeypatch.setattr(cli, "store_for_read", lambda s: (_ for _ in ()).throw(ValueError("no store")))
+    unreadable = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "doctor", "--json"])
+    assert json.loads(unreadable.output)["project_folders"] is None
+    # index: the JSON as before with the entries, each sentence on stderr, exit code 1.
+    answer = {"files": 0, "errors": [sentence], "unavailable": entries}
+    monkeypatch.setattr(cli, "request", lambda *args, **kwargs: answer)
+    indexed_run = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "index", "cairnmind"])
+    assert indexed_run.exit_code == 1 and json.loads(indexed_run.stdout)["unavailable"] == entries
+    assert f"Cairnmind: {sentence}" in indexed_run.stderr
+    monkeypatch.setattr(cli, "request", lambda *args, **kwargs: {"files": 4, "errors": []})
+    assert CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "index", "cairnmind"]).exit_code == 0
+
+
+def test_the_folder_notice_reads_in_english_and_polish():
+    project = {"name": "cairnmind"}
+    missing = {"root": "/Users/me/proj-b", "state": "missing", "host": None, "error": None}
+    unreadable = {"root": "/Users/me/proj-c", "state": "unreadable", "host": None, "error": "Permission denied"}
+    tail_en = (" Nothing of the project is changed for it: its files are not counted as deleted and its code graph "
+               "is kept.")
+    tail_pl = (" Nic w projekcie nie zmienia się z jego powodu: jego pliki nie są liczone jako usunięte, a graf kodu "
+               "zostaje zachowany.")
+    for folder, reason_en, reason_pl in (
+            (missing, "it does not exist here", "nie istnieje tutaj"),
+            (unreadable, "it cannot be read here (Permission denied)", "nie da się go tu odczytać (Permission denied)")):
+        item = project_folders.entry(project, folder)
+        english = (f"The folder {folder['root']} of project cairnmind is unavailable on this machine: "
+                   f"{reason_en}.{tail_en}")
+        assert item["message"] == project_folders.folder_notice([item]) == english
+        assert project_folders.folder_notice([item], "pl") == (
+            f"Folder {folder['root']} projektu cairnmind jest niedostępny na tym komputerze: {reason_pl}.{tail_pl}")
+    both = [project_folders.entry(project, missing), project_folders.entry(project, unreadable)]
+    assert project_folders.folder_notice(both) == " ".join(item["message"] for item in both)
+    assert project_folders.folder_notice([]) == ""

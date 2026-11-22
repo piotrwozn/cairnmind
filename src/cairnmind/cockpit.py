@@ -366,6 +366,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
             except HTTPException:
                 response = None
             row["roots"] = response.json().get("roots", [row["root"]]) if response is not None and response.is_success else [row["root"]]
+            row["unavailable"] = response.json().get("unavailable", []) if response is not None and response.is_success else []
             row["memory_snapshot"] = _snapshot(Path(row["root"]))
         from .client_auth import clear_probe_cache, probe_client
         runs = await asyncio.to_thread(runtime.list_runs)
