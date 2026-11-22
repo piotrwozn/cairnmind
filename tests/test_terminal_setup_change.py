@@ -287,7 +287,7 @@ async def test_a_refusal_before_the_form_is_shown_by_name_and_no_form_opens(ui, 
         await settle(app, pilot)
         app.change("remote")
         await until(pilot, on_screen(app, MessageModal))
-        assert "Jobs are in work now (demo (ingest))" in " ".join(screen_text(app).split())
+        await until(pilot, lambda: "Jobs are in work now (demo (ingest))" in " ".join(screen_text(app).split()), what="the refusal by name")
         await pilot.press("escape")
         await settle(app, pilot)
         assert not isinstance(app.screen, FormModal) and rig.begun == []
@@ -304,7 +304,7 @@ async def test_a_store_written_by_another_installation_is_refused_after_the_test
         await until(pilot, on_screen(app, FormModal))
         await fill(app, pilot, **remote_db(tmp))
         await until(pilot, on_screen(app, MessageModal))
-        assert "Another installation writes the store at" in " ".join(screen_text(app).split())
+        await until(pilot, lambda: "Another installation writes the store at" in " ".join(screen_text(app).split()), what="the refusal of the target")
         await pilot.press("escape")
         await settle(app, pilot)
     assert rig.begun == []
@@ -318,7 +318,8 @@ async def test_nothing_to_change_is_said_and_nothing_begins(ui):
         await settle(app, pilot)
         app.change("local")
         await until(pilot, on_screen(app, MessageModal))
-        assert "already run as `cairnmind setup local` says; nothing to change" in " ".join(screen_text(app).split())
+        await until(pilot, lambda: "already run as `cairnmind setup local` says; nothing to change" in " ".join(screen_text(app).split()),
+                    what="the nothing-to-change sentence")
         await pilot.press("escape")
         await settle(app, pilot)
     assert rig.begun == []
@@ -385,11 +386,11 @@ async def test_progress_and_the_result_are_shown_and_the_panel_reconnects(ui):
         await pilot.press("escape")  # nothing here can stop the helper
         await pilot.pause(.1)
         assert app.screen is modal and not modal.final
-        assert "cannot be stopped halfway" in " ".join(screen_text(app).split())
+        await until(pilot, lambda: "cannot be stopped halfway" in " ".join(screen_text(app).split()), what="the hint")
         report(tmp, "changed", ["Stopping the knowledge service of this workspace for the change.",
                                 "The change is made and the knowledge service runs again with the new settings."])
         await until(pilot, lambda: not modal.query_one("#progress-close", Button).disabled)
-        assert modal.final == "changed" and "Esc: close" in screen_text(app)
+        await until(pilot, lambda: modal.final == "changed" and "Esc: close" in screen_text(app), what="the closing hint")
         await pilot.press("escape")
         await until(pilot, lambda: not isinstance(app.screen, modal_class))
         await settle(app, pilot)
@@ -419,8 +420,8 @@ async def test_a_progress_report_of_another_process_is_not_shown_and_a_silent_en
         report(tmp, "running", ["Stopping the knowledge service of this workspace for the change."])
         rig.helper.code = 7
         await until(pilot, lambda: modal.final == "ended")
-        text = " ".join(screen_text(app).split())
-        assert "ended without saying how (exit status 7)" in text and "Stopping the knowledge service" in text
+        await until(pilot, lambda: "ended without saying how (exit status 7)" in " ".join(screen_text(app).split())
+                    and "Stopping the knowledge service" in screen_text(app), what="the silent end said on the dialog")
         await pilot.press("escape")
         await until(pilot, lambda: not isinstance(app.screen, modal_class))
 
@@ -463,7 +464,8 @@ async def test_a_finished_outcome_nobody_saw_is_shown_once_at_the_next_opening(u
         shown = ENGLISH if language == "en" else POLISH
         await until(pilot, lambda: all(line[:28] in seen(app) for line in shown), what="the outcome's sentences")
         title = tr(terminal_setup_change.OUTCOME_TITLE, language)
-        assert title in seen(app) and all(line[:28] not in seen(app) for line in (POLISH if language == "en" else ENGLISH))
+        await until(pilot, lambda: title in seen(app), what="the title of the outcome dialog")
+        assert all(line[:28] not in seen(app) for line in (POLISH if language == "en" else ENGLISH))
         assert recorded(tmp)["shown"] is True  # recorded in the file, at once: it appears once, not each time
         await pilot.press("escape")
         await until(pilot, lambda: not isinstance(app.screen, MessageModal), what="the dialog closed")
@@ -513,9 +515,9 @@ async def test_each_final_state_is_shown_in_polish_with_no_english_inside(ui, st
     app = rig.app
     async with app.run_test(size=(120, 40)) as pilot:
         await until(pilot, on_screen(app, MessageModal), what=f"the outcome {state}")
-        await until(pilot, lambda: POLISH[0][:28] in seen(app), what="the Polish sentences")
+        await until(pilot, lambda: POLISH[0][:28] in seen(app) and tr(terminal_setup_change.OUTCOME_TITLE, "pl") in seen(app),
+                    what="the Polish sentences and title")
         assert ENGLISH[0][:20] not in seen(app) and ENGLISH[1][:20] not in seen(app)
-        assert tr(terminal_setup_change.OUTCOME_TITLE, "pl") in seen(app)
         await pilot.press("escape")
 
 
@@ -601,7 +603,7 @@ async def test_the_flow_fits_at_80_by_24(ui):
         app.change(None)
         await until(pilot, on_screen(app, ChoiceModal))
         inside(app, "#choice-cancel")
-        assert "(remote)" in screen_text(app)
+        await until(pilot, lambda: "(remote)" in screen_text(app), what="the choice of profiles")
         await pilot.press("down", "down", "enter")  # remote: the longest form
         await until(pilot, on_screen(app, FormModal))
         inside(app, "#form-submit", "#form-cancel")

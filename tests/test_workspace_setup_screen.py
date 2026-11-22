@@ -393,7 +393,7 @@ async def test_the_screen_fits_and_scrolls_at_80_by_24(tmp_path, monkeypatch):
         body.scroll_end(animate=False)
         await pilot.pause()
         assert body.scroll_y == body.max_scroll_y and plain_words(OPTIONAL_KEY).endswith("or saved.")
-        assert "or saved." in screen_text(app)  # the last words of the last paragraph; the rows are wrapped inside the frame
+        await until(pilot, lambda: "or saved." in screen_text(app), what="the last words of the screen")  # the last words of the last paragraph; the rows are wrapped inside the frame
         for page in range(body.max_scroll_y + 1):  # nothing is cut: no rendered row of the body ends in an ellipsis
             body.scroll_to(y=page, animate=False)
             await pilot.pause()
