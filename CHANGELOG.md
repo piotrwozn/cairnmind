@@ -115,6 +115,14 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The installer names by process id the knowledge services of the installed version that still run in other data directories, and stops none of them (#319).
 - The installer names open coding sessions started as `cairnmind run ...` of the installed version by process id and stops until they are closed; other spellings are listed in docs/UPGRADING.md (#319).
 - No workspace, `cairnmind run` session or interface broker starts while the installer replaces Cairnmind, even beside a running service; a service the workspace started at that moment is stopped with its broker, and its start is not announced (#319).
+- In Sessions, Esc in Session actions goes back to the list of sessions; Show / attach on a session that has ended says that it ended (and offers to resume it only when it belongs to a project); Connections names a connection the way Plan stages does, for example "Codex" or "Claude (Claude Code)", instead of "Codex · codex" (#161).
+- The Activity popup title names the folder only when it differs from the project name, and the command menu's description of Run next stage says that it shows the project and moves to that button (#161).
+- The 0.10.0 line about the command menu at 80x24 was wrong: in its popup (72x20 cells with the border, 70x18 inside) the list still scrolls, and the chosen command stays in view with its whole description (#161).
+- The built-in agent's read_file no longer marks a slice that reaches the last line of the file as truncated, and its check_status with a task id that names no task of the project gives a named refusal that says null, not the text "None", means no task (#161).
+- The MCP server refuses a tool call that carries an argument the tool does not declare, names it and lists the tool's arguments, so for example remember with state beside record saves nothing instead of saving the task as todo; the arguments are read from each tool's own declaration, so a new parameter needs no other change (#161).
+- In a terminal, `cairnmind stop` says when the interface broker keeps running and that `cairnmind cockpit stop` stops it; after `workspace stop` the terminal that was attached says that the workspace was stopped, after tmux's own line (#161).
+- The pane of a coding session that ended says "Session ended (exit status N). Resume it from Sessions." instead of tmux's "Pane is dead", in the language the interface had when that session started; a sign-in pane says only "Session ended (exit status N)." (#161).
+- The installer's refusal about running terminal servers names the data directory of each socket it shows, read from the server's first pane, so a real session can be told from a leftover; a socket it cannot ask is listed as before (#161).
 
 ### Development and CI
 
@@ -122,6 +130,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - Tests no longer reach a Cairnmind service or an Ollama running on the default ports of the machine that runs them; a test engine request that gets no answer for more than 5 s prints the statement, the wait, the load and the engine log; the stand-in pane process of the focus-column test no longer logs an older size after a newer one (#221).
 - A fast test checks that every internal link of README.md and `docs/` names a file that exists and, with an anchor, a heading that exists (#275).
 - The test engine client records, while a request is still waiting after 20 seconds, the request (without values), the sockets on the engine's port with their queues, the end of the engine log and the engine's thread dump, and reports a late answer as a slow request (#221).
+- `scripts/measure_snapshot.py N` times a first memory snapshot, an unchanged repeat and a repeat after one added record on a synthetic project of N records, with its own temporary local engine, and removes its temporary folder after that engine has exited; Linux or WSL only (#161).
 
 ## 0.12.0
 
