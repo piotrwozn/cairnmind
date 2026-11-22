@@ -8,6 +8,7 @@ The English sentences are the source; MESSAGES is their Polish for the terminal 
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 import re
 
@@ -71,29 +72,42 @@ def mark_path() -> Path:
     return Path.home() / ".local" / "state" / "cairnmind" / "upgrade-in-progress"
 
 
-def state() -> tuple[str, int | None]:
-    """("none" | "running" | "stale" | "unreadable", the installer's pid or None). Never guesses: a process that runs
-    and cannot be identified counts as the installer."""
+def mark_state(path: Path, holds: Callable[[list[str]], bool], may_hold: Callable[[str], bool]
+               ) -> tuple[str, int | None]:
+    """("none" | "running" | "stale" | "unreadable", pid) of a mark file that holds one process id. `holds(arguments)`
+    says whether a command line is the holder's; `may_hold(executable)` whether a process whose command line cannot be
+    read may be it. Never guesses: a running process that cannot be identified counts as the holder."""
     try:
-        with open(mark_path(), "rb") as handle:
+        with open(path, "rb") as handle:
             raw = handle.read(33)
     except FileNotFoundError:
         return "none", None
-    except (OSError, RuntimeError):  # RuntimeError: Path.home() found no home directory
+    except OSError:
         return "unreadable", None
     found = _MARK.fullmatch(raw)
     if found is None:
         return "unreadable", None
     pid = int(found.group(1))
-    if process_identity._pid(pid) is None:  # 0 or beyond pid_t: the installer never writes it, so the file is malformed
+    if process_identity._pid(pid) is None:  # 0 or beyond pid_t: the holder never writes it, so the file is malformed
         return "unreadable", None
     arguments = process_identity.command_line(pid)
     if arguments is None:
         program = process_identity.executable(pid)
-        if program is not None and Path(program).name not in _SHELLS:
-            return "stale", pid  # a program that is readable and is no shell is not the installer
+        if program is not None and not may_hold(program):
+            return "stale", pid  # a program that is readable and cannot be the holder is not the holder
         return ("running" if process_identity.alive(pid) else "stale"), pid
-    return ("running" if any(Path(argument).name == INSTALLER for argument in arguments) else "stale"), pid
+    return ("running" if holds(arguments) else "stale"), pid
+
+
+def state() -> tuple[str, int | None]:
+    """("none" | "running" | "stale" | "unreadable", the installer's pid or None). Never guesses: a process that runs
+    and cannot be identified counts as the installer."""
+    try:
+        path = mark_path()
+    except RuntimeError:  # Path.home() found no home directory
+        return "unreadable", None
+    return mark_state(path, lambda arguments: any(Path(argument).name == INSTALLER for argument in arguments),
+                      lambda program: Path(program).name in _SHELLS)
 
 
 def _text(kind: str, pid: int | None) -> str | None:
