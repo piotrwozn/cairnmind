@@ -136,3 +136,33 @@ async def test_slow_tool_steps_of_the_first_pass_do_not_hold_back_a_second_look(
     # simulated: search 1.1 s, answer 0.1 s, repair 0.1 s of a 2.0 s budget leave 0.7 s; the second look takes 0.1 s
     assert result["status"] == "complete", f"clock at {clock.now} s of 2.0: " + json.dumps(result["diagnostics"])
     assert result["diagnostics"]["second_look"] == "answered" and "_last_call_at" not in result["diagnostics"]
+
+
+class HangingSecondLook(StepModel):
+    """A StepModel whose third call (the second look's first) runs on past the end of the budget it was given."""
+
+    async def chat(self, messages, tools=None, **kwargs):
+        if len(self.calls) < 2:
+            return await super().chat(messages, tools, **kwargs)
+        self.calls.append(messages)
+        # Lands exactly on the budget's end, passes no time once more (the loop fires the timeout one step of
+        # this task late), then would run 100 s longer: only a budget given to the call stops it.
+        await self.clock.pass_time(2.0 - self.clock.now)
+        await self.clock.pass_time(0.0)
+        await self.clock.pass_time(100.0)
+        return await super().chat(messages, tools, **kwargs)
+
+
+async def test_a_second_look_that_outlasts_the_time_left_is_ended_inside_the_question_budget(
+        workspace, monkeypatch, clock):  # noqa: F811
+    store, project, settings = workspace
+    document(store, project, long_chunk(), uri="notes://kiln")
+    monkeypatch.setattr(agent_module, "SECOND_LOOK_MIN_SECONDS", 0.0)
+    settings.ask_timeout = 2.0
+    # simulated: an answer 0.25 s and its repair 0.25 s leave 1.5 s of 2.0, more than the 0.5 s they took, so a
+    # second look starts; its call would take 100 s and is ended with the question's budget, at 2.0 s.
+    model = HangingSecondLook([UNKNOWN, UNKNOWN, UNKNOWN], [0.25, 0.25], clock)
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], QUESTION)
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "missing_evidence"
+    assert result["diagnostics"]["second_look"] == "no_answer" and len(model.calls) == 3
+    assert clock.now <= settings.ask_timeout, f"clock at {clock.now} s of 2.0"
