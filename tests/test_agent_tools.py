@@ -365,12 +365,16 @@ async def test_large_shell_output_is_drained_without_deadlock(executor):
 
 async def test_timeout_terminates_background_group_and_is_not_replayed(executor):
     executor.approve = lambda request: True
-    executor.command_timeout_seconds = .15
+    # One second, not a fraction: the shell creates child.pid before it fills it, and a timeout in between
+    # leaves the file empty, so the child could not be named (seen in CI under load).
+    executor.command_timeout_seconds = 1
     started = time.monotonic()
     result = await executor.execute("run_command", {"command": "sleep 30 & echo $! > child.pid; wait", "timeout_seconds": 5})
-    pid = int((executor.worktree / "child.pid").read_text())
+    written_pid = (executor.worktree / "child.pid").read_text().strip()
+    assert written_pid, "the command timed out before its shell wrote the child's pid"
+    pid = int(written_pid)
     assert not result["ok"] and result["error_code"] == "command_timeout"
-    assert time.monotonic() - started < 3 and not live(pid)
+    assert time.monotonic() - started < 4 and not live(pid)
     assert not executor.journal.pending_actions()
 
 
