@@ -7,15 +7,17 @@ number would be found for the very question that must stay without an answer.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
 
 import pytest
 
-from cairnmind.agent import KnowledgeAgent
+from cairnmind.agent import NAMES_TIMEOUT, KnowledgeAgent
 from cairnmind.repository_evaluation import load_questions
 from cairnmind.ollama import OllamaUnavailable
+from cairnmind.support import NAMES_SYSTEM
 from cairnmind.subject import (NAMES_GAP, SUBJECT_GAP, _matcher, inflecting, mentions, missing_subject, names_directory,
                                subject_terms, unnamed_answer_names, unnamed_subject)
 
@@ -310,6 +312,28 @@ def test_the_gaps_of_the_names_checks_are_translated_and_the_names_are_kept():
     assert polish == "Cytowane źródła nie podają nazw, które podaje odpowiedź: nginx, [bold]Redis"
     unreadable = "Could not check the names the answer gives."
     assert fixed_message(unreadable, lambda text: tr(text, "pl")) == "Nie udało się sprawdzić nazw, które podaje odpowiedź."
+    assert fixed_message(NAMES_TIMEOUT, lambda text: tr(text, "pl")) == (
+        "Sprawdzenie nazw, które podaje odpowiedź, nie zakończyło się w limicie czasu analizy.")
+
+
+async def test_a_names_call_that_runs_out_of_time_says_so_and_withholds_the_answer(workspace):  # noqa: F811
+    # The judge accepted the answer; the support check's timeout sentence would be false here (review of #245).
+    store, project, settings = workspace
+    settings.ask_timeout = 2
+    uri = str(Path(project["root"]) / "src/example/config.py")
+    source, _ = document(store, project, CONFIG, uri=uri, metadata={"relative_path": "src/example/config.py"})
+
+    class SlowNames(FakeOllama):
+        async def chat(self, messages, tools=None, **kwargs):
+            if messages[0].get("content") == NAMES_SYSTEM:
+                await asyncio.sleep(10)
+            return await super().chat(messages, tools, **kwargs)
+
+    model = SlowNames([final(source["id"], "port: int = 8765", "8765")])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "On which port does the service listen?")
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "support_unverified"
+    assert result["unknowns"][-1] == NAMES_TIMEOUT and "8765" not in result["answer"]
+    assert result["diagnostics"]["support_check"] == "names_failed" and len(model.support_calls) == 1
 
 
 # The names the checks must pass, the shapes the review named as costs (the subject check withholds a right
@@ -418,7 +442,9 @@ async def test_the_names_an_answer_introduces_must_be_in_a_quote_or_a_path_once_
                                      answer=answer)
         assert result["status"] == status
         if status == "partial":
-            assert result["unknowns"][-1] == NAMES_GAP + "Zookeeper" and not model.support_calls
+            # The stated order: the support check first, then this check, and the names call only after it.
+            assert result["unknowns"][-1] == NAMES_GAP + "Zookeeper"
+            assert len(model.support_calls) == 1 and not model.names_calls
             assert result["diagnostics"]["support_check"] == "names_missing" and "8765" not in result["answer"]
     # The same answer with the check off (the default until the replay) is left to the two model calls.
     monkeypatch.setattr("cairnmind.subject.CHECK_ANSWER_NAMES", False)

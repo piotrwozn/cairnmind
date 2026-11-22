@@ -79,6 +79,8 @@ ASK_MESSAGES = {
     "The agent's step limit was exceeded.": "Przekroczono limit kroków agenta.",
     "The support check of the answer did not finish within the analysis time limit.":
         "Kontrola poparcia odpowiedzi nie zakończyła się w limicie czasu analizy.",
+    "The check of the names the answer gives did not finish within the analysis time limit.":
+        "Sprawdzenie nazw, które podaje odpowiedź, nie zakończyło się w limicie czasu analizy.",
     "Correcting the format or citations did not finish within the analysis time limit.":
         "Poprawa formatu lub cytowań nie zakończyła się w limicie czasu analizy.",
     "The local analysis ran out of time.": "Przekroczono czas lokalnej analizy.",

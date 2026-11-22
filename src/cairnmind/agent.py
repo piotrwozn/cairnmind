@@ -240,6 +240,9 @@ def parse_object(text: str) -> dict:
 
 MIN_QUOTE_CHARS = 12
 CITATIONS_LEFT_OUT = "Citations that could not be verified were left out; the answer rests on the citations shown."
+# support_check while the names checks of an answer the judge accepted run, and what a timeout then says (#245).
+NAMES_PENDING = "names_pending"
+NAMES_TIMEOUT = "The check of the names the answer gives did not finish within the analysis time limit."
 # Search hits shown to the model at the start of a question, and the size of each hit's text.
 # With the default num_ctx the context guard in ask is 32768 characters of serialized messages.
 # Ten excerpts of this size with the system prompt and the catalog take about 21000-23000 of
@@ -1044,10 +1047,14 @@ class KnowledgeAgent:
 
     async def _support_gate(self, project_id: str, question: str, result: dict, evidence: dict, started: float,
                             diagnostics: dict, *, plain: bool = True) -> dict:
-        """Keep a complete answer complete only if its sources name the question's subject, one
-        judge call finds that its quotes state the answer and a names call finds every name the
-        answer asserts stated by the quotes (a plain question only; the third call is made only for an
-        answer the judge accepted, so there is one more call per complete answer).
+        """The one place after the citation check (``_validate_final``) where a complete answer may
+        lose its status. The checks run in this order and the first that fails decides:
+        1. the support check: the subject check, then one judge call that its quotes state the answer;
+        2. the deterministic check of the names the answer introduces (while ``CHECK_ANSWER_NAMES``);
+        3. one names call that finds every name the answer asserts stated by the quotes.
+        2 and 3 read a plain question only and run only for an answer the judge accepted, so the
+        names call is one more call per complete answer (#245). What retrieval may read for a
+        hosted run is gated before any of them (memory_egress.ASK, #183).
 
         Anything else (not complete, so no call) passes unchanged. The subject check (subject.py)
         comes first and asks no model: a name of the question's subject that no quoted source has
@@ -1063,15 +1070,10 @@ class KnowledgeAgent:
             return result
         unnamed = await asyncio.to_thread(unnamed_subject, self.store, project_id, question,
                                           result["sources"], evidence) if plain else []
-        prefix = SUBJECT_GAP
-        if plain and not unnamed and _subject.CHECK_ANSWER_NAMES:
-            unnamed = await asyncio.to_thread(unnamed_answer_names, self.store, project_id, question,
-                                              result["answer"], result["sources"])
-            prefix = NAMES_GAP
         if unnamed:
-            diagnostics["support_check"] = "subject_missing" if prefix == SUBJECT_GAP else "names_missing"
+            diagnostics["support_check"] = "subject_missing"
             return self._result("partial", "The model's answer could not be verified in the sources.",
-                                evidence, [*result.get("unknowns", []), prefix + ", ".join(unnamed)],
+                                evidence, [*result.get("unknowns", []), SUBJECT_GAP + ", ".join(unnamed)],
                                 started, result["sources"], code="answer_unsupported")
         try:
             response = await self.ollama.chat(
@@ -1086,7 +1088,15 @@ class KnowledgeAgent:
             supported, reason = support_verdict(response)
             diagnostics["support_check"] = ("supported" if supported else
                                             "unsupported" if reason else "failed")
-        gap = None  # the sentence for a names call that withholds the answer; None: the judge's own gap
+        gap = None  # the sentence for a names check that withholds the answer; None: the judge's own gap
+        if supported and plain:
+            diagnostics["support_check"] = NAMES_PENDING  # a timeout from here on is a names check's
+            introduced = await asyncio.to_thread(unnamed_answer_names, self.store, project_id, question,
+                                                 result["answer"], result["sources"]
+                                                 ) if _subject.CHECK_ANSWER_NAMES else []
+            if introduced:
+                diagnostics["support_check"] = "names_missing"
+                supported, reason, gap = False, "names", NAMES_GAP + ", ".join(introduced)
         if supported and plain:
             # One more call (#245): the names the answer asserts, each stated by the quotes or not. A lower-case
             # name has no shape for the subject check; this is how it is read. Fail closed, like the judge.
@@ -1105,6 +1115,8 @@ class KnowledgeAgent:
             elif unstated:
                 diagnostics["support_check"] = "names_unstated"
                 supported, reason, gap = False, "names", NAMES_GAP + ", ".join(unstated)
+            else:
+                diagnostics["support_check"] = "supported"
         if supported:
             return {**result, "elapsed_seconds": round(time.monotonic() - started, 3)}
         if gap is None:  # the judge's own gap
@@ -1307,11 +1319,13 @@ class KnowledgeAgent:
                                     ["The agent's step limit was exceeded."], started, code="step_budget")
         except TimeoutError:
             if judged is not None and judged.get("status") == "complete":
-                # The answer and its quotes were verified; only the support check ran out of time.
+                # The answer and its quotes were verified; only the support or names check ran out of time.
                 # Not complete, as when the check gives no verdict; the repair outcome stands.
-                diagnostics["support_check"] = "failed"
+                names = diagnostics.get("support_check") == NAMES_PENDING  # the judge had accepted it
+                diagnostics["support_check"] = "names_failed" if names else "failed"
                 return self._result("partial", "The model's answer could not be verified in the sources.", evidence,
                                     [*judged.get("unknowns", []),
+                                     NAMES_TIMEOUT if names else
                                      "The support check of the answer did not finish within the analysis time limit."],
                                     started, judged["sources"], code="support_unverified")
             diagnostics["repair_outcome"] = "budget_exhausted" if diagnostics["repair_attempted"] else "not_needed"
