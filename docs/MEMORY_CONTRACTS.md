@@ -98,8 +98,9 @@ import that would replace any other set is refused (409, `What this import
 replaces ... changed since the check`) and nothing is imported. A commit is
 imported at the full commit ID the check read. An archive import (Import in the
 memory view, and the sidebar's) works the same way since 0.13.0: its check lists
-every record it replaces (no cap) in the dialog or detail view, which scrolls;
-the import carries them as `expected_replaced`, `POST /memory/import` requires it
+every record it replaces (no cap), in the check and again in the consent dialog
+before the import, both of which scroll; the import carries exactly that list as
+`expected_replaced`, `POST /memory/import` requires it
 with `replace_confirmed`, and the importer refuses another set inside its
 transaction with the same sentence and writes nothing, so an archive or a store
 that changed after the check is never imported over verdicts the person did not
@@ -287,14 +288,15 @@ audit note included:
 | Impact verdict (`POST /inspector/impact/verdict`) | A person's verdict on one entry of `impact`, an audit note (`review://impact/...`) that changes no record. The person gives it in the inspector (Impact, then Verdict); `record_verdict` itself refuses without the proof. |
 | Release (`POST /inspector/records/{id}/release`) | A release of one record's current hits of the secrets scan (`release://`), published with its reason. The person releases a record in the inspector (open it, then Release); `release` itself refuses without the proof. |
 | Workspace form (`POST /findings` without `session_id`) | The person's own finding, proposed or confirmed. With a `session_id` it is a session's finding, and asking for `confirmed` is refused before anything is stored. |
-| An import that replaces a verdict given here (`POST /memory/import`, `/memory/import-published`, `/memory/import-commit` with `replace_confirmed`, not a dry run) | Records confirmed or disputed here replaced by a package. The refusal is `Replacing what a person confirmed or disputed on this machine needs the person's workspace ...`; the importer itself refuses too when the proof is missing. From the memory view: Import (archive) and Team memory (folder or commit), each after a dry run and the person's consent; Team memory also sends `expected_replaced`, which the two published routes require. |
+| An import that replaces a verdict given here (`POST /memory/import`, `/memory/import-published`, `/memory/import-commit` with `replace_confirmed`, not a dry run) | Records confirmed or disputed here replaced by a package. The refusal is `Replacing what a person confirmed or disputed on this machine needs the person's workspace ...`; the importer itself refuses too when the proof is missing. From the memory view: Import (archive) and Team memory (folder or commit), each after a dry run and the person's consent; both send `expected_replaced`, the list the person was shown, which all three routes require with `replace_confirmed`. |
 
 In the workspace each of these acts is sent only from a consent dialog that shows what will be done (#332): the
-inspector, the sidebar and the memory view ask for a reason, a note or a title in a form, and the request goes
-out only from the dialog that follows, which counts only input made after it appeared (#318). A key typed before
-a form or a dialog appeared therefore never makes a person's act. The quick finding form (`Ctrl+B n`) is the one
-exception, and an open item for the owner: it opens empty on `proposed`, a finding needs text typed into it and
-`confirmed` needs the status chosen in the form, but it has no consent dialog and the guard of #318 does not cover it.
+inspector, the sidebar and the memory view ask for a reason, a note or a title in a form (an import runs its
+check instead), and the request goes out only from the dialog that follows, which counts only input made after it
+appeared (#318). A key typed before a form or a dialog appeared therefore never makes a person's act. The quick
+finding form (`Ctrl+B n`) is the one exception, and an open item for the owner: it opens empty on `proposed` and
+sends only the text typed into it with the kind and status chosen there, so `confirmed` needs that status chosen,
+but it has no consent dialog and the guard of #318 does not cover it.
 
 The command line confirms nothing and makes no person's act (since 0.13.0, #214,
 #306). A program that runs as the user can open a pseudo-terminal and unset the
