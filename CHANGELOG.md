@@ -192,6 +192,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - After `cairnmind setup remote` or `cairnmind models set`, the step that says answers are labelled unevaluated is shown only for a pair of models that is neither the release's nor one that passed both evaluations, so it no longer contradicts `cairnmind setup` saying the models are evaluated for this release. `cairnmind setup remote` decides it once after the models are saved, so it is also given when the knowledge agent is turned on for a pair that was not moved again (#367).
 - A model server on another computer is no longer called the local runtime or a local model in errors: not when it does not answer, and not when it answers without the model (#367).
 - The refusals of `cairnmind setup` put a full stop after the error they quote, before the sentence that follows ("... cannot be used: ... runtime. Nothing was saved."), in English and Polish (#367).
+- A prefix key typed while a workspace shortcut was still running (for example Ctrl+B 1, a few letters, then Ctrl+B 2) could reach the assistant as the text Ctrl+B and 2 instead of switching panes; the workspace now turns off tmux's paste detection. A paste from a terminal that brackets pastes still goes to the assistant whole; in a terminal that does not, a pasted raw Ctrl+B now acts as the prefix (#356).
 
 ### Development and CI
 
