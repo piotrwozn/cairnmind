@@ -188,6 +188,7 @@ CATALOG = {
         "Gdzie przerwano pracę: punkt kontrolny, następne zadanie, testy i commity",
     "The memory service returned no brief.": "Usługa pamięci nie zwróciła skrótu.",
     "Asking memory…": "Pytam pamięć…", "Missing evidence": "Brakujące dowody",
+    "Warnings": "Ostrzeżenia", "unconfirmed": "niepotwierdzone",
     "No verified answer.": "Brak zweryfikowanej odpowiedzi.",
     "The memory service returned no answer.": "Usługa pamięci nie zwróciła odpowiedzi.",
     "Answer words found in quotes": "Słowa odpowiedzi obecne w cytatach",

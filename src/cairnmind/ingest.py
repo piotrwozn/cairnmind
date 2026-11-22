@@ -15,7 +15,7 @@ import subprocess
 import time
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import UUID
 
@@ -241,28 +241,48 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
             yield path
 
 
-def _chunks(text: str):
+MANAGED_FILES = frozenset({"AGENTS.md", "CLAUDE.md"})  # where `cairnmind install` writes its block
+
+
+def _indexed_spans(lines: list[str], uri: str) -> list[tuple[int, int]]:
+    """The [first, end) line ranges that are indexed: all of a file, except, in AGENTS.md and CLAUDE.md, the lines of
+    Cairnmind's own block (#313), found as extraction finds it. An unclosed block is indexed as it is."""
+    if PurePosixPath(uri).name not in MANAGED_FILES:
+        return [(0, len(lines))]
+    from cairnmind.extraction_input import OWN_BLOCK
+    text, spans, start = "\n".join(lines), [], 0
+    for match in OWN_BLOCK.finditer(text):
+        spans.append((start, text.count("\n", 0, match.start())))
+        start = text.count("\n", 0, match.end()) + 1
+    spans.append((start, len(lines)))
+    return [(first, end) for first, end in spans if end > first]
+
+
+def _chunks(text: str, uri: str = ""):
+    """The windows of a text as (content, first line, last line), numbered as the file is. ``uri`` names the file: the
+    managed block of AGENTS.md and CLAUDE.md is left out of it; the source text itself stays whole."""
     lines = text.splitlines()
-    start = 0
-    while start < len(lines):
-        end = start
-        size = 0
-        while end < len(lines) and end - start < 80:
-            length = len(lines[end]) + 1
-            if end > start and size + length > 6000:
-                break
-            size += length
-            end += 1
-        if end == start:
-            end += 1
-        content = "\n".join(lines[start:end])
-        # A minified line still remains fully archived and searchable in pieces.
-        if len(content) > 6000:
-            for offset in range(0, len(content), 6000):
-                yield content[offset:offset + 6000], start + 1, end
-        else:
-            yield content, start + 1, end
-        start = max(start + 1, end - 12) if end < len(lines) else end
+    for first, stop in _indexed_spans(lines, uri):
+        start = first
+        while start < stop:
+            end = start
+            size = 0
+            while end < stop and end - start < 80:
+                length = len(lines[end]) + 1
+                if end > start and size + length > 6000:
+                    break
+                size += length
+                end += 1
+            if end == start:
+                end += 1
+            content = "\n".join(lines[start:end])
+            # A minified line still remains fully archived and searchable in pieces.
+            if len(content) > 6000:
+                for offset in range(0, len(content), 6000):
+                    yield content[offset:offset + 6000], start + 1, end
+            else:
+                yield content, start + 1, end
+            start = max(start + 1, end - 12) if end < stop else end
 
 
 def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: dict | None = None) -> int:
@@ -276,10 +296,18 @@ def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: d
                 return 0  # a person's verdict on an impact list is never searchable text
             if sources[0].get("is_current") is False:
                 return 0  # replaced meanwhile: its chunks were deleted with it and are not written again (#186)
-            existing = tx.query("SELECT id FROM chunks WHERE source_id=:source", {"source": source_id})
+            existing = tx.query("SELECT id,line_start,line_end FROM chunks WHERE source_id=:source", {"source": source_id})
+            uri = sources[0]["uri"]
+            if existing and PurePosixPath(uri).name in MANAGED_FILES and (
+                    {(row["line_start"], row["line_end"]) for row in existing}
+                    != {(first, last) for _, first, last in _chunks(text, uri)}):
+                # A block indexed before #313 leaves the index here, the next time the project is indexed.
+                store.drop_chunks(tx, [source_id])
+                store._delete_old_vectors(tx, [source_id])
+                existing = []
             ids = []
             if not existing:
-                for number, (content, first, last) in enumerate(_chunks(text)):
+                for number, (content, first, last) in enumerate(_chunks(text, uri)):
                     chunk_id = _identifier(project_id, source_id, number, first, last, content)
                     tx.command(
                         "INSERT INTO chunks SET id=:id,project_id=:project,source_id=:source,text=:text,"
@@ -808,7 +836,7 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                     one_by_one(item)  # its source vanished since the walk began: the ordinary path decides
                     continue
                 item["replaces"] = replaces
-                item["chunks"] = list(_chunks(content))
+                item["chunks"] = list(_chunks(content, name))
                 # Journal events known from the file: source, chunks, their jobs, an extraction job and the old
                 # source. What hangs on the old source is counted before the group is written (write_waiting).
                 cost = 2 + 2 * len(item["chunks"]) + (1 if replaces else 0)

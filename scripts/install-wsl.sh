@@ -149,6 +149,8 @@ if [[ -z "$connect_url" ]]; then
 
     if ! check_java; then
         if ! command -v docker >/dev/null 2>&1; then
+            printf 'Or install Docker and start it; the engine then runs in a container. Then run this installer again.\n' >&2
+            printf 'Nothing has been installed yet. Java is the simpler choice.\n' >&2
             exit 1
         fi
         if docker_asked; then
@@ -161,6 +163,7 @@ if [[ -z "$connect_url" ]]; then
             docker_said="${docker_said//[^[:print:]]/}"
             docker_said="${docker_said:0:200}"
             printf 'Docker is on the path but did not answer (it said: %s). Either start Docker and run the installer again, so the engine runs in Docker, or install Java 21+: %s\n' "${docker_said:-nothing}" "$java_hint" >&2
+            printf 'Nothing has been installed yet. Java is the simpler choice.\n' >&2
             exit 1
         fi
     fi
@@ -365,7 +368,10 @@ stop_installed() {
         done <<<"$(live_terminals "$python")"
     fi
     "$installed" cockpit stop >/dev/null 2>&1 || true
-    "$installed" stop >/dev/null 2>&1 || true
+    # Said, not silent (#313): in a pipe the installed version's `stop` prints its JSON.
+    if [[ "$("$installed" stop 2>/dev/null || true)" == *'"stopping": true'* ]]; then
+        printf 'Stopped the service of the installed %s so that the new version can replace it; the next command that needs it starts it again.\n' "$name"
+    fi
 }
 # --- end ---
 
@@ -373,8 +379,8 @@ stop_installed() {
 trap 'rm -f -- "$constraints_file"; end_upgrade' EXIT
 begin_upgrade
 
-# An earlier release was installed as the uv tool "devbrain", which owns the devbrain
-# executable that this package also provides as an alias. Remove the tool, not the data.
+# DevBrain 0.8.0 was installed as the uv tool "devbrain". Its tool is removed, never the data: its own devbrain
+# command would still start 0.8.0 against the same data directory.
 upgraded_from_devbrain=false
 if uv tool list 2>/dev/null | grep '^devbrain ' >/dev/null; then
     printf 'Removing the earlier DevBrain uv tool; your memory in %s is kept.\n' \
@@ -385,13 +391,33 @@ if uv tool list 2>/dev/null | grep '^devbrain ' >/dev/null; then
     upgraded_from_devbrain=true
 fi
 
+# uv does not list a tool whose receipt is damaged, yet that tool's devbrain command would go on starting 0.8.0 (and
+# its service) on the same data directory: stop here instead of installing beside it.
+refuse_unlisted_devbrain_tool() {
+    if [[ -e "$1" || -L "$1" ]]; then
+        # What it started is stopped first, while its own command still exists: afterwards nothing could stop it.
+        printf 'An earlier DevBrain uv tool is in %s but uv does not list it. First stop what it may still run: "%s/bin/devbrain" workspace stop, then "%s/bin/devbrain" cockpit stop, then "%s/bin/devbrain" stop. Then remove it with: uv tool uninstall devbrain (your memory is kept); if that fails, rm -r "%s". Then run this installer again.\n' "$1" "$1" "$1" "$1" "$1" >&2
+        exit 1
+    fi
+}
+refuse_unlisted_devbrain_tool "$(uv tool dir)/devbrain"
+
 # An installed Cairnmind is being replaced: the same care, with the installed version's own command.
 if uv tool list 2>/dev/null | grep '^cairnmind ' >/dev/null; then
     stop_installed "$(uv tool dir --bin)/cairnmind" cairnmind "$(uv tool dir)/cairnmind/bin/python"
 fi
 
 printf 'Installing Cairnmind from %s...\n' "$package_dir"
-uv tool install --python "${CAIRNMIND_INSTALL_PYTHON:-${DEVBRAIN_INSTALL_PYTHON:-3.12}}" --reinstall --constraints "$constraints_file" "$package_dir"
+# uv's list of every package is shown only when the install fails (#326): then it is uv's own error.
+install_log="$(mktemp "${TMPDIR:-/tmp}/cairnmind-install.XXXXXXXX")"
+trap 'rm -f -- "$constraints_file" "$install_log"' EXIT
+install_status=0
+uv tool install --python "${CAIRNMIND_INSTALL_PYTHON:-${DEVBRAIN_INSTALL_PYTHON:-3.12}}" --reinstall --constraints "$constraints_file" "$package_dir" >"$install_log" 2>&1 || install_status=$?
+if ((install_status != 0)); then
+    while IFS= read -r install_line || [[ -n "$install_line" ]]; do printf '%s\n' "$install_line" >&2; done <"$install_log"
+    exit "$install_status"
+fi
+printf 'Installed Cairnmind and its dependencies.\n'
 
 tool_bin_dir="$(uv tool dir --bin)"
 cairnmind_bin="$tool_bin_dir/cairnmind"
@@ -400,6 +426,16 @@ if [[ ! -x "$cairnmind_bin" ]]; then
     exit 1
 fi
 end_upgrade  # the new version is in place: a service started from now on runs it
+
+# Cairnmind up to 0.12.0 also installed the command devbrain (#314). uv removes it on --reinstall; one still there is
+# named, never removed: nothing here can tell whose it is.
+leftover_devbrain() {
+    local leftover="$1/devbrain"
+    if [[ -e "$leftover" || -L "$leftover" ]]; then
+        printf 'Cairnmind no longer installs the devbrain command, but %s is still there. Use cairnmind instead; if nothing else uses that file, remove it: rm "%s"\n' "$leftover" "$leftover" >&2
+    fi
+}
+leftover_devbrain "$tool_bin_dir"
 
 # The engine mode this data directory stores (cairnmind init saves it), read by the installed version itself;
 # empty when it cannot say: the native engine is then installed as before, and init names what is wrong.
@@ -410,6 +446,29 @@ from cairnmind.database_mode import engine_mode
 print(engine_mode(Settings.load()))' 2>/dev/null || true
 }
 
+# Whether the pinned engine is already unpacked in the data directory (engine install then downloads nothing), read
+# by the installed version itself; empty when it cannot say, and the download line is printed as before.
+engine_present() {
+    "$(uv tool dir)/cairnmind/bin/python" -I -c '
+from cairnmind.config import Settings
+from cairnmind.engine import runtime_dir
+print("yes" if (runtime_dir(Settings.load()) / "lib").is_dir() else "no")' 2>/dev/null || true
+}
+
+# What `init` prints in a terminal ends with a next step that the check at the end of this installer says again, so
+# only what the check does not say is shown: the one-time marks of confirmations (#326). Its JSON is read, not shown.
+show_init_marks() {
+    printf '%s' "$1" | "$(uv tool dir)/cairnmind/bin/python" -I -c '
+import json, sys
+from cairnmind.first_start import INIT_MARKED
+marks = json.load(sys.stdin).get("confirmations_before_rule")
+if marks:
+    print(INIT_MARKED.format(marked=marks["marked_as_a_persons"], left=marks["still_before_the_rule"]))' || {
+        # The marks are said only once, by the init that made them: never lose them without a word.
+        printf 'The result of init could not be read; it said:\n%s\n' "$1" >&2
+    }
+}
+
 if [[ -n "$connect_url" ]]; then
     # Shown without a user, a password, a query or a fragment, should the address carry one by mistake.
     shown_url="$(printf '%s' "$connect_url" | sed -E 's#^([a-zA-Z]+://)[^/@]*@#\1#; s#[?\#].*$##')"
@@ -418,23 +477,31 @@ if [[ -n "$connect_url" ]]; then
     # without the variable stays connect-only instead of starting a local engine.
     # The database and its user are created once, by a person (cairnmind db create-user): until then
     # these two commands say what is missing, and the installation itself is complete.
-    if ! "$cairnmind_bin" engine status || ! "$cairnmind_bin" init; then
+    if "$cairnmind_bin" engine status >/dev/null && init_said="$("$cairnmind_bin" init --json)"; then
+        show_init_marks "$init_said"
+    else
         printf '\nThe database is not ready for this installation yet. Follow docs/DEPLOYMENT.md,\n' >&2
         printf '"Connect-only installations", then run: cairnmind init\n' >&2
     fi
 elif [[ "$engine_in_docker" == true || "$(stored_engine_mode)" == docker ]]; then
     printf '\nThe engine runs in Docker: no ArcadeDB is downloaded here; cairnmind init downloads its image.\n'
-    "$cairnmind_bin" init
+    init_said="$("$cairnmind_bin" init --json)"
+    show_init_marks "$init_said"
     "$cairnmind_bin" engine status >/dev/null  # the summary at the end reports the engine
 else
-    printf '\nInstalling the pinned ArcadeDB release (about 86 MB, verified with SHA-256).\n'
+    if [[ "$(engine_present)" == yes ]]; then
+        printf '\nThe pinned ArcadeDB release is already installed here; nothing is downloaded.\n'
+    else
+        printf '\nInstalling the pinned ArcadeDB release (about 86 MB, verified with SHA-256).\n'
+    fi
     arcade_dist="${CAIRNMIND_ARCADE_DIST:-${DEVBRAIN_ARCADE_DIST:-}}"
     if [[ -n "$arcade_dist" ]]; then
         "$cairnmind_bin" engine install --distribution "$arcade_dist" >/dev/null
     else
         "$cairnmind_bin" engine install >/dev/null
     fi
-    "$cairnmind_bin" init
+    init_said="$("$cairnmind_bin" init --json)"
+    show_init_marks "$init_said"
     "$cairnmind_bin" engine status >/dev/null  # the summary at the end reports the engine
 fi
 
@@ -472,5 +539,6 @@ if [[ "$workspace_ready" == true ]]; then
 fi
 
 # The same summary as `cairnmind doctor` in a terminal: required, optional, the next step (#244, #287).
+# Under pipefail the installer ends with doctor's exit code: 1 when something required is missing (#313).
 printf '\nChecking the installation...\n'
 "$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.doctor_attention
