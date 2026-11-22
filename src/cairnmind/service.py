@@ -208,6 +208,7 @@ class MemoryImportBody(MemoryInspectBody):
     name: str | None = None
     dry_run: bool = Field(default=False, strict=True)
     replace_confirmed: bool = Field(default=False, strict=True)
+    expected_replaced: list[str] | None = Field(default=None, max_length=100_000)  # the list a person was shown (#333)
     packet_id: str | None = None
 
 
@@ -813,6 +814,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         if body.replace_confirmed and not body.dry_run and not body.session_id:
             # A request that names a session is refused below with its own sentence; it never carries the proof.
             await person_proof.require(request, settings, person_proof.IMPORT_REPLACE)
+            needs_shown_list(body)
         # Bind authorization to the exact fully validated package. The importer
         # rechecks this identity, so swapping a manifest cannot change scope.
         inspected = await asyncio.to_thread(inspect_snapshot, body.path)
@@ -823,7 +825,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             return memory.import_snapshot(
                 body.path, body.root, body.name, body.dry_run,
                 expected_snapshot_id=inspected["snapshot_id"], expected_project_id=pid, authorize=authorize,
-                replace_confirmed=body.replace_confirmed)
+                replace_confirmed=body.replace_confirmed, expected_replaced=body.expected_replaced)
         if body.dry_run:
             scope = await asyncio.to_thread(read_scope, pid, body.root, body.session_id)
             return await asyncio.to_thread(restore, scope)
