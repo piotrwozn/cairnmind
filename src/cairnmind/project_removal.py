@@ -284,7 +284,8 @@ def restore_in(tx, name: str, path: str, allow: bool = True) -> dict | None:
         raise ValueError(ROOT_OF_ANOTHER.format(root=_q(path), other=_q(other.get("name") or taken[0]["project_id"])))
     update_document(tx, "projects", {"name": name, "root": path}, "id=:id", {"id": pid})
     tx.command(f"UPDATE projects REMOVE {', '.join(REMOVED_FIELDS)} WHERE id=:id", {"id": pid})
-    insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": pid, "path": path})
+    from .project_folders import stamp
+    insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": pid, "path": path, **stamp()})
     return one_row(tx, "SELECT FROM projects WHERE id=:id", {"id": pid})
 
 

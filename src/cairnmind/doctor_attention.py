@@ -228,10 +228,14 @@ def summary(report: dict) -> list[str]:
     else:
         lines.append(NOTHING_MISSING)
     blockers = report.get("environment_blockers") or []  # listed above as missing
-    for heading, items in ((OPTIONAL_BROKEN, broken), (OPTIONAL_OFF, off), (OPTIONAL_ON, on), (NOTES, [n for n in notes if n not in blockers])):
+    # A project folder this machine cannot read (#371): a note, never a fault; the exit code does not change.
+    folders = [e["message"] for e in report.get("project_folders") or []
+               if isinstance(e, dict) and isinstance(e.get("message"), str)]
+    for heading, items in ((OPTIONAL_BROKEN, broken), (OPTIONAL_OFF, off), (OPTIONAL_ON, on),
+                           (NOTES, [n for n in notes if n not in blockers] + folders)):
         if items:
             lines.append(heading)
-            lines += [f"  - {_line(item)}" for item in items]
+            lines += [f"  - {_line(item, limit=900 if item in folders else 300)}" for item in items]
     lines += [FULL_REPORT, NEXT_FIX if missing else NEXT_PROJECTS if report.get("projects") else NEXT_START]
     return lines
 

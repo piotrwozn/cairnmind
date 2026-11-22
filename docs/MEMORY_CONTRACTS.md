@@ -587,6 +587,18 @@ and where, and it never becomes this machine's own confirmation:
   request that names a session is refused, because an import brings records that
   count as confirmed, and a session can prepare the files it imports.
 
+## Folders this machine cannot read
+
+An installation never deactivates, replaces or drops from the code graph the indexed content of a folder it cannot
+read or that belongs to another machine: its sources stay current, its passages, vectors, jobs and records stay,
+and a citation into it stays anchored. A cited file under such a folder is not refreshed; the answer says the
+project root is unavailable. The code graph follows the project's current file sources, not only the files one
+run read. A folder is available, missing, unreadable or elsewhere; only the folder itself is tested, so a folder
+that opens and is empty is a deletion of its files. A folder belongs to the machine that registered it (a hash and
+a host name in its `project_roots` row) and moves to another by `cairnmind project root PROJECT FOLDER`. That
+machine is not part of a snapshot, its state hash, published memory or a record. See
+[DEPLOYMENT.md](DEPLOYMENT.md#a-projects-folders-belong-to-the-machine-that-added-them).
+
 ## Sensitivity classes
 
 Every source and record has a sensitivity class, computed on each read by one
