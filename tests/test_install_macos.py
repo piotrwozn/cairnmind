@@ -360,8 +360,11 @@ def test_the_refusal_to_replace_a_running_workspace_shows_a_count_and_five_paths
             server = socket.socket(socket.AF_UNIX)
             server.bind(str(folder / "tmux.sock"))
             servers.append(server)
+        # The third argument as the installer passes it: without it the MCP server note (#298) comes first.
+        python = tmp_path / "tools" / "cairnmind" / "bin" / "python"  # no process runs it: no MCP server is open
         result = subprocess.run(
-            [BASH, "-c", "set -euo pipefail\n" + functions + f'\nstop_installed "{bin_dir}/cairnmind" cairnmind'],
+            [BASH, "-c", "set -euo pipefail\n" + functions +
+             f'\nstop_installed "{bin_dir}/cairnmind" cairnmind "{python}"'],
             env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "TMPDIR": str(system_temp)},
             capture_output=True, text=True, timeout=30)
         for server in servers:
