@@ -185,6 +185,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - After `cairnmind setup remote` or `cairnmind models set`, the step that says answers are labelled unevaluated is shown only for a pair of models that is neither the release's nor one that passed both evaluations, so it no longer contradicts `cairnmind setup` saying the models are evaluated for this release. `cairnmind setup remote` decides it once after the models are saved, so it is also given when the knowledge agent is turned on for a pair that was not moved again (#367).
 - A model server on another computer is no longer called the local runtime or a local model in errors: not when it does not answer, and not when it answers without the model (#367).
 - The refusals of `cairnmind setup` put a full stop after the error they quote, before the sentence that follows ("... cannot be used: ... runtime. Nothing was saved."), in English and Polish (#367).
+- An extraction job has one bound, a budget of 180 seconds (120 before) for the first model call and its single repair: each call waits as long as the budget has left, whatever `ask_timeout` holds, so a cut answer and its repair of about a minute each complete on a slow model. A model that never answers ends the job at 180 seconds as a timeout, a server that cannot be reached still fails it at once, and a hung model holds the extraction worker, and the questions behind it, for up to 3 minutes. Measured on an Apple M3 Pro: 33 of 33 extraction jobs completed, the longest in 107.4 s (#266).
 
 ### Development and CI
 
