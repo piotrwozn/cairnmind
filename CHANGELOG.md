@@ -192,6 +192,9 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - After `cairnmind setup remote` or `cairnmind models set`, the step that says answers are labelled unevaluated is shown only for a pair of models that is neither the release's nor one that passed both evaluations, so it no longer contradicts `cairnmind setup` saying the models are evaluated for this release. `cairnmind setup remote` decides it once after the models are saved, so it is also given when the knowledge agent is turned on for a pair that was not moved again (#367).
 - A model server on another computer is no longer called the local runtime or a local model in errors: not when it does not answer, and not when it answers without the model (#367).
 - The refusals of `cairnmind setup` put a full stop after the error they quote, before the sentence that follows ("... cannot be used: ... runtime. Nothing was saved."), in English and Polish (#367).
+- A project whose code graph is larger than about 120,000 vertices is now indexed on the default engine memory: the graph is written in transactions of at most 20,000 rows instead of one that ran the engine out of memory, and a graph of 330,660 vertices and 412,830 edges is indexed and backed up (#377).
+- While a large graph is being written, the project's code graph is reported as not built (impact, memory status and the inspector's graph, groups and neighbors carry the notice), and a write that stops half way leaves it so until the next indexing replaces the whole graph (#377).
+- Indexing waits, for up to a minute and with an error that names the count, for the engine's index on graph vertices to find the vertices it has just committed, instead of failing to store their edges (#377).
 
 ### Development and CI
 
