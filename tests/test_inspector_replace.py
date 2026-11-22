@@ -12,7 +12,7 @@ import pytest
 from textual.widgets import Button, Select, Static, TextArea
 
 from cairnmind import agent_memory, record_replace, terminal_replace
-from cairnmind.terminal_client import BrokerError
+from cairnmind.terminal_client import BrokerError, BrokerUnreachable
 from cairnmind.terminal_detail import joined, record_parts
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
@@ -162,6 +162,65 @@ async def test_a_refused_replace_reloads_the_record_and_says_why(tmp_path, monke
         assert plain_words(tr(record_replace.CHANGED, "pl")) in shown
         assert len(posts(broker)) == 1
         assert len([call for call in broker.calls if call[1] == "/api/inspector/records/record-a"]) > len(reads)
+
+
+async def send_replace(app, broker, pilot):
+    await open_form(app, pilot)
+    app.screen.query_one("#field-content", TextArea).text = NEW
+    await pilot.click("#form-submit")
+    await consent_drawn(app, pilot)
+    await pilot.click("#confirm-yes")
+    await settle(app, pilot)
+    return plain_words(str(app.query_one("#panel-notice", Static).render()))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["unreachable", "bad answer", "new record unreadable"])
+async def test_an_unclear_or_saved_replace_never_says_the_record_was_not_replaced(tmp_path, monkeypatch, how):
+    app, broker, _ = replace_app(tmp_path, monkeypatch, "pl")
+    if how == "unreachable":
+        broker.refuse = BrokerUnreachable(0, "The local broker is unreachable.")
+    plain_request = broker.request
+
+    def request(method, path, **kwargs):
+        if how == "bad answer" and path == REPLACE:
+            plain_request(method, path, **kwargs)
+            return {"replaced": {}}
+        if how == "new record unreadable" and path == "/api/inspector/records/record-b":
+            raise BrokerError(503, "Memory storage is unavailable")
+        return plain_request(method, path, **kwargs)
+    broker.request = request
+    async with app.run_test(size=(95, 42)) as pilot:
+        shown = await send_replace(app, broker, pilot)
+        wanted = {"unreachable": terminal_replace.UNCLEAR, "bad answer": terminal_replace.SAVED_UNREAD,
+                  "new record unreadable": terminal_replace.SAVED_NOT_SHOWN}[how]
+        assert plain_words(tr(wanted, "pl")) in shown
+        assert plain_words(tr(terminal_replace.FAILED, "pl")) not in shown
+        assert plain_words(tr(terminal_replace.DONE, "pl")) not in shown
+        assert len(posts(broker)) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_consent_dialog_itself_holds_the_current_text_and_scrolls_it(tmp_path, monkeypatch):
+    old = "\n".join([f"old line {number}" for number in range(1, 40)] + ["old last line"])
+    app, broker, _ = replace_app(tmp_path, monkeypatch, "en")
+    broker.record["content"] = old
+    async with app.run_test(size=(80, 24)) as pilot:
+        await open_form(app, pilot)
+        app.screen.query_one("#field-content", TextArea).text = NEW
+        await pilot.click("#form-submit")
+        modal = await consent_drawn(app, pilot)
+        body = str(modal.query_one("#message-body", Static).render())  # the dialog's own text, not the screen behind
+        assert old in body and NEW in body
+        scroller = modal.query_one(".cm-dialog-body")
+        assert scroller.max_scroll_y > 0
+        assert "old line 1" in plain_words(screen_text(modal.app))  # the top of the old text is on screen
+        scroller.scroll_end(animate=False)
+        await pilot.pause()
+        assert plain_words(terminal_replace.EFFECT[:30]) in plain_words(screen_text(app))  # the end of the body is reached
+        await pilot.click("#confirm-no")
+        await settle(app, pilot)
+        assert posts(broker) == []
 
 
 @pytest.mark.parametrize("language", ["en", "pl"])

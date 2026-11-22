@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from .findings import FINDING_KINDS, MAX_FINDING_CHARS
 from .record_replace import HISTORICAL, NOT_REPLACEABLE, SAME_TEXT
+from .terminal_client import BrokerError, BrokerUnreachable
 from .terminal_notices import about
 from .terminal_person_act import agreed, typed
 
@@ -20,6 +21,9 @@ EFFECT = ("Replacing saves the new text as a new record confirmed by you on this
 TOO_LONG = f"The new text has at most {MAX_FINDING_CHARS} characters."
 DONE = "Record replaced. The new text is saved as a record confirmed by you."
 FAILED = "The record was not replaced. The current version was reloaded."
+UNCLEAR = "The service did not confirm the replacement, so it may have been saved. The current version was reloaded."
+SAVED_UNREAD = "The record was replaced, but the service's answer could not be read. The current version was reloaded."
+SAVED_NOT_SHOWN = "The record was replaced, but the new record could not be opened."
 MESSAGES = {
     "Replace": "Zastąp",
     "Replace record": "Zastąp ustalenie",
@@ -35,6 +39,9 @@ MESSAGES = {
     TOO_LONG: f"Nowy tekst może mieć najwyżej {MAX_FINDING_CHARS} znaków.",
     DONE: "Ustalenie zastąpione. Nowy tekst zapisano jako ustalenie potwierdzone przez Ciebie.",
     FAILED: "Ustalenie nie zostało zastąpione. Wczytano obecną wersję.",
+    UNCLEAR: "Usługa nie potwierdziła zastąpienia, więc mogło zostać zapisane. Wczytano obecną wersję.",
+    SAVED_UNREAD: "Ustalenie zastąpiono, ale nie udało się odczytać odpowiedzi usługi. Wczytano obecną wersję.",
+    SAVED_NOT_SHOWN: "Ustalenie zastąpiono, ale nie udało się otworzyć nowego ustalenia.",
 }
 
 
@@ -80,13 +87,23 @@ async def replace_record(app):
                "reason": form["reason"], "worktree": app.workspace_data.get("worktree")}
     try:
         result = await app.request("POST", f"/api/inspector/records/{record['id']}/replace", json=payload)
-        new = result.get("record") if isinstance(result, dict) else None
-        if not isinstance(new, dict) or not isinstance(new.get("id"), str):
-            raise RuntimeError("The memory service gave an invalid answer.")  # never shown as a success
-        if scope == app._scope_version:
-            await app.open_entity(new["id"], "records")  # the new record, confirmed
-            app.notice(app.t(DONE))
     except (OSError, ValueError, RuntimeError) as exc:
         if scope == app._scope_version:
+            # Only an answer of the service is a refusal; a lost connection leaves the outcome unknown, so it is said.
+            refused = isinstance(exc, BrokerError) and not isinstance(exc, BrokerUnreachable)
             await app.open_entity(record["id"], "records")
-            app.notice(app.t(FAILED) + " " + broker_error_text(exc, app.t), "error")
+            app.notice(app.t(FAILED if refused else UNCLEAR) + " " + broker_error_text(exc, app.t), "error")
+        return
+    if scope != app._scope_version:
+        return
+    new = result.get("record") if isinstance(result, dict) else None
+    if not isinstance(new, dict) or not isinstance(new.get("id"), str):
+        await app.open_entity(record["id"], "records")  # saved: it now shows the record that replaced it
+        app.notice(app.t(SAVED_UNREAD), "error")
+        return
+    try:
+        await app.open_entity(new["id"], "records")  # the new record, confirmed
+    except (OSError, ValueError, RuntimeError) as exc:
+        app.notice(app.t(SAVED_NOT_SHOWN) + " " + broker_error_text(exc, app.t), "error")
+        return
+    app.notice(app.t(DONE))
