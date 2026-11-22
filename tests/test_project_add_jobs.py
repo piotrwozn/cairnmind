@@ -78,6 +78,16 @@ def test_an_upgrade_mark_is_named_as_the_reason_the_jobs_wait(monkeypatch, world
     assert json.loads(world(terminal=False).stdout)["jobs"]["waiting_because"] == "upgrade_in_progress"
 
 
+def test_an_invalid_knowledge_agent_does_not_fail_an_add_that_is_done(monkeypatch, world):
+    def invalid(settings):
+        raise ValueError(first_start.KNOWLEDGE_INVALID.format(value="'maybe'"))
+    monkeypatch.setattr(knowledge_mode, "enabled", invalid)
+    added = world()
+    assert added.exit_code == 0 and added.stdout.splitlines()[0].startswith("Registered plain")
+    assert "knowledge_agent in config.json is 'maybe'" in added.stdout
+    assert json.loads(world(terminal=False).stdout)["jobs"]["waiting_because"] == "models_not_configured"
+
+
 def test_no_jobs_say_nothing(monkeypatch, world):
     monkeypatch.setattr(cli, "store_for", lambda *a, **k: Store())
     assert len(world().stdout.splitlines()) == 3

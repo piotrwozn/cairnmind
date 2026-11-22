@@ -70,7 +70,9 @@ def test_project_add_says_what_it_did_and_warns_about_a_folder_without_git(tmp_p
 
 def queued(told):
     """The sentence about the queued jobs (#366): the stopped service of these tests leaves the file's job waiting."""
-    return [line for line in told if "extraction and embedding jobs wait" in line]
+    lines = [line for line in told if line.startswith("Extraction and embedding jobs waiting: ")]
+    assert len(lines) == 1, told  # exactly one sentence, not zero or several
+    return lines
 
 
 def test_project_add_warns_about_a_repository_without_a_commit_and_stays_quiet_with_one(tmp_path, run, told):

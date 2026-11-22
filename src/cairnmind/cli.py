@@ -1072,7 +1072,8 @@ def _jobs_after_add(settings: Settings, store, project_id: str, quoted: str) -> 
     """The extraction and embedding jobs of a project add are run by the service. project add indexes in its own
     process, as remember does, and starts nothing: only `index` goes through the service (#366). So it says how many
     jobs are queued, whether the service runs, and why they wait: no models (#274), an upgrade mark that refuses a
-    start (#298), or a service that was stopped."""
+    start (#298), or a service that was stopped. waiting_because None means not known to wait: a running service
+    started by the workspace, or before models were turned on, can still hold them."""
     from cairnmind import first_start, knowledge_mode, upgrade_mark
     summary = store.job_summary(project_id)
     count = sum(summary[group][state] for group in ("indexing", "extraction") for state in ("pending", "running"))
@@ -1080,7 +1081,12 @@ def _jobs_after_add(settings: Settings, store, project_id: str, quoted: str) -> 
     jobs = {"queued": count, "service_running": running, "waiting_because": None}
     if not count:
         return jobs, None
-    if not knowledge_mode.enabled(settings):
+    try:
+        models_on = knowledge_mode.enabled(settings)
+    except ValueError as invalid:  # a hand-edited config: the add is done, so it still reports, with the reason
+        jobs["waiting_because"] = "models_not_configured"
+        return jobs, str(invalid)
+    if not models_on:
         jobs["waiting_because"] = "models_not_configured"  # held even beside a running service
         return jobs, first_start.JOBS_HELD_NO_MODELS.format(count=count)
     if running:
