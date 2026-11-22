@@ -102,7 +102,9 @@ def test_doctor_names_the_java_version_it_read_in_the_storage_line(monkeypatch, 
     """#368: JDK 22 runs the engine: the topology lines say Java 22, not Java 21; no major read says the minimum."""
     from cairnmind import integrations
     Settings.load(tmp_path / "data", create=True)
-    for java, said in (({"major": 22}, "(native engine, Java 22)"), ({"major": 21}, "(native engine, Java 21)"),
+    for java, said in (({"major": 22, "compatible": True}, "(native engine, Java 22)"),
+                       ({"major": 21, "compatible": True}, "(native engine, Java 21)"),
+                       ({"major": 17, "compatible": False}, "(native engine, Java 21 or newer)"),
                        ({"major": None}, "(native engine, Java 21 or newer)")):
         monkeypatch.setattr(integrations, "doctor", lambda settings, java=java: {"java": java})
         report = json.loads(runner.invoke(cli.app, ["--data-dir", str(tmp_path / "data"), "doctor"]).output)

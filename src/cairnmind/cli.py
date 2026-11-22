@@ -762,7 +762,7 @@ def engine_start(
         ctx: typer.Context,
         docker: Annotated[bool, typer.Option("--docker", help="Run the engine in Docker; saved as engine_mode.")] = False,
         native: Annotated[bool, typer.Option(
-            "--native", help="Run the engine with Java 21 on this machine; saved as engine_mode.")] = False,
+            "--native", help="Run the engine with Java 21 or newer on this machine; saved as engine_mode.")] = False,
         build: Annotated[bool, typer.Option(
             "--build", help="With --docker: build the image on this machine from the files shipped with "
                             "Cairnmind, instead of downloading it.")] = False):
@@ -904,8 +904,9 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         result.setdefault("accepted_record_kinds", {"unavailable": type(exc).__name__})
     from cairnmind.topology import topology
     # From what doctor found above, so it asks nothing more (#74): first, so the JSON reads top-down.
+    java = result.get("java", {})  # a Java below 21 is not named as the engine's: the attention line says what was found
     result = {"topology": topology(ctx.obj, models=result.get("memory_models"), writer=result["store_writer"],
-                                     java_major=result.get("java", {}).get("major")), **result}
+                                     java_major=java.get("major") if java.get("compatible") else None), **result}
     from cairnmind.doctor_attention import required_missing, summary
     _human_or_json(result, as_json, lambda: summary(result))
     if required_missing(result):

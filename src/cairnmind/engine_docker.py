@@ -35,7 +35,7 @@ DOCKER_NOT_FOUND = "docker was not found on PATH."
 DOCKER_NO_DAEMON = "docker is installed, but its daemon does not answer: {detail}"
 DOCKER_FAILED = "docker {command} could not be run: {detail}"
 DOCKER_UNUSABLE = ("The engine mode is docker, but Docker cannot be used: {problem} Start Docker, or run the engine "
-                   "with Java 21 on this machine: `cairnmind engine start --native`.")
+                   "with Java 21 or newer on this machine: `cairnmind engine start --native`.")
 UNPUBLISHED = ("This release of Cairnmind pins no published engine image yet. Build the image on this machine "
                "instead: `cairnmind engine start --docker --build`.")
 IMAGE_MISSING = ("The engine image {image} is not on this machine. Download it with "
@@ -97,7 +97,7 @@ CHOSE_NATIVE = ("Engine mode: native. Java {major} was found ({java}), so the da
                 "Saved as engine_mode in {config}.")
 KEPT_NATIVE = ("Engine mode: native, the engine this data directory already holds. Saved as engine_mode in "
                "{config}. To run it in Docker instead: `cairnmind engine start --docker`.")
-NEITHER = ("Neither Java 21 nor Docker can run the database engine here. Java: {java}. Docker: {docker} Install one "
+NEITHER = ("Neither Java 21 or newer nor Docker can run the database engine here. Java: {java}. Docker: {docker} Install one "
            "of them, then run `cairnmind init` again.")
 JAVA_NOT_NEEDED = "The engine runs in Docker; Java is not needed on this machine."
 DOCKER_ATTENTION = "Docker does not answer, and the engine runs in Docker: {error}"
@@ -108,7 +108,7 @@ MESSAGES = {
     DOCKER_NO_DAEMON: "docker jest zainstalowany, ale jego demon nie odpowiada: {detail}",
     DOCKER_FAILED: "Nie udało się uruchomić docker {command}: {detail}",
     DOCKER_UNUSABLE: ("Tryb silnika to docker, ale nie można użyć Dockera: {problem} Uruchom Dockera albo uruchom "
-                      "silnik z Javą 21 na tym komputerze: `cairnmind engine start --native`."),
+                      "silnik z Javą 21 lub nowszą na tym komputerze: `cairnmind engine start --native`."),
     UNPUBLISHED: ("To wydanie Cairnmind nie wskazuje jeszcze opublikowanego obrazu silnika. Zbuduj obraz na tym "
                   "komputerze: `cairnmind engine start --docker --build`."),
     IMAGE_MISSING: ("Obrazu silnika {image} nie ma na tym komputerze. Pobierz go poleceniem "
@@ -175,7 +175,7 @@ MESSAGES = {
                    "komputerze. Zapisano jako engine_mode w {config}."),
     KEPT_NATIVE: ("Tryb silnika: native, czyli silnik, który ten katalog danych już ma. Zapisano jako engine_mode "
                   "w {config}. Aby uruchamiać go w Dockerze: `cairnmind engine start --docker`."),
-    NEITHER: ("Ani Java 21, ani Docker nie mogą tu uruchomić silnika bazy danych. Java: {java}. Docker: {docker} "
+    NEITHER: ("Ani Java 21 lub nowsza, ani Docker nie mogą tu uruchomić silnika bazy danych. Java: {java}. Docker: {docker} "
               "Zainstaluj jedno z nich i uruchom ponownie `cairnmind init`."),
     JAVA_NOT_NEEDED: "Silnik działa w Dockerze; Java nie jest potrzebna na tym komputerze.",
     DOCKER_ATTENTION: "Docker nie odpowiada, a silnik działa w Dockerze: {error}",

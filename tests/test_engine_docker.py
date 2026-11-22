@@ -797,7 +797,7 @@ def test_init_with_neither_java_nor_docker_says_so_and_stores_nothing(init_run):
     failed = run()
     assert isinstance(failed.exception, ArcadeError)
     text = str(failed.exception)
-    assert text.startswith("Neither Java 21 nor Docker can run the database engine here. Java: not found. Docker: ")
+    assert text.startswith("Neither Java 21 or newer nor Docker can run the database engine here. Java: not found. Docker: ")
     assert text.endswith("Install one of them, then run `cairnmind init` again.")
     assert stored(docker.settings)["engine_mode"] == "" and "store" not in order
 
