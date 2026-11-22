@@ -8,6 +8,7 @@ import time
 
 import pytest
 
+from cairnmind.embed_jobs import repair_embed_jobs
 from cairnmind.store import Store
 
 from conftest import as_person, person_edit
@@ -402,9 +403,9 @@ def test_embedding_repair_uses_digest_namespace_not_configured_model_name(store,
     assert store.missing_embeddings("embedding-model@new", project["id"]) == [
         {"id": "digest-chunk", "project_id": project["id"]}
     ]
-    job_id = store.enqueue("embed", project["id"], {"chunk_id": "digest-chunk"}, "new-digest")
+    job_id = store.enqueue("embed", project["id"], {"chunk_id": "digest-chunk"}, "embed:digest-chunk")
     store.finish_job(job_id)
-    store.reset_missing_embedding_job(job_id, "digest-chunk", "embedding-model@new")
+    repair_embed_jobs(store, [{"id": "digest-chunk", "project_id": project["id"]}], "embedding-model@new")
     assert store.query("SELECT state FROM jobs WHERE id=:id", {"id": job_id})[0]["state"] == "pending"
 
 
