@@ -12,7 +12,9 @@ peak memory (VmHWM, since its start, so start-up is in it) when the command ende
 peak is again since its start). It starts nothing and sends nothing anywhere. To keep it away from a real
 installation it refuses to run unless CAIRNMIND_HOME, CAIRNMIND_PORT and CAIRNMIND_ARCADE_URL are set,
 none of them points at the installation's data directory or at port 8765 (the service) or 2480 (the
-engine), and the command has no --data-dir. Linux and WSL; without /proc (macOS) it cannot read the
+engine), and the command has no --data-dir. The engine address must be a throwaway engine: a database name exported
+as CAIRNMIND_ARCADE_DATABASE (or DEVBRAIN_) must start with cairnmind_measure_, and an engine that is not on
+this machine is accepted only with such a name. Linux and WSL; without /proc (macOS) it cannot read the
 service's figures and says so.
 """
 from __future__ import annotations
@@ -27,6 +29,7 @@ from urllib.parse import urlsplit
 
 NO_PROC = "cannot read the service's figures here: this system has no /proc (macOS)"
 INSTALLATION_DIRS = (".local/share/cairnmind", ".local/share/devbrain")
+THROWAWAY_DATABASE = "cairnmind_measure_"
 
 
 def service_figures(stat_text: str, status_text: str, ticks: int) -> tuple[float, float]:
@@ -90,6 +93,13 @@ def refuse_an_installation(env, command: list[str]) -> str | None:
                                               "DEVBRAIN_ARCADE_CONNECT_URL") if env.get(k)]
     if service_port == 8765 or 2480 in engine_ports or None in engine_ports:
         return "the service port is 8765, or an engine port is 2480 or not readable: those are the installation's, not a measurement's"
+    named = [env[k] for k in ("CAIRNMIND_ARCADE_DATABASE", "DEVBRAIN_ARCADE_DATABASE") if env.get(k)]
+    if any(not name.startswith(THROWAWAY_DATABASE) for name in named):
+        return f"an exported database name that does not start with {THROWAWAY_DATABASE} could be the installation's database"
+    hosts = {urlsplit(env[k]).hostname for k in ("CAIRNMIND_ARCADE_URL", "CAIRNMIND_ARCADE_CONNECT_URL",
+                                                 "DEVBRAIN_ARCADE_CONNECT_URL") if env.get(k)}
+    if not named and not hosts <= {"127.0.0.1", "localhost", "::1"}:
+        return f"an engine that is not on this machine needs a database named {THROWAWAY_DATABASE}... in CAIRNMIND_ARCADE_DATABASE"
     return None
 
 

@@ -268,7 +268,7 @@ A headless worker process for extraction and embedding on a server is not planne
 
 | Measured | While `cairnmind index` runs (CPU, peak memory) | After it returned, working off the queue (CPU, peak memory) |
 | --- | --- | --- |
-| **Not measured yet.** One run is still to be made with `scripts/measure_service_spend.py` (a throwaway data directory and its own ports, the service started just before it, the database connect-only, both model roles remote). | not measured | not measured |
+| **NOT MEASURED YET.** One run is still to be made with `scripts/measure_service_spend.py` (a throwaway data directory and its own ports, the service started just before it, the database connect-only, both model roles remote). | NOT MEASURED YET | NOT MEASURED YET |
 
 The request counts of indexing over a connection are measured; they are in the table of [How long indexing takes over a connection](#how-long-indexing-takes-over-a-connection).
 
