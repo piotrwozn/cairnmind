@@ -210,6 +210,14 @@ class Inspector:
             if not row or not self._matches(scope, row):
                 raise InspectorNotFound("Unknown record in requested scope")
             result = {"record": row, "cursor": _cursor(reader, self.store)}
+            if row["status"] == "superseded":
+                # The record that replaced it (#222, #239): read here, never stored on this row.
+                later = (row.get("metadata") or {}).get("superseded_by")
+                if not isinstance(later, str):
+                    found = reader.query("SELECT id FROM records WHERE project_id=:project AND supersedes=:id",
+                                         {"project": scope[0]["id"], "id": record_id})
+                    later = found[0]["id"] if found else None
+                result["replaced_by"] = later
         # Derived on every read: a source can change without any write to the record.
         from .evidence import evidence_states
         result["evidence"] = evidence_states(self.store, scope[0]["id"], [row])[row["id"]]

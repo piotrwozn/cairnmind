@@ -15,6 +15,7 @@ from .terminal_legacy_groups import MESSAGES as LEGACY_GROUP_MESSAGES
 from .terminal_plan_confirm import MESSAGES as PLAN_CONFIRM_MESSAGES
 from .terminal_person_act import MESSAGES as PERSON_ACT_MESSAGES
 from .terminal_release import MESSAGES as RELEASE_MESSAGES
+from .terminal_replace import MESSAGES as REPLACE_MESSAGES
 from .terminal_published_import import MESSAGES as PUBLISHED_IMPORT_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
 from .setup_profiles import MESSAGES as SETUP_PROFILE_MESSAGES
@@ -214,7 +215,7 @@ CATALOG = {
     "This folder does not exist or cannot be read.": "Ten folder nie istnieje lub nie można go odczytać.",
     "No subfolders. You can use this folder.": "Brak podfolderów. Możesz wybrać ten folder.",
     "Cancel": "Anuluj", "Close": "Zamknij", "Save": "Zapisz", "Continue": "Dalej",
-    "Confirm": "Potwierdź", "Refresh": "Odśwież", "Details": "Szczegóły",
+    "Confirm": "Potwierdź", "Refresh": "Odśwież", "Details": "Detale",
     "Technical details": "Szczegóły techniczne", "Hide technical details": "Ukryj szczegóły techniczne",
     # One key line at the bottom of each dialog, and the command menu's empty state.
     "Enter: select · Esc: back": "Enter: wybierz · Esc: wstecz",
@@ -263,7 +264,7 @@ CATALOG = {
     "The superseded finding had newer evidence": "Zastąpione ustalenie miało nowsze dowody",
     "Checks": "Testy", "Queue": "Kolejka", "Unassigned": "Nieprzypisane", "Snapshot": "Snapshot",
     "Filter loaded page…": "Filtruj załadowaną stronę…", "List": "Lista", "Filters": "Filtry",
-    "Dispute": "Zakwestionuj", "History": "Historia", "Preview": "Podgląd", "Automatic": "Automat",
+    "Dispute": "Kwestionuj", "History": "Historia", "Preview": "Podgląd", "Automatic": "Automat",
     "Import": "Import", "Apply": "Wczytaj", "Type / state": "Typ / stan",
     "Content / source": "Treść / źródło", "Version / attempt": "Wersja / próba",
     "Version": "Wersja", "Graph": "Graf", "Groups": "Grupy", "Pause": "Pauza",
@@ -662,6 +663,7 @@ CATALOG.update(CHECK_PROFILE_MESSAGES)  # a check profile the worktree does not 
 CATALOG.update(RECORD_KIND_MESSAGES)  # an unknown transcript record kind a person accepts (#210)
 CATALOG.update(PLAN_CONFIRM_MESSAGES)  # a person confirms a plan in the inspector (#214)
 CATALOG.update(RELEASE_MESSAGES)  # a person releases a record in the inspector (#306)
+CATALOG.update(REPLACE_MESSAGES)  # a person replaces a record with a new text (#222)
 CATALOG.update(PUBLISHED_IMPORT_MESSAGES)  # team memory in the memory view (#304)
 CATALOG.update(LEGACY_GROUP_MESSAGES)  # a person adopts an old task group in the workspace (#305)
 CATALOG.update(PERSON_ACT_MESSAGES)  # the consent dialogs of a person's acts (#332)

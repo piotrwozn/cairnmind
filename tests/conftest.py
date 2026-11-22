@@ -70,7 +70,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_install_macos",
     "test_first_start_round2", "test_first_start_round3", "test_engine_docker", "test_tmux_optional", "test_external_mcp_start",
     "test_knowledge_mode", "test_person_proof", "test_person_key_workspace", "test_inspector_plan_confirm",
-    "test_inspector_release", "test_inspector_published_import",
+    "test_inspector_release", "test_inspector_replace", "test_inspector_published_import",
     "test_command_line_confirms_nothing",
     "test_doc_links", "test_stall_watch", "test_restore_claims_units",
     "test_measure_service_spend", "test_compare_model_paths_script",

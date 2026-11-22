@@ -62,6 +62,7 @@ def person_requests(fixture):  # noqa: F811
     resolve = {"project": pid, "record_id": candidate["id"], "other_id": existing["id"],
                "expected_version": candidate["version"], "other_expected_version": existing["version"]}
     imports = {"replace_confirmed": True}
+    replaceable = fixture.proposed("A decision to replace")
     legacy = fixture.store.remember(pid, {"kind": "task", "key": "old", "content": "An old task", "metadata": {
         "plan_id": "old-group", "step_index": 1, "state": "todo"}}, [fixture.note["id"]])
     return {
@@ -69,6 +70,8 @@ def person_requests(fixture):  # noqa: F811
             "project": pid, "group": "old-group", "task_versions": {legacy["id"]: legacy["version"]}}),
         "review confirm": (review, {"project": pid, "action": "confirm", "expected_version": 1}),
         "review dispute": (review, {"project": pid, "action": "dispute", "expected_version": 1, "reason": "No"}),
+        "replace": (f"/inspector/records/{replaceable['id']}/replace",
+                    {"project": pid, "content": "Use WAL mode", "expected_version": 1}),
         "conflict supersede": ("/inspector/conflicts/resolve", {**resolve, "action": "supersede",
                                                                 "keep": candidate["id"]}),
         "conflict dismiss": ("/inspector/conflicts/resolve", {**resolve, "action": "dismiss"}),
@@ -85,7 +88,7 @@ def person_requests(fixture):  # noqa: F811
     }
 
 
-NAMES = ["review confirm", "review dispute", "conflict supersede", "conflict dismiss", "plan confirm",
+NAMES = ["review confirm", "review dispute", "replace", "conflict supersede", "conflict dismiss", "plan confirm",
          "record kind accept", "record kind withdraw", "finding proposed", "finding confirmed", "import archive",
          "import published", "import commit", "legacy adopt"]
 
@@ -142,6 +145,8 @@ def test_the_workspace_key_lets_the_person_act(fixture):  # noqa: F811
     reviewed = post("review confirm")["record"]
     assert reviewed["status"] == "confirmed" and confirmation_of(reviewed)["route"] == "inspector_review"
     assert confirmation_of(reviewed)["by"] == "person"
+    replaced = post("replace")["record"]
+    assert replaced["status"] == "confirmed" and confirmation_of(replaced)["route"] == "inspector_review"
     decided = post("conflict supersede")
     assert decided["record"]["status"] == "confirmed" and confirmation_of(decided["record"])["route"] == "conflict_decision"
     planned = post("plan confirm")

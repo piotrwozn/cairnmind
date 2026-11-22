@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from . import conflicts, impact_verdicts, person_proof
 from . import stale_proposed as proposed
 from .arcade import ArcadeError
+from .findings import MAX_FINDING_CHARS
 from .inspector import Inspector, InspectorNotFound
 
 
@@ -84,6 +85,16 @@ class AdoptGroupBody(BaseModel):
     group: str = Field(min_length=1, max_length=1000)
     title: str | None = Field(default=None, min_length=1, max_length=500)
     task_versions: dict[str, StrictInt] = Field(min_length=1, max_length=10000)
+    worktree: str | None = Field(default=None, max_length=4096)
+
+
+class ReplaceBody(BaseModel):
+    # No session field: only a person replaces a record with a new text (#222).
+    model_config = ConfigDict(extra="forbid")
+    project: str
+    content: str = Field(min_length=1, max_length=MAX_FINDING_CHARS)
+    expected_version: int = Field(strict=True, ge=1)
+    reason: str | None = Field(default=None, max_length=4000)
     worktree: str | None = Field(default=None, max_length=4096)
 
 
@@ -282,6 +293,13 @@ def create_inspector_router(store, settings):
         from .memory_published_release import release
         project_id = (await call(inspector._project, body.project))["id"]
         return await call(release, store, project_id, record_id, body.reason, body.worktree)
+
+    @router.post("/inspector/records/{record_id}/replace", dependencies=person)
+    async def replace_record(record_id: str, body: ReplaceBody):
+        # A person replaces a record with a new text (#222); it needs the open workspace's key.
+        from .record_replace import replace
+        return await call(replace, inspector, body.project, record_id, body.content, body.expected_version,
+                          reason=body.reason, worktree=body.worktree)
 
     @router.get("/inspector/record-kinds")
     async def record_kinds_overview(project: str):

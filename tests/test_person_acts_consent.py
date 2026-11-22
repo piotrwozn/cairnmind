@@ -22,6 +22,7 @@ from consent_steps import consent_drawn, early_enter_sends_nothing
 from test_inspector_plan_confirm import plan_app
 from test_inspector_published_import import published_app
 from test_inspector_release import RELEASE, release_app
+from test_inspector_replace import replace_app
 from test_legacy_groups_workspace import ui as legacy_ui
 from test_record_kinds_workspace import ACCEPTED, BLOCKING
 from test_record_kinds_workspace import ui as kinds_ui
@@ -32,7 +33,7 @@ from test_workspace_stage_scope import wait_until
 from textual.widgets import Button, Select, Static, TextArea
 
 from cairnmind import (person_proof, terminal_person_act, terminal_plan_confirm, terminal_record_kinds,
-                       terminal_release)
+                       terminal_release, terminal_replace)
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_inspector import InspectorApp
 from cairnmind.terminal_panels import ConfirmModal, SidebarApp
@@ -40,6 +41,7 @@ from cairnmind.terminal_person_act import NOT_GIVEN, agreed, record_line, typed
 from cairnmind.terminal_ui import ChoiceModal, FormModal
 
 REASON = "Read the source."
+NEW = "Validate tokens with the shared helper."
 LAST = "LAST-LINE-OF-THE-TEXT"
 LONG = "\n".join([f"text line {number}" for number in range(1, 40)] + [LAST])
 
@@ -170,6 +172,21 @@ async def reach_release(app, pilot, text):
     await pilot.press("ctrl+s")
 
 
+def make_replace(tmp_path, monkeypatch, language):
+    app, broker, workspace = replace_app(tmp_path, monkeypatch, language)
+    return app, workspace, posts_of(broker, "/replace")
+
+
+async def reach_replace(app, pilot, text):
+    await settle(app, pilot)
+    app.open_selected("record-a")
+    await settle(app, pilot)
+    app.review("replace")
+    await form_ready(app, pilot)
+    await type_into(app, pilot, "content", text)
+    await pilot.press("ctrl+s")
+
+
 def make_verdict(tmp_path, monkeypatch, language):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)
     impact = Impact(broker, workspace)
@@ -295,6 +312,10 @@ ACTS = [
         REASON),
     Act("release", make_release, reach_release, "Release this record?", ("Validate token safely.",),
         lambda w: [(RELEASE, {"project": "project-a", "reason": REASON, "worktree": w.value["worktree"]})], REASON),
+    Act("replace", make_replace, reach_replace, "Replace this record?", ("Validate token safely.",),
+        lambda w: [("/api/inspector/records/record-a/replace", {
+            "project": "project-a", "content": NEW, "expected_version": 3, "reason": "",
+            "worktree": w.value["worktree"]})], NEW),
     Act("verdict", make_verdict, reach_verdict, "Save this verdict?", ("Sessions last 30 minutes.",),
         lambda w: [(VERDICT, {"project": "project-keyboard", "worktree": w.value["worktree"], "since": "HEAD",
                               "record_id": "rec-rule", "fingerprint": "a" * 64, "verdict": "still_valid",
@@ -562,11 +583,13 @@ async def test_agreed_is_true_only_for_an_explicit_yes():
 
 
 def test_every_new_sentence_has_polish():
-    for module in (terminal_person_act, terminal_plan_confirm, terminal_release, terminal_record_kinds):
+    for module in (terminal_person_act, terminal_plan_confirm, terminal_release, terminal_record_kinds,
+                   terminal_replace):
         for key, polish in module.MESSAGES.items():
             assert CATALOG[key] == polish, key
     for key in ("Confirm this record?", "Dispute this record?", "Save this decision?", "Save this verdict?",
-                "Confirm this plan?", "Release this record?", "Treat this kind as technical?"):
+                "Confirm this plan?", "Release this record?", "Replace this record?",
+                "Treat this kind as technical?"):
         assert tr(key, "pl") != key
     assert tr(NOT_GIVEN, "pl", label=tr("Reason", "pl")) == "Uzasadnienie: nie podano."
 
