@@ -251,9 +251,24 @@ def test_memory_outage_keeps_live_terminals_and_cached_projects_available(cockpi
     assert scoped.status_code == 200 and len(scoped.json()["runs"]) == 2
 
 
-@pytest.mark.parametrize("route", ["/api/projects", "/api/stage?project=project-one", "/api/state"])
+def test_the_state_of_a_foreign_service_stays_whole_and_carries_the_refusal(cockpit):
+    # #308: the supervisor reads /api/state every half second; it must not lose the runs or call the broker offline.
+    settings, app, client, runtime, project, requests, outage = cockpit
+    login(app, client)
+    assert client.get("/api/state").json()["foreign_service"] is False
+    outage["foreign"] = True
+    answer = client.get("/api/state")
+    value = answer.json()
+    assert answer.status_code == 200 and value["foreign_service"] is True and value["memory_available"] is False
+    assert "runs" in value and "profiles" in value and settings.token not in answer.text
+    outage["foreign"], outage["enabled"] = False, True  # an outage that is not a refusal is not named as one
+    value = client.get("/api/state").json()
+    assert value["foreign_service"] is False and value["memory_available"] is False
+
+
+@pytest.mark.parametrize("route", ["/api/projects", "/api/stage?project=project-one"])
 def test_a_service_of_another_data_directory_is_named_not_reported_as_unreadable(cockpit, route):
-    # #308: the broker replaced the service's 401 with "could not be read" (or, for state, an outage).
+    # #308: the broker replaced the service's 401 with "could not be read".
     from cairnmind.terminal_client import BrokerClient, BrokerError
     from cairnmind.terminal_i18n import tr
     from cairnmind.terminal_i18n_messages import broker_error_text
@@ -268,9 +283,11 @@ def test_a_service_of_another_data_directory_is_named_not_reported_as_unreadable
             lambda request: httpx.Response(answer.status_code, json=answer.json())))
         broker._url, broker._csrf, broker._allow_start = "http://127.0.0.1:1", "csrf", matched
         broker._client = httpx.Client(base_url=broker._url, transport=broker._transport)
-        broker._authenticate = lambda: None
+        sessions = []
+        broker._authenticate = lambda: sessions.append(1)
         with pytest.raises(BrokerError) as raised:
             broker.request("GET", route)
+        assert sessions == []  # a refusal of the service's token is not an expired broker session
         for language, words in (("en", "most likely belongs to another data directory"), ("pl", "należy do innego")):
             text = broker_error_text(raised.value, lambda sentence: tr(sentence, language))
             assert (words in text and settings.url in text and str(settings.data_dir) in text) is not matched

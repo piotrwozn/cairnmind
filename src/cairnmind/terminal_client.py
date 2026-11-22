@@ -140,7 +140,8 @@ class BrokerClient:
                     # Never retry a mutation after a transport error: its
                     # outcome may already have committed on the server.
                     raise BrokerUnreachable(503, "The connection to the local broker was interrupted.") from None
-                if response.status_code == 401 and attempt == 0:
+                # A refusal of the service's token is not an expired broker session: no new session for it.
+                if response.status_code == 401 and attempt == 0 and not refused_token(401, response.text):
                     self._authenticate()
                     continue
                 try:

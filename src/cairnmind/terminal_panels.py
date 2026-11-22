@@ -18,6 +18,7 @@ from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Sta
 
 from . import terminal_theme
 from .config import Settings
+from .service_token import FOREIGN_SERVICE, foreign_service
 from .mcp_failure_notice import announce as announce_mcp_failures
 from .terminal_safe import plain
 from .terminal_connection_hints import NOT_STARTED, connection_hint
@@ -601,6 +602,11 @@ class SidebarApp(BasePanel):
     async def load_state(self):
         value = await self.request("GET", "/api/state")
         self.data = value
+        if value.get("foreign_service"):
+            # The service refused this directory's token: name it, as the command line does (#308).
+            text = self.t(FOREIGN_SERVICE).format(**foreign_service(self.settings))
+            if str(self.query_one("#panel-notice", Static).render()) != text:
+                self.notice(text, "error")
         self.projects = {p["id"]: p for p in value.get("projects", [])}
         self.render_projects()
         self.render_project()

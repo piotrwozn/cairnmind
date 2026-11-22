@@ -350,12 +350,12 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     async def cockpit_state(request: Request):
         session_for(request)
         values = state.load()
-        memory_available = True
+        memory_available, foreign = True, False
         try:
             rows = await projects()
         except HTTPException as exc:
-            if exc.status_code == 401:
-                raise  # another directory's service is not an outage: name it, do not show cached rows
+            # The state stays whole for the supervisor and the live terminals; the panels name the cause (#308).
+            foreign = refused_token(exc.status_code, exc.detail)
             rows = list(project_cache)
             memory_available = False
         for row in rows:
@@ -378,7 +378,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         capabilities = await asyncio.to_thread(getattr(runtime, "diagnostics", lambda: {}))
         return {"version": __version__, "projects": rows, "profiles": values["profiles"], "settings": values,
                 "runs": runs, "auth": {row["client"]: row for row in auth}, "capabilities": capabilities,
-                "memory_available": memory_available}
+                "memory_available": memory_available, "foreign_service": foreign}
 
     @app.get("/api/projects")
     async def list_projects(request: Request):
