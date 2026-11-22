@@ -19,6 +19,7 @@ from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
 from cairnmind.terminal_inspector import InspectorApp
 from cairnmind import terminal_published_import as published
 from cairnmind.terminal_published_import import MESSAGES, folder_error, taken_ids, take_error
+from consent_steps import form_ready
 from test_terminal_panels import FakeBroker, setup, settle
 from test_trial011_workspace import wait_until
 
@@ -78,6 +79,7 @@ async def open_choice(app, pilot, row=0):
 
 async def checked(app, pilot):
     """Submit the form and wait for the consent dialog: the flow is parked on it, so no worker is complete."""
+    await form_ready(app, pilot)
     await pilot.click("#form-submit")
     for _ in range(300):
         await pilot.pause(.02)
@@ -90,6 +92,7 @@ async def checked(app, pilot):
 
 async def refused_form(app, pilot):
     """Submit and wait until the form has answered (it stays open on a refusal)."""
+    await form_ready(app, pilot)
     await pilot.click("#form-submit")
     await pilot.pause(.3)
     for _ in range(300):
@@ -206,6 +209,7 @@ async def test_a_commit_without_published_memory_says_so_and_imports_nothing(tmp
     async with app.run_test(size=(95, 42)) as pilot:
         await settle(app, pilot)
         await open_choice(app, pilot, row=1)
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await settle(app, pilot)
         assert f"Commit {COMMIT[:12]} holds no published memory of this project. Nothing was imported." in notice(app)

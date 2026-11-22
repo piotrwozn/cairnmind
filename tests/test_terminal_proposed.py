@@ -12,7 +12,7 @@ from cairnmind.terminal_inspector import _VIEWS, InspectorApp
 from cairnmind.terminal_proposed import (BASIS_WORDS, DAYS_ERROR, SUMMARY_ONE_DAY, TEXT_WIDTH, days_error,
                                         list_summary)
 from cairnmind.terminal_ui import FormModal
-from consent_steps import consent_drawn
+from consent_steps import consent_drawn, form_ready
 from test_terminal_panels import settle, setup
 
 ITEMS = [
@@ -134,6 +134,7 @@ async def test_an_entry_is_reviewed_through_the_inspector_review_and_then_leaves
         await pilot.click("#entity-confirm")
         await pilot.pause()
         app.screen.query_one("#field-reason", TextArea).text = "Read the transcript."
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await consent_drawn(app, pilot)
         assert writes(broker) == []
@@ -163,12 +164,14 @@ async def test_filters_ask_for_the_days_and_refuse_anything_else(tmp_path, monke
         field = app.screen.query_one("#field-days", Input)
         assert field.value == "30"
         field.value = "-3"
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         for _ in range(20):  # not settle: the filter's worker waits for this form until it closes
             await pilot.pause(.02)
         assert isinstance(app.screen, FormModal)
         assert str(app.screen.query_one("#form-error", Static).render()) == DAYS_ERROR
         field.value = "0"
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await settle(app, pilot)
         assert [read["days"] for read in proposed.reads] == [30, 0] and writes(broker) == []
