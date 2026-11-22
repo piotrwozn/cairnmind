@@ -8,6 +8,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
+from textual import _time as textual_time, events
 from textual.widgets import Button, Input, Static
 
 from cairnmind import confirmation, person_proof, terminal_legacy_groups
@@ -16,8 +17,8 @@ from cairnmind.terminal_client import BrokerError
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
 from cairnmind.terminal_legacy_groups import MESSAGES, TOO_LONG
-from cairnmind.terminal_panels import SidebarApp
-from cairnmind.terminal_ui import ChoiceModal, FormModal
+from cairnmind.terminal_panels import ConfirmModal, SidebarApp
+from cairnmind.terminal_ui import ChoiceModal, FormModal, drop_unseen_key
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, screen_text, setup_ui
 from test_workspace_stage_scope import wait_until
@@ -65,6 +66,16 @@ async def open_form(app, pilot):
     await wait_until(pilot, lambda: isinstance(app.screen, FormModal))
 
 
+async def consent(app, pilot):
+    """Continue from the form and wait for the consent dialog's draw and quiet moment (#328): before it, an
+    approval is not input the dialog counts."""
+    await pilot.press("ctrl+s")
+    await wait_until(pilot, lambda: isinstance(app.screen, ConfirmModal))
+    modal = app.screen
+    assert modal.consent
+    await wait_until(pilot, lambda: modal.drawn_at + modal.QUIET <= textual_time.get_time())
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_a_person_reads_the_group_and_adopts_it(tmp_path, monkeypatch, language):
@@ -78,13 +89,15 @@ async def test_a_person_reads_the_group_and_adopts_it(tmp_path, monkeypatch, lan
                          else "old-group · zadania: 2 · potwierdzone: 1")
         await pilot.press("enter")
         await wait_until(pilot, lambda: isinstance(app.screen, FormModal))
+        await consent(app, pilot)
         shown = screen_text(app)
         assert shown.index("Ship the importer") < shown.index("Write the docs") and "\x1b" not in shown
         assert ("confirmed before the rule" if language == "en" else "potwierdzone przed regułą") in shown
         assert tr(terminal_legacy_groups.ADOPTING, language)[:40] in shown
+        assert tr("Plan title: {title}", language, title="old-group") in shown
         assert broker.sent == []
-        await pilot.press("ctrl+s")
-        await wait_until(pilot, lambda: broker.sent and not isinstance(app.screen, FormModal))
+        await pilot.click("#confirm-yes")
+        await wait_until(pilot, lambda: broker.sent and not isinstance(app.screen, ConfirmModal))
         await settle(app, pilot)
         notice = notice_of(app)
     assert broker.sent == [("POST", "/api/inspector/legacy-groups/adopt", {
@@ -109,9 +122,37 @@ async def test_the_dialog_works_at_80_by_24(tmp_path, monkeypatch):
         for identifier in ("#form-submit", "#form-cancel"):
             region = app.screen.query_one(identifier, Button).region
             assert region.width > 0 and region.x >= 0 and region.right <= 80 and region.bottom <= 24, identifier
-        app.screen.query_one("#form-fields").scroll_end(animate=False)
+        await consent(app, pilot)
+        for identifier in ("#confirm-yes", "#confirm-no"):
+            region = app.screen.query_one(identifier, Button).region
+            assert region.width > 0 and region.x >= 0 and region.right <= 80 and region.bottom <= 24, identifier
+        body = app.screen.query_one(".cm-dialog-body")
+        assert body.max_scroll_y > 0
+        body.scroll_end(animate=False)
         await pilot.pause()
         assert "Step number 29" in screen_text(app)
+        await pilot.click("#confirm-no")
+        await wait_until(pilot, lambda: not isinstance(app.screen, ConfirmModal))
+    assert broker.sent == []
+
+
+@pytest.mark.asyncio
+async def test_the_consent_dialog_drops_a_key_made_before_it_was_drawn(tmp_path, monkeypatch):
+    app, broker, _ = ui(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        await open_form(app, pilot)
+        await consent(app, pilot)
+        modal = app.screen
+        early = events.Key("enter", None)
+        early.time = modal.drawn_at - 1  # made before the draw, handled late
+        assert not modal.admits(early)
+        drop_unseen_key(app, early)  # BasePanel.on_key; Textual also runs SidebarApp's own on_key for every key
+        assert early._no_default_action and early._stop_propagation
+        await pilot.press("escape")
+        await wait_until(pilot, lambda: not isinstance(app.screen, ConfirmModal))
+        await settle(app, pilot)
+    assert broker.sent == []
 
 
 @pytest.mark.asyncio
@@ -123,15 +164,12 @@ async def test_a_refused_adoption_says_why_and_sends_nothing_else(tmp_path, monk
     async with app.run_test(size=(120, 35)) as pilot:
         await settle(app, pilot)
         await open_form(app, pilot)
-        await pilot.press("ctrl+s")
-        await wait_until(pilot, lambda: broker.sent and str(app.screen.query_one("#form-error", Static).render()))
-        assert isinstance(app.screen, FormModal)
-        assert tr(refusal, language) in str(app.screen.query_one("#form-error", Static).render())
-        assert len(broker.sent) == 1
-        await pilot.press("escape")
+        await consent(app, pilot)
+        await pilot.click("#confirm-yes")
+        await wait_until(pilot, lambda: broker.sent and tr(refusal, language) in " ".join(notice_of(app).split()))
         await settle(app, pilot)
-        assert not isinstance(app.screen, FormModal)
-        assert "adopted" not in notice_of(app) and "włączona" not in notice_of(app)
+        assert not isinstance(app.screen, (FormModal, ConfirmModal))
+        assert "is adopted as plan" not in notice_of(app) and "została włączona" not in notice_of(app)
     assert len(broker.sent) == 1
 
 

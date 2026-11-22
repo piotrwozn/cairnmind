@@ -233,7 +233,7 @@ What they can do, and what the refusal tells them:
   one confirmed before the rule, it is refused whoever runs it (`Task '<key>'
   (task <id>) ... The person adopts the group in the workspace`). The person
   adopts such a group in the workspace: More, then Old task groups, choose the
-  group, read its tasks, then Adopt. That is one person's act (`POST
+  group, give the plan a title, read its tasks in the consent dialog, then Adopt. That is one person's act (`POST
   /inspector/legacy-groups/adopt`, with the open workspace's key): every task of
   the group becomes a step of a new plan, proposed until the person confirms the
   plan, with its progress and reported evidence kept. A group that holds nothing

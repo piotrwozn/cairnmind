@@ -35,6 +35,8 @@ MESSAGES = {
         "potwierdzenie. Postęp i zgłoszone dowody zostają. Jeśli zadanie tej grupy zmieni się, zanim wybierzesz "
         "Włącz do planu, nic nie zostanie włączone.",
     "Plan title": "Tytuł planu",
+    "Plan title: {title}": "Tytuł planu: {title}",
+    "Adopt this task group into a plan?": "Włączyć tę grupę zadań do planu?",
     "Adopt": "Włącz do planu",
     TOO_LONG: f"Tytuł planu może mieć najwyżej {TITLE} znaków.",
     "Group {group} is adopted as plan {title} with {count} steps. Confirm the plan in the inspector: Plans, then "
@@ -86,20 +88,23 @@ async def open_view(app):
         return
     group = groups[int(choice)]
     versions = {task.get("id"): task.get("version") for task in group["tasks"]}
-    adopted = {}
-
-    async def save(values):
-        adopted.update(await app.request("POST", "/api/inspector/legacy-groups/adopt", json={
-            "project": project, "group": group["group"], "title": values["title"], "task_versions": versions,
-            "worktree": selected.get("worktree")}))
-
     values = await app.push_screen_wait(FormModal(
         app.t("Adopt a task group into a plan"),
         [Field("title", app.t("Plan title"), value=safe_text(group["group"], limit=TITLE)[:TITLE], required=True,
                validator=lambda value: TOO_LONG if len(value) > TITLE else None)],
-        note=describe(group, app.t), submit=app.t("Adopt"), on_submit=save))
-    if values:
-        app.notice_for(subject, app.t(
-            "Group {group} is adopted as plan {title} with {count} steps. Confirm the plan in the inspector: Plans, "
-            "then Confirm.", group=safe_text(group["group"], limit=80), title=safe_text(values["title"], limit=80),
-            count=len(adopted.get("tasks") or [])))
+        note=app.t("Group: {group}", group=safe_text(group["group"], limit=TEXT)), submit=app.t("Continue")))
+    if not values:
+        return
+    # The person's consent is a consent dialog: only input made after it was drawn counts (#318, #328).
+    from .terminal_panels import ConfirmModal
+    text = describe(group, app.t) + "\n\n" + app.t("Plan title: {title}", title=safe_text(values["title"], limit=TITLE))
+    if not await app.push_screen_wait(ConfirmModal(app.t("Adopt this task group into a plan?"), text,
+                                                   approve=app.t("Adopt"), consent=True)):
+        return
+    adopted = await app.request("POST", "/api/inspector/legacy-groups/adopt", json={
+        "project": project, "group": group["group"], "title": values["title"], "task_versions": versions,
+        "worktree": selected.get("worktree")})
+    app.notice_for(subject, app.t(
+        "Group {group} is adopted as plan {title} with {count} steps. Confirm the plan in the inspector: Plans, "
+        "then Confirm.", group=safe_text(group["group"], limit=80), title=safe_text(values["title"], limit=80),
+        count=len(adopted.get("tasks") or [])))
