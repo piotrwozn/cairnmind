@@ -176,7 +176,8 @@ def test_after_a_replacement_preview_snapshot_publishing_and_backup_restore_work
     history = restored.record_history(old["id"])  # proposed, reviewed, superseded: every version is still there
     assert [(row["version"], row["status"]) for row in history] == [(1, "proposed"), (2, "confirmed"), (3, "superseded")]
     assert history == store.record_history(old["id"])
-    assert any(claim["action"] == "confirm" for claim in confirmed_claims(restored, pid, new["id"]))
+    claims = confirmed_claims(restored, pid, new["id"])
+    assert [claim["action"] for claim in claims] == ["confirm"]  # one act, one claim (not also its note)
 
 
 def test_a_fresh_import_takes_a_record_and_its_replacement_with_one_key_in_any_file_order(ada, monkeypatch):  # noqa: F811

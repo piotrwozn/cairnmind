@@ -236,6 +236,31 @@ async def test_the_notice_stays_when_the_reload_of_the_old_record_fails(tmp_path
         shown = await send_replace(app, broker, pilot)
         wanted = terminal_replace.UNCLEAR if how == "unclear" else terminal_replace.SAVED_UNREAD
         assert plain_words(tr(wanted, "pl")) in shown
+        assert plain_words(tr(terminal_replace.NOT_RELOADED, "pl")) in shown  # no false "was reloaded"
+        assert plain_words(tr(terminal_replace.RELOADED, "pl")) not in shown
+        assert len(posts(broker)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["done", "unclear", "saved but unread"])
+async def test_an_answer_after_a_project_switch_is_still_told(tmp_path, monkeypatch, how):
+    app, broker, _ = replace_app(tmp_path, monkeypatch, "pl")
+    if how == "unclear":
+        broker.refuse = BrokerError(503, "Memory storage is unavailable")
+    plain_request = broker.request
+
+    def request(method, path, **kwargs):
+        if path == REPLACE:
+            app._scope_version += 1  # the project changes while the request is in flight
+            answer = plain_request(method, path, **kwargs)
+            return {"replaced": {}} if how == "saved but unread" else answer
+        return plain_request(method, path, **kwargs)
+    broker.request = request
+    async with app.run_test(size=(95, 42)) as pilot:
+        shown = await send_replace(app, broker, pilot)
+        wanted = {"done": terminal_replace.DONE, "unclear": terminal_replace.UNCLEAR,
+                  "saved but unread": terminal_replace.SAVED_UNREAD}[how]
+        assert plain_words(tr(wanted, "pl")) in shown
         assert len(posts(broker)) == 1
 
 

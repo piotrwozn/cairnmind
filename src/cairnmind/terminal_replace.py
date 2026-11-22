@@ -20,11 +20,15 @@ EFFECT = ("Replacing saves the new text as a new record confirmed by you on this
           "current record becomes superseded and stays in its history with its sources; nothing is deleted.")
 TOO_LONG = f"The new text has at most {MAX_FINDING_CHARS} characters."
 DONE = "Record replaced. The new text is saved as a record confirmed by you."
-FAILED = "The record was not replaced. The current version was reloaded."
-UNCLEAR = "The service did not confirm the replacement, so it may have been saved. The current version was reloaded."
-SAVED_UNREAD = "The record was replaced, but the service's answer could not be read. The current version was reloaded."
+FAILED = "The record was not replaced."
+UNCLEAR = "The service did not confirm the replacement, so it may have been saved."
+SAVED_UNREAD = "The record was replaced, but the service's answer could not be read."
 SAVED_NOT_SHOWN = "The record was replaced, but the new record could not be opened."
+RELOADED = "The current version was reloaded."
+NOT_RELOADED = "The current version could not be reloaded."
 MESSAGES = {
+    RELOADED: "Wczytano obecną wersję.",
+    NOT_RELOADED: "Nie udało się wczytać obecnej wersji.",
     "Replace": "Zastąp",
     "Replace record": "Zastąp ustalenie",
     "New text": "Nowy tekst",
@@ -38,9 +42,9 @@ MESSAGES = {
             "nic nie jest usuwane.",
     TOO_LONG: f"Nowy tekst może mieć najwyżej {MAX_FINDING_CHARS} znaków.",
     DONE: "Ustalenie zastąpione. Nowy tekst zapisano jako ustalenie potwierdzone przez Ciebie.",
-    FAILED: "Ustalenie nie zostało zastąpione. Wczytano obecną wersję.",
-    UNCLEAR: "Usługa nie potwierdziła zastąpienia, więc mogło zostać zapisane. Wczytano obecną wersję.",
-    SAVED_UNREAD: "Ustalenie zastąpiono, ale nie udało się odczytać odpowiedzi usługi. Wczytano obecną wersję.",
+    FAILED: "Ustalenie nie zostało zastąpione.",
+    UNCLEAR: "Usługa nie potwierdziła zastąpienia, więc mogło zostać zapisane.",
+    SAVED_UNREAD: "Ustalenie zastąpiono, ale nie udało się odczytać odpowiedzi usługi.",
     SAVED_NOT_SHOWN: "Ustalenie zastąpiono, ale nie udało się otworzyć nowego ustalenia.",
 }
 
@@ -57,9 +61,10 @@ async def reload_after(app, record_id, notice):
     and a failed reload must not take the notice away."""
     try:
         await app.open_entity(record_id, "records")
+        reloaded = RELOADED
     except (OSError, ValueError, RuntimeError):
-        pass  # the notice below is still said; the panel keeps what it showed
-    app.notice(notice, "error")
+        reloaded = NOT_RELOADED  # the panel keeps what it showed; the notice says so
+    app.notice(notice + " " + app.t(reloaded), "error")
 
 
 async def replace_record(app):
@@ -98,19 +103,25 @@ async def replace_record(app):
     try:
         result = await app.request("POST", f"/api/inspector/records/{record['id']}/replace", json=payload)
     except (OSError, ValueError, RuntimeError) as exc:
+        # Only a 4xx answer is the service's refusal. A 5xx (the broker's own call failed, or its answer was not
+        # JSON), a status-200 answer that could not be decoded and a lost connection may follow a commit.
+        refused = (isinstance(exc, BrokerError) and not isinstance(exc, BrokerUnreachable)
+                   and 400 <= exc.status_code < 500)
+        notice = app.t(FAILED if refused else UNCLEAR) + " " + broker_error_text(exc, app.t)
         if scope == app._scope_version:
-            # Only a 4xx answer is the service's refusal. A 5xx (the broker's own call failed, or its answer was not
-            # JSON), a status-200 answer that could not be decoded and a lost connection may follow a commit.
-            refused = (isinstance(exc, BrokerError) and not isinstance(exc, BrokerUnreachable)
-                       and 400 <= exc.status_code < 500)
-            notice = app.t(FAILED if refused else UNCLEAR) + " " + broker_error_text(exc, app.t)
             await reload_after(app, record["id"], notice)
-        return
-    if scope != app._scope_version:
+        else:  # the person still hears of a replacement that may have been saved
+            app.notice_for(about(project_id), notice, "error")
         return
     new = result.get("record") if isinstance(result, dict) else None
     if not isinstance(new, dict) or not isinstance(new.get("id"), str):
-        await reload_after(app, record["id"], app.t(SAVED_UNREAD))  # saved: it now shows the record that replaced it
+        if scope == app._scope_version:
+            await reload_after(app, record["id"], app.t(SAVED_UNREAD))  # it now shows the record that replaced it
+        else:
+            app.notice_for(about(project_id), app.t(SAVED_UNREAD), "error")
+        return
+    if scope != app._scope_version:
+        app.notice_for(about(project_id), app.t(DONE))
         return
     try:
         await app.open_entity(new["id"], "records")  # the new record, confirmed
