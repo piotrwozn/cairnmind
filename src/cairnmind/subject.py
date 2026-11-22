@@ -355,11 +355,13 @@ def name_in(name: str, text: str) -> bool:
 
 
 def found_names(names: Iterable[str], question: str, sources: list[dict], evidence: dict) -> list[str]:
-    """Of the ``names`` a model reported as unstated, those that stand in the question or in a source the
-    answer cites (its verified quotes, their paths and the text of the sources). The name is looked for as
-    ``name_in`` says; a source that was read but not cited, or whose citation failed, is not in ``sources``."""
+    """Of the ``names`` a model reported as unstated, those that stand in a source the answer cites (its
+    verified quotes, their paths and the text of the sources). The question is not searched: a name the
+    question carries (nginx in "the nginx port") is exactly what an absent answer must not borrow from it,
+    so ``question`` is kept only for the signature. The name is looked for as ``name_in`` says; a source
+    that was read but not cited, or whose citation failed, is not in ``sources``."""
     whole = {source["id"]: source for source in evidence.values()}
-    passages = [question, *(text for cite in support_citations(sources) for text in (cite["quote"], cite["path"]))]
+    passages = [text for cite in support_citations(sources) for text in (cite["quote"], cite["path"])]
     passages += [source_text(whole[source["id"]]) for source in sources if source.get("id") in whole]
     texts = [text for text in passages if text]
     return [name for name in names if any(name_in(name, text) for text in texts)]

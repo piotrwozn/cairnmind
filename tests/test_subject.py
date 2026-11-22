@@ -467,7 +467,7 @@ async def test_a_name_of_the_question_the_project_or_a_quote_or_path_has_is_not_
     assert ask("Na jakim porcie?", "Na porcie 8765 słucha Zookeeper.") == ["Zookeeper"]
 
 
-# The names call (#245) reports a name as unstated that the question or a cited source has: such a name does not withhold.
+# The names call (#245) reports a name as unstated that a cited source has (not the question): such a name does not withhold.
 def _repository_source(path, quote_pattern):
     text = (REPOSITORY / path).read_text(encoding="utf-8")
     quote = next(line.strip() for line in text.splitlines() if re.search(quote_pattern, line))
@@ -523,8 +523,10 @@ def test_a_name_in_neither_the_question_nor_a_cited_source_is_still_unstated():
     source, evidence = _repository_source("src/cairnmind/config.py", r"arcade_version: str")
     names = ["nginx", "HAProxy", "ArcadeDB", "Zookeeper"]
     assert found_names(names, "Which ArcadeDB version does Cairnmind use?", [source], evidence) == ["ArcadeDB"]
-    # The question names it: found, however the answer got it.
-    assert found_names(names, "What is the HAProxy port?", [source], evidence) == ["HAProxy", "ArcadeDB"]  # the source has ArcadeDB
+    # The question names it: that is not a place where it stands, so an absent name is still withheld.
+    assert found_names(names, "What is the HAProxy port?", [source], evidence) == ["ArcadeDB"]  # the source has ArcadeDB
+    assert found_names(["nginx", "ELASTICSEARCH"], "What is the default nginx port in the settings? ELASTICSEARCH?",
+                       [source], evidence) == []
 
 
 def test_a_name_only_in_an_uncited_source_or_a_source_whose_citation_failed_is_not_found():
