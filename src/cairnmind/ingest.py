@@ -1688,7 +1688,8 @@ def current_source(store, source_id: str) -> dict:
     if source["kind"] not in {"code", "document"} or not metadata.get("path"):
         return source
     project = store.resolve_project(source["project_id"])
-    roots = _roots(store, project)
+    folders = project_folders.folder_states(store, project)  # the registered folders, as _roots lists them
+    roots = [Path(folder["root"]) for folder in folders]
     path = Path(os.path.normpath(metadata["path"]))
     bindings = memory_bindings(store, project["id"])
     local = bound_metadata(store, project["id"], metadata, bindings=bindings)
@@ -1705,7 +1706,6 @@ def current_source(store, source_id: str) -> dict:
                 "freshness_warning": "Imported file snapshot is historical until the local checkout is indexed"}
     # A cited file under a folder this machine cannot read, or that belongs to another machine, is neither
     # deactivated nor indexed from a same-named path here (#371); the same sentence as a missing root.
-    folders = project_folders.folder_states(store, project)
     if (any(f["state"] != "available" and path.is_relative_to(f["root"]) for f in folders)
             and not any(f["state"] == "available" and path.is_relative_to(f["root"]) for f in folders)):
         return {**source, "freshness_warning": "Project root is unavailable; the current file cannot be checked"}
