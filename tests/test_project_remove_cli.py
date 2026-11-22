@@ -140,6 +140,16 @@ def test_a_run_whose_pane_is_gone_does_not_refuse(monkeypatch, tmp_path):
     removal.require_idle(settings, FakeStore(), PROJECT)
 
 
+def test_a_starting_run_or_one_of_an_unknown_lifecycle_refuses_even_without_a_pane(monkeypatch, tmp_path):
+    """A spawn in progress saves its starting row before its tmux session exists: no pane is not an end."""
+    path, settings = registry(tmp_path, [run_row("claude", "starting"), run_row("codex", "strange")])
+    monkeypatch.setattr(client_runtime, "resolve_tmux", lambda *a, **k: "tmux")
+    monkeypatch.setattr(NativeRuntime, "_pane", lambda self, row: None)
+    with pytest.raises(removal.Refused, match=r"demo has a session running in the workspace \(claude starting, "
+                                              r"codex strange\)"):
+        removal.require_idle(settings, FakeStore(), PROJECT)
+
+
 def test_without_tmux_a_live_row_refuses_instead_of_being_marked_ended(monkeypatch, tmp_path):
     path, settings = registry(tmp_path, [run_row("claude", "running")])
     before = path.read_bytes()

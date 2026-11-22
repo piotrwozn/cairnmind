@@ -296,7 +296,10 @@ def require_idle(settings, store, project: dict) -> None:
         if mine and runtime.binary is None:
             # Without tmux a live session cannot be ruled out: refused, not assumed ended.
             raise ValueError(runtime._binary_error or "tmux cannot be found")
-        live = [run for run in mine if (pane := runtime._pane(run)) is not None and not pane["dead"]]
+        # Only a running or stopping row is judged by its pane, as list_runs does: a row still starting (its pane may
+        # not exist yet, the registry is read without the spawn's lock) or of an unknown lifecycle counts as live.
+        live = [run for run in mine if str(run.get("lifecycle") or run.get("state")) not in ("running", "stopping")
+                or ((pane := runtime._pane(run)) is not None and not pane["dead"])]
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         raise Refused(RUNS_UNKNOWN.format(project=name, reason=safe_text(str(exc))[:200])) from None
     if live:
