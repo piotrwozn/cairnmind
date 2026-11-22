@@ -58,6 +58,7 @@ def test_init_points_at_doctor_and_project_add_not_at_models(run):
 
 def test_project_add_says_what_it_did_and_warns_about_a_folder_without_git(tmp_path, run, told):
     run("init")
+    told.clear()
     root = folder(tmp_path)
     added = run("project", "add", "my-app", str(root))
     assert added.exit_code == 0, added.output
@@ -68,6 +69,7 @@ def test_project_add_says_what_it_did_and_warns_about_a_folder_without_git(tmp_p
 
 def test_project_add_warns_about_a_repository_without_a_commit_and_stays_quiet_with_one(tmp_path, run, told):
     run("init")
+    told.clear()
     empty = folder(tmp_path, "empty", repository=True)
     assert run("project", "add", "empty", str(empty)).exit_code == 0
     assert told[1:] == [first_start.NO_COMMIT.format(root=empty.resolve())]
@@ -79,6 +81,7 @@ def test_project_add_warns_about_a_repository_without_a_commit_and_stays_quiet_w
 
 def test_a_project_name_with_a_space_is_quoted_in_the_next_step(tmp_path, run, told):
     run("init")
+    told.clear()
     root = folder(tmp_path, repository=True, commit=True)
     assert run("project", "add", "my app", str(root)).exit_code == 0
     assert "cairnmind remember 'my app' " in told[0]
@@ -86,6 +89,7 @@ def test_a_project_name_with_a_space_is_quoted_in_the_next_step(tmp_path, run, t
 
 def test_adding_a_registered_project_says_it_existed(tmp_path, run, told):
     run("init")
+    told.clear()
     root = folder(tmp_path, repository=True, commit=True)
     first = run("project", "add", "my-app", str(root))
     assert told[0].startswith("Registered my-app in ")
@@ -93,7 +97,8 @@ def test_adding_a_registered_project_says_it_existed(tmp_path, run, told):
     again = run("project", "add", "my-app", str(root))
     assert again.exit_code == 0, again.output
     assert told[0].startswith(f"my-app was already registered for {root.resolve()}; its files were checked again")
-    assert json.loads(again.stdout)["project"] == json.loads(first.stdout)["project"]  # the JSON is unchanged
+    assert json.loads(again.stdout)["project"]["id"] == json.loads(first.stdout)["project"]["id"]  # the JSON is unchanged
+    assert set(json.loads(again.stdout)) == {"project", "indexed", "history"}
 
 
 def test_remember_says_a_proposed_finding_needs_nothing_more_and_a_confirmed_one_what_it_stored(
