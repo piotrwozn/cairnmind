@@ -136,7 +136,11 @@ class Ollama:
     async def _request(self, method: str, path: str, **kwargs: Any) -> dict:
         # Diagnostic paths must not expose query parameters, credentials or arbitrary URLs.
         endpoint = path if path in self.ENDPOINTS else self.UNKNOWN_ENDPOINT
+        read_timeout = kwargs.pop("read_timeout", None)
         headers = self._headers(endpoint)
+        if read_timeout is not None:
+            # An extraction call (#266) waits as long as its job has left, not ask_timeout; connect stays as it was.
+            kwargs["timeout"] = httpx.Timeout(max(5, self.settings.ask_timeout), read=read_timeout)
         if headers:
             kwargs["headers"] = headers
         try:
@@ -211,6 +215,7 @@ class Ollama:
             "temperature": 0,
         }
         options.update(kwargs.pop("options", {}))
+        read_timeout = kwargs.pop("read_timeout", None)
         payload = {
             "model": self.settings.chat_model,
             "messages": messages,
@@ -221,7 +226,7 @@ class Ollama:
         }
         if tools:
             payload["tools"] = tools
-        data = await self._request("POST", "/api/chat", json=payload)
+        data = await self._request("POST", "/api/chat", json=payload, read_timeout=read_timeout)
         if not isinstance(data.get("message"), dict):
             raise OllamaUnavailable(f"{self.label} returned no chat message")
         return data
