@@ -273,7 +273,7 @@ audit note included:
 | Impact verdict (`POST /inspector/impact/verdict`) | A person's verdict on one entry of `impact`, an audit note (`review://impact/...`) that changes no record. The person gives it in the inspector (Impact, then Verdict); `record_verdict` itself refuses without the proof. |
 | Release (`POST /inspector/records/{id}/release`) | A release of one record's current hits of the secrets scan (`release://`), published with its reason. The person releases a record in the inspector (open it, then Release); `release` itself refuses without the proof. |
 | Workspace form (`POST /findings` without `session_id`) | The person's own finding, proposed or confirmed. With a `session_id` it is a session's finding, and asking for `confirmed` is refused before anything is stored. |
-| An import that replaces a verdict given here (`POST /memory/import`, `/memory/import-published`, `/memory/import-commit` with `replace_confirmed`, not a dry run) | Records confirmed or disputed here replaced by a package. The refusal is `Replacing what a person confirmed or disputed on this machine needs the person's workspace ...`; the importer itself refuses too when the proof is missing. From the memory view: Import (archive), Team memory (folder or commit), each after a dry run and the person's consent, sent with `expected_replaced`. |
+| An import that replaces a verdict given here (`POST /memory/import`, `/memory/import-published`, `/memory/import-commit` with `replace_confirmed`, not a dry run) | Records confirmed or disputed here replaced by a package. The refusal is `Replacing what a person confirmed or disputed on this machine needs the person's workspace ...`; the importer itself refuses too when the proof is missing. From the memory view: Import (archive) and Team memory (folder or commit), each after a dry run and the person's consent; Team memory also sends `expected_replaced`, which the two published routes require. |
 
 The command line confirms nothing and makes no person's act (since 0.13.0, #214,
 #306). A program that runs as the user can open a pseudo-terminal and unset the
@@ -777,7 +777,11 @@ contracts, closed references, dependency cycles).
 tree as above, then applies it in one transaction, all or nothing. The route takes `path` (a full
 path; a relative one is refused before anything is read), `project`, `dry_run`, `bind`,
 `take_published`, `replace_confirmed` and `expected_replaced`; `memory import-commit` the same
-without `path` and `take_published`, with `revision`:
+without `path` and `take_published`, with `revision` and an optional `worktree`. A request with
+`replace_confirmed` that is not a dry run must carry `expected_replaced`, the list the person was shown:
+without it the route refuses (400) after the key check and nothing is imported. For a folder the list
+pins which records are replaced, not their new text (the folder is read again at the import); for a commit
+the full commit ID pins the text as well:
 
 - sources arrive as stubs of kind `published` with their original IDs: the passage or nothing as
   content, the reference in their metadata, never current; a local source with the same ID is kept,
@@ -800,7 +804,10 @@ without `path` and `take_published`, with `revision`:
   fast-forwarded to another text or status without the person's choice: the import is refused with
   the paths, the dry run lists them as `replaces_confirmed_here`, and only a person in the workspace
   applies it (Team memory in the memory view; not the command line, since 0.13.0; `--take-published`
-  on such a record counts the same).
+  on such a record counts the same). A record disputed or confirmed here after the last publication
+  has diverged from the published history; it is taken from a published folder with the take field of
+  Team memory, and a commit has no take: from a commit only a record the published side moved on
+  from is replaced.
   A fast-forward that leaves the record confirmed and saying the same keeps the confirmation
   given here (#177);
 - the import itself, `--replace-confirmed` and `--take-published` are refused inside a coding

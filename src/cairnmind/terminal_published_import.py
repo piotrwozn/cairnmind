@@ -55,8 +55,19 @@ MESSAGES = {
 }
 
 
+def full_path(value: str) -> str:
+    """The folder as the service reads it: a typed Windows drive path becomes its WSL path, like the folder picker's."""
+    if re.match(r"^[A-Za-z]:[\\/]", value.strip()):
+        from .cockpit_state import normalize_path
+        try:
+            return str(normalize_path(value))
+        except ValueError:
+            return value
+    return os.path.expanduser(value)
+
+
 def folder_error(value: str) -> str | None:
-    return None if os.path.isabs(os.path.expanduser(value)) else FULL_PATH
+    return None if os.path.isabs(full_path(value)) else FULL_PATH
 
 
 def taken_ids(value: str) -> list[str] | None:
@@ -133,7 +144,7 @@ async def import_published(app) -> None:
         if scope != app._scope_version:
             raise FieldError(next(iter(values)), "The project changed. Close this form and open it again.")
         if choice == "folder":
-            body = {"path": os.path.expanduser(values["path"]), "project": project_id,
+            body = {"path": full_path(values["path"]), "project": project_id,
                     "take_published": taken_ids(values["take"])}
         else:
             body = {"revision": values["revision"], "project": project_id, "worktree": worktree}

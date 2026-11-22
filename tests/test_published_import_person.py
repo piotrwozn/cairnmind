@@ -103,6 +103,8 @@ def test_a_commit_import_replaces_a_verdict_only_with_the_key_at_the_commit_read
     now = rows(team.fixture.store, team.fixture.pid)
     assert now[team.confirmed["id"]]["content"] == "Push to main directly; reviews are not needed."
     assert now[team.confirmed["id"]]["metadata"]["confirmation"]["by"] == "import"
+    assert now[team.disputed["id"]]["content"] == "Sessions last 24 hours, as measured."
+    assert now[team.disputed["id"]]["metadata"]["confirmation"]["by"] == "import"
 
 
 @pytest.mark.parametrize("carrier", ["folder", "commit"])
@@ -141,6 +143,10 @@ def test_taking_the_published_side_over_a_local_dispute_needs_the_key(team):
     assert path in dry.json()["replaces_confirmed_here"]["records"]
     listed = dry.json()["replaces_confirmed_here"]["records"]
     versions = len(store.record_history(mine["id"]))
+    # With the key, taking without replace_confirmed is the 409 that names Team memory, and writes nothing.
+    plain = team.post(route, {**take, "expected_replaced": listed})
+    assert plain.status_code == 409 and "Team memory" in plain.json()["detail"], plain.text
+    assert REPLACED_CHANGED not in plain.json()["detail"] and len(store.record_history(mine["id"])) == versions
     asked = {**take, "replace_confirmed": True, "expected_replaced": listed}
     assert team.post(route, asked, person=False).status_code == 403
     assert len(store.record_history(mine["id"])) == versions
@@ -160,6 +166,17 @@ def test_a_relative_published_path_is_refused_before_anything_is_read(team, dry_
     assert count() == before and team.mine() == state
 
 
-def test_the_command_line_import_without_the_list_behaves_as_before(team):
-    done = team.post("/memory/import-published", {**team.folder, "replace_confirmed": True})
-    assert done.status_code == 200 and done.json()["replaces_confirmed_here"]["records"] == team.paths, done.text
+@pytest.mark.parametrize("carrier", ["folder", "commit"])
+def test_replacing_verdicts_without_the_shown_list_is_refused_even_with_the_key(team, carrier):
+    if carrier == "folder":
+        route, body = "/memory/import-published", team.folder
+    else:
+        team.pull()
+        route, body = "/memory/import-commit", {"project": team.fixture.pid, "revision": "HEAD"}
+    before = team.mine()
+    asked = {**body, "replace_confirmed": True}
+    # The command line has no key: it is refused for that first.
+    assert team.post(route, asked, person=False).status_code == 403
+    kept = team.post(route, asked)
+    assert kept.status_code == 400 and "expected_replaced" in kept.json()["detail"], kept.text
+    assert team.mine() == before

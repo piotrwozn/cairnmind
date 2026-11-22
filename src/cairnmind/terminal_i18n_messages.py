@@ -254,6 +254,10 @@ BROKER_MESSAGES = {
     REPLACED_CHANGED:
         "To, co ten import zastępuje spośród rekordów potwierdzonych lub zakwestionowanych na tym komputerze, zmieniło "
         "się od sprawdzenia. Niczego nie zaimportowano. Sprawdź import ponownie i przeczytaj nową listę.",
+    "Replacing what a person confirmed or disputed needs the list the person was shown (`expected_replaced`). "
+    "Nothing was imported.":
+        "Zastąpienie tego, co osoba potwierdziła lub zakwestionowała, wymaga listy, którą pokazano osobie "
+        "(`expected_replaced`). Niczego nie zaimportowano.",
     "The published memory folder must be given as a full path. Nothing was imported.":
         "Katalog opublikowanej pamięci trzeba podać pełną ścieżką. Niczego nie zaimportowano.",
     NOT_PROVEN:

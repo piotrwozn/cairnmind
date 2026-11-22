@@ -204,6 +204,15 @@ def test_taken_ids_accepts_ids_and_file_names_and_refuses_the_rest():
     assert folder_error("~/published") is None
 
 
+def test_a_typed_windows_drive_path_is_a_full_path_and_is_sent_translated(monkeypatch):
+    from cairnmind import cockpit_state
+    monkeypatch.setattr(cockpit_state.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError("no wslpath")))
+    typed = "C:\\Users\\me\\repo\\.memory\\cairnmind-published"
+    assert folder_error(typed) is None
+    assert published.full_path(typed) == "/mnt/c/Users/me/repo/.memory/cairnmind-published"
+    assert folder_error("C:relative") == published.FULL_PATH
+
+
 @pytest.mark.asyncio
 async def test_typed_input_is_checked_before_anything_is_sent(tmp_path, monkeypatch):
     app, broker, _ = published_app(tmp_path, monkeypatch, "en")

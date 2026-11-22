@@ -755,6 +755,12 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             from cairnmind.confirmation import IMPORT_IN_SESSION
             raise ValueError(IMPORT_IN_SESSION)
 
+    def needs_shown_list(body):
+        """A published import that replaces a person's verdicts carries the list the person was shown (#304)."""
+        if body.expected_replaced is None:
+            raise ValueError("Replacing what a person confirmed or disputed needs the list the person was shown "
+                             "(`expected_replaced`). Nothing was imported.")
+
     def memory_write_authorization(pid: str, requested: str | None,
                                    session_id: str | None, packet_id: str | None):
         """Keep file-lock -> DB-lock ordering, rechecking the actor in core's transaction.
@@ -862,6 +868,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         if body.replace_confirmed and not body.dry_run and not body.session_id:
             # A request that names a session is refused below with its own sentence; it never carries the proof.
             await person_proof.require(request, settings, person_proof.IMPORT_REPLACE)
+            needs_shown_list(body)
         from cairnmind.memory_published_import import PublishedImporter
         if not Path(body.path).is_absolute():
             # Never read against the service's own working directory (#304).
@@ -893,6 +900,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         if body.replace_confirmed and not body.dry_run and not body.session_id:
             # A request that names a session is refused below with its own sentence; it never carries the proof.
             await person_proof.require(request, settings, person_proof.IMPORT_REPLACE)
+            needs_shown_list(body)
         # The main-branch import (#172): a commit's published memory, re-checked against that commit's code.
         from cairnmind.memory_published_main import import_commit
         pid = project(body.project)["id"]
