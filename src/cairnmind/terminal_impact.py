@@ -405,18 +405,18 @@ class ImpactView:
             from .workspace_finding import outcome_unknown
             here, subject = scope == self._scope_version, about(project, None, worktree)  # #354: after a switch too
             status, unknown = getattr(exc, "status_code", None), outcome_unknown(exc, sent)
-            if here and (status in (404, 409) or unknown):
-                await self.load_impact()
-            if here and status == 409:
+            # "the list was reloaded" only when it was: load_impact is False when its read failed (#359)
+            shown = here and (status in (404, 409) or unknown) and await self.load_impact()
+            if shown and status == 409:
                 self.notice(self.t("The code or the record changed, the list was reloaded. Nothing was saved."), "warn")
-            elif here and status == 404:
+            elif shown and status == 404:
                 self.notice(self.t("This record is no longer in the list, the list was reloaded. Nothing was saved."),
                             "warn")
             elif unknown:
                 self.tell(scope, subject, self.t(
                     "No clear answer from the memory service. The verdict may have been saved; the list was "
                     "reloaded and shows it if so. Saving the same verdict again is safe and stores nothing twice."
-                    if here else
+                    if shown else
                     "No clear answer from the memory service. The verdict may have been saved. Saving the same "
                     "verdict again is safe and stores nothing twice.") + " " + self.error_detail(exc), "warn")
             else:

@@ -8,7 +8,7 @@ the inspector read; the inspector route checks it, and the workspace's key trave
 from __future__ import annotations
 
 from .terminal_notices import about
-from .terminal_person_act import agreed, refused, typed
+from .terminal_person_act import agreed, refused, reloaded, tell_saved, typed
 from .terminal_safe import safe_text
 
 PLAN_UNCLEAR = "The service did not confirm the plan, so it may have been confirmed."
@@ -52,16 +52,14 @@ async def confirm_plan(app):
                "worktree": app.workspace_data.get("worktree")}
     try:
         await app.request("POST", f"/api/inspector/plans/{plan['id']}/confirm", json=payload)
-        if scope == app._scope_version:
-            await app.open_entity(plan["id"], "plans")
-        app.tell(scope, about(project_id), app.t("Plan confirmed with an audit note."))
     except (OSError, ValueError, RuntimeError) as exc:
-        reloaded = scope == app._scope_version
-        if reloaded:
-            await app.open_entity(plan["id"], "plans")
+        shown = scope == app._scope_version and await reloaded(lambda: app.open_entity(plan["id"], "plans"))
         if refused(exc):
-            said = app.t("The plan was not confirmed. The current version was reloaded." if reloaded
+            said = app.t("The plan was not confirmed. The current version was reloaded." if shown
                          else "The plan was not confirmed.")
         else:  # a 5xx or a lost connection may follow the commit (#354)
-            said = app.t(PLAN_UNCLEAR) + (" " + app.t("The current version was reloaded.") if reloaded else "")
+            said = app.t(PLAN_UNCLEAR) + (" " + app.t("The current version was reloaded.") if shown else "")
         app.tell(scope, about(project_id), said + " " + broker_error_text(exc, app.t), "error")
+        return
+    await tell_saved(app, scope, project_id, "Plan confirmed with an audit note.",
+                     lambda: app.open_entity(plan["id"], "plans"))

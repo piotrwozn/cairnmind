@@ -415,3 +415,25 @@ After every step it embeds every pending chunk through `Retriever.embed_pending`
 
 **Where the runs were made.** Before: `scripts/store_growth.py` copied into a checkout of main at a3ce347, the commit before #187 (#341). After: a branch holding main at 527edc0, the commit of #341. The script could not name its commit in either run (it ran in a copy without the Git history) and printed "commit unknown"; the commits above are the checkouts the copies were made from. The whole reports were kept as JSON by the run and are not in the repository.
 
+# Extraction on Apple silicon (#266)
+
+**Measured on 22 November 2026**, one run on one repository, on the owner's Apple M3 Pro (18 GiB, macOS 27.0.1), with `qwen3.5:9b` in the MLX build under Ollama 0.40.16 (which refuses the `format` field, so the schema goes into the prompt) and `qwen3-embedding:0.6b`, main at 8b912cb. Indexing this repository (550 files) queued 33 extraction jobs. The budget then was 120 s for the whole job (the first call and its one repair), with at most 1,200 output tokens in the first call and 2,400 in the repair.
+
+| | Result |
+| --- | --- |
+| Jobs | 33, all completed: 21 `ok`, 12 `completed_with_omissions`; none failed on the budget, none needed a second attempt |
+| Time of a job | minimum 3.9 s, median 40.5 s, mean 42.3 s, maximum 107.4 s; 5 above 60 s, 1 above 100 s |
+| Model calls | 39: 33 first calls and 6 repairs, all repairs successful |
+| One call | 22 to 52 s at an input of 6,000 to 8,500 tokens; up to 1,200 output tokens, median 694; about 19 output tokens a second over a whole call |
+| Answers cut at the limit | 1 of 33 (exactly 1,200 tokens, `done_reason` length), repaired by the second call |
+| Jobs with a repair | six, 78 to 107 s each but one small one; the longest was 52.5 s (the cut call) and 50.4 s (the repair), 107.4 s |
+
+The margin of the longest job was 12.6 s of 120. A cut answer forces the long repair: 1,200 tokens at 19 a second are 63 s by themselves, so a cut call and its repair of about 60 s each are 120 s, and the old budget ends there.
+
+**The new budget is 180 s** (`EXTRACTION_TIMEOUT`). The arithmetic for the measured class of job: a cut call of 63 s and a repair of about the same are 126 s; 180 s leaves 54 s. This is not a worst case: the repair of a cut answer may emit up to 2,400 tokens, about 126 s at 19 a second, and 63 s and 126 s together are 189 s, which 180 s does not cover. The measured repair took 50.4 s. The watchdog of the job worker is the budget plus 5 s (185 s), and the lease of a claimed job is the budget plus 90 s (270 s), so a running job is neither cut by the watchdog before it records its own timeout nor claimed by another worker. The output limit of the first call stays 1,200: one answer in 33 was cut and its repair succeeded, and a larger limit would make every long answer longer.
+
+**What the budget does not do.** The 180 s is the only bound of a job: an extraction call does not use `ask_timeout`, the read limit of the model request for questions (#231), but waits as long as the budget has left (the whole of it for the first call, what is left for the repair, never less than 1 s), on both kinds of model server. A call that takes 63 s therefore completes whatever `ask_timeout` holds. A model that never answers ends the job at 180 s with code `timeout` and `diagnostics.budget.timeout_seconds` 180 (a repair then reports `budget_exhausted`), and a model server that cannot be reached is still `model_unavailable` at once. A hang holds the single extraction worker, and the questions that wait behind it in the same queue, for up to 3 minutes. Extraction jobs are not retried by themselves. Scaling the budget from the model's measured speed would adapt to slower or faster machines, at the price of a calibration call and a number that changes between runs.
+
+The per-call figures (22 to 52 s at an input of 6,000 to 8,500 tokens, median output 694 tokens, 19 output tokens a second, the cut call of 52.5 s and its repair of 50.4 s) come from the owner's raw report of the same run, not from the issue; the figures in the issue are the job times, the counts and the budget.
+
+Not measured: a run with the new budget on the Mac, on this or another repository. The tests with a fake clock show that a cut answer and a repair of 60 s each complete within 180 s and did not within 120 s, and that a job past 180 s still fails with the budget named in its diagnostics; the same two calls of 63 s complete with `ask_timeout` 60 (they failed as `model_unavailable` before the call took its limit from the budget).

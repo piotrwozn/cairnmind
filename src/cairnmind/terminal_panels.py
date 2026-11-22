@@ -25,6 +25,7 @@ from .project_folders import folder_notice
 from .terminal_connection_hints import NOT_STARTED, connection_hint
 from .terminal_i18n import native_failure_notice
 from .terminal_notices import about as notice_about
+from .terminal_person_act import refused
 from .terminal_published_import import archive_replaced, archive_text
 from .terminal_i18n_messages import broker_error_text
 from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal,
@@ -861,14 +862,24 @@ class SidebarApp(BasePanel):
         if not approve:
             return
         # The preview the person just approved listed what the import replaces of this machine's own verdicts.
-        result = await self.request("POST", "/api/memory/import", json={
-            **payload, "dry_run": False, "replace_confirmed": replaces_here(preview),
-            "expected_replaced": archive_replaced(preview)})
-        project = result.get("project")
-        if project:
-            await asyncio.to_thread(self.workspace.select_project, project, payload["root"], intent="inspect")
-        await self.load_state()
-        await self.reconcile()
+        try:
+            result = await self.request("POST", "/api/memory/import", json={
+                **payload, "dry_run": False, "replace_confirmed": replaces_here(preview),
+                "expected_replaced": archive_replaced(preview)})
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice(self.t("Memory was not imported." if refused(exc) else
+                               "The service did not confirm the import, so the memory may have been imported.")
+                        + " " + broker_error_text(exc, self.t), "error")
+            return
+        try:  # the memory is saved from here on (#359): a failed refresh never says it was not
+            project = result.get("project")
+            if project:
+                await asyncio.to_thread(self.workspace.select_project, project, payload["root"], intent="inspect")
+            await self.load_state()
+            await self.reconcile()
+        except (OSError, ValueError, RuntimeError):
+            self.notice(self.t("Memory imported, but the view could not be refreshed."), "warn")
+            return
         self.notice(self.t("Memory imported for viewing. No clients started."))
 
     @work(group="sidebar-import", exclusive=True, exit_on_error=False)

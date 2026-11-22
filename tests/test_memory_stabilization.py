@@ -253,7 +253,7 @@ async def test_service_watchdog_still_stops_stalled_work_and_embedding_keeps_thi
         assert row["attempts"] == 1 and row["error_code"] == "job_timeout"
         assert job_row(store, {"id": job_id})["error"] == "TimeoutError"
         assert requested_timeouts == ([30] if kind == "embed" else [.05])
-        assert claims == [(job_id, 1, 210.0)]
+        assert claims == [(job_id, 1, 270.0)]  # the budget of 180 s (#266) plus 90 s
     assert memory_snapshot(store) == before and len(claims) == 1
 
 
