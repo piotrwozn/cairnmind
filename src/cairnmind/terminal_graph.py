@@ -30,6 +30,7 @@ from textual.widgets import Button, Footer, OptionList, Static
 from textual.widgets.option_list import Option
 
 from . import terminal_theme
+from .code_graph import CODE_GRAPH_NOT_BUILT
 from .terminal_safe import plain, safe_text
 from .config import Settings
 from .terminal_i18n import localize_bindings
@@ -486,7 +487,8 @@ class GroupPicker(ModalScreen[dict | None]):
             choices.add_options([Option(plain(f"{label(item.get('label', item['id']))} · {item.get('count', '')}"), id=str(i))
                                  for i, item in enumerate(self.items)])
             choices.highlighted = 0 if self.items else None
-            self.query_one("#group-notice", Static).update(plain(f"{len(self.items)} " + self.graph_app.t("groups") + (" · " + self.graph_app.t("n: next page") if self.next_cursor else "")))
+            not_built = " · " + self.graph_app.t(CODE_GRAPH_NOT_BUILT) if CODE_GRAPH_NOT_BUILT in (data.get("warnings") or []) else ""
+            self.query_one("#group-notice", Static).update(plain(f"{len(self.items)} " + self.graph_app.t("groups") + (" · " + self.graph_app.t("n: next page") if self.next_cursor else "") + not_built))
         except (OSError, ValueError, RuntimeError) as exc:
             self.query_one("#group-notice", Static).update(plain(exc, limit=250))
 
@@ -656,7 +658,10 @@ class GraphApp(BasePanel):
                 targets = await asyncio.to_thread(layout_positions, list(self.model.nodes), list(self.model.edges), dict(self.model.positions))
                 if generation == self.model.generation:
                     self.model.targets = targets
-            self.notice("")
+            # A graph being written is partial (#386): the line shows the sentence once and clears with the mark.
+            text = CODE_GRAPH_NOT_BUILT if CODE_GRAPH_NOT_BUILT in (data.get("warnings") or []) else ""
+            if str(self.query_one("#panel-notice", Static).render()) != self.t(text):
+                self.notice(text)
             self.invalidate_frame()
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(exc)

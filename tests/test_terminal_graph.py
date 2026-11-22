@@ -10,6 +10,7 @@ import threading
 import pytest
 from textual.widgets import OptionList, Static
 
+from cairnmind.code_graph import CODE_GRAPH_NOT_BUILT
 from cairnmind.config import Settings
 from cairnmind.terminal_graph import (BrailleCanvas, Camera, EDGE_LIMIT, GraphApp, GraphModel, GraphScope,
                                     GroupPicker, NODE_LIMIT, TerminalGraph, layout_positions, render_scene,
@@ -125,6 +126,7 @@ class ControlledBroker:
         self.started = threading.Event()
         self.release = threading.Event()
         self.block = False
+        self.group_warnings = []
 
     def ensure(self):
         return {"available": True}
@@ -137,7 +139,7 @@ class ControlledBroker:
         if path == "/api/inspector/graph/groups":
             if not params.get("cursor"):
                 return {"items": [{"id": "group:first", "group": "first", "kind": "group", "label": "First"}],
-                        "next_cursor": "groups-next"}
+                        "next_cursor": "groups-next", **({"warnings": self.group_warnings} if self.group_warnings else {})}
             return {"items": [{"id": "group:last", "group": "last", "kind": "group", "label": "Last"}], "next_cursor": None}
         if path == "/api/inspector/graph":
             data = deepcopy(self.data.get(params.get("project"), {
@@ -270,6 +272,51 @@ async def test_group_picker_pages_and_expands_backend_group(panel):
         await pilot.press("enter")
         await eventually(pilot, lambda: app.model.scope.group == "last")
         assert any(c[1].endswith("/groups") and c[2].get("cursor") == "groups-next" for c in broker.calls)
+
+
+def notice_text(app):
+    return str(app.query_one("#panel-notice", Static).render())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language, words", [("en", "code graph of this project is not built yet"),
+                                              ("pl", "Graf kodu tego projektu nie jest jeszcze zbudowany")])
+async def test_graph_says_that_the_code_graph_is_being_written_until_the_mark_is_gone(panel, language, words):
+    from cairnmind.cockpit_state import CockpitState
+    settings, workspace, broker = panel
+    CockpitState(settings).update({"language": language})
+    broker.data["alpha"]["warnings"] = [CODE_GRAPH_NOT_BUILT]
+    app = GraphApp(settings, broker=broker, workspace=workspace, motion=False)
+    async with app.run_test(size=(100, 35)) as pilot:
+        await eventually(pilot, lambda: words in notice_text(app))
+        del broker.data["alpha"]["warnings"]
+        await broker.queue.put({"event": "change", "data": {"project_id": "alpha"}})
+        await eventually(pilot, lambda: notice_text(app) == "")
+
+
+@pytest.mark.asyncio
+async def test_graph_with_a_built_code_graph_shows_no_such_notice(panel):
+    settings, workspace, broker = panel
+    app = GraphApp(settings, broker=broker, workspace=workspace, motion=False)
+    async with app.run_test(size=(100, 35)) as pilot:
+        await eventually(pilot, lambda: len(app.model.nodes) == 3)
+        await pilot.press("g")
+        await eventually(pilot, lambda: isinstance(app.screen, GroupPicker) and len(app.screen.items) == 1)
+        await eventually(pilot, lambda: "groups" in str(app.screen.query_one("#group-notice", Static).render()))
+        assert "not built" not in notice_text(app)
+        assert "not built" not in str(app.screen.query_one("#group-notice", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_group_picker_says_that_the_code_graph_is_being_written(panel):
+    settings, workspace, broker = panel
+    broker.group_warnings = [CODE_GRAPH_NOT_BUILT]
+    app = GraphApp(settings, broker=broker, workspace=workspace, motion=False)
+    async with app.run_test(size=(100, 35)) as pilot:
+        await eventually(pilot, lambda: bool(app.model.nodes))
+        await pilot.press("g")
+        await eventually(pilot, lambda: isinstance(app.screen, GroupPicker) and len(app.screen.items) == 1)
+        await eventually(pilot, lambda: "not built yet" in str(app.screen.query_one("#group-notice", Static).render()))
 
 
 @pytest.mark.asyncio
