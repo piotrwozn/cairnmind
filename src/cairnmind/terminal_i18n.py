@@ -15,6 +15,7 @@ from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from .terminal_legacy_groups import MESSAGES as LEGACY_GROUP_MESSAGES
 from .terminal_plan_confirm import MESSAGES as PLAN_CONFIRM_MESSAGES
 from .terminal_person_act import MESSAGES as PERSON_ACT_MESSAGES
+from .terminal_project_forget import MESSAGES as PROJECT_FORGET_VIEW_MESSAGES
 from .terminal_release import MESSAGES as RELEASE_MESSAGES
 from .terminal_published_import import MESSAGES as PUBLISHED_IMPORT_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
@@ -676,6 +677,7 @@ CATALOG.update(RESTORE_CLAIM_MESSAGES)  # a restore without the person's workspa
 CATALOG.update(SERVICE_VERSION_MESSAGES)  # a service of another version is not used (#319)
 CATALOG.update(PROJECT_REMOVAL_MESSAGES)  # removing a project from the registry (#327)
 CATALOG.update(PROJECT_FORGET_MESSAGES)  # deleting a project's memory: the command line refuses (#347)
+CATALOG.update(PROJECT_FORGET_VIEW_MESSAGES)  # deleting a project's memory in the workspace (#347)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 

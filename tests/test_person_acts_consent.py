@@ -23,6 +23,7 @@ from test_inspector_plan_confirm import plan_app
 from test_inspector_published_import import published_app
 from test_inspector_release import RELEASE, release_app
 from test_legacy_groups_workspace import ui as legacy_ui
+from test_project_forget_workspace import ui as forget_ui
 from test_record_kinds_workspace import ACCEPTED, BLOCKING
 from test_record_kinds_workspace import ui as kinds_ui
 from test_terminal_impact import VERDICT, Impact, open_impact
@@ -31,8 +32,8 @@ from test_terminal_ux080 import CONFLICT, screen_text, setup_ui
 from test_workspace_stage_scope import wait_until
 from textual.widgets import Button, Select, Static, TextArea
 
-from cairnmind import (person_proof, terminal_person_act, terminal_plan_confirm, terminal_record_kinds,
-                       terminal_release)
+from cairnmind import (person_proof, project_forget, terminal_person_act, terminal_plan_confirm,
+                       terminal_project_forget, terminal_record_kinds, terminal_release)
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_inspector import InspectorApp
 from cairnmind.terminal_panels import ConfirmModal, SidebarApp
@@ -225,6 +226,18 @@ async def reach_adopt(app, pilot, text):
     await pilot.press("ctrl+s")
 
 
+def make_forget(tmp_path, monkeypatch, language):
+    app, broker, workspace = forget_ui(tmp_path, monkeypatch, language)
+    return app, workspace, lambda: [(path, body) for _, path, body in broker.sent]
+
+
+async def reach_forget(app, pilot, text):
+    await settle(app, pilot)
+    app.forget_project()
+    await choice_ready(app, pilot)
+    await pilot.press("enter")
+
+
 def make_sidebar_import(tmp_path, monkeypatch, language):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
     monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
@@ -312,6 +325,8 @@ ACTS = [
         lambda w: [("/api/inspector/legacy-groups/adopt", {
             "project": "project-keyboard", "group": "old-group", "title": "old-group",
             "task_versions": {"t1": 3, "t2": 1}, "worktree": w.value["worktree"]})]),
+    Act("forget-project", make_forget, reach_forget, "Delete this project's memory?", ("Keyboard project",),
+        lambda w: [("/api/inspector/projects/forget", {"project": "project-keyboard"})]),
     Act("sidebar-import", make_sidebar_import, reach_sidebar_import, "Import this project memory?", (),
         lambda w: [(IMPORT, {"path": "/projects/a/.memory/devbrain", "root": "/projects/a", "dry_run": False,
                              "replace_confirmed": False, "expected_replaced": []})]),
@@ -405,7 +420,9 @@ async def test_apply_is_refused_when_the_import_check_changed_while_the_dialog_w
 
 # --- no sender without the dialog (a static check of the source) ---------------------------------------------
 
-EXCEPTIONS = {("workspace_finding.py", "/api/findings")}  # the quick finding popup: documented, the owner's item
+# The quick finding form sends without a dialog by the owner's decision of 22 November 2026: the person typed the
+# text and sends it, so the form is the consent. It stays; this is not an open item.
+EXCEPTIONS = {("workspace_finding.py", "/api/findings")}
 
 
 def _strings(node, names):
@@ -501,7 +518,7 @@ def test_no_panel_sends_a_persons_act_without_its_consent_dialog():
     found = [hit for file in sorted(package.glob("*.py"))
              for hit in unguarded_person_acts(file.read_text(encoding="utf-8"), file.name)]
     assert found == []
-    # The exception still exists; drop it from EXCEPTIONS when the popup gets its dialog.
+    # The exception stays by the owner's decision of 22 November 2026; this pins that the form still sends it.
     assert '"POST", "/api/findings"' in (package / "workspace_finding.py").read_text(encoding="utf-8")
 
 
@@ -562,11 +579,13 @@ async def test_agreed_is_true_only_for_an_explicit_yes():
 
 
 def test_every_new_sentence_has_polish():
-    for module in (terminal_person_act, terminal_plan_confirm, terminal_release, terminal_record_kinds):
+    for module in (terminal_person_act, terminal_plan_confirm, terminal_release, terminal_record_kinds,
+                   terminal_project_forget, project_forget):
         for key, polish in module.MESSAGES.items():
             assert CATALOG[key] == polish, key
     for key in ("Confirm this record?", "Dispute this record?", "Save this decision?", "Save this verdict?",
-                "Confirm this plan?", "Release this record?", "Treat this kind as technical?"):
+                "Confirm this plan?", "Release this record?", "Treat this kind as technical?",
+                "Delete this project's memory?"):
         assert tr(key, "pl") != key
     assert tr(NOT_GIVEN, "pl", label=tr("Reason", "pl")) == "Uzasadnienie: nie podano."
 
