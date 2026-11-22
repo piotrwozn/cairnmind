@@ -265,8 +265,8 @@ async def test_transaction_failure_after_success_diagnostics_is_reported_as_fail
     original, failed = store.client.transaction, []
 
     @contextmanager
-    def fail_commit_once():
-        with original() as transaction:
+    def fail_commit_once(**more):
+        with original(**more) as transaction:
             yield transaction
             if not failed:
                 failed.append(True)
