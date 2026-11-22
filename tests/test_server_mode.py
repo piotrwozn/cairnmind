@@ -42,6 +42,9 @@ def test_server_mode_needs_the_address_and_the_password_file_together(monkeypatc
     secret.chmod(0o600)
     monkeypatch.setenv("CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE", str(secret))
     assert server_under_test() == ("http://127.0.0.1:1", "a-long-enough-secret")
+    secret.chmod(0o644)
+    with pytest.raises(pytest.UsageError, match="0600"):
+        server_under_test()
 
 
 def test_the_default_ports_of_an_installation_are_never_a_server_of_the_tests(monkeypatch, tmp_path):

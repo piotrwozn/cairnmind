@@ -122,7 +122,10 @@ def server_under_test():
     if urlparse(address).port in default_ports():  # the identity of a server fails closed: never the installed one
         raise pytest.UsageError(f"CAIRNMIND_TEST_ARCADE_SERVER_URL names a default port of Cairnmind ({address}).")
     from cairnmind.database_credentials import read_private_file
-    return address, read_private_file(password_file, "CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE")
+    try:
+        return address, read_private_file(password_file, "CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE")
+    except ValueError as problem:  # a usage error, not an INTERNALERROR traceback from the collection hook
+        raise pytest.UsageError(str(problem)) from None
 
 
 def default_ports() -> set:
