@@ -15,7 +15,8 @@ from cairnmind.terminal_i18n_messages import broker_error_text
 from test_published_memory_acts import workspace  # noqa: F401 (a fixture)
 
 
-def test_confirming_a_record_already_confirmed_here_says_so_and_not_version_conflict(workspace):  # noqa: F811
+def test_confirming_a_record_already_confirmed_here_says_so_and_not_version_conflict(workspace,  # noqa: F811
+                                                                                       workspace_person):
     store, pid, _, _ = workspace
     source = store.snapshot(pid, "note://twice", "Use cookies.", "note")
     record = store.remember(pid, {"kind": "decision", "content": "Use cookies."}, [source["id"]])
@@ -38,12 +39,11 @@ def test_confirming_a_record_already_confirmed_here_says_so_and_not_version_conf
     # Over HTTP it is a refusal (400), not a conflict to read again and retry (409); the panel shows it in Polish.
     app = FastAPI()
     attach_inspector_routes(app, store, store.settings)
-    response = TestClient(app).post(f"/inspector/records/{replacement['id']}/review",
-                                    headers={"Authorization": "Bearer " + store.settings.token},
+    headers = {"Authorization": "Bearer " + store.settings.token, **workspace_person}
+    response = TestClient(app).post(f"/inspector/records/{replacement['id']}/review", headers=headers,
                                     json={"project": pid, "action": "confirm", "expected_version": 1})
     assert response.status_code == 200
-    again = TestClient(app).post(f"/inspector/records/{replacement['id']}/review",
-                                 headers={"Authorization": "Bearer " + store.settings.token},
+    again = TestClient(app).post(f"/inspector/records/{replacement['id']}/review", headers=headers,
                                  json={"project": pid, "action": "confirm", "expected_version": 2})
     assert again.status_code == 400 and again.json()["detail"].startswith("Already confirmed by a person here")
     error = SimpleNamespace(detail=again.json()["detail"], status_code=400)
@@ -53,32 +53,33 @@ def test_confirming_a_record_already_confirmed_here_says_so_and_not_version_conf
         assert tr(sentence, "pl") != sentence
 
 
-def test_a_refusal_for_a_command_without_a_terminal_names_piped_or_redirected_input_or_output(workspace,  # noqa: F811
-                                                                                             monkeypatch):
+def test_a_refusal_for_the_command_line_says_where_a_person_confirms_now(workspace, monkeypatch):  # noqa: F811
     from typer.testing import CliRunner
 
     from cairnmind import cli, confirmation, record_kinds
     store, pid, _, _ = workspace
     for name in ("CAIRNMIND_SESSION_ID", "CAIRNMIND_PACKET_ID", *confirmation.CLIENT_MARKERS):
         monkeypatch.delenv(name, raising=False)
-    # CliRunner gives the command no terminal: as `... | head` or `... > file` in a person's own terminal.
+    # The command line confirms nothing (#214), with a terminal or without: each refusal says where a person does.
     run = CliRunner()
     plan = run.invoke(cli.app, ["--data-dir", str(store.data_dir), "memory", "confirm-plan", pid,
                                 "00000000-0000-4000-8000-000000000000", "--expected-version", "1"])
     remember = run.invoke(cli.app, ["--data-dir", str(store.data_dir), "remember", pid, "x", "--confirmed"])
-    for result in (plan, remember):
-        assert result.exit_code == 2 and "piped or redirected" in " ".join(result.output.split()), result.output
-    assert "piped or redirected" in record_kinds.CLI_REFUSED and "piped or redirected" in confirmation.CLI_REFUSED
-    # The two other commands that need a person's terminal (#239): one stores a task as proposed, one refuses.
+    kinds = run.invoke(cli.app, ["--data-dir", str(store.data_dir), "record-kind", "accept", pid, "claude", "x"])
+    for result, sentence in ((plan, confirmation.CLI_PLAN_REFUSED), (remember, confirmation.CLI_CONFIRM_REFUSED),
+                             (kinds, record_kinds.CLI_REFUSED)):
+        words = " ".join(result.output.split())
+        assert result.exit_code == 2 and sentence in words and "inspector of the workspace" in words, result.output
+    # The one command that used to store a confirmed task stores a proposed one and says so (#239, #214).
     task = run.invoke(cli.app, ["--data-dir", str(store.data_dir), "task", "add", pid, "Write the guide"])
-    assert task.exit_code == 0 and "Stored as proposed" in task.output
-    assert "piped or redirected" in " ".join(task.output.split()), task.output
+    assert task.exit_code == 0 and confirmation.CLI_TASK_PROPOSED in " ".join(task.output.split()), task.output
+    assert '"status": "proposed"' in task.output
     prune = run.invoke(cli.app, ["--data-dir", str(store.data_dir), "store", "prune-backups", "--keep", "1"])
     assert prune.exit_code == 2 and "piped or redirected" in " ".join(prune.output.split()), prune.output
 
 
-def test_a_piped_plan_save_that_changes_a_confirmed_plan_names_piped_or_redirected_input_or_output(workspace, tmp_path,  # noqa: F811
-                                                                                                    monkeypatch):
+def test_a_plan_save_that_changes_a_confirmed_plan_says_where_a_person_changes_it(workspace, tmp_path,  # noqa: F811
+                                                                                   monkeypatch):
     import json
 
     from typer.testing import CliRunner
@@ -104,12 +105,13 @@ def test_a_piped_plan_save_that_changes_a_confirmed_plan_names_piped_or_redirect
         document.write_text(json.dumps({"plan": plan, "steps": saved, "expected_version": current["plan"]["version"],
                                         "task_versions": {t["id"]: t["version"] for t in current["tasks"]}}),
                             encoding="utf-8")
-        # CliRunner gives the command no terminal: as `cairnmind plan save ... < plan.json | head`.
+        # No plan save is a person's act (#214), in a terminal or not: the refusal names the inspector.
         refused = run.invoke(cli.app, ["--data-dir", str(store.data_dir), "plan", "save", pid, str(document),
                                        "--idempotency-key", key])
         words = " ".join((refused.output + str(refused.exception or "")).split())
         assert refused.exit_code != 0 and "Nothing was saved" in words, words
-        assert "piped or redirected" in words and "`cairnmind plan save` in their own terminal, with input" in words
+        assert "in the inspector of the workspace" in words and "own terminal" not in words
+        assert "piped or redirected" not in words and "no plan save is" in words
     assert PlanManager(store).get(pid, plan_id) == current
 
 

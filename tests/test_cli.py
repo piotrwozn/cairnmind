@@ -13,9 +13,8 @@ from cairnmind.config import Settings
 from cairnmind.store import Store
 
 
-def test_cli_task_plan_and_evidence_workflow(tmp_path, monkeypatch, person_terminal):
-    # person_terminal: the commands below are a person's, in their own terminal (#177). CliRunner has none,
-    # and without one `remember --confirmed` is refused and `task add` stores a proposed task.
+def test_cli_task_plan_and_evidence_workflow(tmp_path, monkeypatch):
+    # The command line confirms nothing (#214): what it stores is proposed.
     from cairnmind import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     runner = CliRunner()
@@ -40,8 +39,8 @@ def test_cli_task_plan_and_evidence_workflow(tmp_path, monkeypatch, person_termi
 
     run("init")
     run("project", "add", "demo", str(root))
-    note = run("remember", "demo", "Plan logowania", "--kind", "decision", "--confirmed")
-    assert note["status"] == "confirmed"
+    note = run("remember", "demo", "Plan logowania", "--kind", "decision")
+    assert note["status"] == "proposed"
     task = run("task", "add", "demo", "Test logowania", "--plan", "login", "--step", "1",
                "--requires-test", "--requires-review", "--criterion", "Działa poprawne i błędne hasło")
     run("task", "update", "demo", task["id"], "needs_test")

@@ -1063,7 +1063,7 @@ async def test_ollama_http_protocol_and_invalid_vectors(workspace):
 def test_ollama_refuses_remote_provider(workspace):
     _, _, settings = workspace
     settings.ollama_url = "https://remote.example"
-    with pytest.raises(ValueError, match="loopback"):
+    with pytest.raises(ValueError, match="--allow-remote"):  # the one sentence of memory_models.local_server (#302)
         Ollama(settings)
 
 

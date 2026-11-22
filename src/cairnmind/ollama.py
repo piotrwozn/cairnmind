@@ -11,7 +11,6 @@ import math
 import re
 import time
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 
@@ -98,9 +97,6 @@ def validate_embeddings(embeddings: Any, count: int) -> list[list[float]]:
     return embeddings
 
 
-LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
-
-
 class Ollama:
     ENDPOINTS = frozenset({"/api/chat", "/api/embed", "/api/tags"})
     UNKNOWN_ENDPOINT = "/api/unknown"
@@ -109,17 +105,16 @@ class Ollama:
                  base_url: str | None = None, credential=None, num_ctx: int | None = None):
         """base_url, credential and num_ctx come only from a validated memory model profile (memory_models.py).
 
-        Without base_url this is the local Ollama of the settings, which stays a loopback HTTP address.
+        Without base_url this is the local Ollama of the settings: memory_models.local_server decides (#288, #302).
         """
         self.settings = settings
         if base_url is None:
-            parsed = urlparse(settings.ollama_url)
-            if parsed.scheme != "http" or parsed.hostname not in LOOPBACK_HOSTS:
-                raise ValueError("Ollama must use a loopback HTTP address; no remote provider is permitted")
-            base_url = settings.ollama_url
+            from .memory_models import local_server  # memory_models imports this module
+            base_url = local_server(settings)
         self.base_url = base_url
         self.num_ctx = settings.num_ctx if num_ctx is None else num_ctx
-        self.label = "Local Ollama" if urlparse(base_url).hostname in LOOPBACK_HOSTS else "Ollama"
+        from .memory_models import is_loopback
+        self.label = "Local Ollama" if is_loopback(base_url) else "Ollama"
         self._credential = credential
         self._client = client
         self._model_cache: tuple[float, dict] | None = None

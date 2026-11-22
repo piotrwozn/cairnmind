@@ -77,7 +77,7 @@ def test_native_transaction_rolls_back_and_query_rejects_writes(tmp_path):
 
 def test_edge_id_cannot_be_reassigned_to_another_project(tmp_path):
     from cairnmind.store import Store
-    store = Store(tmp_path)
+    store = Store(tmp_path / "data")
     first = store.add_project("first", tmp_path / "first")
     second = store.add_project("second", tmp_path / "second")
     for project in (first, second):

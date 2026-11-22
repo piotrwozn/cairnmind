@@ -1326,10 +1326,10 @@ class KnowledgeAgent:
                     save()
                     return
                 accepted = await self.propose(source, diagnostics)
-                if accepted is None:
+                if accepted is None and not payload.get("reextract"):
                     save()
                     return
-                stamp = await self.extractor_stamp(deadline)
+                stamp = await self.extractor_stamp(deadline) if accepted is not None else None
                 diagnostics["code"] = "persistence_failed"
                 diagnostics["persistence_stage"] = "begin_transaction"
                 # All awaits end before the transaction. Cancellation never leaves
@@ -1350,10 +1350,21 @@ class KnowledgeAgent:
                            ("project_id", "sha256", "content", "is_current", "kind")) or source_text(current) != source_text(source):
                         diagnostics["code"] = "source_changed"
                         raise ValueError("Extraction source changed during inference")
-                    self._commit_extraction(project_id, source, accepted, deadline, diagnostics, stamp)
+                    if accepted is None:
+                        # A re-extraction (#297) of a source the extractor now skips: its old untouched proposals go.
+                        from .extraction_input import EXTRACTOR_VERSION
+                        from .reextract import supersede_unextracted
+                        diagnostics["persistence_stage"] = "supersede_records"
+                        gone = supersede_unextracted(self.store, project_id, source, EXTRACTOR_VERSION,
+                                                     lambda: self._extraction_deadline(deadline))
+                        if gone:
+                            diagnostics["counts"]["superseded_records"] = gone
+                    else:
+                        self._commit_extraction(project_id, source, accepted, deadline, diagnostics, stamp)
                     self._extraction_deadline(deadline)
                     diagnostics["persistence_stage"] = "save_diagnostics"
-                    diagnostics["code"] = "completed_with_omissions" if diagnostics["counts"]["skipped_records"] else "ok"
+                    diagnostics["code"] = ("source_skipped" if accepted is None else "completed_with_omissions"
+                                           if diagnostics["counts"]["skipped_records"] else "ok")
                     if not save():
                         diagnostics["code"] = "stale_job"
                         raise ValueError("Extraction job attempt changed before commit")

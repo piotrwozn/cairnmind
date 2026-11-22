@@ -433,7 +433,23 @@ class SessionManager:
         return {"plan": plan, "task": task, "reason": following.get("reason"),
                 "blocked": following.get("blocked", []), "records": relevant,
                 "code": code, "state_hash": _hash(identity), "unknowns": state_unknowns,
-                "initial_baseline_eligible": initial_baseline}
+                "initial_baseline_eligible": initial_baseline,
+                # Not part of the state hash: only for telling a client what its packet does not show (#299).
+                "automatic_created": [row["created_at"] for row in relevant
+                                      if _automatic_proposal(row, sources_by_id)]}
+
+    @staticmethod
+    def _with_newer(reply: dict, state: dict, packet: dict) -> dict:
+        """``reply`` plus how many automatic proposals are newer than ``packet``; unchanged when none (#299).
+
+        Information only: read after the state hash was compared, it decides nothing. The key is never stored.
+        """
+        newer = SessionManager._newer_count(state, packet)
+        return {**reply, "newer_automatic_proposals": newer} if newer else reply
+
+    @staticmethod
+    def _newer_count(state: dict, packet: dict) -> int:
+        return sum(created > packet["created_at"] for created in state["automatic_created"])
 
     @staticmethod
     def _target(path: str, client: str, watermark: dict | None = None) -> dict:
@@ -901,7 +917,8 @@ class SessionManager:
         return {"status": "pending" if any(counts.get(key, 0) for key in ("pending", "running"))
                 else "failed" if counts.get("failed") else "complete", "counts": counts}
 
-    def _build(self, session: dict, state: dict, archives: list[dict], unknowns: list[str]) -> dict:
+    def _build(self, session: dict, state: dict, archives: list[dict], unknowns: list[str],
+               created_at: str | None = None) -> dict:
         plan, task = state["plan"], state["task"]
         evidence = state.get("evidence") or {}
         plan_view = ({key: plan.get(key) for key in
@@ -932,7 +949,7 @@ class SessionManager:
                            if row.get("kind") == "agent_journal" else row for row in archives]
         packet = {"id": str(uuid4()), "schema_version": PACKET_SCHEMA_VERSION, "project_id": session["project_id"],
                   "session_id": session["id"], "epoch": session["epoch"], "client": session["client"],
-                  "worktree": session["worktree"], "created_at": utc_now(),
+                  "worktree": session["worktree"], "created_at": created_at or utc_now(),
                   "active_plan": plan_view, "active_task": task_view,
                   "next_action": state["reason"], "blockers": state["blocked"],
                   "records": [{"id": row["id"], "version": row["version"], "kind": row["kind"],
@@ -1106,6 +1123,8 @@ class SessionManager:
                 unknowns.extend(f"{reason} ({archive['path']})" for reason in archive.get("unknowns", []))
         except TimeoutError as exc:
             unknowns.append(str(exc))
+        # Taken before the state is read: a proposal that lands while the packet is built is then counted as newer.
+        state_read_at = utc_now()
         state = self._state(session)
         # Advisory only, and only when a packet is prepared: it is not an unknown and not part
         # of the state identity, so a deleted or edited file neither blocks a resume nor
@@ -1120,7 +1139,7 @@ class SessionManager:
             unknowns.extend(state["code"].get("unknowns", []))
         if limit and time.monotonic() > deadline:
             unknowns.append("Resume preparation exceeded its deadline")
-        packet = self._build(session, state, archives, unknowns)
+        packet = self._build(session, state, archives, unknowns, state_read_at)
         # Keep raw proofs out of the bounded packet; proofs survive source-file loss.
         proved = []
         for index, target in enumerate(targets):
@@ -1266,11 +1285,12 @@ class SessionManager:
             continuity = self._own_continuity(session)
             if continuity:
                 raise ValueError("resume_required: " + continuity[0])
-            if self._state_locked(session, code)["state_hash"] != packet["state_hash"]:
+            state = self._state_locked(session, code)
+            if state["state_hash"] != packet["state_hash"]:
                 raise ValueError("resume_required: relevant project state or code changed before ACK")
             previous = one_row(tx, "SELECT FROM resume_acks WHERE id=:id", {"id": session.get("ack_id")}, False)
             if previous and previous.get("packet_id") == packet_id:
-                return previous
+                return self._with_newer(previous, state, packet)
             acknowledgment = {"id": str(uuid4()), "project_id": session["project_id"], "session_id": session_id,
                               "epoch": session["epoch"], "packet_id": packet_id, "packet_hash": packet_hash,
                               "readback": readback, "status": "acknowledged", "created_at": utc_now(),
@@ -1278,7 +1298,7 @@ class SessionManager:
             insert_document(tx, "resume_acks", acknowledgment)
             update_document(tx, "sessions", {"ack_id": acknowledgment["id"], "updated_at": utc_now()},
                  "id=:id", {"id": session_id})
-            return acknowledgment
+            return self._with_newer(acknowledgment, state, packet)
 
     def _write_refusal(self, session: dict, packet_id: str | None) -> str | None:
         """require_ack's refusals that need no code state, from database reads only; None when none applies."""
@@ -1302,6 +1322,10 @@ class SessionManager:
         Inside a transaction pass ``code``, from code_scope taken before it began: without it the worktree is
         hashed here, and a slow worktree let ArcadeDB expire the caller's transaction (#255).
         """
+        self._acknowledged_state(session_id, packet_id, code)
+
+    def _acknowledged_state(self, session_id: str, packet_id: str | None, code: dict | None) -> tuple[dict, dict]:
+        """require_ack's checks; the current state and the packet when they all hold."""
         session = self._session(session_id)
         refusal = self._write_refusal(session, packet_id)
         if refusal:
@@ -1318,6 +1342,7 @@ class SessionManager:
             raise ValueError("resume_required: plan, task, decision, scope or code changed since the acknowledged "
                              "packet (a checkpoint or decision this session saved counts too); call resume_context "
                              "and ack_resume its new packet")
+        return current, packet
 
     def note_event(self, payload: dict, client: str) -> None:
         """Called after spool import by the service; native hook performs no DB I/O."""
@@ -1406,8 +1431,9 @@ class SessionManager:
             # An acknowledged external session is still not a verified one.
             result.update(history="unarchived", evidence="degraded")
         try:
-            self.require_ack(session_id)
+            current, current_packet = self._acknowledged_state(session_id, None, None)
             result["acknowledged"] = True
+            result = self._with_newer(result, current, current_packet)
         except ValueError as exc:
             result["ack_reason"] = str(exc)
             result["stale"] = bool(session.get("ack_id"))

@@ -62,7 +62,7 @@ def test_a_remote_server_is_accepted_only_with_https_and_explicit_consent():
 
 
 def test_the_legacy_ollama_address_still_refuses_a_remote_host(tmp_path):
-    with pytest.raises(ValueError, match="loopback"):
+    with pytest.raises(ValueError, match="--allow-remote"):  # the one sentence of memory_models.local_server (#302)
         Ollama(settings_with(tmp_path, ollama_url="https://models.example"))
 
 

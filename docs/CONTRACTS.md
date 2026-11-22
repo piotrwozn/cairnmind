@@ -61,7 +61,8 @@ worker's own write sets, a client can neither set nor keep and any later write d
 record still `proposed` whose only source is the one the mark names, in the same project. A packet built after
 such a proposal arrived shows it, with `origin: automatic_extraction` (in the preview, or counted in
 `omitted_by_origin` when left out of it), but does not promise it; a packet already handed out is not
-renewed by it, and `resume_context` returns that same packet until something it promises changes. The
+renewed by it, and `resume_context` returns that same packet until something it promises changes or the
+client is told of newer proposals (below). The
 arrival, like a source or chunk the queue indexes that nothing in the state cites,
 never makes a packet stale. Everything else counts, failing closed: a record a person confirmed, disputed,
 superseded or edited (an extracted proposal counts from the write that confirms or changes it), a record
@@ -72,6 +73,16 @@ The `origin: automatic_extraction` label, which a client can write, plays no par
 the state it showed held no such proposal and nothing else changed; otherwise its ACK is refused or goes
 stale once and `resume_context` hands out a new packet.
 
+So that a client knows what its packet does not show (#299), the reply of `ack_resume` and the session status
+of an acknowledged session carry `newer_automatic_proposals`: how many such proposals (the same test as above,
+never a field a client sets) were written after the packet. It is information only: it is read after the state
+hash was compared, changes no hash, readback or refusal, and is never stored with the ACK. With none the key
+is absent and the reply is as before. The count never costs the session its ACK: `resume_context` keeps
+returning the same acknowledged packet, not a new one to acknowledge. The proposals are read with the read
+tools that exist, for an MCP client `ask`, on the command line `cairnmind records` or `cairnmind ask`; a packet
+built after them shows them, and its count is then zero. Packets show at most 20 records, automatic
+proposals last. A proposal that lands while a packet is built is counted as newer than it.
+
 A captured transcript horizon is complete only when every line in it is an archived record the reader
 understood. A line stored as `transcript_unknown` keeps the packet partial, with one exception (#210): a
 record whose `type` is a kind the reader does not know at all, that is a JSON object and names no other
@@ -81,9 +92,9 @@ nobody accepted once per transcript, with its client, version and byte, and how 
 never carries the record's text. The acceptance lives on the project's row (`accepted_record_kinds`, with
 the date, the note, who accepted and the note source of the act; withdrawals in `withdrawn_record_kinds`),
 is never part of a memory package, and is written only inside a person's act that the store checks
-(`record_kinds.py`, `Store.open_person_act`): the command line in a person's own terminal
-(`person_at_terminal`) or the inspector route `/inspector/record-kinds/accept` and `/withdraw`, which has no
-session field and is what the workspace calls. A malformed record of a known kind, a line that is not a
+(`record_kinds.py`, `Store.open_person_act`): the inspector route `/inspector/record-kinds/accept` and
+`/withdraw`, which has no session field, needs the open workspace's key and is what the workspace calls. The
+command line no longer accepts or withdraws a kind (0.13.0). A malformed record of a known kind, a line that is not a
 JSON object, and every integrity check of the horizon (hashes, offsets, rotation, the import cursor,
 capture recovery provenance) are never covered. An acceptance changes no stored source: the records stay
 `transcript_unknown`, unextracted, with their raw text indexed as before. While a transcript can be read,
@@ -126,7 +137,7 @@ Syntax analysis covers Python, JavaScript and TypeScript. Other languages remain
 
 `ask` answers and the startup context still consume Codex or Claude tokens. Local memory reduces the need to carry the whole history along; it does not remove context limits or the cost of model work. API and Copilot connections use their own account billing and permissions.
 
-The launcher blocks a client from starting when the resume package is partial or unavailable. A transcript record of a kind this release does not know (a newer Codex or Claude Code may write one) keeps the packets of its project partial, and the packet says which kind, client and version, at which byte. A person can look at such a record with `cairnmind record-kind list PROJECT` or under More, then Transcript record kinds in the workspace, and accept its kind as technical for that one project with a note (`cairnmind record-kind accept PROJECT CLIENT KIND --note TEXT` in their own terminal, or the same view); packets of that project are ready again without a new release, and other projects are not affected. `doctor` lists every acceptance and `record-kind withdraw` takes one back. Only a person accepts: the command refuses inside a coding session and without a terminal, and no MCP tool or built-in agent tool can do it. A malformed record of a kind the reader knows, and a transcript that fails its integrity checks, still block. An ACK confirms receipt and reading of specific versions, not the model's understanding. Cairnmind's write controls do not replace the native tool permissions of Codex and Claude.
+The launcher blocks a client from starting when the resume package is partial or unavailable. A transcript record of a kind this release does not know (a newer Codex or Claude Code may write one) keeps the packets of its project partial, and the packet says which kind, client and version, at which byte. A person can look at such a record with `cairnmind record-kind list PROJECT` or under More, then Transcript record kinds in the workspace, and accept its kind as technical for that one project with a note, in the same view; packets of that project are ready again without a new release, and other projects are not affected. `doctor` lists every acceptance, and the same view takes one back. Only a person accepts, in the workspace: `record-kind accept` and `withdraw` are refused on the command line, and no MCP tool or built-in agent tool can do it. A malformed record of a kind the reader knows, and a transcript that fails its integrity checks, still block. An ACK confirms receipt and reading of specific versions, not the model's understanding. Cairnmind's write controls do not replace the native tool permissions of Codex and Claude.
 
 ## Extension surfaces
 

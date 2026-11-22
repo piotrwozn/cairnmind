@@ -78,9 +78,9 @@ async def test_an_edit_after_a_lost_answer_is_refused_and_kept_in_the_form(stack
     assert record["content"] == "Keep one writr."
 
 
-def test_the_service_compares_a_retry_with_what_the_first_request_asked(stack):
+def test_the_service_compares_a_retry_with_what_the_first_request_asked(stack, workspace_person):
     settings, store, project, root, _, service = stack
-    headers = {"Authorization": f"Bearer {settings.token}"}
+    headers = {"Authorization": f"Bearer {settings.token}", **workspace_person}
     body = {"project": project["id"], "content": "One writer.", "kind": "decision", "key": KEY}
     first = service.post("/findings", json=body, headers=headers).json()["record"]
     for change in ({"content": "One writer!"}, {"kind": "fact"}, {"status": "confirmed"}):

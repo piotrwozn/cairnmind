@@ -12,7 +12,7 @@ from textual.widgets import Button, DataTable, Footer, Input, Static
 
 from . import terminal_theme
 from .cockpit_state import CockpitState
-from .first_start import MATCHES_HEADING
+from .first_start import GET_MODELS, MATCHES_HEADING, MODE_HEADING
 from .terminal_i18n_messages import ASK_STATUS, fixed_message
 from .terminal_safe import plain
 
@@ -241,7 +241,10 @@ def ask_summary(result, translate) -> str:
     matches = [match for match in result.get("full_text_matches", []) if isinstance(match, dict)][:8]
     if matches:  # search results without models (#274): their own heading, never "Sources"
         lines += ["", translate(MATCHES_HEADING) + ":", *_passages(matches, "excerpt")]
-    unknowns = [fixed_message(item, translate) for item in result.get("unknowns", [])][:8]
+    raw = result.get("unknowns", [])
+    if GET_MODELS in raw:  # the way to get models is not missing evidence: the mode's own heading (#294)
+        lines += ["", translate(MODE_HEADING) + ":", translate(GET_MODELS)]
+    unknowns = [fixed_message(item, translate) for item in raw if item != GET_MODELS][:8]
     if unknowns:
         lines += ["", translate("Missing evidence") + ":"] + [f"- {item}" for item in unknowns]
     coverage = result.get("coverage")

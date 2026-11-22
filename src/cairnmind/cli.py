@@ -258,7 +258,7 @@ def last_log_line(path: Path) -> str:
     return "".join(char if char.isprintable() else "?" for char in text)[:500]
 
 
-_PORT_ADVICE = "Give this data directory its own port: `port` in {}/config.json, or CAIRNMIND_PORT for one command."
+from cairnmind.service_token import PORT_ADVICE as _PORT_ADVICE, foreign_service_text, refused_token  # noqa: E402
 
 
 def _bind_failed(log: Path, since: int) -> bool:
@@ -434,9 +434,8 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
                 detail = response.text
             # Only where the service was not started or matched by instance id here: after that match a 401 is this
             # directory's own service with a changed token, not another directory's.
-            if not start_service and response.status_code == 401 and "Invalid local service token" in str(detail):
-                detail = (f"The service at {settings.url} does not accept the token of {settings.data_dir}, so it "
-                          f"most likely belongs to another data directory. {_PORT_ADVICE.format(settings.data_dir)}")
+            if not start_service and refused_token(response.status_code, detail):
+                detail = foreign_service_text(settings)
             # The service's answer, not a wrong argument; shown as it is, without control characters.
             from cairnmind.terminal_safe import safe_text
             if raise_refusal:
@@ -1015,8 +1014,9 @@ def usage(ctx: typer.Context, project: ProjectArg,
 @app.command()
 def status(ctx: typer.Context, project: str | None = None):
     """Ask the running service for its queue, store and model state. Starts nothing."""
-    output(request(ctx.obj, "GET", "/status", start_service=False,
-                   params={"project": project} if project else {}))
+    result = request(ctx.obj, "GET", "/status", start_service=False, params={"project": project} if project else {})
+    # The address that was asked, so a report from another directory's service is recognised as such.
+    output({"service_url": ctx.obj.url, **result} if isinstance(result, dict) else result)
 
 
 @store_app.command("size")
@@ -1209,19 +1209,21 @@ def remember(ctx: typer.Context, project: ProjectArg,
                                          "options before it: `cairnmind remember PROJECT --kind decision -- '-text'`.")],
              kind: str = "fact",
              source_id: Annotated[list[str] | None, typer.Option("--source")] = None,
-             confirmed: bool = False, key: str | None = None):
-    """Store a finding as proposed. --confirmed stores it as confirmed, for a person in their own terminal."""
+             confirmed: Annotated[bool, typer.Option(
+                 help="Refused since 0.13.0; a person confirms in the inspector.")] = False,
+             key: str | None = None):
+    """Store a finding as proposed. --confirmed is refused: a person confirms in the inspector of the workspace."""
     from cairnmind import confirmation
-    if confirmed and not confirmation.person_at_terminal():
-        # Only a person confirms (#177). A coding session's shell and an agent's command are not one:
-        # refused before anything is written, with what to do instead.
-        refuse(confirmation.CLI_REFUSED)
+    if confirmed:
+        # The command line confirms nothing (#214): refused before anything is written, not even a proposed record,
+        # because the person asked for a confirmed one and storing another quietly is not allowed.
+        refuse(confirmation.CLI_CONFIRM_REFUSED)
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     from cairnmind.store import KeyTaken
     try:
         with actor_write(store, ctx.obj, pid):
-            record = {"kind": kind, "content": content, "status": "confirmed" if confirmed else "proposed"}
+            record = {"kind": kind, "content": content, "status": "proposed"}
             if key is not None:
                 record["key"] = key
             # Known secrets are replaced in the note's indexed view (#182); the note itself is kept as typed.
@@ -1229,10 +1231,7 @@ def remember(ctx: typer.Context, project: ProjectArg,
             sources = source_id or [store.snapshot(pid, f"manual://{uuid.uuid4()}", content, "manual",
                                                   note_metadata(store.settings, content,
                                                                 {"role": "user", "origin": "cli"}))["id"]]
-            if confirmed:
-                result = confirmation.remember_as_person(store, pid, record, sources)
-            else:
-                result = store.remember(pid, record, sources)
+            result = store.remember(pid, record, sources)
     except (KeyTaken, confirmation.VerdictKept) as exc:
         if getattr(exc, "change", "key") != "key":
             raise
@@ -1277,23 +1276,14 @@ def task_add(ctx: typer.Context, project: ProjectArg, title: TitleArg, plan: str
                 "requires_test": requires_test, "requires_review": requires_review}
     text = json.dumps({"title": title, **metadata}, ensure_ascii=False)
     from cairnmind import confirmation
-    # A task a person adds in their own terminal is confirmed, as before. Inside a coding session, from an
-    # agent's command or a script there is no person (#177): the task is stored as proposed, and says so.
-    person = confirmation.person_at_terminal()
+    # The command line confirms nothing (#214): the task is stored as proposed, and the command says so.
     with actor_write(store, ctx.obj, pid):
         from cairnmind.secret_mask import note_metadata  # indexed with its known secrets replaced (#182)
         src = store.snapshot(pid, f"manual://task/{uuid.uuid4()}", text, "manual",
                              note_metadata(store.settings, text, {"role": "user"}))
-        record = {"kind": "task", "content": title, "status": "confirmed" if person else "proposed",
-                  "metadata": metadata}
-        if person:
-            result = confirmation.remember_as_person(store, pid, record, [src["id"]])
-        else:
-            result = store.remember(pid, record, [src["id"]])
-    if not person:
-        typer.echo("Stored as proposed: only a person in their own terminal adds a confirmed task. This command "
-                   "runs inside a coding session, or its input or output is not a terminal (piped or redirected). "
-                   "The person confirms it in the inspector.", err=True)
+        result = store.remember(pid, {"kind": "task", "content": title, "status": "proposed", "metadata": metadata},
+                                [src["id"]])
+    typer.echo(confirmation.CLI_TASK_PROPOSED, err=True)
     output(result)
 
 
@@ -1369,11 +1359,9 @@ def plan_save(ctx: typer.Context,
                 else document.get("task_versions"))
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
-    from cairnmind import confirmation
-    # Typed by a person in their own terminal, a save may change or remove a step they confirmed (#177);
-    # from a coding session's shell or an agent's command the store refuses that, with the step named.
-    with actor_write(store, ctx.obj, pid, worktree) as scope, \
-            confirmation.person_command(store, pid, "command_line_plan_save", scope):
+    # A save is never a person's act (#214): the store refuses one that changes or removes a step a person
+    # confirmed, with the step named.
+    with actor_write(store, ctx.obj, pid, worktree) as scope:
         result = PlanManager(store).save(pid, document.get("plan", {}), document.get("steps", []),
             idempotency_key, expected_version if expected_version is not None else document.get("expected_version"),
             versions, scope, activate)
@@ -1444,10 +1432,8 @@ def plan_adopt(ctx: typer.Context, project: ProjectArg, group: GroupArg,
     from cairnmind.plans import PlanManager
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
-    from cairnmind import confirmation
-    # Adoption gives each task a plan key: on a task a person confirmed, only a person's command does (#177).
-    with actor_write(store, ctx.obj, pid, worktree) as scope, \
-            confirmation.person_command(store, pid, "command_line_plan_adopt", scope):
+    # Adoption gives each task a plan key: a task a person confirmed is refused, never adopted here (#214).
+    with actor_write(store, ctx.obj, pid, worktree) as scope:
         result = PlanManager(store).adopt_legacy(pid, group, plan={"title": title} if title else None,
             idempotency_key=idempotency_key, worktree=scope, activate=activate)
     output(result)
@@ -1905,8 +1891,8 @@ def memory_import(ctx: typer.Context, path: SnapshotArg,
                   root: Annotated[Path, typer.Option("--root")], name: str | None = None,
                   dry_run: bool = False,
                   replace_confirmed: Annotated[bool, typer.Option(
-                      "--replace-confirmed", help="Let the package replace records that were confirmed or disputed "
-                      "on this machine; the dry run lists them.")] = False):
+                      "--replace-confirmed", help="Ask to replace records that were confirmed or disputed on this "
+                      "machine; the service applies it only from the workspace, the dry run lists them.")] = False):
     """Import the memory of this project only; --dry-run needs a running service and writes nothing."""
     from cairnmind.memory import inspect_snapshot
     selected = str(path.expanduser().absolute())

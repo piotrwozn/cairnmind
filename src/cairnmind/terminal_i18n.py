@@ -8,6 +8,7 @@ from .first_start import MESSAGES as FIRST_START_MESSAGES
 from .memory_models import MESSAGES as MEMORY_MODELS_MESSAGES
 from .platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
 from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
+from .terminal_plan_confirm import MESSAGES as PLAN_CONFIRM_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
 from .setup_profiles import MESSAGES as SETUP_PROFILE_MESSAGES
 from .topology import MESSAGES as TOPOLOGY_MESSAGES
@@ -639,6 +640,7 @@ CATALOG.update(PLATFORM_HINT_MESSAGES)  # install hints by system: Homebrew, apt
 CATALOG.update(CONNECTION_HINT_MESSAGES)  # a connection key that is missing or unusable (#243)
 CATALOG.update(CHECK_PROFILE_MESSAGES)  # a check profile the worktree does not declare (#243)
 CATALOG.update(RECORD_KIND_MESSAGES)  # an unknown transcript record kind a person accepts (#210)
+CATALOG.update(PLAN_CONFIRM_MESSAGES)  # a person confirms a plan in the inspector (#214)
 CATALOG.update(ENGINE_DOCKER_MESSAGES)  # the engine in Docker (#272)
 CATALOG.update(FIRST_START_MESSAGES)  # tmux only for the workspace; the service started for MCP (#273, #258)
 CATALOG.update(MEMORY_MODELS_MESSAGES)  # an ollama_url on another computer (#288)

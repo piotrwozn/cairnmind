@@ -244,3 +244,67 @@ def test_the_command_dry_runs_queues_once_and_refuses_without_models(fixture, tm
     disabled = _store_choice(tmp_path / "off", "disabled")
     refused = runner.invoke(cli.app, ["--data-dir", str(disabled), "memory", "reextract", "demo"])
     assert refused.exit_code == 2 and "cairnmind memory reextract" in " ".join(refused.stderr.split())
+
+
+def own_block_source(f):
+    from cairnmind.integrations import BEGIN, END
+    return f.store.snapshot(f.project["id"], "file:///repo/AGENTS.md", f"{BEGIN}\nFIRST call resume_context.\n{END}\n",
+                            "document", metadata={"path": "/repo/AGENTS.md"})
+
+
+def test_a_reextraction_of_a_source_the_extractor_skips_supersedes_its_untouched_old_proposals(fixture):  # noqa: F811
+    f, pid = fixture, fixture.project["id"]
+    a = own_block_source(f)
+    first, second = old(f, a, "Call resume_context first.", "resume", 1), old(f, a, "Another.", "other", 0)
+    confirmed = old(f, a, "Confirmed one.", "kept", 1)
+    Inspector(f.store).review(pid, confirmed["id"], "confirm", 1)
+    disputed = old(f, a, "Disputed one.", "wrong", 1)
+    Inspector(f.store).review(pid, disputed["id"], "dispute", 1, reason="wrong")
+    current = old(f, a, "Written by this extractor.", "now", VERSION)
+    confirmed, disputed, current = (record(f, r["id"]) for r in (confirmed, disputed, current))
+    shown = plan(f.store, pid, VERSION, VERSION)
+    assert shown["skipped_sources"] == [a["id"]] and shown["skipped_records"] == 2
+    bound = f.session("external")
+    queue(f.store, pid, VERSION, VERSION)
+    run(f, [NEW])
+    for gone in (first, second):
+        assert record(f, gone["id"])["status"] == "superseded"
+        assert "no longer extracted" in record(f, gone["id"])["metadata"]["superseded_reason"]
+        assert [h["status"] for h in f.store.record_history(gone["id"])] == ["proposed", "superseded"]
+    assert [record(f, r["id"]) for r in (confirmed, disputed, current)] == [confirmed, disputed, current]
+    assert counts(f)["superseded_records"] == 2 and counts(f)["written_records"] == 0
+    assert not [r for r in f.store.list_records(pid) if r["metadata"].get("extractor", {}).get("version") == VERSION
+                and r["id"] != current["id"]]
+    view = f.client.get(f"/sessions/{bound['session_id']}").json()
+    assert view["acknowledged"] is True and view["stale"] is False, view
+
+
+def test_an_ordinary_extraction_of_a_skipped_source_supersedes_nothing(fixture):  # noqa: F811
+    f, pid = fixture, fixture.project["id"]
+    a = own_block_source(f)
+    kept = old(f, a, "Call resume_context first.", "resume", 1)
+    f.store.enqueue("extract", pid, {"source_id": a["id"]}, "extract:ordinary")
+    run(f, [NEW])
+    assert record(f, kept["id"])["status"] == "proposed"
+
+
+def test_a_failure_while_superseding_for_a_skipped_source_changes_nothing(fixture, monkeypatch):  # noqa: F811
+    f, pid = fixture, fixture.project["id"]
+    a = own_block_source(f)
+    kept = [old(f, a, "One.", "one"), old(f, a, "Two.", "two")]
+    queue(f.store, pid, VERSION, VERSION)
+    real, calls = f.store.remember, []
+
+    def remember(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise ValueError("disk full")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(f.store, "remember", remember)
+    with pytest.raises(ValueError):
+        run(f, [NEW])
+    assert len(calls) == 2
+    for r in kept:
+        assert record(f, r["id"])["status"] == "proposed" and record(f, r["id"])["version"] == 1
+        assert len(f.store.record_history(r["id"])) == 1

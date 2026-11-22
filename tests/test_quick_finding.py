@@ -176,8 +176,13 @@ def test_confirmation_is_one_literal_line_in_both_languages():
 
 
 @pytest.fixture
-def stack(tmp_path, monkeypatch):
-    """The real chain of the popup: BrokerClient -> cockpit broker -> memory service -> ArcadeDB."""
+def stack(tmp_path, monkeypatch, workspace_person):
+    """The real chain of the popup: BrokerClient -> cockpit broker -> memory service -> ArcadeDB.
+
+    The popup runs inside the open workspace (#214): its client sends the workspace's proof, the broker passes
+    it on and the service checks it, here against a tmux that answers with the test's key.
+    """
+    monkeypatch.setattr("cairnmind.person_proof.workspace_headers", lambda settings, environ=None: workspace_person)
     settings = Settings.load(tmp_path / "memory", create=True)
     root = tmp_path / "repo"
     root.mkdir()
@@ -193,7 +198,9 @@ def stack(tmp_path, monkeypatch):
             reply = service.request(request.method, request.url.path, params=dict(request.url.params),
                                     content=request.content, headers={
                                         "Authorization": request.headers["authorization"],
-                                        "Content-Type": "application/json"})
+                                        "Content-Type": "application/json",
+                                        **{name: value for name, value in request.headers.items()
+                                           if name.lower().startswith("x-cairnmind-")}})
             return httpx.Response(reply.status_code, content=reply.content,
                                   headers={"Content-Type": "application/json"})
         app = create_cockpit_app(settings, runtime=Runtime(), proxy_transport=httpx.MockTransport(upstream),
@@ -251,10 +258,11 @@ async def test_saved_finding_reaches_store_byte_for_byte_and_is_visible_in_the_i
     assert [item["id"] for item in seen["items"]] == [record["id"]]
 
 
-def test_service_keeps_the_resume_gate_and_its_own_validation(stack, tmp_path):
+def test_service_keeps_the_resume_gate_and_its_own_validation(stack, tmp_path, workspace_person):
     from cairnmind.sessions import SessionManager
     settings, store, project, root, _, service = stack
-    headers = {"Authorization": f"Bearer {settings.token}"}
+    token_only = {"Authorization": f"Bearer {settings.token}"}
+    headers = {**token_only, **workspace_person}
     body = {"project": project["id"], "content": "Agents must not skip ACK.", "kind": "fact", "key": KEY}
     session = SessionManager(store, settings).prepare(project["id"], "codex", timeout=0)
     gated = service.post("/findings", json={**body, "session_id": session["session_id"]}, headers=headers)
@@ -263,6 +271,9 @@ def test_service_keeps_the_resume_gate_and_its_own_validation(stack, tmp_path):
                    {"worktree": str(tmp_path)}, {"key": "not-a-uuid"}, {"key": KEY.upper()}):
         assert service.post("/findings", json={**body, **change}, headers=headers).status_code == 400
     assert service.post("/findings", json=body).status_code == 401
+    # The token alone is no person's form: nothing is written, not even a proposed finding (#214).
+    assert service.post("/findings", json=body, headers=token_only).status_code == 403
+    assert service.post("/findings", json={**body, "status": "confirmed"}, headers=token_only).status_code == 403
     assert not [row for row in store.list_records(project["id"]) if row["kind"] != "checkpoint"]
     saved = service.post("/findings", json=body, headers=headers)
     assert saved.status_code == 200 and saved.json()["record"]["status"] == "proposed"
