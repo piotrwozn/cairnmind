@@ -22,9 +22,14 @@ The English sentences are the source; ``MESSAGES`` holds their Polish.
 from __future__ import annotations
 
 from contextlib import ExitStack
+import hashlib
+from pathlib import Path
 import re
 import sys
+from typing import NoReturn
+from uuid import uuid4
 
+from .sql import utc_now
 from .store_readonly import StoreNotReady
 from .terminal_safe import safe_text
 
@@ -47,7 +52,37 @@ UNREADABLE = (
     "This store carries a mark of an unfinished restore that cannot be read, so no command uses it. On the "
     "installation that writes this store, restore a whole backup with `cairnmind restore FILE`; the copies made before "
     "earlier restores are in backups/ of its data directory (before-restore-*).")
+UNDONE = "{error} The restore stopped, and the store was put back as it was before, from {before}."
+UNDONE_VECTORS = (
+    "{error} The restore stopped, and the store was put back as it was before, from {before}. That copy holds no "
+    "vectors: {jobs} embedding job(s) are pending again and the service rebuilds the vectors in the background; until "
+    "then search uses the text only.")
+NOT_UNDONE = (
+    "{error} The restore stopped, and putting the store back from {before} failed too ({undo_error}). Until a restore "
+    "finishes, no command uses the store: run `cairnmind restore {before}` to go back to the store as it was before, "
+    "or `cairnmind restore {backup}` to restore that backup again.")
+NO_UNDO = (
+    "{error} The restore stopped. The copy from before the first, unfinished restore ({before}) is not on this machine, "
+    "so the store was not put back. Until a restore finishes, no command uses the store: run `cairnmind restore "
+    "{backup}` again, or restore another whole backup.")
+COPY_CHANGED = ("the copy {before} changed after the restore wrote it, so it is not used to put the store back")
 MESSAGES = {
+    UNDONE: "{error} Przywracanie zostało przerwane, a magazyn przywrócono do stanu sprzed niego, z pliku {before}.",
+    UNDONE_VECTORS: (
+        "{error} Przywracanie zostało przerwane, a magazyn przywrócono do stanu sprzed niego, z pliku {before}. Ta "
+        "kopia nie zawiera wektorów: zadań osadzania, które znów czekają, jest {jobs}, a usługa odbuduje wektory w "
+        "tle; do tego czasu wyszukiwanie korzysta tylko z tekstu."),
+    NOT_UNDONE: (
+        "{error} Przywracanie zostało przerwane i przywrócenie magazynu z pliku {before} też się nie powiodło "
+        "({undo_error}). Dopóki jakieś przywracanie się nie zakończy, żadne polecenie nie używa magazynu: uruchom "
+        "`cairnmind restore {before}`, aby wrócić do stanu sprzed przywracania, albo `cairnmind restore {backup}`, aby "
+        "ponownie przywrócić tamtą kopię."),
+    NO_UNDO: (
+        "{error} Przywracanie zostało przerwane. Kopii sprzed pierwszego, niedokończonego przywracania ({before}) nie "
+        "ma na tym komputerze, więc magazynu nie przywrócono. Dopóki jakieś przywracanie się nie zakończy, żadne "
+        "polecenie nie używa magazynu: uruchom ponownie `cairnmind restore {backup}` albo przywróć inną pełną kopię."),
+    COPY_CHANGED: (
+        "kopia {before} zmieniła się po tym, jak przywracanie ją zapisało, więc nie posłuży do przywrócenia magazynu"),
     UNFINISHED: (
         "Przywracanie tego magazynu nie zostało dokończone: zaczęło się {started_at} w instalacji {installation}, z "
         "pliku {backup}. Dopóki jakieś przywracanie się nie zakończy, magazyn zawiera tylko część tej kopii i żadne "
@@ -68,6 +103,10 @@ MESSAGES = {
 }
 
 _TEXT_FIELDS = ("backup", "before", "installation_id", "started_at")
+
+
+class RestoreFailed(ValueError):
+    """A restore that stopped; the message says whether the store was put back."""
 
 
 class RestoreUnfinished(StoreNotReady):
@@ -186,6 +225,66 @@ def clear(store, types: list[str]) -> None:
                 budget -= count
                 if budget:  # fewer than asked: this type is empty now
                     types.pop(0)
+
+
+def _file_sha256(path: Path) -> str:
+    """The digest ``backup_reader.StreamedBackup`` reads from the file's bytes."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while block := handle.read(1 << 20):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _described(exc: BaseException) -> str:
+    text = str(exc).strip() or type(exc).__name__
+    return text if text.endswith((".", "!", "?", ")")) else text + "."
+
+
+def staged_restore(store, source, path: Path, claims) -> None:
+    """Replace the store with the validated backup `source` (read from `path`), as one outcome: the backup, or the
+    store as it was. Called by ``Store.restore`` once the writer is known."""
+    from .config import BACKUP_SUFFIXES
+    mark = unfinished(store.client)
+    if mark:
+        # Finishing an unfinished restore: the copy to go back to is the one from before it, not one of its half store.
+        before, before_sha256 = Path(mark["before"]), mark["before_sha256"]
+    else:
+        # No mark, or one that cannot be read and so names no copy: a copy of the store as it is now.
+        before = store.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}"
+        store.backup(before)
+        before_sha256 = _file_sha256(before)
+    mark = {"backup": str(path), "before": str(before), "before_sha256": before_sha256,
+            "installation_id": store.installation.id, "started_at": utc_now(), "undoing": False}
+    write_mark(store, mark)
+    try:
+        store._restore_from(source, claims)
+    except Exception as exc:  # noqa: BLE001 - every failure is undone or leaves the mark; none passes as it was
+        _undo(store, mark, _described(exc), exc)
+    clear_mark(store)
+
+
+def _undo(store, mark: dict, error: str, cause: BaseException) -> NoReturn:
+    """Put the store back from the copy made before the restore, then raise ``RestoreFailed`` saying so."""
+    from .backup_reader import opened_backup
+    from .store import RESTORE_TYPES
+    before, backup = Path(mark["before"]), safe_text(mark["backup"])
+    if not before.is_file():
+        raise RestoreFailed(NO_UNDO.format(error=error, before=safe_text(before), backup=backup)) from cause
+    try:
+        write_mark(store, {**mark, "undoing": True})
+        with opened_backup(before, store._validated_backup, RESTORE_TYPES) as copy:
+            # The copy is this store's own state, written by this restore and checked by its digest, not a foreign
+            # backup: nothing in it becomes a claim (#214), and the one-time upgrade step does not run.
+            if copy.digest != mark["before_sha256"]:
+                raise ValueError(COPY_CHANGED.format(before=safe_text(before)))
+            store._restore_from(copy, None)
+        clear_mark(store)
+    except Exception as second:  # noqa: BLE001 - the mark stays, and the person is told how to finish
+        raise RestoreFailed(NOT_UNDONE.format(error=error, undo_error=_described(second).rstrip("."),
+                                              before=safe_text(before), backup=backup)) from cause
+    jobs = store.embed_jobs_requeued
+    raise RestoreFailed((UNDONE_VECTORS if jobs else UNDONE).format(error=error, before=safe_text(before), jobs=jobs)) from cause
 
 
 def replace(store, source, claims) -> int | None:

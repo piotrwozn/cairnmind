@@ -315,6 +315,11 @@ class StreamedBackup:
         _raise_first(index, failures, types)
         self.vector_indexes = index.vector_indexes
 
+    @property
+    def digest(self) -> str:
+        """The SHA-256 of the file's bytes, as the first pass read them."""
+        return self._digest
+
     def _pass(self, canonical=None) -> Iterator[tuple]:
         self._handle.seek(0)
         raw = _Hashed(self._handle)
@@ -348,6 +353,8 @@ class StreamedBackup:
 
 class LoadedBackup:
     """A backup the in-memory reader loaded and validated, read in the order restore always used."""
+
+    digest = None  # none: a copy this version wrote is never read this way, and None equals no digest (fails closed)
 
     def __init__(self, payload):
         self._payload, self.vector_indexes = payload, payload["vector_indexes"]

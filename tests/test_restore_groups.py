@@ -12,6 +12,7 @@ import pytest
 from cairnmind import arcade
 from cairnmind.journal import JournalTransaction
 from cairnmind.restore_groups import DOCUMENT_BYTES_PER_REQUEST, GRAPH_BYTES_HELD, GraphGroups
+from cairnmind.restore_staged import RestoreFailed
 from cairnmind.sql import clean_row, insert_document, json_text, quote_name
 from cairnmind.store import DOCUMENT_TYPES, Store
 
@@ -195,9 +196,9 @@ def test_a_restore_that_fails_in_the_middle_of_a_group_changes_nothing(store, tm
     before = comparable(store.export())
     # The second group: the first has been sent and is part of the open transaction.
     left = _failing_at(monkeypatch, 2, lambda sql: statement in sql)
-    with pytest.raises(OSError, match="went away"):
+    with pytest.raises(RestoreFailed, match="went away.*put back as it was before"):
         store.restore(path)
-    assert left[0] == 0
+    assert left[0] <= 0  # the undo writes the same kinds of group again: it is the one failure that counted
     monkeypatch.undo()
     assert comparable(store.export()) == before
 
@@ -205,14 +206,17 @@ def test_a_restore_that_fails_in_the_middle_of_a_group_changes_nothing(store, tm
 def test_a_group_the_database_did_not_store_in_full_fails_the_restore(store, tmp_path, monkeypatch):
     path = _large(store, tmp_path)
     before = comparable(store.export())
-    command = JournalTransaction.command
+    command, short_once = JournalTransaction.command, []
 
     def short(self, sql, params=None):
         result = command(self, sql, params)
-        return result[:-1] if sql.startswith("INSERT INTO `chunks` CONTENT :rows") else result
+        if sql.startswith("INSERT INTO `chunks` CONTENT :rows") and not short_once:
+            short_once.append(sql)  # once: the undo writes its chunks in full, as an engine that recovered would
+            return result[:-1]
+        return result
 
     monkeypatch.setattr(JournalTransaction, "command", short)
-    with pytest.raises(RuntimeError, match="did not store every row"):
+    with pytest.raises(RestoreFailed, match="did not store every row"):
         store.restore(path)
     monkeypatch.undo()
     assert comparable(store.export()) == before

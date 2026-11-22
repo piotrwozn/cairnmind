@@ -1942,18 +1942,22 @@ class Store:
             raise ValueError("Invalid or corrupt Cairnmind backup") from exc
 
     def restore(self, backup, *, claims=None):
-        """Restore validated data atomically. Stop Cairnmind workers before calling.
+        """Restore validated data as one outcome: the whole backup, or the store as it was. Stop Cairnmind workers
+        before calling. The rows are written in transactions of bounded size, so a failure is undone from the safety
+        copy, and a restore that was cut off leaves a mark that refuses the store until a restore finishes (#362).
 
         With `claims` (restore_claims.BackupClaims) the restore keeps no person's act of the backup: each
         confirmation becomes the backup's claim and accepted record kinds are withdrawn (#214). Without it the
         rows are written as they are; `cairnmind restore` decides by the open workspace's key."""
         # The file is validated in two passes over it before anything changes, and read a third time for
         # the inserts; it is never held in memory whole (#196, backup_reader).
+        from .restore_staged import staged_restore
         from .store_writer import require_writer
-        with opened_backup(Path(backup).expanduser().resolve(), self._validated_backup, RESTORE_TYPES) as source:
+        path = Path(backup).expanduser().resolve()
+        with opened_backup(path, self._validated_backup, RESTORE_TYPES) as source:
             require_writer(self)  # only the writer restores, and the restored data keeps naming it (#70)
-            self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}")
-            self._restore_from(source, claims)
+            # The safety copy, the mark, the bounded transactions and, when one fails, the way back (#362).
+            staged_restore(self, source, path, claims)
         if claims is not None:
             self.confirmations_before_rule = None  # nothing restored is a person's, so nothing is marked as one
             return
