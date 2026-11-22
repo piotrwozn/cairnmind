@@ -270,7 +270,10 @@ def test_a_user_made_by_someone_else_meanwhile_refuses_the_change_before_it_crea
                                                                "databases": {new_names.database: ["admin"]}}))
         state, text = ns.change(request, expected)
         assert state == "refused" and "no longer what you agreed to" in text
-        assert "Created on ArcadeDB" not in text and f"the user {new_names.user} exists" in text, text
+        assert "Created on ArcadeDB" not in text, text
+        assert (f"On the server now: the user {new_names.user} exists, but the database {new_names.database} does not."
+                in text), text
+        assert "--yes" not in text and "Not tested yet" not in text, text
         with closing(ArcadeClient(replace(ns.local, arcade_password=ns.password_file.read_text().strip(),
                                           arcade_database=new_names.database), administrator=True)) as client:
             assert not client.database_exists()  # the database was not created for a user made by someone else
@@ -307,7 +310,9 @@ def test_a_database_made_by_someone_else_meanwhile_refuses_the_change_and_create
             client.server_command(f"create database {new_names.database}")
         state, text = ns.change(request, expected)
         assert state == "refused" and "no longer what you agreed to" in text, text
-        assert f"the user {new_names.user} does not sign in to the database {new_names.database}, which exists" in text
+        assert (f"On the server now: the database {new_names.database} exists, but the user {new_names.user} does not "
+                "sign in to it.") in text, text
+        assert "--yes" not in text and "Not tested yet" not in text, text
         assert not user_signs_in(ns, new_names)
         assert (ns.data / "config.json").read_bytes() == before
         settled(ns.data, remote=False)
@@ -330,6 +335,7 @@ def test_a_user_and_database_made_by_someone_else_meanwhile_refuse_the_change_an
         state, text = ns.change(request, expected)
         assert state == "refused" and "no longer what you agreed to" in text, text
         assert f"the user {new_names.user} signs in to the database {new_names.database}" in text, text
+        assert "--yes" not in text and "Not tested yet" not in text, text
         assert (ns.data / "config.json").read_bytes() == before
         settled(ns.data, remote=False)
     ns.stop()
@@ -349,6 +355,9 @@ def test_a_database_gone_meanwhile_refuses_a_change_agreed_as_the_user_only(inst
         before = (ns.data / "config.json").read_bytes()
         state, text = ns.change(request, expected)
         assert state == "refused" and "no longer what you agreed to" in text, text
+        assert (f"On the server now: the user {new_names.user} does not sign in, and the database "
+                f"{new_names.database} does not exist.") in text, text
+        assert "--yes" not in text and "Not tested yet" not in text, text
         assert not user_signs_in(ns, new_names)
         assert (ns.data / "config.json").read_bytes() == before
         settled(ns.data, remote=False)

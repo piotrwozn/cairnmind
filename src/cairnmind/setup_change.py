@@ -81,6 +81,11 @@ PLAN_CHANGED = ("What the change would do is no longer what you agreed to (a sto
                 "installation's settings answered differently just now), so nothing was changed.{notes} Open the "
                 "change again to see the new plan.")
 UNEXPECTED = "The change could not be made: {error} config.json was not changed."
+# What the server shows now, for the notes of PLAN_CHANGED: plain statements, not the dry run's "Not tested yet" (#390).
+NOW_NEITHER = "On the server now: the user {user} does not sign in, and the database {database} does not exist."
+NOW_DATABASE_ONLY = "On the server now: the database {database} exists, but the user {user} does not sign in to it."
+NOW_USER_ONLY = "On the server now: the user {user} exists, but the database {database} does not."
+NOW_NO_RIGHTS = "On the server now: the user {user} exists, but it has no rights on the database {database}."
 START_FAILED_PUT_BACK = ("The change was made, but the knowledge service did not start with the new settings: {reason} "
                          "config.json was put back as it was.{notes}")
 STEP_START = "starting the knowledge service"
@@ -143,6 +148,10 @@ MESSAGES = {
                    "tej instalacji odpowiedziały teraz inaczej), więc nic nie zostało zmienione.{notes} Otwórz zmianę "
                    "ponownie, aby zobaczyć nowy plan."),
     UNEXPECTED: "Nie udało się wprowadzić zmiany: {error} config.json nie został zmieniony.",
+    NOW_NEITHER: "Na serwerze teraz: użytkownik {user} nie loguje się, a baza {database} nie istnieje.",
+    NOW_DATABASE_ONLY: "Na serwerze teraz: baza {database} istnieje, ale użytkownik {user} nie loguje się do niej.",
+    NOW_USER_ONLY: "Na serwerze teraz: użytkownik {user} istnieje, ale bazy {database} nie ma.",
+    NOW_NO_RIGHTS: "Na serwerze teraz: użytkownik {user} istnieje, ale nie ma uprawnień do bazy {database}.",
     START_FAILED_PUT_BACK: ("Zmiana została wprowadzona, ale usługa wiedzy nie uruchomiła się z nowymi ustawieniami: "
                             "{reason} config.json przywrócono do poprzedniego stanu.{notes}"),
     STEP_START: "uruchamianiu usługi wiedzy",
@@ -273,6 +282,8 @@ def target_refusal(result: dict, request) -> tuple[str, dict] | None:
 _CREATES = {setup_profiles.CREATE_BOTH: [setup_profiles.USER_CREATED, setup_profiles.DATABASE_CREATED],
             setup_profiles.CREATE_USER: [setup_profiles.USER_CREATED],
             setup_profiles.CREATE_DB: [setup_profiles.DATABASE_CREATED], setup_profiles.NO_RIGHTS: [setup_profiles.NO_RIGHTS]}
+_NOW = {setup_profiles.CREATE_BOTH: NOW_NEITHER, setup_profiles.CREATE_USER: NOW_DATABASE_ONLY,
+        setup_profiles.CREATE_DB: NOW_USER_ONLY, setup_profiles.NO_RIGHTS: NOW_NO_RIGHTS}
 
 
 def agreed_plan(result: dict) -> dict:
@@ -312,7 +323,8 @@ def same_creation(expected: dict) -> Callable[[tuple], None]:
     that signs in now is TEST_STORAGE_OK, which creates nothing)."""
     def check(found: tuple) -> None:
         if _made(expected["writer"]) != _CREATES.get(found[0], []):
-            raise SetupRefused(PLAN_CHANGED, notes=[found])
+            sentence = _NOW.get(found[0])  # TEST_STORAGE_OK, a plain statement of fact, stays as it is
+            raise SetupRefused(PLAN_CHANGED, notes=[(sentence, found[1]) if sentence else found])
     return check
 
 

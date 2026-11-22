@@ -697,8 +697,25 @@ def test_a_user_created_by_someone_else_between_the_consent_and_the_change_refus
                         lambda candidate, admin, **kwargs: {"created": False, "database_created": False})
     state, text = rig.go(request, expected=expected)
     assert state == "refused" and setup_change.PLAN_CHANGED[:40] in said(text), text
+    assert "--yes" not in said(text) and "Not tested yet" not in said(text), text
     assert rig.starts  # the service was brought back on the old settings
     rig.untouched(before)
+
+
+def test_the_notes_of_a_changed_plan_say_what_the_server_shows_now_in_plain_sentences():
+    named = {"url": "u", "user": "alice", "database": "notes"}
+    check = setup_change.same_creation({"writer": []})  # agreed: nothing is created
+    for found, now in ((setup_profiles.CREATE_BOTH, setup_change.NOW_NEITHER),
+                       (setup_profiles.CREATE_USER, setup_change.NOW_DATABASE_ONLY),
+                       (setup_profiles.CREATE_DB, setup_change.NOW_USER_ONLY),
+                       (setup_profiles.NO_RIGHTS, setup_change.NOW_NO_RIGHTS)):
+        with pytest.raises(setup_profiles.SetupRefused) as refused:
+            check((found, named))
+        assert refused.value.values["notes"] == [(now, named)]
+        for language in ("en", "pl"):
+            text = render_one((now, named), language)
+            assert "alice" in text and "notes" in text and "--yes" not in text and "Not tested yet" not in text
+        assert setup_change.MESSAGES[now] != now
 
 
 def test_a_user_that_the_change_creates_as_agreed_is_changed_and_the_writer_is_read_afterwards(rig):
