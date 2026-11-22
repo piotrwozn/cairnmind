@@ -126,6 +126,16 @@ LOCAL_DATA_NEW = "The store on this machine has no database {database}; with --e
 BACKUP_PLAN = ("The backup: the store at {url} is read into {path}, and nothing is written to it; the file is checked, "
                "then restored into the store on this machine, whose current contents first go to a safety backup in "
                "backups/.")
+RESTORE_WILL_KEEP = ("A person's confirmations in the backup: the open workspace of this installation answers with its "
+                     "key now, so they will be kept, as `cairnmind restore` keeps them; the key is read again just "
+                     "before the restore.")
+RESTORE_WILL_CLAIM = ("A person's confirmations in the backup: no open workspace of this installation answers with its "
+                      "key now, so, as with `cairnmind restore`, each will be kept only as the backup's claim, not "
+                      "verified here, and accepted transcript record kinds will be withdrawn. To keep them, open the "
+                      "workspace (`cairnmind`), stop the service (`cairnmind stop`) and run this command from there; "
+                      "the key is read again just before the restore.")
+RESTORE_KEPT = ("A person's confirmations in the backup were kept: the open workspace of this installation answered "
+                "with its key, as `cairnmind restore` requires.")
 CHANGE_MODEL = "The {role} model: from {before} to {after}."
 MODEL_AT = "{model} at {url}"
 AGENT_ON = "The knowledge agent will be turned on; it is disabled now (deterministic-only mode)."
@@ -247,6 +257,9 @@ MESSAGES = {
     LOCAL_DATA_FOUND: "Baza na tym komputerze nadal ma bazę danych {database} sprzed zmiany; z --empty jest używana tak, jak została zostawiona, bez niczego z bazy pod adresem {url}.",
     LOCAL_DATA_NEW: "Baza na tym komputerze nie ma bazy danych {database}; z --empty zaczyna pusta.",
     BACKUP_PLAN: "Kopia zapasowa: baza pod adresem {url} jest czytana do {path}, bez żadnego zapisu do niej; plik jest sprawdzany, a potem odtwarzany w bazie na tym komputerze, której obecna zawartość najpierw trafia do kopii bezpieczeństwa w backups/.",
+    RESTORE_WILL_KEEP: "Potwierdzenia osoby w kopii zapasowej: otwarte środowisko tej instalacji odpowiada teraz swoim kluczem, więc zostaną zachowane, tak jak zachowuje je `cairnmind restore`; klucz jest czytany ponownie tuż przed odtwarzaniem.",
+    RESTORE_WILL_CLAIM: "Potwierdzenia osoby w kopii zapasowej: żadne otwarte środowisko tej instalacji nie odpowiada teraz swoim kluczem, więc, tak jak przy `cairnmind restore`, każde zostanie zachowane tylko jako twierdzenie kopii zapasowej, niezweryfikowane tutaj, a zaakceptowane rodzaje rekordów transkrypcji zostaną wycofane. Aby je zachować, otwórz środowisko (`cairnmind`), zatrzymaj usługę (`cairnmind stop`) i uruchom to polecenie stamtąd; klucz jest czytany ponownie tuż przed odtwarzaniem.",
+    RESTORE_KEPT: "Potwierdzenia osoby w kopii zapasowej zostały zachowane: otwarte środowisko tej instalacji odpowiedziało swoim kluczem, czego wymaga `cairnmind restore`.",
     CHANGE_MODEL: "Model {role}: z {before} na {after}.",
     MODEL_AT: "{model} pod adresem {url}",
     AGENT_ON: "Agent wiedzy zostanie włączony; teraz jest wyłączony (tryb tylko deterministyczny).",
@@ -691,6 +704,8 @@ def _plan_lines(settings, request, plan, moves, result) -> None:
         changes.append((ENGINE_START, {"engine": how}))
         if plan["target"]:
             changes.append((BACKUP_PLAN, {"url": url, "path": plan["target"]}))
+            from .person_proof import restore_proof  # as far as it is known now; checked_restore reads it again
+            changes.append((RESTORE_WILL_KEEP if restore_proof(settings) == "key" else RESTORE_WILL_CLAIM, {}))
         else:
             data = settings.data_dir / "arcade" / "databases" / fields["arcade_database"]
             changes.append((LOCAL_DATA_FOUND if data.is_dir() else LOCAL_DATA_NEW,
@@ -737,6 +752,7 @@ def _back_to_local(settings, plan, result, say, state) -> Settings:
     config.json is still as it was, then the settings switch, the engine starts, the backup is restored. The remote
     store is only read."""
     from .backup_reader import opened_backup
+    from .restore_claims import checked_restore
     from .store import RESTORE_TYPES, Store
     url, target = database_mode.address(settings), plan["target"]
     if target:
@@ -772,12 +788,14 @@ def _back_to_local(settings, plan, result, say, state) -> Settings:
     if target:
         state["step"] = (STEP_RESTORE, {})
         say(render_one((RESTORING, {"path": written})))
-        restored = Store(local.data_dir, settings=local)
-        restored.restore(written)  # validation, writer check and safety backup included
+        # The rule of `cairnmind restore` (#214): validation, writer check, safety backup and the workspace's key.
+        outcome = checked_restore(local, written, lambda: Store(local.data_dir, settings=local))
         state["restored"] = (written, local.data_dir / "backups")
         result["done"].append((RESTORED, {"path": written, "backups": local.data_dir / "backups"}))
-        from .confirmation_upgrade import report
-        marks = report(restored.confirmations_before_rule)  # what `cairnmind restore` also says
+        notice = outcome.pop("notice", None)
+        result["restore"] = outcome
+        marks = outcome.get("confirmations_before_rule")
+        result["done"].append(notice or (RESTORE_KEPT, {}))
         if marks:
             result["done"].append((CONFIRMATIONS, {"marked": marks["marked_as_a_persons"],
                                                    "left": marks["still_before_the_rule"]}))
@@ -880,5 +898,5 @@ def as_json(result: dict) -> dict:
     """The result for --json: every sentence in English, and the three topology lines after a change."""
     shown = {key: [render_one(item) for item in result[key]]
              for key in ("tests", "changes", "writer", "rebuild", "left_behind", "done", "next")}
-    return {"profile": result["profile"], "applied": result["applied"], **shown,
+    return {"profile": result["profile"], "applied": result["applied"], **shown, **result.get("restore", {}),
             "topology": (result["topology"] or {}).get("lines", [])}

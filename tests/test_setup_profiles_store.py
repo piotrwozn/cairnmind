@@ -13,10 +13,14 @@ from dataclasses import replace
 import pytest
 from typer.testing import CliRunner
 
+from cairnmind import person_proof
 from cairnmind.arcade import ArcadeClient
 from cairnmind.cli import app
 from cairnmind.config import Settings
+from cairnmind.confirmation import confirmation_of
 from cairnmind.database_mode import connect_only
+from cairnmind.store import Store
+from conftest import as_person
 from database_relay import Relay
 from test_connect_only import data_directory, repository, test_engine  # noqa: F401 - test_engine is a fixture
 
@@ -35,8 +39,12 @@ def counts(settings) -> tuple[int, dict]:
 
 
 @pytest.mark.no_schema_template
+@pytest.mark.parametrize("proof", ["unavailable", "key"], ids=["without_the_key", "with_the_key"])
 def test_moving_to_a_connect_only_store_and_back_with_a_backup_keeps_every_row_and_leaves_the_remote_store(
-        tmp_path, test_engine):  # noqa: F811
+        tmp_path, test_engine, monkeypatch, proof):  # noqa: F811
+    # The way back restores under the rule of `cairnmind restore` (#214): only the workspace's key keeps a
+    # person's confirmation; without it the confirmation becomes the backup's claim, and the count is said.
+    monkeypatch.setattr(person_proof, "restore_proof", lambda settings: proof)
     port, secret = test_engine
     prefix = os.environ["CAIRNMIND_ARCADE_DB_PREFIX"]
     data = data_directory(tmp_path, arcade_url=f"http://127.0.0.1:{port}", arcade_password=secret,
@@ -65,13 +73,27 @@ def test_moving_to_a_connect_only_store_and_back_with_a_backup_keeps_every_row_a
         (second / "other.py").write_text("OTHER = 1\n\n\ndef other():\n    return OTHER\n")
         assert cli(data, "project", "add", "second", str(second)).exit_code == 0
         remote = Settings.load(data)
+        remote_store = Store(data, settings=remote)
+        pid = remote_store.resolve_project("second")["id"]
+        note = remote_store.snapshot(pid, "manual://note", "A note a person wrote", "manual")
+        typed = as_person(remote_store, pid, {"kind": "decision", "content": "Typed by a person"}, [note["id"]])
         remote_rows, remote_head = counts(remote)
         assert remote_rows >= 1 and counts(local)[0] == local_before  # the local store was left as it was
 
         backup = tmp_path / "from-remote.cairnmind.json.gz"
-        back = cli(data, "setup", "local", "--backup", str(backup), "--yes")
+        back = cli(data, "setup", "local", "--backup", str(backup), "--yes", "--json")
         assert back.exit_code == 0, (back.output, back.exception)
         assert backup.exists() and not connect_only(Settings.load(data))
+        shown = json.loads(back.stdout)
+        row = Store(data, settings=Settings.load(data)).query("SELECT FROM records WHERE id=:id", {"id": typed["id"]})[0]
+        if proof == "key":
+            assert shown["person_confirmations"] == "kept" and confirmation_of(row)["by"] == "person"
+        else:
+            assert (confirmation_of(row)["by"], confirmation_of(row).get("package")) == ("import", "backup")
+            assert (shown["person_confirmations"], shown["confirmations_turned_into_claims"]) == (
+                "claims_of_the_backup", 1)
+            assert any("Restored without the person's workspace" in line and "1 confirmed record(s)" in line
+                       for line in shown["done"])
         # Every row of the remote store is in the local one; the remote store is as it was.
         assert counts(Settings.load(data))[0] == remote_rows
         assert counts(remote) == (remote_rows, remote_head)

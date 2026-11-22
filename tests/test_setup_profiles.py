@@ -19,12 +19,13 @@ import pytest
 from typer.testing import CliRunner
 
 from conftest import plain_words
-from cairnmind import (backup_reader, cli, database_credentials, engine, engine_docker, memory_models, setup_profiles,
-                       store_writer)
+from cairnmind import (backup_reader, cli, database_credentials, engine, engine_docker, memory_models, person_proof,
+                       setup_profiles, store_writer)
 from cairnmind import topology as topology_module
 from cairnmind.arcade import ArcadeError
 from cairnmind.config import Settings, derived_database, is_own_variable
 from cairnmind.database_mode import connect_only
+from cairnmind.restore_claims import BackupClaims, restore_notice
 from cairnmind.store import Store
 from cairnmind.store_readonly import StoreNotReady
 from cairnmind.memory_openai import OpenAICompatible
@@ -52,9 +53,11 @@ class World:
         self.checked = {}
         self.passwords = []  # what each engine start was given to sign in with
         self.backup_error = self.check_error = self.restore_error = self.start_error = None
+        self.proof, self.claims = "key", []  # what restore_proof answers; the claims each restore was given (#214)
+        monkeypatch.setattr(person_proof, "restore_proof", lambda settings: self.proof)
         monkeypatch.setattr(Store, "open_readonly", classmethod(lambda cls, settings: self.open_readonly(settings)))
         monkeypatch.setattr(Store, "__init__", lambda store, data_dir, **kwargs: self.log.append(("Store", self.mode())))
-        monkeypatch.setattr(Store, "restore", lambda store, path: self.restore(path))
+        monkeypatch.setattr(Store, "restore", lambda store, path, claims=None: self.restore(path, claims))
         monkeypatch.setattr(backup_reader, "opened_backup", self.opened_backup)
         monkeypatch.setattr(engine, "start_command", self.start_command)
         monkeypatch.setattr(engine_docker, "choose_engine_mode", self.choose_engine_mode)
@@ -122,8 +125,9 @@ class World:
             raise self.check_error
         yield None
 
-    def restore(self, path):
+    def restore(self, path, claims):
         self.log.append(("restore", (str(path), self.mode())))
+        self.claims.append(claims)
         if self.restore_error:
             raise self.restore_error
 
@@ -775,6 +779,33 @@ def test_the_dry_run_of_local_starts_and_writes_nothing(tmp_path, world):
     for words in (f"Tested: the store at {DB} can be read for the backup.", "The backup: the store at",
                   "Nothing was changed. To make these changes"):
         assert words in said(result), (words, result.output)
+
+
+@pytest.mark.parametrize("proof", ["key", "unavailable", "no_key"])
+def test_the_restore_of_setup_goes_through_the_rule_of_cairnmind_restore(tmp_path, world, proof):
+    connect_only_installation(tmp_path)
+    world.proof = proof
+    plan = invoke(tmp_path, "setup", "local", "--backup", str(tmp_path / "plan.cairnmind.json.gz"))
+    expected = setup_profiles.RESTORE_WILL_KEEP if proof == "key" else setup_profiles.RESTORE_WILL_CLAIM
+    assert plain_words(expected) in said(plan), plan.output
+    assert MESSAGES[expected] in setup_profiles.render(plan_of(tmp_path, world), "pl")
+    result = invoke(tmp_path, "setup", "local", "--backup", str(tmp_path / "b.cairnmind.json.gz"), "--yes", "--json")
+    assert result.exit_code == 0, result.output
+    shown = json.loads(result.stdout)
+    if proof == "key":
+        assert world.claims == [None] and shown["person_confirmations"] == "kept"
+        assert setup_profiles.RESTORE_KEPT in shown["done"]
+    else:
+        assert isinstance(world.claims[0], BackupClaims) and world.claims[0].where == "b.cairnmind.json.gz"
+        assert (shown["person_confirmations"], shown["confirmations_turned_into_claims"],
+                shown["record_kinds_withdrawn"]) == ("claims_of_the_backup", 0, 0)
+        assert restore_notice(proof, world.claims[0]) in shown["done"]
+
+
+def plan_of(tmp_path, world):
+    """The plan of `setup local --backup` as run() returns it, for rendering in another language."""
+    return run(Settings.load(tmp_path / "data"), Request("local", backup=str(tmp_path / "pl.cairnmind.json.gz")),
+               yes=False, say=lambda text: None)
 
 
 def test_a_model_save_that_fails_after_the_storage_switch_puts_everything_back(tmp_path, world):

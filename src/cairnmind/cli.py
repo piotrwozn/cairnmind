@@ -2292,21 +2292,13 @@ def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
     # A missing path or a folder is refused while the arguments are read, before the store or engine is touched.
     with _service_stopped(ctx.obj, "Run cairnmind stop first; the service still holds the store lock",
                           "Run cairnmind stop first; restoring requires a stopped service"):
-        from cairnmind.person_proof import restore_proof
-        from cairnmind.restore_claims import BackupClaims, restore_notice
-        proof = restore_proof(ctx.obj)  # read once, before anything changes; only "key" keeps a person's acts (#214)
-        claims = None if proof == "key" else BackupClaims(source.name)
-        store = store_for(ctx.obj)
-        store.restore(source, claims=claims)
-    if claims is not None:
-        typer.echo(f"Cairnmind: {restore_notice(proof, claims)}", err=True)
-        output({"restored": True, "person_confirmations": "claims_of_the_backup",
-                "confirmations_turned_into_claims": claims.confirmations,
-                "record_kinds_withdrawn": claims.record_kinds})
-        return
-    from cairnmind.confirmation_upgrade import report
-    marks = report(getattr(store, "confirmations_before_rule", None))
-    output({"restored": True, "person_confirmations": "kept", **({"confirmations_before_rule": marks} if marks else {})})
+        from cairnmind.restore_claims import checked_restore
+        # The proof is read once, before anything changes; only "key" keeps a person's acts (#214).
+        outcome = checked_restore(ctx.obj, source, lambda: store_for(ctx.obj))
+    notice = outcome.pop("notice", None)
+    if notice:
+        typer.echo(f"Cairnmind: {notice[0].format(**notice[1])}", err=True)
+    output({"restored": True, **outcome})
 
 
 @app.command()
