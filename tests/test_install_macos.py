@@ -378,6 +378,54 @@ def test_the_refusal_to_replace_a_running_workspace_shows_a_count_and_five_paths
         shutil.rmtree(system_temp, ignore_errors=True)
 
 
+def test_the_refusal_names_the_data_directory_of_each_socket_it_can_ask(tmp_path):
+    """#169: a person tells a real session from a leftover by its data directory. Bash builtins only, bash 3.2 syntax."""
+    import socket
+    import tempfile
+    script = SCRIPT.read_text()
+    start = script.index("# --- what an installed version left running")
+    system_temp = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp"))
+    try:
+        functions = script[start:script.index("# --- end ---", start)]
+        panes = tmp_path / "panes"
+        panes.mkdir()
+        starts = {  # the first pane's start command of each server, as tmux prints it
+            "ui-0000000000000001": "'/usr/bin/python3' -I -m cairnmind.terminal_panels --kind sidebar --workspace-id default "
+                                   "--data-dir '/home/me/my data'\nsecond pane --data-dir /other",
+            "native-0000000000000002": "python -I -m cairnmind.native_worker --spec /home/me/.local/share/cairnmind/runtime/abc.launch.json",
+            "native-0000000000000003": "",  # asked, no answer: listed as before
+            "native-0000000000000004": "bash -c 'sleep 1'"}  # another command
+        servers = []
+        for name, text in starts.items():
+            (panes / name).write_text(text + "\n")
+            folder = system_temp / f"cairnmind-{name.split('-')[0]}-{os.getuid()}-{name.split('-')[1]}"
+            folder.mkdir()
+            server = socket.socket(socket.AF_UNIX)
+            server.bind(str(folder / "tmux.sock"))
+            servers.append(server)
+        bin_dir = tmp_path / "bin"
+        tool(bin_dir / "tmux", 'if [ "$3" = list-panes ]; then d="${2%/tmux.sock}"; d="${d##*/}"; d="${d#cairnmind-}"; '
+             f'k="${{d%%-*}}"; n="${{d##*-}}"; cat "{panes}/$k-$n"; fi')
+        tool(bin_dir / "cairnmind", 'if [ "$1 $2" = "workspace status" ]; then echo \'{"available": false}\'; fi')
+        python = tmp_path / "tools" / "cairnmind" / "bin" / "python"
+        result = subprocess.run(
+            [BASH, "-c", "set -euo pipefail\n" + functions + f'\nstop_installed "{bin_dir}/cairnmind" cairnmind "{python}"'],
+            env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "TMPDIR": str(system_temp)},
+            capture_output=True, text=True, timeout=30)
+        for server in servers:
+            server.close()
+        assert result.returncode == 1, result.stderr
+        lines = result.stderr.splitlines()
+        assert lines[0] == "A workspace or coding sessions of the installed version are running (4):"
+        shown = lines[1:5]
+        assert all(f"-{os.getuid()}-000000000000000{number}/tmux.sock" in line for number, line in enumerate(shown, 1))
+        assert shown[0].endswith(" (data directory: /home/me/my data)")
+        assert shown[1].endswith(" (data directory: /home/me/.local/share/cairnmind)")
+        assert shown[2].endswith("tmux.sock") and shown[3].endswith("tmux.sock")
+    finally:
+        shutil.rmtree(system_temp, ignore_errors=True)
+
+
 def test_the_run_and_service_checks_and_a_failed_stop_run_on_the_bash_of_macos(tmp_path):
     script = SCRIPT.read_text()
     start = script.index("# --- what an installed version left running")
