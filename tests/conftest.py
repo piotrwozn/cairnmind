@@ -385,6 +385,18 @@ def no_inherited_session():
 
 
 @pytest.fixture(autouse=True)
+def no_upgrade_mark(tmp_path_factory):
+    """No test sees an upgrade the person who runs the tests may have in progress (#298); a test that wants a mark
+    points mark_path elsewhere. By hand, not monkeypatch, for the reason given at no_inherited_session."""
+    from cairnmind import upgrade_mark
+    original = upgrade_mark.mark_path
+    missing = tmp_path_factory.getbasetemp() / "no-upgrade-mark" / "upgrade-in-progress"
+    upgrade_mark.mark_path = lambda: missing
+    yield
+    upgrade_mark.mark_path = original
+
+
+@pytest.fixture(autouse=True)
 def models_found_at_init():
     """`cairnmind init` asks the model server whether it has the models (#274). No test asks a real one: here the
     models are found, as every installation before 0.13.0 counted them, unless a test installs another answer.
