@@ -18,6 +18,8 @@ COMMIT_NOTE = ("The check writes nothing. The import also checks every quoted pa
                "published memory folder, with their file names in its last field.")
 REPLACED_HEADING = ("These records were confirmed or disputed on this computer, and the import puts the published "
                     "text or status in their place ({count}):")
+ARCHIVE_HEADING = ("These records were confirmed or disputed on this computer, and the import puts the imported "
+                   "text or status in their place ({count}):")
 COUNTS = ("New: {inserted} · moved on: {advanced} · taken from the published side: {taken} · unchanged: {unchanged} "
           "· plans: {plans}")
 
@@ -49,6 +51,8 @@ MESSAGES = {
         "Żaden rekord potwierdzony ani zakwestionowany na tym komputerze nie zostanie zastąpiony.",
     "Taken from the published side; your versions stay in the history ({count}):":
         "Wzięte ze strony opublikowanej; twoje wersje zostają w historii ({count}):",
+    ARCHIVE_HEADING: "Te rekordy zostały potwierdzone lub zakwestionowane na tym komputerze, a import wstawia w ich "
+                     "miejsce zaimportowaną treść lub status ({count}):",
     "Nothing imported is verified here.": "Nic z zaimportowanego nie jest tu zweryfikowane.",
     "Commit {commit} holds no published memory of this project. Nothing was imported.":
         "Commit {commit} nie zawiera opublikowanej pamięci tego projektu. Niczego nie zaimportowano.",
@@ -96,6 +100,26 @@ def take_error(value: str) -> str | None:
 
 def count(value) -> int:
     return len(value) if isinstance(value, list) else value if type(value) is int else 0
+
+
+def archive_replaced(result) -> list[str]:
+    """The records an archive import replaces of this computer's verdicts, as the check listed them: the list a
+    person agrees to and the one the import is sent with (#333)."""
+    here = result.get("replaces_confirmed_here") if isinstance(result, dict) else None
+    return [str(item) for item in (here.get("records") if isinstance(here, dict) else None) or []]
+
+
+def archive_text(result: dict, language: str) -> str:
+    """What the archive import's check says: the summary, then every record it replaces, none cut (the view scrolls)."""
+    from .terminal_i18n import tr
+    from .terminal_safe import safe_text
+    from .terminal_ui import summary_text
+    lines = [summary_text(result, language)]
+    replaced = archive_replaced(result)
+    if replaced:
+        lines.append(tr(ARCHIVE_HEADING, language, count=len(replaced)))
+        lines.extend("  " + safe_text(item) for item in replaced)
+    return "\n".join(lines)
 
 
 def preview_text(result: dict, t) -> str:

@@ -12,6 +12,7 @@ from cairnmind.terminal_inspector import _VIEWS, InspectorApp
 from cairnmind.terminal_proposed import (BASIS_WORDS, DAYS_ERROR, SUMMARY_ONE_DAY, TEXT_WIDTH, days_error,
                                         list_summary)
 from cairnmind.terminal_ui import FormModal
+from consent_steps import consent_drawn
 from test_terminal_panels import settle, setup
 
 ITEMS = [
@@ -134,6 +135,9 @@ async def test_an_entry_is_reviewed_through_the_inspector_review_and_then_leaves
         await pilot.pause()
         app.screen.query_one("#field-reason", TextArea).text = "Read the transcript."
         await pilot.click("#form-submit")
+        await consent_drawn(app, pilot)
+        assert writes(broker) == []
+        await pilot.click("#confirm-yes")
         await settle(app, pilot)
         assert writes(broker) == [("POST", "/api/inspector/records/record-a/review",
                                    {"project": "project-a", "action": "confirm", "expected_version": 3,

@@ -75,7 +75,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_doc_links", "test_stall_watch", "test_restore_claims_units",
     "test_measure_service_spend", "test_compare_model_paths_script",
     "test_upgrade_mark", "test_upgrade_start", "test_service_version", "test_other_version",
-    "test_short_answers",
+    "test_short_answers", "test_person_acts_consent",
 })
 
 TMUX_MODULES = frozenset({

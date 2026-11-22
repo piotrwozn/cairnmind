@@ -12,8 +12,9 @@ from cairnmind.terminal_detail import joined, record_parts
 from cairnmind import terminal_i18n
 from cairnmind.terminal_i18n import tr
 from cairnmind.terminal_inspector import InspectorApp
-from cairnmind.terminal_panels import SidebarApp
+from cairnmind.terminal_panels import ConfirmModal, SidebarApp
 from cairnmind.terminal_ui import FormModal, MessageModal
+from consent_steps import consent_drawn
 from test_api_panels import ProfileBroker
 from test_terminal_panels import settle, setup
 
@@ -59,6 +60,9 @@ async def test_the_notice_after_a_review_reads_in_the_panel_language(tmp_path, m
         await wait_until(pilot, lambda: isinstance(app.screen, FormModal) and app.screen.is_mounted)
         app.screen.query_one("#field-reason", TextArea).text = "Read the source."
         await pilot.press("ctrl+s")
+        await consent_drawn(app, pilot)
+        assert broker.record["status"] != "confirmed"
+        await pilot.click("#confirm-yes")
         await settle(app, pilot)
         assert broker.record["status"] == "confirmed"
         assert notice_of(app) == saved
@@ -80,10 +84,17 @@ async def test_the_review_dialog_names_its_own_action(tmp_path, monkeypatch, siz
         await settle(app, pilot)
         app.review(action)
         await wait_until(pilot, lambda: isinstance(app.screen, FormModal) and app.screen.is_mounted)
-        assert str(app.screen.query_one("#form-submit", Button).label) == label
+        # The form only collects the reason (#332): its button says Continue; the act is named in the dialog after it.
+        continues = tr("Continue", language)
+        assert str(app.screen.query_one("#form-submit", Button).label) == continues
         hint = str(app.screen.query_one(".cm-hint", Static).render())
-        assert hint == tr("Ctrl+S: {action} · Esc: cancel", language, action=label)
+        assert hint == tr("Ctrl+S: {action} · Esc: cancel", language, action=continues)
+        app.screen.query_one("#field-reason", TextArea).text = "Not what we agreed."
+        await pilot.press("ctrl+s")
+        modal = await consent_drawn(app, pilot)
+        assert str(modal.query_one("#confirm-yes", Button).label) == label
         await pilot.press("escape")
+        await wait_until(pilot, lambda: not isinstance(app.screen, ConfirmModal))
 
 
 # Switching language does not re-render an inspector view that is already open

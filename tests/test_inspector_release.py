@@ -12,6 +12,7 @@ from cairnmind.person_proof import PROOF_MISSING
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
 from cairnmind.terminal_inspector import InspectorApp
+from consent_steps import consent_drawn
 from test_terminal_panels import FakeBroker, setup, settle
 
 RELEASE = "/api/inspector/records/record-a/release"
@@ -69,6 +70,9 @@ async def test_the_inspector_releases_a_record(tmp_path, monkeypatch, language):
                   "the record. A registered secret is never released.", language) in note
         app.screen.query_one("#field-reason", TextArea).text = "The documented example key."
         await pilot.click("#form-submit")
+        await consent_drawn(app, pilot)
+        assert posts(broker) == []  # the form sent nothing (#332)
+        await pilot.click("#confirm-yes")
         await settle(app, pilot)
         assert posts(broker) == [(RELEASE, {"project": "project-a", "reason": "The documented example key.",
                                             "worktree": workspace.value["worktree"]})]
@@ -115,6 +119,8 @@ async def test_a_refused_release_says_why_and_is_not_sent_again(tmp_path, monkey
         await open_release_form(app, pilot)
         app.screen.query_one("#field-reason", TextArea).text = "Example."
         await pilot.click("#form-submit")
+        await consent_drawn(app, pilot)
+        await pilot.click("#confirm-yes")
         await settle(app, pilot)
         shown = str(app.query_one("#panel-notice", Static).render())
         assert "The record was not released." in shown and "403" in shown
