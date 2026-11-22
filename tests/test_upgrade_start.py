@@ -46,6 +46,20 @@ def test_a_running_service_is_still_used_during_an_upgrade_so_stop_works(tmp_pat
     cli.ensure_service(settings)
 
 
+def test_a_coding_session_is_refused_during_an_upgrade_even_beside_a_running_service(tmp_path, monkeypatch, capsys):
+    import typer
+    from cairnmind import integrations
+    settings = Settings.load(tmp_path / "data")
+    monkeypatch.setattr(cli, "service_alive", lambda settings: True)
+    monkeypatch.setattr(upgrade_mark, "state", lambda: RUNNING)
+    monkeypatch.setattr(cli.subprocess, "Popen", forbidden)
+    with pytest.raises(typer.Exit):
+        cli._refuse_during_upgrade()  # what `cairnmind run` calls first
+    assert upgrade_mark.NOTE_RUNNING.format(pid=4242) in capsys.readouterr().err
+    with pytest.raises(cli.UpgradeInProgress):  # a session the workspace prepares
+        integrations._prepare_session(settings, {"id": "p"}, "claude", tmp_path, None)
+
+
 def began_while_starting(tmp_path, monkeypatch, status):
     """No mark at the first check, a running installer once the started service answers."""
     settings = Settings.load(tmp_path / "data", create=True)

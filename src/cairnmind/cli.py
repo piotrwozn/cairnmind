@@ -362,6 +362,22 @@ class ServiceOfOtherVersion(ServiceDidNotStart):
     """This data directory's service runs another version (service_version.py): nothing is sent to it (#319)."""
 
 
+def ensure_no_upgrade() -> None:
+    """A coding session starts nothing of the version being replaced, even beside a running service, whose stop the
+    installer may be about to make (#319). ensure_service itself reads the mark only when it has to start."""
+    from cairnmind import upgrade_mark
+    reason = upgrade_mark.refusal()
+    if reason:
+        raise UpgradeInProgress(reason)
+
+
+def _refuse_during_upgrade() -> None:
+    try:
+        ensure_no_upgrade()
+    except UpgradeInProgress as exc:
+        refuse(str(exc))
+
+
 def _ensure_service_or_refuse(settings: Settings) -> None:
     try:
         started = ensure_service(settings)
@@ -2033,6 +2049,7 @@ def install(ctx: typer.Context, project: ProjectArg):
 def run(ctx: typer.Context, project: ProjectArg, client: ClientArg, worktree: Path | None = None):
     """Start Codex or Claude Code in the project, bound to its memory. Arguments after -- go to the client."""
     from cairnmind.integrations import run_client
+    _refuse_during_upgrade()
     _ensure_service_or_refuse(ctx.obj)
     selected = store_for(ctx.obj).resolve_project(project)
     if worktree:
