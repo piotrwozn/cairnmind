@@ -152,7 +152,7 @@ The inspector shows records, full sources, raw and normalized conversations, met
 
 The global inbox of unassigned entries keeps sources that have no certain project. Reading them or selecting them in the graph does not assign them to the current project.
 
-**Memory** opens the record overview. **More → Snapshots and export** opens snapshot preview, saving, import check, import and automation settings. The existing commands also work:
+**Memory** opens the record overview. **More → Snapshots and export** opens snapshot preview, saving, import check, import, **Team memory** (published team memory from a folder or a commit: a check that lists every record confirmed or disputed here that it would replace, then the import after you agree) and automation settings. The existing commands also work:
 
 ```bash
 cairnmind memory snapshot my-app --preview

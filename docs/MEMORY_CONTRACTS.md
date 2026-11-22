@@ -89,10 +89,14 @@ and `/memory/import-commit` refuse a request that names a session, except its dr
 run, which writes nothing. An import that would put another text or status in
 the place of a record that was confirmed or disputed on this machine is refused
 and lists those records (`replaces_confirmed_here` in the dry run); a person
-applies it in the memory view of the workspace (an archive; a published
-directory or a commit cannot replace such records yet, `--take-published`
-included, since 0.13.0). The import dialog states the number before the person
-applies the import.
+applies it in the memory view of the workspace (Import for an archive, Team
+memory for a published directory or a commit, `--take-published` included; since
+0.13.0 not the command line). The import dialog states the number before the
+person applies the import. Team memory lists every such record before the
+person agrees, and sends the list with the import as `expected_replaced`: an
+import that would replace any other set is refused (409, `What this import
+replaces ... changed since the check`) and nothing is imported. A commit is
+imported at the full commit ID the check read.
 
 ## How an extracted record was made
 
@@ -241,8 +245,8 @@ What they can do, and what the refusal tells them:
   refused.
 
 A person takes their own confirmation away by disputing the record in the
-inspector, by a conflict decision, or by an import run from the workspace that
-replaces what was confirmed or disputed here (`replace_confirmed`). A disputed record is no longer a
+inspector, by a conflict decision, or by an import run from the memory view of the
+workspace (Import, Team memory) that replaces what was confirmed or disputed here (`replace_confirmed`). A disputed record is no longer a
 person's confirmation, and any writer may change it, its status included: a
 session can set a record a person disputed back to `proposed`. Only a
 confirmation is kept. The store records who confirmed a record and not who
@@ -269,7 +273,7 @@ audit note included:
 | Impact verdict (`POST /inspector/impact/verdict`) | A person's verdict on one entry of `impact`, an audit note (`review://impact/...`) that changes no record. The person gives it in the inspector (Impact, then Verdict); `record_verdict` itself refuses without the proof. |
 | Release (`POST /inspector/records/{id}/release`) | A release of one record's current hits of the secrets scan (`release://`), published with its reason. The person releases a record in the inspector (open it, then Release); `release` itself refuses without the proof. |
 | Workspace form (`POST /findings` without `session_id`) | The person's own finding, proposed or confirmed. With a `session_id` it is a session's finding, and asking for `confirmed` is refused before anything is stored. |
-| An import that replaces a verdict given here (`POST /memory/import`, `/memory/import-published`, `/memory/import-commit` with `replace_confirmed`, not a dry run) | Records confirmed or disputed here replaced by a package. The refusal is `Replacing what a person confirmed or disputed on this machine needs the person's workspace ...`; the importer itself refuses too when the proof is missing. |
+| An import that replaces a verdict given here (`POST /memory/import`, `/memory/import-published`, `/memory/import-commit` with `replace_confirmed`, not a dry run) | Records confirmed or disputed here replaced by a package. The refusal is `Replacing what a person confirmed or disputed on this machine needs the person's workspace ...`; the importer itself refuses too when the proof is missing. From the memory view: Import (archive), Team memory (folder or commit), each after a dry run and the person's consent, sent with `expected_replaced`. |
 
 The command line confirms nothing and makes no person's act (since 0.13.0, #214,
 #306). A program that runs as the user can open a pseudo-terminal and unset the
@@ -282,7 +286,8 @@ stores a proposed task and says so on standard error. `plan save` and `plan
 adopt` are never a person's act: they are refused when they would change or
 remove a step a person confirmed, and any other save is stored. `memory import`,
 `memory import-published` and `memory import-commit` with `--replace-confirmed`
-are refused by the service. Records that 0.12.0 or earlier confirmed on the
+are refused by the service; the person runs them from the memory view (Import,
+Team memory). Records that 0.12.0 or earlier confirmed on the
 command line keep their mark and say `on the command line`.
 
 Not a person's route, and unchanged: an import that only brings a package's
@@ -454,11 +459,13 @@ and where, and it never becomes this machine's own confirmation:
   leaves it confirmed and saying the same (progress on a task), the confirmation
   given here is kept. When it brings another text or status, the import is
   refused with the list, and a person applies it in the memory view of the
-  workspace; the record is then confirmed elsewhere, like anything else the
+  workspace (Import for an archive, Team memory for a published directory or a
+  commit); the record is then confirmed elsewhere, like anything else the
   package brings. A record that diverged from a published file refuses the
   import as before, and `--take-published` names it; when that record was
   confirmed or disputed here, taking the published side replaces that verdict
-  and is refused like any other replacement.
+  and is refused like any other replacement, and the take field of Team memory
+  does it from a folder.
 - Only a person runs an import, `--replace-confirmed` and `--take-published`. A
   request that names a session is refused, because an import brings records that
   count as confirmed, and a session can prepare the files it imports.
@@ -767,7 +774,10 @@ contracts, closed references, dependency cycles).
 ## Import
 
 `memory import-published DIR --project P [--dry-run] [--bind] [--take-published ID ...]` checks the
-tree as above, then applies it in one transaction, all or nothing:
+tree as above, then applies it in one transaction, all or nothing. The route takes `path` (a full
+path; a relative one is refused before anything is read), `project`, `dry_run`, `bind`,
+`take_published`, `replace_confirmed` and `expected_replaced`; `memory import-commit` the same
+without `path` and `take_published`, with `revision`:
 
 - sources arrive as stubs of kind `published` with their original IDs: the passage or nothing as
   content, the reference in their metadata, never current; a local source with the same ID is kept,
@@ -789,7 +799,8 @@ tree as above, then applies it in one transaction, all or nothing:
 - a record that was confirmed or disputed on this machine (and whose head no import wrote) is not
   fast-forwarded to another text or status without the person's choice: the import is refused with
   the paths, the dry run lists them as `replaces_confirmed_here`, and only a person in the workspace
-  applies it (not the command line, since 0.13.0; `--take-published` on such a record counts the same).
+  applies it (Team memory in the memory view; not the command line, since 0.13.0; `--take-published`
+  on such a record counts the same).
   A fast-forward that leaves the record confirmed and saying the same keeps the confirmation
   given here (#177);
 - the import itself, `--replace-confirmed` and `--take-published` are refused inside a coding
