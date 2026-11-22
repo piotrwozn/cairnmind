@@ -174,6 +174,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The upgrade check reads a process's command line again before calling an upgrade mark stale, so a living process that cannot be read once is not called finished (#348).
 - A workspace stop that arrives while the terminal is still attaching ends the attached terminal with exit code 0, instead of sometimes 1 (#343).
 - A session that ended cleanly is no longer recorded as failed, and its pane no longer misses the Session ended line, when tmux 3.4 misses the exit of its client (#349).
+An extraction job now has 180 seconds instead of 120 for its model call and its single correction, so a model server that takes about a minute for each call (an MLX build on Apple silicon) no longer fails the job on the budget (#266).
 
 ### Development and CI
 

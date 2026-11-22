@@ -25,7 +25,7 @@ The installer never changes your Codex or Claude Code configuration, never downl
 | tmux | 3.4 or newer, optional | Only for the terminal workspace (`cairnmind`); the service, `run`, `mcp`, `brief` and the other commands work without it |
 | uv | current | Installs Cairnmind with Python 3.12 |
 | Ollama | current, optional | Runs the knowledge agent's local models; without models Cairnmind works in deterministic-only mode |
-| GPU | optional | The 9B model needs roughly 7 GB of GPU memory; on CPU it works, but answers are slow |
+| GPU | optional | The 9B model needs roughly 7 GB of GPU memory; on CPU it works, but answers are slow; on a Mac one model call takes 22 to 52 s, which the budgets allow for ([measurement](evaluation/RESULTS.md#extraction-on-apple-silicon-266)) |
 | Terminal | 80 × 24 or larger | The multi-pane Cockpit layout needs 140 × 42 |
 
 ## 1. Prepare Windows (skip on Linux and macOS)

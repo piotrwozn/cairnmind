@@ -59,9 +59,9 @@ def memory_snapshot(store):
 
 
 def test_extraction_default_budget_covers_one_repair_and_lease_outlives_the_watchdog():
-    assert agent_module.extraction_work_budget() == 120.0
-    assert agent_module.extraction_outer_timeout() == 125.0
-    assert agent_module.inference_lease_seconds() == 210.0
+    assert agent_module.extraction_work_budget() == 180.0
+    assert agent_module.extraction_outer_timeout() == 185.0
+    assert agent_module.inference_lease_seconds() == 270.0
 
 
 @pytest.mark.parametrize("budget", [30.0, .05])
@@ -447,9 +447,9 @@ async def test_length_repair_grows_once_and_never_parses_or_commits_the_valid_pr
     assert model.calls[0]["options"] == {"num_predict": initial}
     assert model.calls[1]["options"] == {"num_predict": min(2 * initial, 3600)}
     assert settings.answer_tokens == answer_tokens and settings.ask_timeout == 60.0
-    assert agent_module.extraction_work_budget() == 120.0
-    assert agent_module.extraction_outer_timeout() == 125.0
-    assert agent_module.inference_lease_seconds() == 210.0
+    assert agent_module.extraction_work_budget() == 180.0
+    assert agent_module.extraction_outer_timeout() == 185.0
+    assert agent_module.inference_lease_seconds() == 270.0
     assert model.calls[0]["format"] == model.calls[1]["format"] == agent_module._extraction_schema(QUOTE)
     assert all(call["tools"] is None and call["format"]["properties"]["records"]["maxItems"] == 6
                for call in model.calls)
@@ -554,3 +554,51 @@ async def test_length_repair_keeps_existing_deadline_and_cancel_without_late_wri
     assert diagnostic["repair_attempted"] is True and diagnostic["validation_codes"] == ["output_truncated"]
     assert diagnostic["counts"]["written_records"] == 0 and "persistence_stage" not in diagnostic
 
+def slow_model(elapsed, call_seconds):
+    """A cut first answer and a good repair; each call moves the agent's fake clock by its time (#266)."""
+    def reply(reason, content):
+        async def call():
+            elapsed[0] += call_seconds
+            return {"done_reason": reason, "message": {"content": content}}
+        return call
+    good = json.dumps({"records": [{"kind": "decision", "key": "authentication",
+                                    "content": "Use explicit authentication.", "evidence": QUOTE, "metadata": {}}]})
+    return CompletionReplies([reply("length", truncated_record_json()), reply("stop", good)])
+
+
+def fake_clock(monkeypatch):
+    real_monotonic, elapsed = time.monotonic, [0.0]
+    monkeypatch.setattr(agent_module, "time", SimpleNamespace(monotonic=lambda: real_monotonic() + elapsed[0]))
+    return elapsed
+
+
+async def test_a_job_with_a_cut_answer_and_a_repair_of_60_s_each_fits_the_budget(workspace, monkeypatch):
+    # Measured on Apple silicon (#266): calls of 52 s, so one cut answer (1,200 tokens at 19 a second = 63 s) and
+    # its repair are two calls of about 60 s. The old budget of 120 s could not hold them.
+    store, project, _source, job, settings = workspace
+    model = slow_model(fake_clock(monkeypatch), 60.0)
+    await KnowledgeAgent(store, settings, model).extract(job)
+    diagnostic = store.job_status(project["id"], job["id"])["diagnostics"]
+    assert diagnostic["code"] == "ok" and diagnostic["repair_outcome"] == "succeeded"
+    assert diagnostic["budget"]["timeout_seconds"] == 180.0 and diagnostic["budget"]["elapsed_seconds"] >= 120.0
+    assert len(store.list_records(project["id"])) == 1
+
+
+async def test_the_same_two_calls_failed_on_the_budget_of_120_s(workspace, monkeypatch):
+    store, project, _source, job, settings = workspace
+    monkeypatch.setattr(agent_module, "EXTRACTION_TIMEOUT", 120.0)
+    model = slow_model(fake_clock(monkeypatch), 60.0)
+    with pytest.raises(TimeoutError):
+        await KnowledgeAgent(store, settings, model).extract(job)
+    assert store.list_records(project["id"]) == []
+
+
+async def test_a_job_over_the_budget_is_still_failed_and_names_the_budget(workspace, monkeypatch):
+    store, project, _source, job, settings = workspace
+    model = slow_model(fake_clock(monkeypatch), 95.0)  # 190 s in all
+    with pytest.raises(TimeoutError):
+        await KnowledgeAgent(store, settings, model).extract(job)
+    diagnostic = store.job_status(project["id"], job["id"])["diagnostics"]
+    assert diagnostic["code"] == "timeout" and diagnostic["repair_outcome"] == "budget_exhausted"
+    assert diagnostic["budget"]["timeout_seconds"] == 180.0 and diagnostic["budget"]["elapsed_seconds"] >= 180.0
+    assert diagnostic["counts"]["written_records"] == 0 and store.list_records(project["id"]) == []
