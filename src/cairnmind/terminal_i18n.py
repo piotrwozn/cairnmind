@@ -17,6 +17,7 @@ from .terminal_person_act import MESSAGES as PERSON_ACT_MESSAGES
 from .terminal_release import MESSAGES as RELEASE_MESSAGES
 from .terminal_published_import import MESSAGES as PUBLISHED_IMPORT_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
+from .terminal_setup import MESSAGES as SETUP_SCREEN_MESSAGES
 from .setup_profiles import MESSAGES as SETUP_PROFILE_MESSAGES
 from .topology import MESSAGES as TOPOLOGY_MESSAGES
 from .upgrade_mark import MESSAGES as UPGRADE_MARK_MESSAGES
@@ -659,6 +660,7 @@ CATALOG.update(FIRST_START_MESSAGES)  # tmux only for the workspace; the service
 CATALOG.update(MEMORY_MODELS_MESSAGES)  # an ollama_url on another computer (#288)
 CATALOG.update(TOPOLOGY_MESSAGES)  # where storage and models run (#74)
 CATALOG.update(SETUP_PROFILE_MESSAGES)  # where storage and models run: the profiles (#74)
+CATALOG.update(SETUP_SCREEN_MESSAGES)  # the workspace screen of where storage and models run (#74)
 CATALOG.update(UPGRADE_MARK_MESSAGES)  # an upgrade in progress; an MCP server older than the installation (#298)
 CATALOG.update(RESTORE_CLAIM_MESSAGES)  # a restore without the person's workspace (#214)
 CATALOG.update(SERVICE_VERSION_MESSAGES)  # a service of another version is not used (#319)
