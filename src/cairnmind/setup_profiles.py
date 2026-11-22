@@ -183,6 +183,9 @@ KEPT_PASSWORD = ("The password that engine now uses stays in config.json (arcade
 KEPT_PASSWORD_START = ("The engine did not finish starting, and ArcadeDB may already have taken the password this "
                        "change generated for it, so that password stays in config.json (arcade_password) and "
                        "`cairnmind setup local` can be run again.")
+PASSWORD_NOT_KEPT = ("The password generated for the engine on this machine could not be kept in config.json "
+                     "(arcade_password): {reason}. If the engine already uses it, `cairnmind setup local` cannot sign "
+                     "in to that engine again: stop the engine, remove its data directory and run it again.")
 RESTORE_DONE = ("The restore had already finished: the store on this machine holds the data of {path}, and its earlier "
                 "contents are in a safety backup in {backups}.")
 CONFIRMATIONS = ("The restore marked {marked} records as confirmed by a person and left {left} before the rule; confirm "
@@ -226,6 +229,7 @@ MESSAGES = {
     LOCAL_NAME_DIFFERS: "Baza tam ma bazę danych {database}, a nie {derived}, czyli nazwę, której `cairnmind setup local` używa na tym komputerze; jej dane zostają na dysku pod nazwą {database}.",
     KEPT_PASSWORD: "Hasło, którego ten silnik teraz używa, zostaje w config.json (arcade_password), aby można było ponownie uruchomić `cairnmind setup local`.",
     KEPT_PASSWORD_START: "Silnik nie dokończył uruchamiania, a ArcadeDB mogła już przyjąć hasło wygenerowane dla niego przez tę zmianę, więc to hasło zostaje w config.json (arcade_password), aby można było ponownie uruchomić `cairnmind setup local`.",
+    PASSWORD_NOT_KEPT: "Hasła wygenerowanego dla silnika na tym komputerze nie udało się zachować w config.json (arcade_password): {reason}. Jeśli silnik już go używa, `cairnmind setup local` nie zaloguje się do niego ponownie: zatrzymaj silnik, usuń jego katalog danych i uruchom polecenie jeszcze raz.",
     RESTORE_DONE: "Odtwarzanie już się zakończyło: baza na tym komputerze ma dane z {path}, a jej wcześniejsza zawartość jest w kopii bezpieczeństwa w {backups}.",
     CONFIRMATIONS: "Odtwarzanie oznaczyło {marked} rekordów jako potwierdzone przez człowieka i zostawiło {left} sprzed reguły; pozostałe potwierdź w inspektorze.",
     CHANGE_STORAGE_LOCAL: "Baza: z ArcadeDB pod adresem {before} na silnik na tym komputerze pod adresem {url}, z bazą {database}.",
@@ -829,12 +833,15 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) ->
         kept = _generated_password(path, snapshot) if state["engine_tried"] else None
         try:
             _put_back(path, snapshot)
-            if kept:
-                _keep_password(path, kept)
-                notes.append((KEPT_PASSWORD if state["engine"] else KEPT_PASSWORD_START, {}))
         except OSError as failure:
             raise SetupFailed(PUT_BACK_FAILED, step=state["step"], error=str(exc), reason=str(failure),
                               notes=notes) from exc
+        if kept:
+            try:
+                _keep_password(path, kept)
+                notes.append((KEPT_PASSWORD if state["engine"] else KEPT_PASSWORD_START, {}))
+            except (OSError, ValueError) as failure:  # the put-back worked; the original error is still raised below
+                notes.append((PASSWORD_NOT_KEPT, {"reason": str(failure)}))
         if not isinstance(exc, Exception):
             say(render_one((PUT_BACK, {"step": state["step"], "error": str(exc) or type(exc).__name__,
                                        "notes": notes})))

@@ -645,6 +645,26 @@ def test_a_retry_after_a_failed_restore_starts_the_engine_with_the_same_password
     assert world.passwords == [kept, kept] and config(tmp_path)["arcade_password"] == kept
 
 
+@pytest.mark.parametrize("failure", [OSError("disk full"), ValueError("Expecting value: line 1 column 1 (char 0)")])
+def test_a_password_that_cannot_be_kept_is_said_and_the_original_error_stays(tmp_path, world, monkeypatch, failure):
+    connect_only_installation(tmp_path)
+    before = config_bytes(tmp_path)
+    world.restore_error = ArcadeError("cut")
+
+    def cannot(path, password):
+        raise failure
+    monkeypatch.setattr(setup_profiles, "_keep_password", cannot)
+    result = invoke(tmp_path, "setup", "local", "--backup", str(tmp_path / "k.cairnmind.json.gz"), "--yes")
+    assert isinstance(result.exception, setup_profiles.SetupFailed)
+    message = str(result.exception)
+    assert "The change stopped at the restore: cut config.json was put back as it was." in message
+    assert "could NOT be put back" not in message and "could not be kept in config.json (arcade_password)" in message
+    assert str(failure) in message and "cannot sign in to that engine again" in message
+    assert config_bytes(tmp_path) == before
+    polish = setup_profiles.render_one((setup_profiles.PASSWORD_NOT_KEPT, {"reason": "x"}), "pl")
+    assert "nie udało się zachować" in polish
+
+
 def test_a_retry_after_an_engine_start_that_failed_late_uses_the_same_password(tmp_path, world):
     stored = connect_only_installation(tmp_path)
     world.start_error = ArcadeError("ArcadeDB did not become ready")
