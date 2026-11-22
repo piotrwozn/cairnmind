@@ -21,6 +21,7 @@ from .config import Settings
 from .service_token import FOREIGN_SERVICE, foreign_service
 from .mcp_failure_notice import announce as announce_mcp_failures
 from .terminal_safe import plain
+from .project_folders import folder_notice
 from .terminal_connection_hints import NOT_STARTED, connection_hint
 from .terminal_i18n import native_failure_notice
 from .terminal_notices import about as notice_about
@@ -573,9 +574,11 @@ class SidebarApp(BasePanel):
             labels[key] = (label, original[1], original[2])
         self.refresh_bindings()
         failure = native_failure_notice(fresh or {}, self.language)
-        self.query_one("#project-state", Static).set_class(bool(failure) and not live, "-warn")
+        # A folder this machine cannot read is named in the person's language, by project (#371).
+        folder = folder_notice((self.projects.get(project_id) or {}).get("unavailable") or [], self.language)
+        self.query_one("#project-state", Static).set_class(bool(failure or folder) and not live, "-warn")
         self.query_one("#project-state", Static).update(self.t("Resume returns to the running process. Model changes apply to its next launch.") if live else
-            failure or self.t("Browsing memory does not start an assistant."))
+            failure or folder or self.t("Browsing memory does not start an assistant."))
 
     def reusable_run(self, slot=None, profile=None):
         """Mirror NativeRuntime.start's live-slot identity, not profile/model edits."""

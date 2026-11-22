@@ -67,6 +67,7 @@ class Machine:
         monkeypatch.setattr(Path, "read_text", fake_read)
         monkeypatch.setattr(subprocess, "run", fake_run)
         monkeypatch.setattr(store_writer, "_known_platform_uuid", None, raising=False)  # this process read none
+        monkeypatch.setattr(store_writer, "_ioreg_failed_at", float("-inf"), raising=False)
 
 
 def test_a_mac_keeps_its_identity_when_the_host_name_changes(monkeypatch, tmp_path):
@@ -112,6 +113,8 @@ def test_a_failed_lookup_is_tried_again_and_a_good_one_is_kept(monkeypatch):
     mac = Machine(monkeypatch, platform="darwin", ioreg=subprocess.TimeoutExpired(["ioreg"], 5))
     assert store_writer.machine_identity().startswith("host:")
     mac.ioreg = (0, IOREG)
+    assert store_writer.machine_identity().startswith("host:")  # asked again only after IOREG_RETRY_SECONDS (#371)
+    monkeypatch.setattr(store_writer, "_ioreg_failed_at", float("-inf"))
     assert store_writer.machine_identity() == "platform-uuid:" + UUID.lower()
     mac.ioreg = (1, "")  # once read, the identity of this process does not depend on another run
     assert store_writer.machine_identity() == "platform-uuid:" + UUID.lower()

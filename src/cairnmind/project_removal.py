@@ -20,7 +20,7 @@ from uuid import uuid4
 
 ENDED = frozenset({"exited", "failed", "interrupted"})
 INSTALLED_FILES = ("AGENTS.md", "CLAUDE.md", ".mcp.json", ".codex/config.toml", ".codex/hooks.json",
-                   ".claude/settings.local.json")
+                   ".claude/settings.local.json", ".claude/agents/cairnmind-recorder.md")
 REMOVED_FIELDS = ("removed_at", "removed_name", "removed_root", "removed_roots")
 
 IN_SESSION = ("A coding session cannot remove a project from the registry; only a person can, outside the session. "
@@ -284,7 +284,8 @@ def restore_in(tx, name: str, path: str, allow: bool = True) -> dict | None:
         raise ValueError(ROOT_OF_ANOTHER.format(root=_q(path), other=_q(other.get("name") or taken[0]["project_id"])))
     update_document(tx, "projects", {"name": name, "root": path}, "id=:id", {"id": pid})
     tx.command(f"UPDATE projects REMOVE {', '.join(REMOVED_FIELDS)} WHERE id=:id", {"id": pid})
-    insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": pid, "path": path})
+    from .project_folders import stamp
+    insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": pid, "path": path, **stamp()})
     return one_row(tx, "SELECT FROM projects WHERE id=:id", {"id": pid})
 
 
