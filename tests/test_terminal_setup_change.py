@@ -23,7 +23,7 @@ from cairnmind.terminal_panels import ConfirmModal, SidebarApp
 from cairnmind.terminal_setup_change import MESSAGES, change_setup, consent_text
 from cairnmind.terminal_ui import ChoiceModal, FormModal, MessageModal
 from consent_steps import consent_drawn, early_enter_sends_nothing, form_ready
-from test_setup_change import Rig
+from test_setup_change import Rig, clean_environment  # noqa: F401 - clean_environment is an autouse fixture: an engine test leaves its variables set
 from test_setup_profiles import (DB, MODELS, RELEASE_CHAT, RELEASE_EMBEDDING, config_bytes, connect_only_installation,
                                  make, private)
 from test_terminal_panels import settle
