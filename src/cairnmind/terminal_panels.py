@@ -1373,7 +1373,7 @@ class SidebarApp(BasePanel):
             if action == "show":
                 await asyncio.to_thread(manager.select_run, self.settings, identifier, self.workspace_id)
                 if not run_is_live(run):
-                    self.notice(self.t("This session has ended. Resume it or start a new one."))
+                    self.notice(self.t("This session has ended. Resume it or start a new one.") if run.get("project_id") else self.t("This session has ended."))
             elif action == "takeover":
                 await asyncio.to_thread(manager.take_control, self.settings, identifier, self.workspace_id)
             elif action == "stop":

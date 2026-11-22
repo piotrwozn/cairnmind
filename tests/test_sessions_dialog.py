@@ -42,10 +42,12 @@ async def heading(app, pilot, expected):
     raise AssertionError(f"{expected!r} did not open; the screen is {app.screen!r}")
 
 
-def ui(tmp_path, monkeypatch, lifecycle="exited"):
+def ui(tmp_path, monkeypatch, lifecycle="exited", project_id=True):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     broker = RunsBroker(broker.project)
     broker.runs = [run_of(broker.project, lifecycle)]
+    if not project_id:
+        broker.runs[0]["project_id"] = None  # a sign-in run belongs to no project
     selected = []
     monkeypatch.setattr("cairnmind.workspace.select_run", lambda *args: selected.append(args[1]))
     return SidebarApp(settings, broker=broker, workspace=workspace), selected
@@ -84,6 +86,22 @@ async def test_show_on_an_ended_session_says_that_it_ended(tmp_path, monkeypatch
         shown = notice_of(app)
     assert selected == ["run-" + lifecycle]
     assert ("This session has ended." in shown) is says_ended
+
+
+@pytest.mark.asyncio
+async def test_an_ended_run_without_a_project_is_not_told_to_resume(tmp_path, monkeypatch):
+    app, _ = ui(tmp_path, monkeypatch, project_id=False)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.sessions()
+        await heading(app, pilot, LIST)
+        await pilot.press("enter")
+        await heading(app, pilot, ACTIONS)
+        assert [value for _, value in app.screen.choices] == ["show"]
+        await pilot.press("enter")
+        await settle(app, pilot)
+        shown = notice_of(app)
+    assert "This session has ended." in shown and "Resume" not in shown
 
 
 @pytest.mark.asyncio

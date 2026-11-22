@@ -389,12 +389,12 @@ def test_the_refusal_names_the_data_directory_of_each_socket_it_can_ask(tmp_path
         functions = script[start:script.index("# --- end ---", start)]
         panes = tmp_path / "panes"
         panes.mkdir()
-        starts = {  # the first pane's start command of each server, as tmux prints it
-            "ui-0000000000000001": "'/usr/bin/python3' -I -m cairnmind.terminal_panels --kind sidebar --workspace-id default "
-                                   "--data-dir '/home/me/my data'\nsecond pane --data-dir /other",
-            "native-0000000000000002": "python -I -m cairnmind.native_worker --spec /home/me/.local/share/cairnmind/runtime/abc.launch.json",
+        starts = {  # the first pane's start command of each server; tmux prints a shell string in double quotes
+            "ui-0000000000000001": "\"'/usr/bin/python3' -I -m cairnmind.terminal_panels --kind sidebar --workspace-id default "
+                                   "--data-dir '/home/me/my data'\"\nsecond pane --data-dir /other",
+            "native-0000000000000002": "\"python -I -m cairnmind.native_worker --spec /home/me/.local/share/cairnmind/runtime/abc.launch.json\"",
             "native-0000000000000003": "",  # asked, no answer: listed as before
-            "native-0000000000000004": "bash -c 'sleep 1'"}  # another command
+            "native-0000000000000004": "\"bash -c 'sleep 1'\""}  # another command
         servers = []
         for name, text in starts.items():
             (panes / name).write_text(text + "\n")

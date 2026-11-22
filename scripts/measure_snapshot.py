@@ -7,10 +7,11 @@ Prints the seconds of a first snapshot, of a repeat with nothing changed, and of
 was added (#161: a repeat reads the previous package and compares every object; the cost was never measured
 at size). The records are made up for this run. The project, its worktree and its own database engine live
 in a temporary directory with ports of their own, so no installation is touched, and all of it is removed
-at the end. Time grows with N: 100,000 records take many minutes to create, before the first measurement.
+at the end, after the engine process has exited. Time grows with N: 100,000 records take many minutes to create, before the first measurement.
 """
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import shutil
@@ -72,6 +73,7 @@ def main() -> int:
     for name in list(os.environ):
         if name.startswith(("CAIRNMIND_", "DEVBRAIN_")) and not name.endswith(("_HOME", "_ARCADE_DIST")):
             os.environ.pop(name)
+    from cairnmind import process_identity
     from cairnmind.engine import install_engine, runtime_dir, start_engine, stop_engine
     from cairnmind.store import Store
 
@@ -82,7 +84,8 @@ def main() -> int:
     worktree = temporary / "project"
     settings = replace(user, data_dir=temporary / "data", arcade_url=f"http://127.0.0.1:{free_port()}", arcade_user="root",
                        arcade_password=secrets.token_urlsafe(32), arcade_database="cairnmind_measure_" + uuid4().hex,
-                       token=secrets.token_urlsafe(32), port=free_port(), cockpit_port=free_port())
+                       token=secrets.token_urlsafe(32), port=free_port(), cockpit_port=free_port(),
+                       engine_mode="", arcade_connect_url="", arcade_password_file="")  # a local engine, whatever the user's config says
     try:
         worktree.mkdir()
         (worktree / "README.md").write_text("A synthetic project for measuring a snapshot.\n")
@@ -95,9 +98,17 @@ def main() -> int:
         measure(Store(settings.data_dir, settings=settings), worktree, records)
     finally:
         try:
+            pid = int(json.loads((settings.data_dir / "arcade" / "process.json").read_text())["pid"])
+        except (OSError, ValueError, KeyError):
+            pid = None  # the engine never started
+        try:
             stop_engine(settings)  # harmless when the engine never started
         except Exception as exc:  # noqa: BLE001 - the engine may have gone by itself
             print(f"The measuring engine could not be stopped cleanly: {exc}", file=sys.stderr)
+        # stop_engine returns when the engine stops answering; the process still writes while it shuts down.
+        deadline = time.monotonic() + 60
+        while pid and process_identity.alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.2)
         shutil.rmtree(temporary, ignore_errors=True)
     return 0
 

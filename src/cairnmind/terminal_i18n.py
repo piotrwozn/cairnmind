@@ -638,11 +638,14 @@ CATALOG.update({
     # Pane and control words on the pane's border (workspace_border, #208); the others are shared.
     "Client 1": "Klient 1", "Client 2": "Klient 2", "Inspector": "Inspektor", "In control": "Steruje",
     "The workspace was stopped with cairnmind workspace stop; run cairnmind to open it again.":
-        "Obszar roboczy zatrzymano poleceniem cairnmind workspace stop; uruchom cairnmind, aby otworzyć go ponownie.",
+        "Przestrzeń pracy zatrzymano poleceniem cairnmind workspace stop; uruchom cairnmind, aby otworzyć ją ponownie.",
     "Session ended (#{?pane_dead_signal,signal #{pane_dead_signal},exit status #{pane_dead_status}}). "
     "Resume it from Sessions.":
         "Sesja zakończona (#{?pane_dead_signal,sygnał #{pane_dead_signal},kod wyjścia #{pane_dead_status}}). "
         "Wznów ją z listy Sesje.",
+    "Session ended (#{?pane_dead_signal,signal #{pane_dead_signal},exit status #{pane_dead_status}}).":
+        "Sesja zakończona (#{?pane_dead_signal,sygnał #{pane_dead_signal},kod wyjścia #{pane_dead_status}}).",
+    "This session has ended.": "Ta sesja się zakończyła.",
     "This session has ended. Resume it or start a new one.":
         "Ta sesja się zakończyła. Wznów ją albo rozpocznij nową.",
 })
