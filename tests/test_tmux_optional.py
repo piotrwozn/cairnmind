@@ -17,7 +17,8 @@ from cairnmind.config import Settings
 from cairnmind.terminal_i18n import tr
 
 STATES = ["missing", "3.3a", "3.5a"]
-SENTENCE_TAIL = "Without it, these commands work: cairnmind serve, cairnmind run, cairnmind mcp and cairnmind brief."
+SENTENCE_TAIL = ("Without it, every other command works, for example cairnmind brief, cairnmind remember, "
+                 "cairnmind ask and cairnmind run.")  # #287: the commands that work, the first start's own
 
 
 @pytest.fixture
@@ -162,8 +163,9 @@ def test_doctor_reports_the_cockpit_as_a_warning_and_exits_0(monkeypatch, data, 
     assert stripped[0] == stripped[1] == stripped[2]  # nothing else turns unhealthy
 
 
-def test_the_installer_view_of_doctor_says_cockpit_unavailable():
+def test_the_installer_view_of_doctor_says_cockpit_unavailable(monkeypatch):
     from cairnmind import doctor_attention
+    monkeypatch.setattr(platform_hints, "host_system", lambda *a, **k: "wsl")
     healthy = {"python": "3.12.3", "java": {"on_path": True, "executable": "/usr/bin/java", "compatible": True},
                "arcadedb": {"available": True, "database_available": True},
                "ollama": {"available": True, "chat_model_installed": True, "embedding_model_installed": True},
@@ -171,11 +173,16 @@ def test_the_installer_view_of_doctor_says_cockpit_unavailable():
                "environment_notes": [], "data_dir": "/d", "store_writer": {"role": "writer"}}
 
     def lines(tmux):
-        return doctor_attention.attention({**healthy, "tmux": tmux})
-    assert lines({"code": "tmux_missing"}) == ["cockpit: unavailable (tmux 3.4+ not found)"]
-    assert lines({"code": "tmux_unsupported", "version": "tmux 3.3a"}) == [
-        "cockpit: unavailable (tmux 3.4+ not found; found tmux 3.3a)"]
-    assert lines({"code": "ready"}) == []
+        report = {**healthy, "tmux": tmux}
+        assert doctor_attention.attention(report) == []  # #287: the workspace is optional, not a fault
+        summary = doctor_attention.summary(report)
+        assert first_start.NOTHING_MISSING in summary
+        return [line for line in summary[summary.index(first_start.OPTIONAL_OFF):] if "workspace" in line]
+    assert lines({"code": "tmux_missing"}) == [
+        "  - Terminal workspace: unavailable (tmux 3.4+ not found). Install tmux >= 3.4 in Ubuntu: sudo apt install "
+        "tmux. Every other command works without it."]
+    assert lines({"code": "tmux_unsupported", "version": "tmux 3.3a"})[0].startswith(
+        "  - Terminal workspace: unavailable (tmux 3.4+ not found; found tmux 3.3a).")
 
 
 # --- every other command works without tmux (no gate on it exists; these keep one from appearing) -----------------

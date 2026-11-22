@@ -135,7 +135,7 @@ database names the one installation that writes it; no database leases are kept.
   works when this release cannot read the store as a reader (schema of another release, no journal
   head): the writer row moves first, then the store is opened as its writer; a reader's other commands
   on such a store name the writer and the takeover command.
-  `cairnmind store writer`, `doctor` (`store_writer`) and `status` (`writer`) report the role:
+  `cairnmind store writer`, `doctor --json` (`store_writer`) and `status` (`writer`) report the role:
   writer, reader, lost, none or unknown.
 - Two claims or takeovers at once: each is one transaction that reads the head, then the writer row,
   writes the row and names itself in the head. ArcadeDB 26.11.1 finds a conflict per record, at

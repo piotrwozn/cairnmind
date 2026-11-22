@@ -89,7 +89,7 @@ bash scripts/install-wsl.sh
 
 Then run `cairnmind install <project>` for each project. The installer stops the interface broker and the knowledge service of the installed version itself; it refuses to continue while a workspace or a coding session started from it is running, in any data directory, because the new version names its terminal sessions differently and would not find them. Set `CAIRNMIND_INSTALL_STOP_WORKSPACE=1` to let it close them. Scheduled daily backups of both names are pruned together; the safety copies written before a restore or a schema change are never pruned. Upgrade every machine and every collaborator that shares a project's repository together: a version up to 0.9.0 does not read what this one writes there.
 
-- **Data directory.** An existing `~/.local/share/devbrain` is used where it is. Only an installation with no data yet starts in `~/.local/share/cairnmind`. If both directories hold data, the earlier one is used and `cairnmind doctor` says so under `environment_notes`.
+- **Data directory.** An existing `~/.local/share/devbrain` is used where it is. Only an installation with no data yet starts in `~/.local/share/cairnmind`. If both directories hold data, the earlier one is used and `cairnmind doctor --json` says so under `environment_notes`.
 - **Variables.** `CAIRNMIND_HOME`, `CAIRNMIND_ARCADE_URL` and the others are the names to use. A `DEVBRAIN_*` variable in your shell profile keeps working; when both spellings of a configuration variable are set, the new one wins and `cairnmind doctor` reports a pair that disagrees.
 - **Sessions.** The launcher gives a coding client both spellings of the session variables, so hooks and MCP entries written by 0.8.0 or 0.9.0 keep working without `cairnmind install`. A session started before the upgrade stays bound after it. If the two spellings of a session variable ever name different sessions, neither is honoured: commands are refused and the client has to be started again through the launcher.
 
@@ -246,7 +246,7 @@ Nothing in the data directory, `config.json`, the socket paths or the files `cai
 
 - **Codex tool timeout.** `cairnmind install` writes `tool_timeout_sec` into the Cairnmind entry of `.codex/config.toml` as the question budget plus 15 seconds, never less than 75. With the default budget of 60 that is 75, as before. If you raised `ask_timeout` in `config.json`, the next `cairnmind install` writes the larger value.
 - **Stopping.** `cairnmind workspace stop --clients` also stops the private terminal server of the last coding-session run, which 0.11.0 left running. `cairnmind engine stop` clears the record of an engine that has already exited instead of failing.
-- **Questions.** A question no longer starts a second reading of whole passages when the time left is shorter than the calls it repeats, so it can end sooner with what it has. A model server that refuses structured output is asked again without it, and `cairnmind doctor` says so; the refusal was seen with an MLX build of Ollama on Apple silicon.
+- **Questions.** A question no longer starts a second reading of whole passages when the time left is shorter than the calls it repeats, so it can end sooner with what it has. A model server that refuses structured output is asked again without it, and `cairnmind doctor --json` says so; the refusal was seen with an MLX build of Ollama on Apple silicon.
 
 ### What changes on macOS
 

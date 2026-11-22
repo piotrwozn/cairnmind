@@ -16,6 +16,8 @@ import time
 from uuid import uuid4
 
 from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
+from .first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN, UNKNOWN_PROJECT_NEXT
+from .terminal_safe import safe_text
 # The sensitivity class of a source and a record (#180): derived on every read, stored nowhere.
 from .sensitivity import record_sensitivity, source_sensitivity  # noqa: F401
 from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
@@ -754,7 +756,9 @@ class Store:
             existing = one_row(tx, "SELECT FROM projects WHERE name=:name OR root=:root", {"name": name, "root": path}, False)
             if existing:
                 if existing["name"] != name or existing["root"] != path:
-                    raise ValueError("Project name or root is already registered")
+                    if existing["name"] == name:
+                        raise ValueError(PROJECT_NAME_TAKEN.format(name=safe_text(name), root=safe_text(existing["root"])))
+                    raise ValueError(PROJECT_ROOT_TAKEN.format(name=safe_text(existing["name"]), root=safe_text(path)))
                 return existing
             project = {"id": str(uuid4()), "name": name, "root": path, "created_at": utc_now()}
             insert_document(tx, "projects", project)
@@ -789,7 +793,7 @@ class Store:
         if project:
             return project
         if not value.startswith((".", "~")) and "/" not in value and os.sep not in value:
-            raise ValueError(f"Unknown project: {value}")
+            raise ValueError(f"Unknown project: {value}. {UNKNOWN_PROJECT_NEXT}")
         written = Path(value).expanduser()
         if not written.is_absolute() and (recorded or not self.relative_paths):
             raise ValueError(f"Unknown project: {value} (a relative path is not accepted here; give an absolute one)")
@@ -801,7 +805,7 @@ class Store:
         if candidates:
             selected = max(candidates, key=lambda row: len(row["path"]))
             return one_row(self, "SELECT FROM projects WHERE id=:id", {"id": selected["project_id"]})
-        raise ValueError(f"Unknown project: {value}")
+        raise ValueError(f"Unknown project: {value}. {UNKNOWN_PROJECT_NEXT}")
 
     def _delete_old_vectors(self, tx, source_ids):
         if not source_ids:
