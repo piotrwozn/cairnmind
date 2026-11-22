@@ -124,7 +124,8 @@ def attention(report: dict) -> list[str]:
     if (writer.get("role") in {"reader", "lost", "unknown"} or writer.get("problem")) and not unknown_for_the_engine:
         lines.append(_line(f"Store writer: {writer.get('role')}. {writer.get('problem') or writer.get('reason') or ''} "
                            f"{writer.get('next') or ''}"))
-    lines += [_line(note) for note in report.get("environment_blockers") or []]  # commands here are refused
+    # Commands here are refused; whole, so the command that ends a refusal is never cut off (#319).
+    lines += [_line(note, limit=600) for note in report.get("environment_blockers") or []]
     return lines
 
 

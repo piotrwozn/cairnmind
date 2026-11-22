@@ -83,6 +83,13 @@ def test_stop_and_doctor_still_reach_a_service_of_another_version(tmp_path, monk
     report = json.loads(invoke(settings, "doctor").output)
     assert report["service_running"] is True
     assert " ".join(sentence(settings).split()) in [" ".join(line.split()) for line in report["environment_notes"]]
+    # In a terminal it is listed as required and not working, once, and the next step is to fix it (#319).
+    from cairnmind.doctor_attention import summary
+    from cairnmind.first_start import NEXT_FIX, REQUIRED_MISSING
+    assert report["environment_blockers"] == [sentence(settings)]
+    lines = summary(report)
+    shown = [index for index, line in enumerate(lines) if line == f"  - {' '.join(sentence(settings).split())}"]
+    assert len(shown) == 1 and lines.index(REQUIRED_MISSING) < shown[0] and lines[-1] == NEXT_FIX
     seen.clear()
     result = invoke(settings, "stop")
     assert result.exit_code == 0, result.output
