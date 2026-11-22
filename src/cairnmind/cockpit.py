@@ -27,6 +27,7 @@ from . import __version__
 from .config import BROKER_NAMES, SESSION_NAMES, drop_env
 from .path_spelling import lies_in
 from .process_identity import start as process_start
+from .service_token import refused_token
 from .cockpit_state import (CockpitState, ProjectDiscovery, _atomic, _private_directory, _private_lock, _snapshot,
                             normalize_path)
 
@@ -226,6 +227,13 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     async def projects():
         response = await upstream("GET", "/projects")
         if response.is_error:
+            try:
+                detail = response.json().get("detail")
+            except (ValueError, AttributeError):
+                detail = None
+            if refused_token(response.status_code, detail):
+                # The client turns this into the foreign-service sentence in the panel's language (#308).
+                raise HTTPException(401, "Invalid local service token")
             raise HTTPException(response.status_code, "The projects could not be read.")
         rows = response.json()
         if not isinstance(rows, list):
@@ -345,7 +353,9 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         memory_available = True
         try:
             rows = await projects()
-        except HTTPException:
+        except HTTPException as exc:
+            if exc.status_code == 401:
+                raise  # another directory's service is not an outage: name it, do not show cached rows
             rows = list(project_cache)
             memory_available = False
         for row in rows:

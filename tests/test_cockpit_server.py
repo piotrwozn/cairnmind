@@ -103,6 +103,8 @@ def cockpit(tmp_path, monkeypatch):
     def upstream(request):
         assert request.headers["authorization"] == "Bearer " + settings.token
         requests.append((request.method, request.url.path, request.content))
+        if outage.get("foreign"):
+            return httpx.Response(401, json={"detail": "Invalid local service token"})
         if outage["enabled"]:
             raise httpx.ConnectError("private runtime unavailable", request=request)
         if request.url.path == "/projects":
@@ -247,6 +249,34 @@ def test_memory_outage_keeps_live_terminals_and_cached_projects_available(cockpi
     assert listed.status_code == 200 and listed.json()["runs"][0]["memory"]["status"] == "unavailable"
     scoped = client.get("/api/client-runs", params={"project": project["id"]})
     assert scoped.status_code == 200 and len(scoped.json()["runs"]) == 2
+
+
+@pytest.mark.parametrize("route", ["/api/projects", "/api/stage?project=project-one", "/api/state"])
+def test_a_service_of_another_data_directory_is_named_not_reported_as_unreadable(cockpit, route):
+    # #308: the broker replaced the service's 401 with "could not be read" (or, for state, an outage).
+    from cairnmind.terminal_client import BrokerClient, BrokerError
+    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal_i18n_messages import broker_error_text
+    settings, app, client, runtime, project, requests, outage = cockpit
+    login(app, client)
+    outage["foreign"] = True
+    answer = client.get(route)
+    assert answer.status_code == 401 and answer.json()["detail"] == "Invalid local service token"
+    assert settings.token not in answer.text
+    for matched in (False, True):
+        broker = BrokerClient(settings, transport=httpx.MockTransport(
+            lambda request: httpx.Response(answer.status_code, json=answer.json())))
+        broker._url, broker._csrf, broker._allow_start = "http://127.0.0.1:1", "csrf", matched
+        broker._client = httpx.Client(base_url=broker._url, transport=broker._transport)
+        broker._authenticate = lambda: None
+        with pytest.raises(BrokerError) as raised:
+            broker.request("GET", route)
+        for language, words in (("en", "most likely belongs to another data directory"), ("pl", "należy do innego")):
+            text = broker_error_text(raised.value, lambda sentence: tr(sentence, language))
+            assert (words in text and settings.url in text and str(settings.data_dir) in text) is not matched
+            assert settings.token not in text
+    # the broker's own refusals of a ticket are not the service's and stay as they are
+    assert client.post("/_control/ticket").status_code == 401
 
 
 def test_event_reconnect_forwards_cursor_and_rejects_oversized_headers(cockpit):
