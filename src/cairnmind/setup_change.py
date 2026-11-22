@@ -269,8 +269,10 @@ def target_refusal(result: dict, request) -> tuple[str, dict] | None:
 # --- The plan that was agreed -----------------------------------------------------------------------------------------
 
 # What the dry run says --admin-password-file will create, as the sentence the change says when it did (NO_RIGHTS: nothing).
-_CREATES = {setup_profiles.CREATE_BOTH: setup_profiles.USER_CREATED, setup_profiles.CREATE_USER: setup_profiles.USER_CREATED,
-            setup_profiles.CREATE_DB: setup_profiles.DATABASE_CREATED, setup_profiles.NO_RIGHTS: setup_profiles.NO_RIGHTS}
+# The user and the database are two entries: a database that appeared since the consent is not the same plan (#390).
+_CREATES = {setup_profiles.CREATE_BOTH: [setup_profiles.USER_CREATED, setup_profiles.DATABASE_CREATED],
+            setup_profiles.CREATE_USER: [setup_profiles.USER_CREATED],
+            setup_profiles.CREATE_DB: [setup_profiles.DATABASE_CREATED], setup_profiles.NO_RIGHTS: [setup_profiles.NO_RIGHTS]}
 
 
 def agreed_plan(result: dict) -> dict:
@@ -279,7 +281,7 @@ def agreed_plan(result: dict) -> dict:
     has no rights). The other tests are not part of it: their wording changes when a user is created."""
     return {"plan": [render_one(item) for key in ("changes", "rebuild", "left_behind") for item in result[key]],
             "writer": [item[0] for item in result["writer"]]
-            + [_CREATES[item[0]] for item in result["tests"] if item[0] in _CREATES]}
+            + [made for item in result["tests"] for made in _CREATES.get(item[0], ())]}
 
 
 def _writer_same(agreed: list, now: list) -> bool:
@@ -300,12 +302,29 @@ def _writer_same(agreed: list, now: list) -> bool:
                 and agreed[1:] == now[1:])
 
 
+def _made(items: list) -> list:
+    return [item for item in items if item in (*setup_profiles.CREATED, setup_profiles.NO_RIGHTS)]
+
+
+def same_creation(expected: dict) -> Callable[[tuple | None], None]:
+    """The before_create hook of setup_profiles.run: refuses before the administrator creates anything when the server
+    would now create something other than the user and database agreed to; the notes name what is there now."""
+    def check(found: tuple | None) -> None:
+        if _made(expected["writer"]) != (_CREATES[found[0]] if found else []):
+            raise SetupRefused(PLAN_CHANGED, notes=[found] if found else [])
+    return check
+
+
 def same_plan(expected: dict) -> Callable[[dict], None]:
     """The before_change hook of setup_profiles.run: refuses, with config.json untouched, when the plan is not the one
     agreed to."""
     def check(result: dict) -> None:
         got = agreed_plan(result)  # the server's side as the change found it: what it created stands in "done"
-        got["writer"] += [item[0] for item in result["done"] if item[0] in setup_profiles.CREATED]
+        for item in result["done"]:
+            if item[0] in setup_profiles.CREATED:
+                got["writer"].append(item[0])
+                if item[0] == setup_profiles.USER_CREATED and item[1].get("database_created"):
+                    got["writer"].append(setup_profiles.DATABASE_CREATED)
         if got["plan"] != expected["plan"] or not _writer_same(expected["writer"], got["writer"]):
             raise SetupRefused(PLAN_CHANGED, notes=[item for item in result["done"]
                                                     if item[0] in setup_profiles.CREATED])
@@ -519,7 +538,8 @@ def _apply(settings, request, expected, out) -> tuple[str, object]:
             return "refused", (SERVICE_BACK, {})
         try:
             return "changed", setup_profiles.run(settings, request, yes=True, say=out.say,
-                                                 before_change=same_plan(expected))
+                                                 before_change=same_plan(expected),
+                                                 before_create=same_creation(expected))
         except SetupRefused as exc:
             return "refused", (exc.template, exc.values)
         except SetupFailed as exc:

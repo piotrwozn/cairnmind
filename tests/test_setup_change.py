@@ -680,7 +680,7 @@ def test_the_plan_of_the_dry_run_names_what_the_administrators_file_will_create_
             item[0] for item in result["tests"]]
         assert result["writer"] == [(setup_profiles.WRITER_AFTER_USER, {"url": DB})]
         agreed = setup_change.agreed_plan(result)["writer"]
-        assert agreed == [setup_profiles.WRITER_AFTER_USER, setup_change._CREATES[create]]
+        assert agreed == [setup_profiles.WRITER_AFTER_USER, *setup_change._CREATES[create]]
         refusal = setup_change.target_refusal(result, rig.request())  # no dialog, no stop for a run setup refuses
         assert (refusal is not None) == (create == setup_profiles.NO_RIGHTS)
         assert refusal is None or refusal[0] == setup_profiles.NO_RIGHTS
@@ -691,7 +691,8 @@ def test_a_user_created_by_someone_else_between_the_consent_and_the_change_refus
     before = config_bytes(rig.tmp)
     request = rig.request(admin_password_file=private(rig.tmp, "root-password", "PRIVATE_ADMIN_MARKER"))
     expected = rig.agreed(request)  # the dry run: the user and the database do not exist, so both will be created
-    assert expected["writer"] == [setup_profiles.WRITER_AFTER_USER, setup_profiles.USER_CREATED]
+    assert expected["writer"] == [setup_profiles.WRITER_AFTER_USER, setup_profiles.USER_CREATED,
+                                  setup_profiles.DATABASE_CREATED]
     monkeypatch.setattr(setup_profiles.database_credentials, "create_user",
                         lambda candidate, admin, **kwargs: {"created": False, "database_created": False})
     state, text = rig.go(request, expected=expected)
