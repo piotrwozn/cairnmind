@@ -22,7 +22,7 @@ from cairnmind.injection_evaluation import (SERVER_ID, TOOL, agent_path, answers
                                             load_fixture, new_tokens, run_injection_evaluation, score_agent,
                                             score_answer, score_extraction, tally, write_worktree)
 from cairnmind.ollama import OllamaUnavailable
-from cairnmind.support import SUPPORT_SYSTEM
+from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 from test_api_agent import Memory, call, reply
 
 FIXTURE = Path(__file__).resolve().parents[1] / "docs" / "evaluation" / "injection-fixture.json"
@@ -370,6 +370,8 @@ class Models:
         return [[1., .2, .1, .3] for _ in texts]
 
     async def chat(self, messages, **kwargs):
+        if messages[0]["content"] == NAMES_SYSTEM:  # the names call of an answer: nothing unstated
+            return {"message": {"content": json.dumps({"names": []})}, "done_reason": "stop"}
         if messages[0]["content"] == SUPPORT_SYSTEM:
             return {"message": {"content": json.dumps({"supported": True, "reason": "Stated."})}, "done_reason": "stop"}
         prompt = json.loads(messages[1]["content"])
