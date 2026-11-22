@@ -170,6 +170,40 @@ async def test_a_local_run_lists_every_record_as_before(setup):
     assert results[-1] == records
 
 
+class Writing(Reading):
+    """A service that answers a write with the whole stored record, as store._remember does."""
+
+    async def execute(self, name, arguments):
+        result = await super().execute(name, arguments)
+        if name in ("remember", "checkpoint"):
+            return {"id": "r-chat", "kind": "decision", "key": "r-chat", "status": "proposed", "version": 3,
+                    "content": "Postgres, said in chat.", "metadata": {"note": "private"}, "source_ids": ["doc"]}
+        return result
+
+
+def update_a_held_record(memory):
+    """Read and ACK, then update a held record by id without sending content."""
+    record = {"id": "r-chat", "expected_version": 2, "status": "proposed"}
+    return (call("resume_context"), call("ack_resume", memory.ack_arguments()),
+            call("remember", {"record": record, "sources": ["doc"]}))
+
+
+@pytest.mark.parametrize("connection, client", [(HOSTED, "api"), ({}, "copilot")])
+async def test_a_hosted_run_is_not_handed_a_held_records_text_by_updating_it(setup, connection, client):
+    memory = Writing(SOURCES)
+    results, provider, _ = await read(setup, connection, memory, *update_a_held_record(memory), client=client)
+    written = results[-1]
+    assert written["id"] == "r-chat" and written["version"] == 3 and written["status"] == "proposed"
+    assert "content" not in written and "metadata" not in written
+    assert "said in chat" not in json.dumps(provider.requests) and "private" not in json.dumps(provider.requests)
+
+
+async def test_a_local_run_is_handed_the_whole_written_record(setup):
+    memory = Writing(SOURCES)
+    results, _, _ = await read(setup, LOCAL, memory, *update_a_held_record(memory))
+    assert results[-1]["content"] == "Postgres, said in chat."
+
+
 def test_the_engine_tells_its_own_memory_client_what_a_hosted_run_must_not_receive(setup):
     settings, run, profile, _ = setup
     for connection, expected in ((HOSTED, HELD), (LOCAL, [])):
@@ -266,9 +300,14 @@ def test_a_hosted_sessions_resume_packet_leaves_held_previews_out_and_counts_the
     assert packet["omitted_records"] == 0 and packet["state_hash"] == everything["state_hash"]
     assert "said in chat" in json.dumps(everything["records"]) and "held_back" not in everything
     assert packet["status"] == "ready" and ack(manager, hosted)["status"] == "acknowledged"
-    # A refresh keeps what the session was prepared with; allowing the class shows the records again.
-    again = manager.resume_context(session)
-    assert "said in chat" not in json.dumps(again["packet"]["records"])
+    # A packet rebuilt after a state change, by a refresh or by a prepare that names no classes, keeps the hold.
+    (root / "app.py").write_text("VALUE = 2\n")  # the code changes, so the stored packet is no longer current
+    rebuilt = manager.resume_context(session)
+    assert rebuilt["packet"]["id"] != packet["id"] and rebuilt["packet"]["held_back"]["records"] == 1
+    assert "said in chat" not in json.dumps(rebuilt["packet"]["records"])
+    restarted = manager.prepare(project["id"], "api", session_id=session, timeout=0, reason="resume")
+    assert "said in chat" not in json.dumps(restarted["packet"]["records"])
+    assert "said in chat" not in json.dumps(manager.status(session)["packet"]["records"])
     allowed = manager.prepare(project["id"], "api", session_id=session, timeout=0, reason="refresh",
                               held_classes=[])
     assert "said in chat" in json.dumps(allowed["packet"]["records"]) and "held_back" not in allowed["packet"]

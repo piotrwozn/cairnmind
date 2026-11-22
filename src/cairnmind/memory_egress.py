@@ -16,7 +16,7 @@ enforced at the three places where source text leaves for a memory model:
 With the local Ollama of the settings nothing changes. Not gated here: the question itself.
 
 The same setting holds classes back from the built-in agent when its model is hosted (coding_held_classes,
-#183): its read_source and memory_records, the quotes of the ask answers it gets and the record previews of
+#183): its read_source and memory_records (and what its remember and checkpoint hand back), the quotes of the ask answers it gets and the record previews of
 its resume packet. Codex, Claude Code and external MCP clients are not gated: ask answers and resume packets
 go to their own provider (docs/EXTERNAL_CLIENTS.md).
 """
@@ -124,6 +124,13 @@ def coding_read(name: str, result, held: frozenset, session_id: str) -> dict:
         return result
     return {**result, "items": shown,
             "held_back": {"classes": ordered(held), "records": count, "message": HOSTED_RECORDS_HELD}}
+
+
+def coding_written(result) -> dict:
+    """What a hosted run is given back of a remember or checkpoint result: the record without its content and
+    metadata. An update that sends no content keeps the old version's, which may be of a held class."""
+    return {key: value for key, value in result.items() if key not in ("content", "metadata")} \
+        if isinstance(result, dict) else {}
 
 
 def held_back_class(settings, role: str, source) -> str | None:

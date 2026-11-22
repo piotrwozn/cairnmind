@@ -18,7 +18,7 @@ from uuid import uuid4
 from jsonschema import Draft202012Validator
 
 from .agent_reads import ReadLedger, projected_read
-from .memory_egress import coding_held_classes, coding_read
+from .memory_egress import coding_held_classes, coding_read, coding_written
 
 
 SYSTEM = """You are Cairnmind's programming agent. Answer in the user's language.
@@ -565,6 +565,8 @@ class AgentEngine:
         result = await self.memory.execute(name, arguments)
         if self._held and name in ("read_source", "memory_records"):
             return coding_read(name, result, self._held, self.run["session_id"])
+        if self._held and name in ("remember", "checkpoint"):
+            return coding_written(result)
         if name == "resume_context":
             packet = result.get("packet") if isinstance(result, dict) else None
             # The service hands back the same packet while nothing changed, and its ACK stays valid; reading

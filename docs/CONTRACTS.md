@@ -28,7 +28,8 @@ Copilot connection, every API profile whose address is not loopback) is held bac
 class on all four, with the setting `memory_remote_classes` that also guards the memory model
 servers (default `["project"]`; [API.md](API.md#the-knowledge-agents-models)): `read_source` refuses a held
 source, naming the class and the setting; `memory_records` lists a held record without its content;
-`ask` leaves held passages out and says so in its unknowns; the resume packet leaves held record
+`ask` leaves held passages out and says so in its unknowns, or in its freshness warnings when the
+answer is complete; `remember` and `checkpoint` hand back no content or metadata; the resume packet leaves held record
 previews out and counts them under `held_back`, without changing `state_hash`, the ACK or the plan,
 task and blockers it shows. A run may read what its own session archived. A built-in agent on a
 local Ollama is not held back. Codex CLI, Claude Code and external MCP clients are not gated: what
