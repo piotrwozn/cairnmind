@@ -6,6 +6,7 @@ from textual.widgets import Button, Select, Static, TextArea
 
 from cairnmind.terminal_i18n import tr
 from cairnmind.terminal_inspector import InspectorApp
+from consent_steps import consent_drawn
 from test_terminal_panels import FakeBroker, setup, settle
 
 
@@ -55,6 +56,9 @@ async def test_the_inspector_confirms_a_plan(tmp_path, monkeypatch, language):
                   version=5) in note
         app.screen.query_one("#field-reason", TextArea).text = "Read every step."
         await pilot.click("#form-submit")
+        await consent_drawn(app, pilot)
+        assert [path for method, path, _, _ in broker.calls if method == "POST"] == []  # the form sent nothing (#332)
+        await pilot.click("#confirm-yes")
         await settle(app, pilot)
         writes = [(path, body) for method, path, _, body in broker.calls if method == "POST"]
         assert writes == [("/api/inspector/plans/plan-a/confirm",
@@ -77,8 +81,10 @@ async def test_a_refused_plan_confirmation_reloads_the_plan_and_says_why(tmp_pat
         await pilot.click("#entity-confirm")
         await pilot.pause()
         await pilot.click("#form-submit")
+        await consent_drawn(app, pilot)
+        await pilot.click("#confirm-yes")
         await settle(app, pilot)
-        shown = str(app.query_one("#panel-notice", Static).render())
+        shown =str(app.query_one("#panel-notice", Static).render())
         assert "The plan was not confirmed. The current version was reloaded." in shown and "403" in shown
         assert app.entity["version"] == 6  # not sent again
         assert len([1 for method, path, _, _ in broker.calls if method == "POST"]) == 1
