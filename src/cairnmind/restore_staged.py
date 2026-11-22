@@ -66,7 +66,33 @@ NO_UNDO = (
     "so the store was not put back. Until a restore finishes, no command uses the store: run `cairnmind restore "
     "{backup}` again, or restore another whole backup.")
 COPY_CHANGED = ("the copy {before} changed after the restore wrote it, so it is not used to put the store back")
+# What a person is told when the engine fails during a restore: what happened, then where its heap is set.
+MEMORY_SEEN = "The database engine ran out of memory (Java heap space)."
+MEMORY_MAYBE = ("The database engine failed or stopped answering; if its log names OutOfMemoryError or \"Available heap "
+                "RAM is critically low\", it ran out of memory.")
+_RESTORE_FITS = ("a restore commits every 5,000 rows or 8 MB of text whatever the size of the store, which fits in that "
+                 "heap, so stop other work on the engine (`cairnmind stop`) and run the restore again.")
+WHERE_NATIVE = ("Its log is {log}. The engine Cairnmind starts on this machine has a heap of 1 GB (-Xmx1024m), which "
+                "this release does not change; " + _RESTORE_FITS)
+WHERE_DOCKER = ("Its log: `docker logs {container}`. The container Cairnmind starts has a heap of 1 GB (-Xmx1024m), which "
+                "this release does not change; " + _RESTORE_FITS)
+WHERE_SERVER = ("Its log is the server's own (for deploy/kubernetes: `kubectl -n cairnmind-db logs "
+                "statefulset/arcadedb`). To give the server more memory, add -Xmx4g to ARCADEDB_JAVA_OPTS and raise the "
+                "container's memory limit with it, as docs/DEPLOYMENT.md says under What to change, Memory.")
+_FITS_PL = ("przywracanie zatwierdza co 5000 wierszy albo 8 MB tekstu bez względu na rozmiar magazynu, co mieści się w "
+            "tej stercie, więc zatrzymaj inną pracę silnika (`cairnmind stop`) i uruchom przywracanie ponownie.")
 MESSAGES = {
+    MEMORY_SEEN: "Silnikowi bazy danych zabrakło pamięci (Java heap space).",
+    MEMORY_MAYBE: ("Silnik bazy danych zawiódł albo przestał odpowiadać; jeśli jego dziennik wymienia "
+                   "OutOfMemoryError albo \"Available heap RAM is critically low\", zabrakło mu pamięci."),
+    WHERE_NATIVE: ("Jego dziennik to {log}. Silnik, który Cairnmind uruchamia na tym komputerze, ma stertę 1 GB "
+                   "(-Xmx1024m), której to wydanie nie zmienia; " + _FITS_PL),
+    WHERE_DOCKER: ("Jego dziennik: `docker logs {container}`. Kontener, który Cairnmind uruchamia, ma stertę 1 GB "
+                   "(-Xmx1024m), której to wydanie nie zmienia; " + _FITS_PL),
+    WHERE_SERVER: ("Jego dziennik to dziennik samego serwera (dla deploy/kubernetes: `kubectl -n cairnmind-db logs "
+                   "statefulset/arcadedb`). Aby dać serwerowi więcej pamięci, dopisz -Xmx4g do ARCADEDB_JAVA_OPTS i "
+                   "razem z tym podnieś limit pamięci kontenera, tak jak mówi docs/DEPLOYMENT.md w części What to "
+                   "change, Memory."),
     UNDONE: "{error} Przywracanie zostało przerwane, a magazyn przywrócono do stanu sprzed niego, z pliku {before}.",
     UNDONE_VECTORS: (
         "{error} Przywracanie zostało przerwane, a magazyn przywrócono do stanu sprzed niego, z pliku {before}. Ta "
@@ -236,15 +262,69 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _described(exc: BaseException) -> str:
+def _engine_log(settings) -> Path:
+    return settings.data_dir / "arcade" / "engine.log"
+
+
+def _log_size(settings) -> int | None:
+    """The size of the managed native engine's log now, to read what it says during the restore; None when there is
+    no such log to read (a server, a container) or it cannot be asked."""
+    from .database_mode import connect_only
+    if connect_only(settings) or settings.engine_mode == "docker":
+        return None
+    try:
+        return _engine_log(settings).stat().st_size
+    except FileNotFoundError:
+        return 0
+    except OSError:
+        return None
+
+
+def _log_names_memory(settings, offset: int) -> bool:
+    try:
+        with _engine_log(settings).open("rb") as handle:
+            size = handle.seek(0, 2)
+            start = offset if offset <= size else 0  # a smaller log was rotated: read it from its start
+            handle.seek(max(start, size - (4 << 20)))
+            return b"OutOfMemoryError" in handle.read()
+    except OSError:
+        return False
+
+
+def memory_hint(exc: BaseException, settings, offset: int | None) -> str | None:
+    """Say that the engine ran out of memory, or may have, and where its heap is set; None for any other error.
+
+    Only an answer of 500 and a dropped or unanswered request are what an engine out of memory gives (in production
+    mode it says only "Internal error"); `offset` is the engine's log size when the restore began."""
+    from .arcade import ArcadeError
+    from .database_mode import connect_only
+    if not isinstance(exc, ArcadeError) or exc.status_code not in (500, None):
+        return None
+    server, docker = connect_only(settings), settings.engine_mode == "docker"
+    seen = ("heap space" in str(exc) or "OutOfMemoryError" in exc.exception_name
+            or (not server and not docker and offset is not None and _log_names_memory(settings, offset)))
+    if server:
+        where = WHERE_SERVER
+    elif docker:
+        from .engine_docker import container_name
+        where = WHERE_DOCKER.format(container=container_name(settings))
+    else:
+        where = WHERE_NATIVE.format(log=_engine_log(settings))
+    return f"{MEMORY_SEEN if seen else MEMORY_MAYBE} {where}"
+
+
+def _described(exc: BaseException, settings, offset: int | None) -> str:
     text = str(exc).strip() or type(exc).__name__
-    return text if text.endswith((".", "!", "?", ")")) else text + "."
+    text = text if text.endswith((".", "!", "?", ")")) else text + "."
+    hint = memory_hint(exc, settings, offset)
+    return f"{text} {hint}" if hint else text
 
 
 def staged_restore(store, source, path: Path, claims) -> None:
     """Replace the store with the validated backup `source` (read from `path`), as one outcome: the backup, or the
     store as it was. Called by ``Store.restore`` once the writer is known."""
     from .config import BACKUP_SUFFIXES
+    offset = _log_size(store.settings)
     mark = unfinished(store.client)
     if mark:
         # Finishing an unfinished restore: the copy to go back to is the one from before it, not one of its half store.
@@ -260,7 +340,7 @@ def staged_restore(store, source, path: Path, claims) -> None:
     try:
         store._restore_from(source, claims)
     except Exception as exc:  # noqa: BLE001 - every failure is undone or leaves the mark; none passes as it was
-        _undo(store, mark, _described(exc), exc)
+        _undo(store, mark, _described(exc, store.settings, offset), exc)
     clear_mark(store)
 
 
@@ -281,7 +361,7 @@ def _undo(store, mark: dict, error: str, cause: BaseException) -> NoReturn:
             store._restore_from(copy, None)
         clear_mark(store)
     except Exception as second:  # noqa: BLE001 - the mark stays, and the person is told how to finish
-        raise RestoreFailed(NOT_UNDONE.format(error=error, undo_error=_described(second).rstrip("."),
+        raise RestoreFailed(NOT_UNDONE.format(error=error, undo_error=_described(second, store.settings, None).rstrip("."),
                                               before=safe_text(before), backup=backup)) from cause
     jobs = store.embed_jobs_requeued
     raise RestoreFailed((UNDONE_VECTORS if jobs else UNDONE).format(error=error, before=safe_text(before), jobs=jobs)) from cause

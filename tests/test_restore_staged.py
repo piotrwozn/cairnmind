@@ -135,14 +135,14 @@ def test_a_restore_commits_no_more_than_the_bound_per_transaction(tmp_path, monk
     assert comparable(target.export()) == comparable(source.export())
 
 
-def _failing_commits(monkeypatch, *numbers):
+def _failing_commits(monkeypatch, *numbers, error=OSError("the engine went away")):
     """Make the ``n``-th commit of the write phase (counted over every restore of the test) fail, as a lost engine does."""
     seen = [0]
 
     def failing(self):
         seen[0] += 1
         if seen[0] in numbers:
-            raise OSError("the engine went away")  # the transaction stays open: the restore rolls it back
+            raise error  # the transaction stays open: the restore rolls it back
         return commit(self)
 
     commit = restore_staged.Batches.commit
@@ -174,6 +174,15 @@ def test_a_failure_after_several_commits_puts_the_store_back_and_keeps_the_copy(
     assert comparable(store.export()) == before
     assert len(_copies(store, known)) == 1 and str(_copies(store, known)[0]) in str(failed.value)
     assert restore_staged.unfinished(store.client) is None and not Store(store.data_dir).read_only
+
+
+def test_an_engine_that_runs_out_of_memory_is_named_in_the_error_of_the_restore(tmp_path, monkeypatch):
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    _failing_commits(monkeypatch, 4, error=arcade.ArcadeError("ArcadeDB HTTP 500: Java heap space", status_code=500))
+    with pytest.raises(RestoreFailed, match=r"Java heap space\. The database engine ran out of memory.*put back as it was"):
+        store.restore(path)
+    monkeypatch.undo()
+    assert comparable(store.export()) == before
 
 
 def test_a_failure_while_putting_back_leaves_the_store_refused_until_a_restore_finishes(tmp_path, monkeypatch):

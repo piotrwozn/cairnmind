@@ -78,7 +78,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_sessions_dialog", "test_command_menu_popup", "test_mcp_unknown_argument", "test_stop_broker_line",
     "test_ended_pane_text",
     "test_short_answers", "test_person_acts_consent", "test_project_forget_workspace",
-    "test_server_mode",
+    "test_server_mode", "test_restore_messages",
 })
 
 TMUX_MODULES = frozenset({
