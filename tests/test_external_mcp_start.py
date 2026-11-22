@@ -159,6 +159,55 @@ def test_a_reader_is_not_asked_to_start_the_service_and_nothing_is_spawned(monke
     assert "Start it with" not in text
 
 
+def test_during_an_upgrade_the_bridge_starts_nothing_and_says_why(monkeypatch, settings, tmp_path):
+    from cairnmind import upgrade_mark
+    network = Network(monkeypatch)
+    monkeypatch.setattr(cli, "service_alive", lambda s: False)
+    monkeypatch.setattr(upgrade_mark, "state", lambda: ("running", 4242))
+
+    def never(*args, **kwargs):
+        raise AssertionError("a service was started during an upgrade")
+    monkeypatch.setattr(cli.subprocess, "Popen", never)
+    with pytest.raises(RuntimeError) as caught:
+        ask(external(settings, tmp_path))
+    assert str(caught.value) == upgrade_mark.BRIDGE_UPGRADE.format(reason=upgrade_mark.NOTE_RUNNING.format(pid=4242))
+    assert "cairnmind serve" not in str(caught.value)
+    assert network.seen == ["/ask"]
+
+
+def test_once_the_mark_is_gone_the_same_bridge_starts_the_service_again(monkeypatch, settings, tmp_path):
+    from cairnmind import upgrade_mark
+    network, marks = Network(monkeypatch), [("running", 4242), ("none", None)]
+    monkeypatch.setattr(cli, "service_alive", lambda s: False)
+    monkeypatch.setattr(upgrade_mark, "state", lambda: marks[0])
+
+    bridge = external(settings, tmp_path)
+    with pytest.raises(RuntimeError, match="upgrade of Cairnmind is in progress"):
+        ask(bridge)
+    marks.pop(0)  # the installer has finished
+    monkeypatch.setattr(cli, "ensure_service", lambda s: setattr(network, "up", True))
+    assert ask(bridge) == {"answer": "yes"}
+
+
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("loaded", ["other", None])
+def test_a_bridge_whose_installed_code_changed_refuses_every_call(monkeypatch, settings, tmp_path, native, loaded):
+    from cairnmind import __version__
+    from cairnmind.upgrade_mark import CODE_REPLACED
+    network = Network(monkeypatch)
+    network.up = True
+    if loaded is None:
+        monkeypatch.setattr(mcp_server, "LOADED_CODE", None)
+    else:
+        monkeypatch.setattr(mcp_server, "code_identity", lambda: (1, 2, 3, 4))
+    monkeypatch.setattr(cli, "ensure_service", lambda s: pytest.fail("a changed bridge must start nothing"))
+    bridge = mcp_server.ServiceClient(settings) if native else external(settings, tmp_path)
+    with pytest.raises(RuntimeError) as caught:
+        ask(bridge)
+    assert str(caught.value) == CODE_REPLACED.format(version=__version__)
+    assert network.seen == []
+
+
 def test_parallel_calls_wait_for_one_start(monkeypatch, settings, tmp_path):
     import time
     network, active, worst, calls = Network(monkeypatch), [0], [0], []

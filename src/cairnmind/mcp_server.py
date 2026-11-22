@@ -15,7 +15,9 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from . import __version__
 from .config import Settings, env_names, session_value
+from .upgrade_mark import BRIDGE_UPGRADE, CODE_REPLACED
 
 # store.ORIGIN_METADATA, repeated so the stdio bridge does not import the store: an external session's mark.
 ORIGIN_KEYS = ("origin_client", "origin_session_id", "origin_history", "origin_evidence")
@@ -126,11 +128,24 @@ def _written_as_path(value: str) -> bool:
 UNAVAILABLE = "Cairnmind service is unavailable ({error}); start `cairnmind serve` or use the launcher."
 
 
+def code_identity() -> tuple[int, int, int, int] | None:
+    """The installed package's __init__.py as the file system has it now; None when it cannot be read. A reinstall
+    writes new files, so another identity means this process no longer runs what is installed (#298)."""
+    try:
+        found = os.stat(Path(__file__).with_name("__init__.py"))
+    except OSError:
+        return None
+    return found.st_dev, found.st_ino, found.st_mtime_ns, found.st_size
+
+
+LOADED_CODE = code_identity()  # what this process started from
+
+
 def start_service(settings: Settings) -> None:
     """Start this installation's knowledge service as `ask`, `run` and `context` do (cli.ensure_service), for an
     external client, which no launcher started it for (#258). Prints nothing: stdout belongs to MCP."""
     import shlex
-    from .cli import _data_dir_arguments, _os_error_text, _service_unavailable, ensure_service
+    from .cli import UpgradeInProgress, _data_dir_arguments, _os_error_text, _service_unavailable, ensure_service
     from .first_start import SERVICE_NOT_STARTED
     from .store_writer import inspect
     try:
@@ -142,6 +157,9 @@ def start_service(settings: Settings) -> None:
         raise RuntimeError(_service_unavailable(settings))
     try:
         ensure_service(settings)
+    except UpgradeInProgress as exc:
+        # Not SERVICE_NOT_STARTED, whose "start it with `cairnmind serve`" would be wrong advice now (#298).
+        raise RuntimeError(BRIDGE_UPGRADE.format(reason=str(exc))) from None
     except (ValueError, OSError) as exc:  # ServiceDidNotStart is a ValueError
         command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "serve"])
         reason = (_os_error_text(exc) if isinstance(exc, OSError) else str(exc)).strip().rstrip(".") + "."
@@ -244,6 +262,9 @@ class ServiceClient:
 
     async def request(self, method: str, endpoint: str, *, payload: dict[str, Any] | None = None,
                       params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if LOADED_CODE is None or code_identity() != LOADED_CODE:
+            # Its lazy imports would load the new version's modules into this old process: it must be restarted.
+            raise RuntimeError(CODE_REPLACED.format(version=__version__))
         body = dict(payload or {})
         query = dict(params or {})
         if "session_id" in body and body["session_id"] != self.session_id:
