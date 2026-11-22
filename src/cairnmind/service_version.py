@@ -27,17 +27,21 @@ OTHER_VERSION = ("The knowledge service of this data directory runs Cairnmind {s
 # An answer that is this data directory's service, with a version that cannot be read: `stop` reaches it.
 VERSION_UNKNOWN = ("The knowledge service at {url} did not say which version of Cairnmind it runs, so nothing is sent "
                    "to it. Try again; if this keeps happening, stop it with `{command}`.")
-# No answer at all: nothing is known of the program, and `stop` would say it is not running.
-NO_HEALTH = ("The program at {url} did not answer within 5 seconds, so it is not known whether it is the knowledge "
-             "service of this data directory, and nothing is sent to it. See what holds the port with `{command}`.")
+# No answer at all: nothing is known of the program, `stop` would say it is not running and `doctor` cannot name it.
+NO_HEALTH = ("The program at {url} did not answer within 5 seconds, so nothing is sent to it. Try again; if this keeps "
+             "happening, the program on that port hangs or is not the knowledge service of this data directory: end "
+             "it, or give this data directory its own port: `port` in {data_dir}/config.json, or CAIRNMIND_PORT for "
+             "one command.")
 
 MESSAGES = {
     OTHER_VERSION: ("Usługa wiedzy tego katalogu danych działa w wersji Cairnmind {service}, a to jest Cairnmind "
                     "{client}, więc nic nie jest do niej wysyłane: obie wersje mogą się nie zgadzać co do tego, na co "
                     "pozwala baza. Zatrzymaj ją poleceniem `{command}`; następne polecenie, "
                     "które potrzebuje usługi, uruchomi ją w wersji {client}."),
-    NO_HEALTH: ("Program pod adresem {url} nie odpowiedział w ciągu 5 sekund, więc nie wiadomo, czy to usługa wiedzy "
-                "tego katalogu danych, i nic nie jest do niego wysyłane. Zobacz, co zajmuje port, poleceniem `{command}`."),
+    NO_HEALTH: ("Program pod adresem {url} nie odpowiedział w ciągu 5 sekund, więc nic nie jest do niego wysyłane. "
+                "Spróbuj ponownie; jeśli to się powtarza, program na tym porcie zawiesił się albo nie jest usługą "
+                "wiedzy tego katalogu danych: zakończ go albo daj temu katalogowi danych własny port: `port` w "
+                "{data_dir}/config.json albo CAIRNMIND_PORT dla jednego polecenia."),
     VERSION_UNKNOWN: ("Usługa wiedzy pod adresem {url} nie podała, w której wersji Cairnmind działa, więc nic nie jest "
                       "do niej wysyłane. Spróbuj ponownie; jeśli to się powtarza, zatrzymaj ją poleceniem `{command}`."),
 }
@@ -72,7 +76,7 @@ def refusal(settings) -> Sentence | None:
         return None  # nothing listens: the request that follows fails, or starts the service, on its own
     except httpx.HTTPError:
         # Nothing is known of the program: `stop` would call it "not running" (it waits 0.7 s), so it is not advised.
-        return Sentence(NO_HEALTH, url=settings.url, command=_command(settings, "doctor"))
+        return Sentence(NO_HEALTH, url=settings.url, data_dir=settings.data_dir)
     try:
         health = response.json()
     except ValueError:

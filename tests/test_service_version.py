@@ -78,9 +78,10 @@ def test_a_program_that_does_not_answer_is_not_called_the_service_and_stop_is_no
 
     answer(monkeypatch, hang)
     reason = refusal(settings)
-    doctor = command(settings).removesuffix("stop") + "doctor"
-    assert reason == NO_HEALTH.format(url=settings.url, command=doctor)
+    assert reason == NO_HEALTH.format(url=settings.url, data_dir=settings.data_dir)
     assert " stop" not in reason and "knowledge service at" not in reason
+    # doctor cannot name the program on the port, so it is not where the person is sent (#319 recheck)
+    assert "doctor" not in reason and "config.json" in reason
 
 
 def test_the_sentence_is_shown_in_polish_by_the_workspace(settings, monkeypatch):
