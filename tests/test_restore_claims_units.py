@@ -167,3 +167,10 @@ def test_the_restore_sentences_have_polish():
     assert "cairnmind workspace stop" in old and "2 confirmed" in old and "1 accepted" in old
     for proof in ("unavailable", "key"):
         assert "cairnmind workspace stop" not in restore_claims.restore_notice(proof, claims)
+    assert "tmux 3.4" in restore_claims.restore_notice("unavailable", claims)
+    # With nothing to keep, no redo is advised (it could change nothing), in both languages.
+    empty = BackupClaims(FILE, AT)
+    for proof in ("unavailable", "no_key"):
+        template, values = restore_claims.notice_item(proof, empty)
+        assert template == restore_claims.RESTORED_NOTHING_TO_KEEP and "run the same restore again" not in template
+        assert CATALOG[template] == restore_claims.MESSAGES[template] and "ponownie" not in tr(template, "pl", **values)

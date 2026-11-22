@@ -28,8 +28,11 @@ RESTORED_WITHOUT_WORKSPACE = (
     "tmux_executable). Nothing in the backup counts as a person's act here: "
     "{confirmations} confirmed record(s) are kept as confirmed only by the backup's claim, not verified here, and "
     "{kinds} accepted transcript record kind(s) were withdrawn. The person confirms again in the inspector of the "
-    "workspace what still holds. To keep the person's confirmations instead, open the workspace (`cairnmind`), "
-    "stop the service (`cairnmind stop`) and run the same restore again.")
+    "workspace what still holds. To keep the person's confirmations instead, open the workspace (`cairnmind`; it "
+    "needs tmux 3.4 or newer), stop the service (`cairnmind stop`) and run the same restore again.")
+RESTORED_NOTHING_TO_KEEP = (
+    "Restored without the person's workspace: the backup held no confirmed record and no accepted transcript record "
+    "kind, so nothing was turned into a claim or withdrawn.")
 RESTORED_WITH_AN_OLD_WORKSPACE = (
     "Restored without the person's workspace: the open workspace was started by an earlier version and holds no "
     "key for a person's acts. Nothing in the backup counts as a person's act here: {confirmations} confirmed "
@@ -74,8 +77,11 @@ MESSAGES = {
         "tutaj jako czynność osoby. Ustalenia, które pozostają potwierdzone tylko według kopii zapasowej i nie są "
         "tutaj zweryfikowane: {confirmations}. Wycofane zaakceptowane rodzaje rekordów transkrypcji: {kinds}. Osoba "
         "ponownie potwierdza w inspektorze środowiska to, co nadal obowiązuje. Aby zamiast tego zachować "
-        "potwierdzenia osoby, otwórz środowisko (`cairnmind`), zatrzymaj usługę (`cairnmind stop`) i uruchom to "
-        "samo przywracanie jeszcze raz."),
+        "potwierdzenia osoby, otwórz środowisko (`cairnmind`; wymaga tmux 3.4 lub nowszego), zatrzymaj usługę "
+        "(`cairnmind stop`) i uruchom to samo przywracanie jeszcze raz."),
+    RESTORED_NOTHING_TO_KEEP: (
+        "Przywrócono bez środowiska osoby: kopia zapasowa nie zawierała potwierdzonego rekordu ani zaakceptowanego "
+        "rodzaju rekordów transkrypcji, więc nic nie zamieniono na ustalenie ani nie wycofano."),
     RESTORED_WITH_AN_OLD_WORKSPACE: (
         "Przywrócono bez środowiska osoby: otwarte środowisko uruchomiła wcześniejsza wersja i nie ma ono klucza dla "
         "czynności osoby. Nic z kopii zapasowej nie liczy się tutaj jako czynność osoby. Ustalenia, które pozostają "
@@ -127,6 +133,8 @@ def _with_mark(record, mark):
 def notice_item(proof: str, claims: BackupClaims) -> tuple[str, dict]:
     """The sentence said when a restore kept no person's act, as (template, values) for either language."""
     template = RESTORED_WITH_AN_OLD_WORKSPACE if proof == "no_key" else RESTORED_WITHOUT_WORKSPACE
+    if not claims.confirmations and not claims.record_kinds:
+        template = RESTORED_NOTHING_TO_KEEP  # nothing to keep: a redo would change nothing
     return template, {"confirmations": claims.confirmations, "kinds": claims.record_kinds}
 
 

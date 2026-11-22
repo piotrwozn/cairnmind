@@ -20,7 +20,7 @@ Cairnmind runs on Linux, on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the test
 
 Nothing else: no Ollama, no models, no GPU, no tmux and no coding assistant are needed for the steps below. Each adds something later.
 
-**What gets installed:** the `cairnmind` command; a small local service that starts by itself when a command needs it and keeps running in the background (`cairnmind stop` stops it); and ArcadeDB, the database your project memory is kept in (about 86 MB, checked with SHA-256). Your memory and the engine are kept in `~/.local/share/cairnmind`; the command is a uv tool, and a Docker engine lives in Docker's storage. `cairnmind stop` stops the service and `cairnmind engine stop` the engine, which also keeps running in the background once it has started.
+**What gets installed:** the `cairnmind` command; a small local service that starts by itself when a command needs it and keeps running in the background (`cairnmind stop` stops it); and ArcadeDB, the database your project memory is kept in (about 86 MB, checked with SHA-256; with Docker instead, an engine image of about 640 MB on disk, pinned by its SHA-256 digest). Your memory is kept in `~/.local/share/cairnmind`; the command is a uv tool, and a Docker engine's image lives in Docker's storage. `cairnmind stop` stops the service and `cairnmind engine stop` the engine, which also keeps running in the background once it has started.
 
 ```bash
 git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
