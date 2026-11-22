@@ -553,7 +553,7 @@ fi
 printf 'Installing Cairnmind from %s...\n' "$package_dir"
 # uv's list of every package is shown only when the install fails (#326): then it is uv's own error.
 install_log="$(mktemp "${TMPDIR:-/tmp}/cairnmind-install.XXXXXXXX")"
-trap 'rm -f -- "$constraints_file" "$install_log"' EXIT
+trap 'rm -f -- "$constraints_file" "$install_log"; end_upgrade' EXIT  # a failed install also removes the mark
 install_status=0
 uv tool install --python "${CAIRNMIND_INSTALL_PYTHON:-${DEVBRAIN_INSTALL_PYTHON:-3.12}}" --reinstall --constraints "$constraints_file" "$package_dir" >"$install_log" 2>&1 || install_status=$?
 if ((install_status != 0)); then

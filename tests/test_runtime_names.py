@@ -402,6 +402,9 @@ def test_the_installer_marks_the_upgrade_around_the_replacement():
     finished = script.index("end_upgrade  #", first_stop)
     assert script.index("Installation did not provide the executable") < finished < script.index('if [[ -n "$connect_url" ]]', first_stop)
     assert script.index("uv tool install --python") < finished
+    # The trap set for the install log still ends the upgrade: a failed install leaves no mark behind.
+    log_trap = script.index("trap 'rm -f -- \"$constraints_file\" \"$install_log\"; end_upgrade' EXIT")
+    assert begin < log_trap < script.index("uv tool install --python")
 
 
 def test_scheduled_backups_of_both_suffixes_are_ordered_by_the_time_in_their_name(tmp_path):
