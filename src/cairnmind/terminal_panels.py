@@ -1164,7 +1164,7 @@ class SidebarApp(BasePanel):
                     row for row in current.get("launch_errors", []) if row.get("code") != "background_inference_deferred"]},
                     expected_revision=current["revision"])
                 self.notice_for(subject, "Memory processing enabled for this project." if result.get("worker_running") else
-                                "Background memory processing is disabled in this service.")
+                                result.get("notice") or "Background memory processing is disabled in this service.")
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice_for(subject, exc)
 
