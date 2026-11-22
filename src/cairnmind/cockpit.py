@@ -27,6 +27,7 @@ from . import __version__, person_proof
 from .config import BROKER_NAMES, SESSION_NAMES, drop_env
 from .path_spelling import lies_in
 from .process_identity import start as process_start
+from .service_token import refused_token
 from .cockpit_state import (CockpitState, ProjectDiscovery, _atomic, _private_directory, _private_lock, _snapshot,
                             normalize_path)
 
@@ -228,6 +229,13 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     async def projects():
         response = await upstream("GET", "/projects")
         if response.is_error:
+            try:
+                detail = response.json().get("detail")
+            except (ValueError, AttributeError):
+                detail = None
+            if refused_token(response.status_code, detail):
+                # The client turns this into the foreign-service sentence in the panel's language (#308).
+                raise HTTPException(401, "Invalid local service token")
             raise HTTPException(response.status_code, "The projects could not be read.")
         rows = response.json()
         if not isinstance(rows, list):
@@ -344,10 +352,12 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     async def cockpit_state(request: Request):
         session_for(request)
         values = state.load()
-        memory_available = True
+        memory_available, foreign = True, False
         try:
             rows = await projects()
-        except HTTPException:
+        except HTTPException as exc:
+            # The state stays whole for the supervisor and the live terminals; the panels name the cause (#308).
+            foreign = refused_token(exc.status_code, exc.detail)
             rows = list(project_cache)
             memory_available = False
         for row in rows:
@@ -370,7 +380,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         capabilities = await asyncio.to_thread(getattr(runtime, "diagnostics", lambda: {}))
         return {"version": __version__, "projects": rows, "profiles": values["profiles"], "settings": values,
                 "runs": runs, "auth": {row["client"]: row for row in auth}, "capabilities": capabilities,
-                "memory_available": memory_available}
+                "memory_available": memory_available, "foreign_service": foreign}
 
     @app.get("/api/projects")
     async def list_projects(request: Request):

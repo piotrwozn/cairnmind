@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import itertools
 import json
 import uuid
@@ -13,6 +14,7 @@ from cairnmind import cli
 from cairnmind import store as store_module
 from cairnmind.agent import KnowledgeAgent
 from cairnmind.inspector import Inspector
+from cairnmind.memory_egress import release_held_extractions
 from cairnmind.reextract import plan, queue
 from cairnmind.retrieval import json_value
 
@@ -308,3 +310,38 @@ def test_a_failure_while_superseding_for_a_skipped_source_changes_nothing(fixtur
     for r in kept:
         assert record(f, r["id"])["status"] == "proposed" and record(f, r["id"])["version"] == 1
         assert len(f.store.record_history(r["id"])) == 1
+    diagnostics = f.store.job_status(pid, f.job["id"])["diagnostics"]  # #311: the failure names its stage
+    assert diagnostics["code"] == "persistence_failed" and diagnostics["persistence_stage"] == "supersede_records"
+
+
+def test_the_dry_run_counts_a_masked_source_as_read_because_only_the_job_can_decide(fixture):  # noqa: F811
+    f, pid = fixture, fixture.project["id"]
+    plain = own_block_source(f)
+    masked = f.store.snapshot(pid, "file:///repo/CLAUDE.md", own_block_source(f)["content"], "document",
+                              metadata={"path": "/repo/CLAUDE.md", "masked": True})
+    assert masked["id"] != plain["id"]
+    old(f, plain, "One.", "one")
+    old(f, masked, "Two.", "two")
+    shown = plan(f.store, pid, VERSION, VERSION)
+    assert shown["skipped_sources"] == [plain["id"]]  # the masked one is counted as read, the job decides
+    assert shown["skipped_records"] == 1 and masked["id"] in shown["would_queue"]
+
+
+def test_a_held_back_reextract_job_keeps_its_flag_when_released_and_supersedes_then(fixture):  # noqa: F811
+    f, pid = fixture, fixture.project["id"]
+    a = f.store.snapshot(pid, "conversation://1", "<environment_context>cwd</environment_context>", "transcript",
+                         metadata={"role": "user"})  # the extractor skips it; its class (conversation) is held
+    kept = old(f, a, "The environment.", "env")
+    queue(f.store, pid, VERSION, VERSION)
+    remote = replace(f.settings, memory_chat={"provider": "openai_compatible", "base_url": "https://models.example/v1",
+                                              "allow_remote": True})
+    held = run(f, [NEW], agent=KnowledgeAgent(f.store, remote, Model([NEW])))
+    assert f.store.job_status(pid, held["id"])["diagnostics"]["code"] == "remote_not_allowed"
+    f.store.finish_job(held["id"], worker=held["worker"], expected_attempts=held["attempts"])
+    assert record(f, kept["id"])["status"] == "proposed"
+    allowed = replace(remote, memory_remote_classes=["project", "conversation"])
+    assert release_held_extractions(f.store, allowed) == 1
+    released = run(f, [NEW], agent=KnowledgeAgent(f.store, allowed, Model([NEW])))
+    assert json_value(released["payload"], {})["reextract"] is True
+    assert f.store.job_status(pid, released["id"])["diagnostics"]["code"] == "source_skipped"
+    assert record(f, kept["id"])["status"] == "superseded" and counts(f)["superseded_records"] == 1
