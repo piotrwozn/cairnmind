@@ -23,7 +23,8 @@ def mark(tmp_path):
 
 
 def installer_like_child():
-    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "/x/scripts/install-wsl.sh"])
+    return subprocess.Popen([sys.executable, "-c", "import time; print('ready', flush=True); time.sleep(30)",
+                             "/x/scripts/install-wsl.sh"], stdout=subprocess.PIPE, text=True)
 
 
 def test_without_a_mark_nothing_is_blocked_or_noted(mark):
@@ -32,34 +33,36 @@ def test_without_a_mark_nothing_is_blocked_or_noted(mark):
     assert upgrade_mark.note() is None
 
 
-def wait_for_the_installer_name(child):
-    """Not before the child's command line shows the installer: no assertion rests on how fast it started."""
-    import time
-    deadline, read = time.monotonic() + 10, None
-    while time.monotonic() < deadline:
-        read = process_identity.command_line(child.pid)
-        if read and any(Path(argument).name == upgrade_mark.INSTALLER for argument in read):
-            return
-        time.sleep(0.05)
-    pytest.fail(f"the command line of process {child.pid} never showed {upgrade_mark.INSTALLER}; last read: {read!r}")
+def wait_until_the_child_runs(child):
+    """The child says so from its final image, after any second exec of a launcher (a framework Python on macOS):
+    no read of it happens during an exec, and no assertion rests on how fast it started."""
+    import threading
+    watchdog = threading.Timer(10, child.kill)
+    watchdog.start()
+    try:
+        assert child.stdout.readline() == "ready\n", "the child did not announce itself"
+    finally:
+        watchdog.cancel()
 
 
 def test_a_mark_of_a_running_installer_blocks_and_names_its_process(mark):
     child = installer_like_child()
     try:
-        wait_for_the_installer_name(child)
+        wait_until_the_child_runs(child)
         mark.write_text(f"{child.pid}\n")
         assert upgrade_mark.state() == ("running", child.pid)
         assert upgrade_mark.refusal() == upgrade_mark.NOTE_RUNNING.format(pid=child.pid)
     finally:
         child.kill()
         child.wait()
+        child.stdout.close()
 
 
 def test_a_mark_whose_installer_is_gone_blocks_nothing_and_doctor_says_the_upgrade_did_not_finish(mark):
     child = installer_like_child()
     child.kill()
     child.wait()
+    child.stdout.close()
     mark.write_text(f"{child.pid}\n")
     assert upgrade_mark.state() == ("stale", child.pid)
     assert upgrade_mark.refusal() is None
@@ -95,8 +98,8 @@ def test_a_process_without_a_readable_command_line_is_told_by_its_program(mark, 
 
 
 def test_a_living_process_is_not_called_stale_by_one_failed_read(mark, monkeypatch):
-    """macOS answered running, then stale, for one living installer: a read around exec failed once and the program
-    that was readable was no shell (#348)."""
+    """macOS answered running, then stale, for one living stand-in for the installer; most likely one read of its
+    command line failed (around an exec) while its program was readable and no shell (#348)."""
     mark.write_text("4242\n")
     answers = iter([None, ["python", "-c", "x", "/x/scripts/install-wsl.sh"]])
     monkeypatch.setattr(process_identity, "command_line", lambda pid: next(answers))
@@ -113,6 +116,15 @@ def test_a_command_line_read_again_that_names_another_program_is_stale(mark, mon
     monkeypatch.setattr(process_identity, "executable", lambda pid: "/usr/bin/python3")
     monkeypatch.setattr(process_identity, "alive", lambda pid: True)
     monkeypatch.setattr(upgrade_mark.time, "sleep", lambda seconds: None)
+    assert upgrade_mark.state() == ("stale", 4242)
+    assert next(answers, None) is None  # the second read was used
+
+
+def test_a_readable_program_that_ended_between_reads_is_stale(mark, monkeypatch):
+    mark.write_text("4242\n")
+    monkeypatch.setattr(process_identity, "command_line", lambda pid: None)
+    monkeypatch.setattr(process_identity, "executable", lambda pid: "/usr/bin/python3")
+    monkeypatch.setattr(process_identity, "alive", lambda pid: False)
     assert upgrade_mark.state() == ("stale", 4242)
 
 
