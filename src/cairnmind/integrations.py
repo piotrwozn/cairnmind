@@ -840,8 +840,10 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
     # New projects must acquire their managed integration before the first
     # native session. Capability alone does not imply config was installed.
     installation = installation or install_integrations(settings, project, clients=(client,))
+    from .recorder_agent import RECORDER_OFF
     for warning in installation["warnings"]:
-        print(f"Cairnmind: {warning}", file=sys.stderr)
+        if warning != RECORDER_OFF:  # a person's own choice: `cairnmind install` says it, a launch does not repeat it
+            print(f"Cairnmind: {warning}", file=sys.stderr)
     info = installation["clients"][client]
     parts = missing_parts(info)
     if parts:

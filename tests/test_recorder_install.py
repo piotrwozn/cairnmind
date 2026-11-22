@@ -404,3 +404,12 @@ def test_a_session_that_comes_back_already_acknowledged_is_refused_and_not_kept(
     with pytest.raises(RuntimeError, match="already holds an acknowledgement"):
         asyncio.run(client._start_external())
     assert client.session_id is None
+
+
+def test_a_launch_does_not_repeat_that_the_recorder_is_off(settings, project, capsys, monkeypatch):
+    monkeypatch.setattr(integrations.shutil, "which", lambda name: "/usr/bin/claude")
+    installation = {"warnings": [recorder_agent.RECORDER_OFF, "another note"], "clients": {"claude": {}}}
+    with pytest.raises(ValueError):  # nothing is connected in this installation, so the launch refuses after its notes
+        integrations.prepare_client_launch(settings, project, "claude", installation=installation)
+    said = capsys.readouterr().err
+    assert "another note" in said and recorder_agent.RECORDER_OFF not in said
