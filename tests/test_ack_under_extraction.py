@@ -97,6 +97,33 @@ def test_an_external_session_acknowledges_at_the_first_try_while_the_queue_index
     assert {shown[row["id"]]["origin"] for row in written} == {"automatic_extraction"}
 
 
+NEWER = "newer_automatic_proposals"
+
+
+def test_an_ack_and_the_status_name_the_automatic_proposals_newer_than_the_packet(fixture):  # noqa: F811
+    indexed_notes(fixture)
+    started = prepared(fixture)
+    acknowledged = fixture.client.post("/sessions/ack", json=ack_body(started))
+    assert acknowledged.status_code == 200 and NEWER not in acknowledged.json()  # none: the reply is as before
+    assert NEWER not in session_view(fixture, started["session_id"])
+    started = prepared(fixture)
+    extract_one(fixture)  # lands between resume_context and ack_resume
+    reply = fixture.client.post("/sessions/ack", json=ack_body(started))
+    assert reply.status_code == 200 and reply.json()[NEWER] == 1
+    assert fixture.client.post("/sessions/ack", json=ack_body(started)).json()[NEWER] == 1  # the repeated ACK too
+    extract_one(fixture)
+    view = session_view(fixture, started["session_id"])
+    assert view["acknowledged"] is True and view[NEWER] == 2
+    assert all(NEWER not in row for row in fixture.store.query(
+        "SELECT FROM resume_acks WHERE session_id=:id", {"id": started["session_id"]}))  # never stored
+    # A promised change makes the packet stale; the packet that replaces it shows the proposals, so no count.
+    Inspector(fixture.store).review(fixture.project["id"], extract_one(fixture)["id"], "confirm", 1)
+    renewed = post(fixture, "/sessions/context", {"session_id": started["session_id"]})
+    assert renewed["packet"]["id"] != started["packet"]["id"]
+    assert NEWER not in post(fixture, "/sessions/ack", ack_body(started, renewed["packet"]))
+    assert NEWER not in session_view(fixture, started["session_id"])
+
+
 def test_a_person_confirming_a_proposal_between_resume_and_ack_costs_exactly_one_retry(fixture):  # noqa: F811
     indexed_notes(fixture)
     proposal = extract_one(fixture)

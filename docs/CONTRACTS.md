@@ -72,6 +72,13 @@ The `origin: automatic_extraction` label, which a client can write, plays no par
 the state it showed held no such proposal and nothing else changed; otherwise its ACK is refused or goes
 stale once and `resume_context` hands out a new packet.
 
+So that a client knows what its packet does not show (#299), the reply of `ack_resume` and the session status
+of an acknowledged session carry `newer_automatic_proposals`: how many such proposals (the same test as above,
+never a field a client sets) were written after the packet. It is information only: it is read after the state
+hash was compared, changes no hash, readback or refusal, and is never stored with the ACK. With none the key
+is absent and the reply is as before. The count ends with the packet: a new packet shows these proposals.
+Until something the packet promises changes, `resume_context` returns the same packet (see above).
+
 A captured transcript horizon is complete only when every line in it is an archived record the reader
 understood. A line stored as `transcript_unknown` keeps the packet partial, with one exception (#210): a
 record whose `type` is a kind the reader does not know at all, that is a JSON object and names no other
