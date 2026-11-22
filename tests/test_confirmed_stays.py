@@ -54,7 +54,7 @@ def test_published_files_cannot_move_on_a_record_confirmed_here_without_the_pers
     assert preview["replaces_confirmed_here"]["total"] == 1 and preview["replaces_confirmed_here"]["records"] == [path]
     with pytest.raises(MemoryConflict, match="would replace 1 record") as refused:
         importer.import_published(folder_of(other["root"]), pid)
-    assert path in str(refused.value) and "--replace-confirmed" in str(refused.value)
+    assert path in str(refused.value) and "memory view of the workspace" in str(refused.value)
     assert rows(store, pid)[record["id"]] == mine  # Nothing was written: text, version and the person's mark.
 
     taken = importer.import_published(folder_of(other["root"]), pid, replace_confirmed=True)

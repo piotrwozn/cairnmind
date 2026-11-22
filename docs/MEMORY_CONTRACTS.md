@@ -88,9 +88,11 @@ An import is run only by a person. `POST /memory/import`, `/memory/import-publis
 and `/memory/import-commit` refuse a request that names a session, except its dry
 run, which writes nothing. An import that would put another text or status in
 the place of a record that was confirmed or disputed on this machine is refused
-and lists those records (`replaces_confirmed_here` in the dry run); the person
-applies it with `--replace-confirmed`. In the workspace and the inspector the
-import dialog states the number before the person applies the import.
+and lists those records (`replaces_confirmed_here` in the dry run); a person
+applies it in the memory view of the workspace (an archive; a published
+directory or a commit cannot replace such records yet, `--take-published`
+included, since 0.13.0). The import dialog states the number before the person
+applies the import.
 
 ## How an extracted record was made
 
@@ -127,6 +129,13 @@ through, and it holds for every route:
   that source itself and checks that it belongs to the project and is the kind
   of note that route writes. Nothing in a request, a record or a file opens an
   act, and an act opened while the write belongs to a session is refused.
+  Since 0.13.0 the act also has to be proven (#214): the request that opened it
+  carried the key of the open workspace, which the service checked before the
+  route wrote anything ("What the person's key is" below). The store counts an
+  act only then. An open act without the proof is refused with `Only a person can
+  store a record as confirmed, and a person's act needs the person's workspace
+  ...` and takes no confirmation away, like a session's write. Evaluation seed
+  data needs no proof and is never a person.
 - A write keeps `confirmed` when it does not change what was confirmed: the
   text, the kind, the key, the record it replaces, the quoted passage and every
   metadata field. A field is covered unless it is named as not covered, so a
@@ -171,8 +180,7 @@ through, and it holds for every route:
   record is stored too. Either leaves `confirmation.by = "lapsed"` with the new
   status, which stays on later versions until a person confirms or disputes the
   record.
-- A person's act leaves no such mark: a dispute, a conflict decision, a plan the
-  person saves in their own terminal.
+- A person's act leaves no such mark: a dispute, a conflict decision.
 
 ### Changing what a person confirmed
 
@@ -201,10 +209,9 @@ What they can do, and what the refusal tells them:
   show` returns it: criteria that are declared again without their
   `criterion_checks` drop that link, which is a change, and the error names it
   (`metadata.criterion_checks would differ from the confirmed version`). The
-  person disputes the step in the inspector, after which a session's save may
-  rewrite it, or saves the plan with `cairnmind plan save` in their own
-  terminal; a step the person changes this way is proposed until they confirm
-  it, and one they remove is archived, without a lapsed mark.
+  person disputes the step in the inspector, after which a save, from a
+  session or from `cairnmind plan save`, may rewrite it. No plan save is a
+  person's act: the command line confirms nothing, in a terminal or not.
 - **A plan's title, goal and constraints.** A person who confirms a plan
   confirms these with its steps (the audit hashes them), and later sessions
   read the constraints as the plan's rules. While at least one step still
@@ -212,18 +219,19 @@ What they can do, and what the refusal tells them:
   that is not a person's act and changes the title, the goal or the constraints
   is refused as a whole and says which of them (`A person confirmed this plan
   with its title, goal and constraints ...`). A save that leaves them out, or
-  sends them unchanged, is stored. The person changes them with `cairnmind
-  plan save` in their own terminal; once they have disputed every step they
-  confirmed with the plan, nothing of it is confirmed and a session may change
-  them again. A step confirmed one by one in the inspector, or before the
-  rule, does not cover the plan's own fields.
+  sends them unchanged, is stored. The person changes them by disputing the
+  steps they confirmed with the plan in the inspector; once every one is
+  disputed, nothing of it is confirmed and a save may change them. A step
+  confirmed one by one in the inspector, or before the rule, does not cover the
+  plan's own fields.
 - **Adopting old tasks.** `cairnmind plan adopt` gives each adopted task a
   plan key, which changes what was confirmed. On a task a person confirmed, or
-  one confirmed before the rule, it works only in the person's own terminal;
-  elsewhere it is refused and says so (`Task '<key>' (task <id>) ... The person
-  runs `cairnmind plan adopt` in their own terminal`). Up to 0.10.0 `task add`
-  stored every task as confirmed, so the tasks of an old group all count as
-  confirmed before the rule.
+  one confirmed before the rule, it is refused whoever runs it (`Task '<key>'
+  (task <id>) ... The person disputes the task in the inspector of the
+  workspace`). The person disputes the task there, after which it can be
+  adopted, and its step is proposed until they confirm the plan. Up to 0.10.0
+  `task add` stored every task as confirmed, so the tasks of an old group all
+  count as confirmed before the rule.
 - **The checkpoint record** is the one exception. It is a slot that holds the
   latest reported state, not a statement, and every session writes it. If a
   person confirmed it in the inspector, the next `checkpoint` is still stored:
@@ -233,8 +241,8 @@ What they can do, and what the refusal tells them:
   refused.
 
 A person takes their own confirmation away by disputing the record in the
-inspector, by a conflict decision, by saving a plan in their own terminal, or
-by an import run with `--replace-confirmed`. A disputed record is no longer a
+inspector, by a conflict decision, or by an import run from the workspace that
+replaces what was confirmed or disputed here (`replace_confirmed`). A disputed record is no longer a
 person's confirmation, and any writer may change it, its status included: a
 session can set a record a person disputed back to `proposed`. Only a
 confirmation is kept. The store records who confirmed a record and not who
@@ -247,31 +255,64 @@ only adds records, verification writes check runs and never a task record, and
 imports are a person's own command. A refused write is therefore always the
 direct answer to the session, tool call or command that asked for it.
 
-The person's routes, and how each is told from a session or an agent:
+The person's routes, and what each ends in. Every one of them needs the key of
+the open workspace (below) on top of the service token. Without it the route
+answers 403 and says where the person acts, before anything is written, an
+audit note included:
 
-| Route | Told apart by |
+| Route | Ends in |
 | --- | --- |
-| Inspector review (`POST /inspector/records/{id}/review`) | The route. Its body has no session field, no MCP tool and no tool of the built-in agent calls it, and it writes the `review://` audit itself. |
-| Conflict decision (`POST /inspector/conflicts/resolve`) | The route, as above. The finding chosen to stand becomes confirmed. |
-| Plan confirmation (`POST /inspector/plans/{id}/confirm`, `memory confirm-plan`) | The route; the command also requires a person's terminal (below). |
-| Workspace form (`POST /findings` without `session_id`) | The absence of a session. With a `session_id` it is a session's finding, and asking for `confirmed` is refused before anything is stored. |
-| Command line: `remember --confirmed`, `task add`, `memory confirm-plan`, and `plan save` or `plan adopt` when they change a confirmed step | No session variable (`CAIRNMIND_SESSION_ID`, `CAIRNMIND_PACKET_ID` or their earlier spellings), no marker of a coding client (`CLAUDECODE`, `CODEX_THREAD_ID`), and a terminal on both standard input and standard output. |
+| Inspector review (`POST /inspector/records/{id}/review`) | A confirmed record, or a person's dispute. Its body has no session field, no MCP tool and no tool of the built-in agent calls it, and it writes the `review://` audit itself. |
+| Conflict decision (`POST /inspector/conflicts/resolve`) | Superseding by a person; the finding chosen to stand becomes confirmed. |
+| Plan confirmation (`POST /inspector/plans/{id}/confirm`) | A confirmed plan and its steps. The person confirms a plan in the inspector (Plans, then Confirm). |
+| Record kind (`POST /inspector/record-kinds/accept` and `/withdraw`) | An accepted or withdrawn transcript record kind. |
+| Workspace form (`POST /findings` without `session_id`) | The person's own finding, proposed or confirmed. With a `session_id` it is a session's finding, and asking for `confirmed` is refused before anything is stored. |
+| An import that replaces a verdict given here (`POST /memory/import`, `/memory/import-published`, `/memory/import-commit` with `replace_confirmed`, not a dry run) | Records confirmed or disputed here replaced by a package. The refusal is `Replacing what a person confirmed or disputed on this machine needs the person's workspace ...`; the importer itself refuses too when the proof is missing. |
 
-A command line confirmation leaves a note of its own (`person://`, origin
-`cli_person`) with the person's Git name, branch and commit. Like a review's
-audit it is not evidence: it does not anchor the record and is not the time of
-its evidence. It hashes nothing, so it is not an act that travels with published
-memory; the inspector can still confirm such a record so that it can be
-published.
+The command line confirms nothing (since 0.13.0, #214). A program that runs as
+the user can open a pseudo-terminal and unset the session variables, so no test
+of the terminal tells it from a person. `remember --confirmed`, `memory
+confirm-plan`, `record-kind accept` and `record-kind withdraw` are refused with
+exit code 2 and say that the person does it in the inspector of the workspace;
+`remember --confirmed` stores nothing, not even a proposed record. `task add`
+stores a proposed task and says so on standard error. `plan save` and `plan
+adopt` are never a person's act: they are refused when they would change or
+remove a step a person confirmed, and any other save is stored. `memory import`,
+`memory import-published` and `memory import-commit` with `--replace-confirmed`
+are refused by the service. Records that 0.12.0 or earlier confirmed on the
+command line keep their mark and say `on the command line`.
 
-A command that does not pass the last test is not a person: `remember
---confirmed` and `memory confirm-plan` are refused with what to do instead, and
-`task add` stores the task as proposed and says so, and `plan save` or `plan
-adopt` is refused when it would change or remove a step a person confirmed
-(any other save is stored). This covers a coding
-client's shell (it carries the session or the client's marker), the built-in
-agent's command (its input is `/dev/null` and its output a pipe, and it has no
-session variable at all), a script and CI.
+Not a person's route, and unchanged: `POST /inspector/impact/verdict` and `POST
+/inspector/records/{id}/release` write a person's note but confirm nothing and
+change no record's status, so they stay reachable with the token (the release
+decides what the secrets gate lets into published memory; #214 does not change
+it). An import that only brings a package's confirmations (`by: import`) is
+reachable with the token too: such a record is "confirmed elsewhere ... not
+verified here" and is never a person's confirmation here.
+
+### What the person's key is
+
+When the workspace creates its tmux server it puts a random key into it, as a
+user option (`@cairnmind_person_key`), through tmux's standard input: the key is
+in no file, log, environment variable, command line or pane. The inspector and
+the finding form read it from their own tmux server for each request that is a
+person's act and send it, with the socket, in the headers `X-Cairnmind-Person`
+and `X-Cairnmind-Workspace`. The broker passes the two headers on and keeps
+nothing. The service accepts the socket only when it has the workspace's shape (a
+directory named like the workspace's socket directory, private and the user's,
+not a link, and a socket of the user; on Linux and WSL the directory's location
+is not checked, because TMPDIR can differ between processes, on macOS it is),
+reads the key from that tmux server and compares it in constant
+time; only then does the request count as a person's, for that request alone.
+
+The service keeps no state about the key. A service started by `cairnmind
+serve`, by the MCP bridge or before the workspace works with a workspace opened
+later, and a broker that restarts changes nothing. Closing the workspace ends
+the key and opening it makes a new one. A workspace that an earlier version
+started holds no key: the refusal says to stop it (`cairnmind workspace stop`)
+and open it again. The service has to be able to run tmux (`tmux_executable`);
+when it cannot, it refuses and says so. `cairnmind workspace status` reports
+`person_key` as `present`, `absent` or `unavailable`, never the key.
 
 Every other route is not a person's: MCP `remember`, `checkpoint` and
 `save_plan`, the built-in agent's memory tools, `POST /remember` with or without
@@ -280,29 +321,47 @@ records, and none of them changes, replaces or lowers a record a person
 confirmed. A plan a session saves has proposed steps until the person confirms
 the plan; activating a plan does not confirm it.
 
-What the rule does not claim. The service has one local token for all its
-routes, and the command line trusts the terminal it is given. A program that
-already runs as the same user can read that token and call a person's route,
-fake a terminal, or write to the database. The rule separates a person from the
-tools Cairnmind hands to a model and from the commands a model runs as they are;
-it is not a defence against code running as the user.
+What the rule does not claim. A person's act needs the key that the open
+workspace keeps in its tmux server: the inspector and the finding form read it
+there and send it with the request, and the service reads the same server before
+it lets the request count as a person's. The service token alone reaches no
+person's route, the command line confirms nothing, and no MCP tool or tool of
+the built-in agent can send the key.
 
-This limit is reachable from a coding session whose shell commands run without
-the person's approval. Such a shell passes the command line check by removing
-the session variables and opening a pseudo-terminal, for example
-`env -u CAIRNMIND_SESSION_ID -u CLAUDECODE script -qec "cairnmind remember ... --confirmed" /dev/null`
-or Python's `pty.spawn`; the record is then stored as confirmed by a person on
-the command line, under the Git name of the user. The same shell can read the
-service token from the settings file and call the inspector's review route or
-`POST /findings` without a session, run an import without the session variable,
-or stop the service and restore a prepared backup (`cairnmind restore` writes
-the rows of a backup as they are, marks included). A check on the command line
-alone cannot close this, because every check the command can make, the shell
-can answer. What limits it today is the client's own approval of commands: the
-built-in agent asks the person to approve each command and shows it in full,
-and a coding client does so unless the person turned that off. A record such a
-command confirmed says `on the command line` in its confirmation line, and the
-command line never writes an act that published memory carries.
+Cairnmind runs as the user, and so does every program a coding session starts.
+Such a program can still act as the person, by going through the workspace or
+around Cairnmind:
+
+- use the workspace's tmux server, whose socket belongs to the user: read the
+  key from it, run a program inside it, or type into the inspector (`tmux
+  send-keys`); or start a workspace of its own in a pseudo-terminal and type
+  into that;
+- run a tmux server of its own in a directory named like the workspace's socket
+  directory and put a key of its choosing into it (the service cannot tell that
+  directory from the workspace's on Linux and WSL);
+- use Cairnmind's library code, or the database engine with the password the
+  user can read, and write any row, marks and audit notes included;
+- restore a backup: `cairnmind restore` is the one documented command that
+  still writes the rows of a backup as they are, marks included. With `cairnmind
+  stop` and `cairnmind backup` it can bring back a confirmation a person has
+  since disputed, by restoring an older genuine backup, and accepted record
+  kinds with it (#214 continues with this);
+- replace or change the installed program;
+- read the memory of a Cairnmind process where the system lets a process read
+  another process of the same user (Linux with `kernel.yama.ptrace_scope` 0, or
+  as root).
+
+Except restore, none of these is a documented command, route or tool, and a record confirmed
+this way carries the confirmation line of the route it imitated; nothing in the
+store tells it from the person's own act. What limits it is the client's
+approval of commands: the built-in agent asks the person to approve each command
+and shows it in full, and a coding client does so unless the person turned that
+off.
+
+Records confirmed with `cairnmind remember --confirmed` or `cairnmind task add`
+before 0.13.0 keep their mark and say `on the command line`; nothing tells such
+a confirmation from one a program made in a pseudo-terminal, and the person can
+review them in the inspector.
 
 ### How a confirmation is recorded and shown
 
@@ -385,10 +444,12 @@ and where, and it never becomes this machine's own confirmation:
   was not a person's) and any dispute. When a package moves such a record on and
   leaves it confirmed and saying the same (progress on a task), the confirmation
   given here is kept. When it brings another text or status, the import is
-  refused with the list, and `--replace-confirmed` applies it; the record is
-  then confirmed elsewhere, like anything else the package brings. A record that
-  diverged from a published file refuses the import as before, and
-  `--take-published` names it.
+  refused with the list, and a person applies it in the memory view of the
+  workspace; the record is then confirmed elsewhere, like anything else the
+  package brings. A record that diverged from a published file refuses the
+  import as before, and `--take-published` names it; when that record was
+  confirmed or disputed here, taking the published side replaces that verdict
+  and is refused like any other replacement.
 - Only a person runs an import, `--replace-confirmed` and `--take-published`. A
   request that names a session is refused, because an import brings records that
   count as confirmed, and a session can prepare the files it imports.
@@ -577,8 +638,9 @@ A record state travels only when a person's act covers it:
 
 Only a person stores a record as confirmed at all (#177, "Only a person confirms a record" above):
 session, MCP and agent writes are proposed, and a confirmed record an agent edits becomes proposed
-again. `remember --confirmed` and `task add` in a person's terminal confirm a record locally, but
-they write no audit that hashes what was judged, so they are not acts that travel. Such records,
+again. `remember --confirmed` and `task add` in a person's terminal confirmed a record locally up to 0.12.0
+(the command line confirms nothing now, #214), but they wrote no audit that hashes what was judged, so they are
+not acts that travel. Such records,
 and records confirmed before that rule existed, stay local until a person reviews them; the
 inspector allows confirming a confirmed record again when no review, conflict decision, plan
 confirmation or workspace form on this machine covers its current version.
@@ -671,9 +733,8 @@ in plan order), `sources`, and a Goal block. A definition is appended only when 
 `confirm_plan` audit covers it: an audit with the plan's ID and `plan_sha256` equal to the hash of
 title, goal, constraints and the ordered step IDs. Its sources are the earliest plan source and the
 covering audits. A plan file has no version, state or step index; steps are task files that carry the
-plan, their step key and their dependencies. `memory confirm-plan PROJECT PLAN --expected-version N`
-(refused inside a coding session) and the inspector API confirm a plan and all its active steps in one
-transaction with one audit.
+plan, their step key and their dependencies. The inspector (Plans, then Confirm) and its API confirm a plan
+and all its active steps in one transaction with one audit; `memory confirm-plan` is refused (#214).
 
 ## Reading a directory
 
@@ -718,8 +779,9 @@ tree as above, then applies it in one transaction, all or nothing:
   confirmed, and the names its files give for who confirmed them;
 - a record that was confirmed or disputed on this machine (and whose head no import wrote) is not
   fast-forwarded to another text or status without the person's choice: the import is refused with
-  the paths, the dry run lists them as `replaces_confirmed_here`, and `--replace-confirmed` applies
-  it. A fast-forward that leaves the record confirmed and saying the same keeps the confirmation
+  the paths, the dry run lists them as `replaces_confirmed_here`, and only a person in the workspace
+  applies it (not the command line, since 0.13.0; `--take-published` on such a record counts the same).
+  A fast-forward that leaves the record confirmed and saying the same keeps the confirmation
   given here (#177);
 - the import itself, `--replace-confirmed` and `--take-published` are refused inside a coding
   session; only the dry run is open to one. `memory import-commit` follows the same rules;

@@ -227,7 +227,7 @@ def port_forward_check(files: dict[str, Path], work: Path) -> list:
         tree.mkdir()
         (tree / "README.md").write_text("# Demo\n\nA project for the Kubernetes check.\n")
         cairnmind("project", "add", "demo", str(tree))
-        # Not --confirmed: only a person in their own terminal confirms, and this check has none.
+        # Not --confirmed: the command line confirms nothing, a person does in the workspace.
         cairnmind("remember", "demo", "The Kubernetes check wrote this record.", "--key", "k8s-check")
         before = cairnmind("records", "demo")
         backup = cairnmind("backup", str(work / "backup.json.gz"))["backup"]

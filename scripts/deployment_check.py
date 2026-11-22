@@ -135,7 +135,7 @@ def roundtrip(source: Server, target: Server, work: Path) -> tuple[list, list]:
     tree.mkdir()
     (tree / "README.md").write_text("# Demo\n\nA project for the deployment check.\n")
     source.cli("project", "add", "demo", str(tree))
-    # Not --confirmed: only a person in their own terminal confirms, and this check has none.
+    # Not --confirmed: the command line confirms nothing, a person does in the workspace.
     source.cli("remember", "demo", "The deployment check wrote this record.", "--key", "deployment-check")
     projects, records = source.cli("project", "list"), source.cli("records", "demo")
     if not any(record.get("key") == "deployment-check" for record in records):

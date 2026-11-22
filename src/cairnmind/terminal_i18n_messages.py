@@ -7,7 +7,10 @@ translated: text from a model, a provider or a source is never looked up here (s
 from __future__ import annotations
 
 from .code_graph import CODE_GRAPH_NOT_BUILT
+from .confirmation import NOT_PROVEN
 from .first_start import ASK_NO_MATCH, ASK_OFF, GET_MODELS, MATCHES_HELD_BACK, MESSAGES as FIRST_START
+from .person_proof import IMPORT_REPLACE, NO_WORKSPACE_KEY, PROOF_MISSING, PROOF_REFUSED, TMUX_MISSING
+from .service_token import FOREIGN_SERVICE
 
 # Answers and gaps of the memory agent's /ask (agent.py, service.py).
 ASK_MESSAGES = {
@@ -201,6 +204,10 @@ BROKER_MESSAGES = {
     "The local broker is unavailable or needs a restart.":
         "Lokalny broker jest niedostępny lub wymaga ponownego uruchomienia.",
     "The local broker does not answer.": "Lokalny broker nie odpowiada.",
+    FOREIGN_SERVICE: (
+        "Usługa pod adresem {url} nie przyjmuje tokenu katalogu {data_dir}, więc najpewniej należy do innego "
+        "katalogu danych. Nadaj temu katalogowi danych własny port: `port` w {data_dir}/config.json albo "
+        "CAIRNMIND_PORT dla jednego polecenia."),
     "The local broker address is invalid.": "Niepoprawny adres lokalnego brokera.",
     "The local broker gave an invalid answer.": "Niepoprawna odpowiedź lokalnego brokera.",
     "The request was refused.": "Żądanie zostało odrzucone.",
@@ -225,6 +232,29 @@ BROKER_MESSAGES = {
         "Już potwierdzone przez osobę na tym komputerze w tej wersji; nie ma nic do zrobienia.",
     "Already disputed at this version; nothing to do.": "Już zakwestionowane w tej wersji; nie ma nic do zrobienia.",
     "The memory service gave an invalid response.": "Niepoprawna odpowiedź usługi pamięci.",
+    # A person's act needs the open workspace's key (person_proof, confirmation.NOT_PROVEN; #214).
+    PROOF_MISSING:
+        "Czynność osoby wykonuje się w środowisku, a to żądanie z niego nie pochodzi. Niczego nie zapisano. Osoba "
+        "ocenia i rozstrzyga w inspektorze środowiska (otwórz je poleceniem `cairnmind`); sesja, skrypt lub "
+        "polecenie zapisuje to, co znalazło, jako proponowane.",
+    PROOF_REFUSED:
+        "To żądanie nie pochodzi z otwartego środowiska tej instalacji albo to środowisko zostało zamknięte. "
+        "Niczego nie zapisano. Zamknij widok i otwórz środowisko ponownie poleceniem `cairnmind`.",
+    NO_WORKSPACE_KEY:
+        "Otwarte środowisko uruchomiła wcześniejsza wersja i nie ma ono klucza dla czynności osoby. Niczego nie "
+        "zapisano. Zatrzymaj je poleceniem `cairnmind workspace stop` i otwórz ponownie poleceniem `cairnmind`.",
+    TMUX_MISSING:
+        "Usługa nie może uruchomić tmux, więc nie może sprawdzić, czy to żądanie pochodzi z otwartego środowiska. "
+        "Niczego nie zapisano. Ustaw tmux_executable w konfiguracji albo uruchom usługę ponownie z terminala, w "
+        "którym działa tmux (`cairnmind stop`, potem `cairnmind`).",
+    IMPORT_REPLACE:
+        "Zastąpienie tego, co osoba potwierdziła lub zakwestionowała na tym komputerze, wymaga środowiska osoby, a "
+        "ten import z niego nie pochodzi. Niczego nie zaimportowano. Zaimportuj pakiet z widoku pamięci w "
+        "środowisku (`cairnmind`); katalog publikacji ani commit nie mogą jeszcze zastąpić takich ustaleń.",
+    NOT_PROVEN:
+        "Tylko osoba może zapisać ustalenie jako potwierdzone, a czynność osoby wymaga jej środowiska: ta z niego "
+        "nie pochodzi. Niczego nie zapisano. Zapisz ustalenie jako proponowane; osoba potwierdzi je w inspektorze "
+        "środowiska.",
     "Invalid graph projection format.": "Niepoprawny format projekcji grafu.",
     "The project of the chosen entry is unknown.": "Nieznany projekt wskazanego wpisu.",
     "Too many pending cockpit openings.": "Zbyt wiele oczekujących otwarć kokpitu.",
@@ -314,6 +344,8 @@ STATE_MESSAGES = {
     "Invalid credential store.": "Niepoprawny magazyn poświadczeń.",
     "Unsupported credential store.": "Nieobsługiwany magazyn poświadczeń.",
     "The credential store exceeds its size limit.": "Magazyn poświadczeń przekroczył limit rozmiaru.",
+    "Project folder cannot be inside the data directory: Cairnmind never indexes it; choose a folder outside it":
+        "Folder projektu nie może leżeć w katalogu danych: Cairnmind go nie indeksuje; wybierz folder poza nim.",
     "Choose how the key is stored.": "Wybierz sposób przechowywania klucza.",
     "Invalid credential profile.": "Niepoprawny profil poświadczeń.",
     "Invalid credential reference.": "Niepoprawne odwołanie do poświadczeń.",
@@ -379,6 +411,10 @@ STATE_MESSAGES = {
     "The workspace configuration must be a private file of the user.":
         "Konfiguracja środowiska musi być prywatnym plikiem użytkownika.",
     "tmux is unavailable.": "tmux jest niedostępny.",
+    "The workspace's tmux server did not give a usable key for a person's acts, so every act in it would be "
+    "refused. Close it with `cairnmind workspace stop` and open it again.":
+        "Serwer tmux środowiska nie dał użytecznego klucza dla czynności osoby, więc każda czynność w nim zostałaby "
+        "odrzucona. Zamknij je poleceniem `cairnmind workspace stop` i otwórz ponownie.",
     "Attaching needs an interactive terminal.": "Dołączenie wymaga interaktywnego terminala.",
     "The terminal workspace is not running.": "Środowisko terminalowe nie działa.",
     "The identity of the attaching terminal was not confirmed.":
@@ -408,6 +444,8 @@ _BROKER_FIXED = frozenset(sentence for catalog in (BROKER_MESSAGES, STATE_MESSAG
 def broker_error_text(exc, translate) -> str:
     """One line for an error of the local broker, with its fixed detail in the panel's language."""
     detail, status = getattr(exc, "detail", None), getattr(exc, "status_code", None)
+    if isinstance(getattr(exc, "foreign", None), dict) and type(status) is int:
+        return f"Broker {status}: " + translate(FOREIGN_SERVICE).format(**exc.foreign)
     if isinstance(detail, str) and type(status) is int:
         text = " ".join(detail.split())
         return f"Broker {status}: " + (translate(text) if text in _BROKER_FIXED else text)

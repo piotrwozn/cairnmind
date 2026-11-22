@@ -291,10 +291,69 @@ async def test_confirmation_and_consent_both_start_on_cancel(tmp_path, monkeypat
                         results.append)
         await pilot.pause()
         await pilot.pause()
+        await pilot.pause(.5)  # past the quiet moment of a consent dialog (#292)
         await pilot.press("shift+tab", "enter")
         await pilot.pause()
         assert results == [False, False, True]
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size,text", [((120, 40), "A real request."), ((60, 24), "word " * 400)])
+@pytest.mark.parametrize("keys", [("tab", "enter", "tab", "enter"), ("shift+tab", "enter")])
+async def test_keys_typed_before_the_first_refresh_never_approve_a_consent_dialog(tmp_path, monkeypatch, size, text, keys):
+    from cairnmind.terminal_panels import ConfirmModal
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    results = []
+    async with app.run_test(size=size) as pilot:
+        await settle(app, pilot)
+        app.push_screen(ConfirmModal("Run a command?", text, approve="Run", consent=True), results.append)
+        await pilot.press(*keys)  # queued before the dialog's first refresh
+        await pilot.pause()
+        assert True not in results
+        if size[0] == 60:  # the text really scrolls here: the focus starts on it, not on a button
+            assert app.screen.query_one(".cm-dialog-body").virtual_size.height > app.screen.query_one(".cm-dialog-body").scrollable_content_region.height
+        if not results:  # still open (a Cancel by Enter ends it): a deliberate Tab and Enter, later, approve as before
+            await pilot.pause(.6)
+            for _ in range(3):
+                if app.focused is not None and app.focused.id == "confirm-yes":
+                    break
+                await pilot.press("tab")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert results == [True]
+
+
+@pytest.mark.asyncio
+async def test_a_stall_before_the_first_refresh_does_not_let_queued_keys_approve(tmp_path, monkeypatch):
+    from cairnmind.terminal_panels import ConfirmModal
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    results = []
+    original = ConfirmModal.spare_hint_row
+    monkeypatch.setattr(ConfirmModal, "spare_hint_row", lambda self: (time.sleep(.5), original(self))[1])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        app.push_screen(ConfirmModal("Run a command?", "A real request.", approve="Run", consent=True), results.append)
+        await pilot.press("shift+tab", "enter")  # the loop stalls longer than the quiet moment before these are handled
+        await pilot.pause()
+        assert results == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_a_resize_keeps_the_focus_on_cancel_of_a_consent_dialog(tmp_path, monkeypatch, language):
+    from cairnmind.terminal_panels import ConfirmModal
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        app.push_screen(ConfirmModal("Run a command?", "\n".join(f"line {i}" for i in range(20)), approve="Run", consent=True))
+        await pilot.pause(.5)
+        assert app.focused.id == "confirm-no"
+        await pilot.resize_terminal(120, 14)
+        await pilot.pause(.5)
+        assert app.focused is not None and app.focused.id == "confirm-no"
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "pl"])
