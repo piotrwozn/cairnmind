@@ -29,9 +29,13 @@ hash, an id: a long unbroken run with a digit, or a word with single characters 
 digits and capitals), and the project's own names, which the caller passes. A question without
 such a word is not checked at all: the gate then does not apply. A product name written in lower
 case without backticks has no shape to go by and is not read either; such a question rests on the
-support check alone. So does a question written in headline case, where a capital says nothing,
-and one asked with an answer schema, which is a caller's instruction full of field names (the
-caller of ``unnamed_subject`` leaves those out).
+support check alone. So does one asked with an answer schema, which is a caller's instruction full
+of field names (the caller of ``unnamed_subject`` leaves those out). In a question written in
+headline case (most words capitalised) a capital says nothing; there a capitalised word is read
+only when it stands directly before one of the GENERIC words ("Zookeeper Port", "Redis Version"),
+the place of the name of the thing whose port or version is asked: "Listen" and "Heap" are not
+names. A name elsewhere in such a question is not read, and an ordinary word before a generic one
+("Local Service") is read and passes when the quoted source has it.
 
 The names an answer introduces are read by the same shapes and must occur in a quote or the path
 of its source (``unnamed_answer_names``); a lower-case name has no shape in an answer either, which
@@ -158,6 +162,10 @@ def _identifier(word: str) -> bool:
     return bool(_CAMEL.search(word)) and not word.isupper()
 
 
+def _generic(folded: str) -> bool:
+    return folded in GENERIC or (folded.endswith("s") and folded[:-1] in GENERIC)
+
+
 def _starts_sentence(question: str, position: int) -> bool:
     before = question[:position].rstrip(" \t\r\n\"'`([{*")
     return not before or before[-1] in ".?!:;"
@@ -187,19 +195,23 @@ def subject_terms(question: str, own_names: Iterable[str] = ()) -> list[str]:
     headline = len(inner) >= 4 and sum(word[0].isupper() for word in inner) * 2 > len(inner)
     lower = {match.group() for match in words if match.group().islower()}
     found: dict[str, str] = {}
-    for match in words:
+    for index, match in enumerate(words):
         word = match.group().strip("_")
         folded = word.casefold()
-        if (_letters(word) < 2 or len(word) > MAX_TERM_CHARS or folded in STOP or folded in GENERIC
+        if (_letters(word) < 2 or len(word) > MAX_TERM_CHARS or folded in STOP or _generic(folded)
                 or _key(word) in own):
             continue
-        if folded.endswith("s") and folded[:-1] in GENERIC:
-            continue
-        named = word[0].isupper() and not word.isupper() and not headline
-        if named and _starts_sentence(question, match.start()):
+        named = word[0].isupper() and not word.isupper()
+        if named and (headline or _starts_sentence(question, match.start())):
             # The language capitalises this word: a name only when it is no opener of a question
             # and the question does not also write it as an ordinary word.
             named = _letters(word) >= 3 and folded not in OPENERS and folded not in lower
+            # In headline case every word is capitalised: only one that qualifies a generic word
+            # ("Zookeeper Port", "Redis Version") is read; "Listen" and "Heap" are ordinary words.
+            if named and headline:
+                after = words[index + 1] if index + 1 < len(words) else None
+                named = bool(after and question[match.end():after.start()].isspace()
+                             and _generic(after.group().casefold()))
         if _identifier(word) or named or (match.start() in alone and _letters(word) >= 3):
             found.setdefault(_key(word), word)
     return list(found.values())[:MAX_TERMS]
