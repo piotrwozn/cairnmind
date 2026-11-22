@@ -23,6 +23,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - `cairnmind setup` shows where storage and the memory models run and what runs on this machine, in three lines (`--json` for the structured form). It changes no setting of an initialized installation; choosing a profile comes in a later step (#74).
 - `cairnmind doctor` and `cairnmind status` start with `topology`: the same three lines, the variable a value came from when it was not `config.json`, whether the models were evaluated, and the writer role with its problem. The workspace status row shows Storage and Models when the terminal is wide enough (#74).
 - An empty `CAIRNMIND_ARCADE_CONNECT_URL` no longer turns a connect-only installation into a managed one; it counts as unset, like the port and Ollama variables (#74).
+- `docs/UPGRADING.md` has a section "From 0.12.0 to 0.13.0": the steps, what the upgrade does to a store (schema and backup format unchanged, an acknowledgement that may be refused once, the first snapshot after the upgrade), what an existing `config.json` means, how to move the engine to Docker and back, the changes scripts meet, and where the README's text moved (#303).
 
 ### A person's acts need the open workspace
 
@@ -62,6 +63,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The workspace's project list, stage panel and sidebar name a Cairnmind service of another data directory, in English and Polish, instead of saying the projects could not be read; a refused token no longer opens a new broker session on every poll (#308).
 - In deterministic-only mode, More, Queue, Process memory no longer asks for consent to use local models that are not configured; it shows the notice about getting models, or restarting the service, at once (#309).
 - Indexing names a project that 0.12.0 registered with a folder inside the data directory, says to move the files out and register them again, and leaves the registration untouched; it shows in `cairnmind ingest`, in `status` and in the warnings of `ask`. The refusal "Project root cannot contain Cairnmind's private credential store" has a Polish form in the workspace (#310).
+- An `https://` address of this computer in `ollama_url` now works for the local Ollama in every command, instead of being refused with an older message that named neither the setting nor the remedy (#302).
+- The acknowledgement reply and the session status now say how many automatic proposals were written after the session's packet, and `resume_context` still hands back the packet the session acknowledged, so the count never costs an ACK; the proposals are read with `ask` (MCP) or `cairnmind records` and `cairnmind ask` (#299).
 
 ### Development and CI
 
