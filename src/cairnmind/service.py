@@ -474,9 +474,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                     # itself being down is one error of the round, not one traceback per project.
                     try:
                         indexed = await asyncio.to_thread(index_project_if_changed, store, project["id"])
-                    except (asyncio.CancelledError, StoreNotWriter, ArcadeError):
+                    except (asyncio.CancelledError, StoreNotWriter):
                         raise
                     except Exception as exc:
+                        if isinstance(exc, ArcadeError) and exc.status_code is None:
+                            raise  # no answer at all: the store is down for every project, not for this one
                         scan_errors.append(f"{project['name']}: {exc}")
                         log.exception("Indexing project %s failed", project["name"])
                         continue

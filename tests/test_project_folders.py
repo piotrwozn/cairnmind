@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cairnmind import project_folders
+from cairnmind.arcade import ArcadeError
 from cairnmind.config import Settings
 from cairnmind.evidence import evidence_states
 from cairnmind.ingest import GRAPH_EDGE_KINDS, GRAPH_NODE_KINDS, index_project, index_project_if_changed
@@ -26,6 +27,14 @@ from cairnmind.store import Store
 from cairnmind.store_writer import take_over
 
 from test_service import LocalModelFixture
+
+
+@pytest.fixture(autouse=True)
+def identified_machine(monkeypatch):
+    """Whatever the test machine is (a container without a machine id, a Mac whose ioreg failed), these tests run on
+    one that can be told from another; the host-name case patches its own identity."""
+    from cairnmind import store_writer
+    monkeypatch.setattr(store_writer, "machine_identity", lambda: "machine-id:fixture")
 
 
 class Vectors:
@@ -214,7 +223,9 @@ def test_a_graph_with_files_of_an_older_parser_that_cannot_be_read_here_is_kept(
     assert not index_project_if_changed(store, pid).get("skipped")  # not recorded: named until rebuilt
 
 
-def test_one_project_that_fails_does_not_stop_the_round(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failure", [ValueError("the index of this project broke"),
+                                     ArcadeError("ArcadeDB HTTP 500: the index of this project broke", status_code=500)])
+def test_one_project_that_fails_does_not_stop_the_round(tmp_path, monkeypatch, failure):
     from cairnmind import ingest
     store = Store(tmp_path / "data")
     for name in ("aaa-fails", "bbb-works"):
@@ -226,7 +237,7 @@ def test_one_project_that_fails_does_not_stop_the_round(tmp_path, monkeypatch):
 
     def scan(scanned, project_id):
         if project_id == failing:
-            raise ValueError("the index of this project broke")
+            raise failure
         return real(scanned, project_id)
     monkeypatch.setattr(ingest, "index_project_if_changed", scan)
     settings = Settings.load(store.data_dir)
@@ -238,8 +249,33 @@ def test_one_project_that_fails_does_not_stop_the_round(tmp_path, monkeypatch):
             if background.get("last_scan_at"):
                 break
             time.sleep(0.05)
-    assert "aaa-fails: the index of this project broke" in background["scan_errors"]
+    assert f"aaa-fails: {failure}" in background["scan_errors"]  # an answer of the database: this project's error
     assert counts(store, working)["graph_nodes"] > 0 and counts(store, failing)["graph_nodes"] == 0
+
+
+def test_a_store_that_does_not_answer_is_one_error_of_the_round(tmp_path, monkeypatch):
+    from cairnmind import ingest
+    store = Store(tmp_path / "data")
+    for name in ("aaa-down", "bbb-after"):
+        make_repo(tmp_path / name)
+        store.add_project(name, tmp_path / name)
+    asked = []
+
+    def scan(scanned, project_id):
+        asked.append(project_id)
+        raise ArcadeError("Local ArcadeDB is unavailable (ConnectError)")
+    monkeypatch.setattr(ingest, "index_project_if_changed", scan)
+    settings = Settings.load(store.data_dir)
+    settings.poll_seconds = 0.05
+    headers = {"Authorization": f"Bearer {settings.token}"}
+    with TestClient(create_app(settings, ollama=LocalModelFixture())) as client:
+        for _ in range(400):
+            if client.get("/status", headers=headers).json()["background"].get("scanner_error"):
+                break
+            time.sleep(0.05)
+        background = client.get("/status", headers=headers).json()["background"]
+    assert "unavailable" in background["scanner_error"]
+    assert set(asked) == {store.resolve_project("aaa-down")["id"]}  # the round ends at the first, not one trace each
 
 
 def test_two_projects_from_the_same_files_share_no_rows(tmp_path):
@@ -514,6 +550,10 @@ def test_project_add_of_a_folder_of_another_machine_names_it_and_fails(tmp_path,
     added = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "project", "add", "cairnmind", str(root)])
     assert added.exit_code == 1
     assert "belongs to" in added.output and str(root) in added.output and "checked again" not in added.output
+    monkeypatch.setattr(cli, "_stdout_is_terminal", lambda: True)  # the sentences a person reads, not the JSON
+    added = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "project", "add", "cairnmind", str(root)])
+    assert added.exit_code == 1 and "belongs to" in added.output and "checked again" not in added.output
+    assert "project root cairnmind" in " ".join(added.output.split())  # the command that moves it, by name
     assert counts(store, pid, [record]) == before
 
 
@@ -541,10 +581,39 @@ def test_the_elsewhere_notice_reads_in_english_and_polish():
             f"Folder {root} projektu cairnmind jest niedostępny na tym komputerze: {reason_pl}.{tail_pl}{move_pl}")
 
 
-def test_a_folder_is_not_claimed_by_a_host_name(tmp_path, monkeypatch):
+@pytest.mark.parametrize("identity", ["host:laptop", "machine-id:uninitialized"])
+def test_a_machine_known_only_by_its_host_name_neither_claims_nor_refuses_a_folder(tmp_path, monkeypatch, identity):
     from cairnmind import store_writer
-    store, pid, root, record = indexed(tmp_path)
+    store, pid, root, record = indexed(tmp_path)  # stamped by an identifiable machine, as a Mac that could read ioreg
+    assert stamped(store, pid)[0][0]
+    monkeypatch.setattr(store_writer, "machine_identity", lambda: identity)
+    assert project_folders.this_machine() is None and project_folders.stamp() == {}
+    # A folder stamped by another machine is not refused: a host name that changed or is shared proves nothing.
+    (root / "app.py").write_text("def handler():\n    return 'edited'\n")
+    result = index_project(store, pid)
+    assert "unavailable" not in result and result["changed"] == 1
+    # Registering writes no stamp; the first index of an unstamped folder does not claim it.
+    other = tmp_path / "mac" / "other"
+    make_repo(other)
+    store.add_project_root(pid, other)
+    make_repo(tmp_path / "mac" / "second")
+    store.add_project("second", tmp_path / "mac" / "second")
     store.command("UPDATE project_roots REMOVE machine, host WHERE project_id=:p", {"p": pid})
-    monkeypatch.setattr(store_writer, "machine_identity", lambda: "host:laptop")
     index_project(store, pid)
+    assert all(row == (None, None) for row in stamped(store, pid))
+    assert [row[0] for row in stamped(store, store.resolve_project("second")["id"])] == [None]
+    assert store.add_project_root(pid, other) == {}  # nor does `project root` move anything
+
+
+def test_status_doctor_and_a_poll_that_skips_never_stamp_a_folder(tmp_path):
+    store, pid, root, record = indexed(tmp_path)
+    time.sleep(2.2)  # outside the racy window (2 s of the newest change time), so the next index records its signature
+    index_project(store, pid)
+    store.command("UPDATE project_roots REMOVE machine, host WHERE project_id=:p", {"p": pid})  # as before #371
+    project = store.resolve_project(pid)
+    assert project_folders.unavailable(store, pid) == [] and project_folders.unavailable(store) == []
+    assert project_folders.folder_states(store, project)[0]["adopt"] is True  # only a complete index acts on it
+    assert index_project_if_changed(store, pid).get("skipped") is True  # the poll found nothing to read
     assert stamped(store, pid) == [(None, None)]
+    index_project(store, pid)
+    assert stamped(store, pid)[0][0] == project_folders.this_machine()

@@ -47,17 +47,24 @@ MESSAGES = {
 }
 
 
-def this_machine() -> str:
-    """A hash of what tells this machine from another, so the raw machine id never enters the store or a backup."""
+def this_machine() -> str | None:
+    """A hash of what tells this machine from another, so the raw machine id never enters the store or a backup.
+    None when nothing better than the host name identifies it (no machine id, a Mac whose platform UUID cannot be
+    read, an image with an uninitialised id): a host name changes with the network and is shared by clones, so such
+    a machine neither claims a folder nor refuses one, and every folder behaves as it did before 0.13.0."""
     from .store_writer import machine_identity
-    return hashlib.sha256(("cairnmind-folder\0" + machine_identity()).encode()).hexdigest()
+    identity = machine_identity()
+    if identity.startswith("host:") or identity == "machine-id:uninitialized":
+        return None
+    return hashlib.sha256(("cairnmind-folder\0" + identity).encode()).hexdigest()
 
 
 def stamp() -> dict:
-    """What a `project_roots` row records of the machine that registered it."""
+    """What a `project_roots` row records of the machine that registered it; nothing when this machine is not
+    identifiable (see this_machine)."""
     from .store_writer import label
-    return {"machine": this_machine(), "host": label(socket.gethostname())}
-
+    here = this_machine()
+    return {"machine": here, "host": label(socket.gethostname())} if here else {}
 
 def _reason(folder: dict) -> tuple[str, dict]:
     if folder["state"] == "missing":
@@ -83,7 +90,7 @@ def folder_states(store, project: dict, rows: list[dict] | None = None) -> list[
     for root in roots:
         row = rows.get(str(root)) or {}
         state, error = "available", None
-        if row.get("machine") and row["machine"] != here:
+        if here and row.get("machine") and row["machine"] != here:
             state = "elsewhere"  # decided before the disk is touched
         else:
             try:
@@ -125,14 +132,10 @@ def unavailable(store, project_id: str | None = None) -> list[dict]:
 
 def adopt(store, row_ids: list[str]) -> None:
     """Stamp rows that have no machine with this one: the first complete index that read the folder claims it."""
-    from .store_writer import machine_identity
-    # A host name tells machines apart badly (clones, a Mac whose host name follows the network): when nothing
-    # better identifies this one, the folder stays unclaimed rather than claimed by a name that may change.
-    if row_ids and not machine_identity().startswith("host:"):
+    if row_ids and stamp():
         with store.transaction() as tx:
             tx.command("UPDATE project_roots SET machine=:machine,host=:host WHERE id IN :ids AND machine IS NULL",
                        {**stamp(), "ids": row_ids})
-
 
 def require_here(store, project: dict, root: Path) -> None:
     """Refuse an act that writes into a folder that belongs to another machine."""

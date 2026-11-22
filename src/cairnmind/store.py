@@ -786,7 +786,7 @@ class Store:
                 raise ValueError("Directory already belongs to another project")
             if not existing:
                 insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": root, **stamp()})
-            elif existing.get("machine") != this_machine():
+            elif (here := this_machine()) and existing.get("machine") != here:
                 update_document(tx, "project_roots", stamp(), "id=:id", {"id": existing["id"]})
                 if existing.get("machine"):
                     return {"moved_from": label(existing.get("host"))}
