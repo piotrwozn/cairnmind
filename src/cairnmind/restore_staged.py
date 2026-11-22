@@ -27,6 +27,7 @@ import hashlib
 from pathlib import Path
 import re
 import sys
+import time
 from typing import NoReturn
 from uuid import uuid4
 
@@ -37,24 +38,40 @@ from .terminal_safe import safe_text
 MARK = "restore_unfinished"  # the name of the row of devbrain_meta
 ROWS_PER_TRANSACTION = 5000
 BYTES_PER_TRANSACTION = 8 << 20
+# A transaction that has been open this long is committed, and a delete that took this long halves the next ones:
+# the bound follows from time as well as from rows and bytes, so no request of a restore nears the client's wait
+# (arcade.REQUEST_TIMEOUT, and COMMIT_TIMEOUT for a commit) on a slow link or a loaded server.
+TIME_PER_TRANSACTION = 5.0
+MIN_ROWS_PER_DELETE = 100
 JOURNAL_TYPES = ("journal_state", "journal_events")
 
+# The way out from any installation: a restore that finishes is the only thing that clears the mark, and any valid
+# backup does it. Taking the writer role is a person's act that a marked store allows (store_writer.take_over_at).
+_ELSEWHERE = (" From another installation of this store, or when that one is gone for good, run `cairnmind store "
+              "takeover --yes` there and then `cairnmind restore FILE` with any valid backup: a restore that finishes "
+              "removes the mark.")
+_ELSEWHERE_PL = (" Z innej instalacji tego magazynu albo gdy tamtej już nie ma, uruchom tam `cairnmind store takeover "
+                 "--yes`, a potem `cairnmind restore PLIK` z dowolną poprawną kopią zapasową: przywracanie, które się "
+                 "zakończy, usuwa znacznik.")
 UNFINISHED = (
     "A restore of this store did not finish: it began at {started_at} on installation {installation}, from {backup}. "
     "Until a restore finishes, the store holds only part of that backup and no command uses it. On the installation "
     "that writes this store, run `cairnmind restore {backup}` to finish it, or `cairnmind restore {before}` to go back "
-    "to the rows the store held before (that file is in the backups of that installation).")
+    "to the rows the store held before (that file is in the backups of that installation)." + _ELSEWHERE)
 UNDO_UNFINISHED = (
     "A restore of this store failed, and putting the store back did not finish either: it began at {started_at} on "
     "installation {installation}, from {backup}. Until a restore finishes, no command uses the store. On the "
     "installation that writes this store, run `cairnmind restore {before}` to go back to the rows the store held "
-    "before, or `cairnmind restore {backup}` to restore that backup.")
+    "before, or `cairnmind restore {backup}` to restore that backup." + _ELSEWHERE)
 UNREADABLE = (
     "This store carries a mark of an unfinished restore that cannot be read, so no command uses it. On the "
     "installation that writes this store, restore a whole backup with `cairnmind restore FILE`; the copies made before "
-    "earlier restores are in backups/ of its data directory (before-restore-*).")
+    "earlier restores are in backups/ of its data directory (before-restore-*)." + _ELSEWHERE)
 UNDONE = "{error} The restore stopped, and the store was put back as it was before, from {before}."
 NOTHING_CHANGED = "{error} The restore stopped before it changed any row: the store is as it was."
+MARK_KEPT = (
+    "{error} The restore stopped before it changed any row, but its mark could not be removed ({mark_error}). Until a "
+    "restore finishes, no command uses the store: run `cairnmind restore {backup}` again to remove it.")
 UNKNOWN_STATE = (
     "{error} The restore stopped. The mark of an earlier, unfinished restore could not be read, so what the store holds "
     "is not known and it was not put back. No command uses the store: run `cairnmind restore FILE` again with a whole "
@@ -97,6 +114,10 @@ MESSAGES = {
                    "change, Memory."),
     UNDONE: "{error} Przywracanie zostało przerwane, a magazyn przywrócono do stanu sprzed niego, z pliku {before}.",
     NOTHING_CHANGED: "{error} Przywracanie zostało przerwane, zanim zmieniło jakikolwiek wiersz: magazyn jest taki, jaki był.",
+    MARK_KEPT: (
+        "{error} Przywracanie zostało przerwane, zanim zmieniło jakikolwiek wiersz, ale nie udało się usunąć jego "
+        "znacznika ({mark_error}). Dopóki jakieś przywracanie się nie zakończy, żadne polecenie nie używa magazynu: "
+        "uruchom ponownie `cairnmind restore {backup}`, aby go usunąć."),
     UNKNOWN_STATE: (
         "{error} Przywracanie zostało przerwane. Znacznika wcześniejszego, niedokończonego przywracania nie dało się "
         "odczytać, więc nie wiadomo, co zawiera magazyn, i nie przywrócono go. Żadne polecenie nie używa magazynu: "
@@ -117,18 +138,18 @@ MESSAGES = {
         "pliku {backup}. Dopóki jakieś przywracanie się nie zakończy, magazyn zawiera tylko część tej kopii i żadne "
         "polecenie go nie używa. W instalacji, która zapisuje ten magazyn, uruchom `cairnmind restore {backup}`, aby je "
         "dokończyć, albo `cairnmind restore {before}`, aby wrócić do wierszy sprzed przywracania (ten plik jest w "
-        "kopiach zapasowych tamtej instalacji)."),
+        "kopiach zapasowych tamtej instalacji)." + _ELSEWHERE_PL),
     UNDO_UNFINISHED: (
         "Przywracanie tego magazynu nie powiodło się i przywrócenie poprzedniego stanu też nie zostało dokończone: "
         "zaczęło się {started_at} w instalacji {installation}, z pliku {backup}. Dopóki jakieś przywracanie się nie "
         "zakończy, żadne polecenie nie używa magazynu. W instalacji, która zapisuje ten magazyn, uruchom `cairnmind "
         "restore {before}`, aby wrócić do wierszy sprzed przywracania, albo `cairnmind restore {backup}`, aby "
-        "przywrócić tamtą kopię."),
+        "przywrócić tamtą kopię." + _ELSEWHERE_PL),
     UNREADABLE: (
         "Ten magazyn ma znacznik niedokończonego przywracania, którego nie da się odczytać, więc żadne polecenie go "
         "nie używa. W instalacji, która zapisuje ten magazyn, przywróć całą kopię poleceniem `cairnmind restore "
         "PLIK`; kopie zrobione przed wcześniejszymi przywracaniami są w backups/ jej katalogu danych "
-        "(before-restore-*)."),
+        "(before-restore-*)." + _ELSEWHERE_PL),
 }
 
 _TEXT_FIELDS = ("backup", "before", "installation_id", "started_at")
@@ -212,12 +233,13 @@ class Batches:
         except BaseException:
             stack.close()
             raise
-        self._stack, self.rows, self.size = stack, 0, 0
+        self._stack, self.rows, self.size, self.opened = stack, 0, 0, time.monotonic()
 
     def wrote(self, rows: int, size: int = 0) -> None:
         self.rows += rows
         self.size += size
-        if self.rows >= ROWS_PER_TRANSACTION or self.size >= BYTES_PER_TRANSACTION:
+        if (self.rows >= ROWS_PER_TRANSACTION or self.size >= BYTES_PER_TRANSACTION
+                or time.monotonic() - self.opened >= TIME_PER_TRANSACTION):
             self.commit()
             self._open()
 
@@ -238,15 +260,17 @@ class Batches:
 
 
 def clear(store, types: list[str]) -> None:
-    """Delete every row of ``types``, in order, at most ``ROWS_PER_TRANSACTION`` rows per transaction."""
+    """Delete every row of ``types``, in order, at most ``ROWS_PER_TRANSACTION`` rows and ``TIME_PER_TRANSACTION``
+    seconds per transaction; a delete that was slow makes the next ones smaller."""
     from .journal import Journal
     from .sql import quote_name
-    types = list(types)
+    types, limit = list(types), ROWS_PER_TRANSACTION
     while types:
         with store.transaction() as tx:
             Journal.reset(tx, reason="restore")
-            budget = ROWS_PER_TRANSACTION
+            budget, opened = limit, time.monotonic()
             while types and budget:
+                started = time.monotonic()
                 result = tx.command(f"DELETE FROM {quote_name(types[0])} LIMIT {budget}")
                 count = result[0].get("count") if isinstance(result, list) and result and isinstance(result[0], dict) else None
                 if type(count) is not int or not 0 <= count <= budget:
@@ -254,6 +278,11 @@ def clear(store, types: list[str]) -> None:
                 budget -= count
                 if budget:  # fewer than asked: this type is empty now
                     types.pop(0)
+                now = time.monotonic()
+                if now - started >= TIME_PER_TRANSACTION:
+                    limit = max(MIN_ROWS_PER_DELETE, limit // 2)
+                if now - opened >= TIME_PER_TRANSACTION:
+                    break
 
 
 def _file_sha256(path: Path) -> str:
@@ -326,6 +355,14 @@ def _described(exc: BaseException, settings, offset: int | None) -> str:
 def staged_restore(store, source, path: Path, claims) -> None:
     """Replace the store with the validated backup `source` (read from `path`), as one outcome: the backup, or the
     store as it was. Called by ``Store.restore`` once the writer is known."""
+    # The writer lock is held from here to the end, as the one transaction of 0.12.0 held it: another command of this
+    # installation waits, instead of committing between two transactions of the restore.
+    with store.held():
+        _staged(store, source, path, claims)
+    store._unfinished_restore = False
+
+
+def _staged(store, source, path: Path, claims) -> None:
     from .config import BACKUP_SUFFIXES
     offset = _log_size(store.settings)
     found = unfinished(store.client)
@@ -351,7 +388,11 @@ def staged_restore(store, source, path: Path, claims) -> None:
         if unknown:
             raise RestoreFailed(UNKNOWN_STATE.format(error=error)) from exc
         if found is None and not store.restore_changed:
-            clear_mark(store)  # failed before the first delete: the store was never touched, so there is nothing to undo
+            try:
+                clear_mark(store)  # failed before the first delete: the store was never touched, so nothing to undo
+            except Exception as second:  # noqa: BLE001 - the engine that failed is likely gone: say both, the mark stays
+                raise RestoreFailed(MARK_KEPT.format(error=error, backup=safe_text(path),
+                                                     mark_error=_described(second, store.settings, None).rstrip("."))) from exc
             raise RestoreFailed(NOTHING_CHANGED.format(error=error)) from exc
         _undo(store, mark, error, exc)
     clear_mark(store)

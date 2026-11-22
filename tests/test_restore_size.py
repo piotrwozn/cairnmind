@@ -24,6 +24,9 @@ from cairnmind.store import Store
 from conftest import prepare_engine
 
 SOURCES, CHUNKS, NODES, EDGES = 550, 2942, 81488, 101428
+# #377: at about 160,000 vertices the unique index lookup on nodes.id misses vertices on this engine, and no store of
+# any restore can be written. This test stays far below that size; do not raise the counts toward it.
+assert NODES < 100_000
 WORDS = "def class return import self value store graph node edge restore backup engine heap memory".split()
 
 
@@ -85,7 +88,40 @@ def _counts(store):
             for table in ("sources", "chunks", "nodes", "edges")}
 
 
-@pytest.mark.time_limit(900)
+def _restore_through_a_slow_link(store, backup, engine, monkeypatch):
+    """The same restore again, as a connect-only installation through a relay that delays each request by 20 ms (the
+    trial's network: 18.5 ms). The trial's clients gave up with a read timeout on ONE request that the server was still
+    working on; here no request of the restore comes near the client's wait, a commit included."""
+    from cairnmind import arcade
+    from database_relay import Relay
+    monkeypatch.delenv("CAIRNMIND_ARCADE_URL")
+    monkeypatch.setenv("CAIRNMIND_ARCADE_DATABASE", store.settings.arcade_database)
+    with Relay(int(engine.arcade_url.rsplit(":", 1)[1]), delay=0.02) as relay:
+        monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", relay.url)
+        far = Store(store.data_dir)
+        waits, request = [], arcade.ArcadeClient._request
+
+        def noting(self, method, path, **kwargs):
+            waits.append((path, kwargs.get("timeout", arcade.REQUEST_TIMEOUT)))
+            return request(self, method, path, **kwargs)
+
+        monkeypatch.setattr(arcade.ArcadeClient, "_request", noting)
+        begun, before = time.monotonic(), len(relay.durations)
+        far.restore(backup)
+        took = time.monotonic() - begun
+        monkeypatch.setattr(arcade.ArcadeClient, "_request", request)
+        measured = relay.durations[before:]
+        assert _counts(far) == {"sources": SOURCES, "chunks": CHUNKS, "nodes": NODES, "edges": EDGES}  # through the relay
+    longest = max(measured, key=lambda item: item[1])
+    print(f"\nrestore over a 20 ms relay: {len(measured)} requests, {took:.1f} s; longest request {longest[1]:.2f} s: "
+          f"{longest[0][:110]!r}")  # shown by `pytest -s`; the figure the documents quote
+    assert longest[1] < arcade.REQUEST_TIMEOUT / 2, longest  # the trial's clients gave up after 30 s on one request
+    commits = [timeout for path, timeout in waits if path.startswith("/api/v1/commit/")]
+    assert commits and set(commits) == {arcade.COMMIT_TIMEOUT}  # a commit is waited for longer, on purpose
+    assert {timeout for path, timeout in waits if not path.startswith("/api/v1/commit/")} == {arcade.REQUEST_TIMEOUT}
+
+
+@pytest.mark.time_limit(1500)
 def test_a_store_the_size_of_this_repository_restores_on_the_default_heap(tmp_path, monkeypatch):
     for name in (key for base in ("ARCADE_URL", "ARCADE_USER", "ARCADE_PASSWORD", "ARCADE_DATABASE", "ARCADE_DB_PREFIX",
                                   "ARCADE_CONNECT_URL") for key in env_names(base)):
@@ -108,6 +144,7 @@ def test_a_store_the_size_of_this_repository_restores_on_the_default_heap(tmp_pa
         assert not store.query("SELECT FROM devbrain_meta WHERE name='restore_unfinished'")
         log = Path(engine.data_dir / "arcade" / "engine.log").read_text(errors="replace")
         assert "OutOfMemoryError" not in log and "critically low" not in log
+        _restore_through_a_slow_link(store, backup, engine, monkeypatch)
     finally:
         stop_engine(engine)
         for _ in range(200):  # the engine ends after the stop is asked for: nothing may outlive the test
