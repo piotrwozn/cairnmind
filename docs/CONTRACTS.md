@@ -61,7 +61,8 @@ worker's own write sets, a client can neither set nor keep and any later write d
 record still `proposed` whose only source is the one the mark names, in the same project. A packet built after
 such a proposal arrived shows it, with `origin: automatic_extraction` (in the preview, or counted in
 `omitted_by_origin` when left out of it), but does not promise it; a packet already handed out is not
-renewed by it, and `resume_context` returns that same packet until something it promises changes. The
+renewed by it, and `resume_context` returns that same packet until something it promises changes or the
+client is told of newer proposals (below). The
 arrival, like a source or chunk the queue indexes that nothing in the state cites,
 never makes a packet stale. Everything else counts, failing closed: a record a person confirmed, disputed,
 superseded or edited (an extracted proposal counts from the write that confirms or changes it), a record
@@ -71,6 +72,16 @@ The `origin: automatic_extraction` label, which a client can write, plays no par
 0.13.0 keep `schema_version` 2: their state hash counted every extraction, so one still matches only when
 the state it showed held no such proposal and nothing else changed; otherwise its ACK is refused or goes
 stale once and `resume_context` hands out a new packet.
+
+So that a client knows what its packet does not show (#299), the reply of `ack_resume` and the session status
+of an acknowledged session carry `newer_automatic_proposals`: how many such proposals (the same test as above,
+never a field a client sets) were written after the packet. It is information only: it is read after the state
+hash was compared, changes no hash, readback or refusal, and is never stored with the ACK. With none the key
+is absent and the reply is as before. The count never costs the session its ACK: `resume_context` keeps
+returning the same acknowledged packet, not a new one to acknowledge. The proposals are read with the read
+tools that exist, for an MCP client `ask`, on the command line `cairnmind records` or `cairnmind ask`; a packet
+built after them shows them, and its count is then zero. Packets show at most 20 records, automatic
+proposals last. A proposal that lands while a packet is built is counted as newer than it.
 
 A captured transcript horizon is complete only when every line in it is an archived record the reader
 understood. A line stored as `transcript_unknown` keeps the packet partial, with one exception (#210): a

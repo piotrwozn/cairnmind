@@ -31,6 +31,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The installer no longer prints the engine's JSON or GPU advice without `--pull-models`; without tmux a leftover terminal socket that nothing listens on no longer blocks a second run, and the refusal lists at most five sockets; the Java hint names the apt command (#287).
 - Opening the workspace without tmux 3.4+ names `brief`, `remember`, `ask` and `run` as the commands that work without it (#287).
 - `cairnmind setup`, `status` and `doctor` no longer say that a model server on another computer "receives questions and memory text" when that address is the refused `ollama_url`: they show the refusal (#287, #301).
+- `docs/UPGRADING.md` has a section "From 0.12.0 to 0.13.0": the steps, what the upgrade does to a store (schema and backup format unchanged, an acknowledgement that may be refused once, the first snapshot after the upgrade), what an existing `config.json` means, how to move the engine to Docker and back, the changes scripts meet, and where the README's text moved (#303).
 
 ### A person's acts need the open workspace
 
@@ -66,6 +67,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - A folder inside Cairnmind's data directory is refused as a project, with the reason; before, it was registered and indexed no files. A registration of that kind made by an earlier version stays as it is (#295).
 - `cairnmind run` for a partial packet prints its sentence without the code `resume_partial:` in front; the workspace keeps the code (#296).
 - `cairnmind memory reextract` also replaces the untouched proposals of a source that the newer extraction skips, and its dry run counts such sources and records apart (#297).
+- An `https://` address of this computer in `ollama_url` now works for the local Ollama in every command, instead of being refused with an older message that named neither the setting nor the remedy (#302).
+- The acknowledgement reply and the session status now say how many automatic proposals were written after the session's packet, and `resume_context` still hands back the packet the session acknowledged, so the count never costs an ACK; the proposals are read with `ask` (MCP) or `cairnmind records` and `cairnmind ask` (#299).
 
 ### Development and CI
 
