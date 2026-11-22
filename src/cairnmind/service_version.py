@@ -23,15 +23,21 @@ _VERSION = re.compile(r"[0-9A-Za-z.+-]{1,40}")
 
 OTHER_VERSION = ("The knowledge service of this data directory runs Cairnmind {service}, and this is Cairnmind "
                  "{client}, so nothing is sent to it: the two versions may not agree on what the store allows. Stop it "
-                 "with `{command}`; the next command or tool call that needs the service starts it in version {client}.")
+                 "with `{command}`; the next command that needs the service starts it in version {client}.")
+# An answer that is this data directory's service, with a version that cannot be read: `stop` reaches it.
 VERSION_UNKNOWN = ("The knowledge service at {url} did not say which version of Cairnmind it runs, so nothing is sent "
                    "to it. Try again; if this keeps happening, stop it with `{command}`.")
+# No answer at all: nothing is known of the program, and `stop` would say it is not running.
+NO_HEALTH = ("The program at {url} did not answer within 5 seconds, so it is not known whether it is the knowledge "
+             "service of this data directory, and nothing is sent to it. See what holds the port with `{command}`.")
 
 MESSAGES = {
     OTHER_VERSION: ("Usługa wiedzy tego katalogu danych działa w wersji Cairnmind {service}, a to jest Cairnmind "
                     "{client}, więc nic nie jest do niej wysyłane: obie wersje mogą się nie zgadzać co do tego, na co "
-                    "pozwala baza. Zatrzymaj ją poleceniem `{command}`; następne polecenie albo wywołanie narzędzia, "
+                    "pozwala baza. Zatrzymaj ją poleceniem `{command}`; następne polecenie, "
                     "które potrzebuje usługi, uruchomi ją w wersji {client}."),
+    NO_HEALTH: ("Program pod adresem {url} nie odpowiedział w ciągu 5 sekund, więc nie wiadomo, czy to usługa wiedzy "
+                "tego katalogu danych, i nic nie jest do niego wysyłane. Zobacz, co zajmuje port, poleceniem `{command}`."),
     VERSION_UNKNOWN: ("Usługa wiedzy pod adresem {url} nie podała, w której wersji Cairnmind działa, więc nic nie jest "
                       "do niej wysyłane. Spróbuj ponownie; jeśli to się powtarza, zatrzymaj ją poleceniem `{command}`."),
 }
@@ -42,12 +48,22 @@ def instance_id(settings) -> str:
     return hashlib.sha256(str(settings.data_dir).encode()).hexdigest()[:16]
 
 
-def _stop_command(settings) -> str:
+class Sentence(str):
+    """A formatted sentence that remembers its template and values: the workspace translates the template first and
+    puts the values in after (terminal_i18n_messages.broker_error_text), as it does for FOREIGN_SERVICE."""
+
+    def __new__(cls, template: str, **values):
+        text = super().__new__(cls, template.format(**values))
+        text.template, text.values = template, values
+        return text
+
+
+def _command(settings, verb: str) -> str:
     from .cli import _data_dir_arguments  # only when refusing: an MCP server does not import the command line otherwise
-    return shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "stop"])
+    return shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), verb])
 
 
-def refusal(settings) -> str | None:
+def refusal(settings) -> Sentence | None:
     """Why nothing may be sent to this data directory's knowledge service, None when it may (or nothing answers)."""
     try:
         with httpx.Client(trust_env=False, timeout=5) as client:
@@ -55,7 +71,8 @@ def refusal(settings) -> str | None:
     except httpx.ConnectError:
         return None  # nothing listens: the request that follows fails, or starts the service, on its own
     except httpx.HTTPError:
-        return VERSION_UNKNOWN.format(url=settings.url, command=_stop_command(settings))
+        # Nothing is known of the program: `stop` would call it "not running" (it waits 0.7 s), so it is not advised.
+        return Sentence(NO_HEALTH, url=settings.url, command=_command(settings, "doctor"))
     try:
         health = response.json()
     except ValueError:
@@ -67,5 +84,5 @@ def refusal(settings) -> str | None:
     if version == __version__:
         return None
     if not isinstance(version, str) or not _VERSION.fullmatch(version):  # printed: never raw text from a socket
-        return VERSION_UNKNOWN.format(url=settings.url, command=_stop_command(settings))
-    return OTHER_VERSION.format(service=version, client=__version__, command=_stop_command(settings))
+        return Sentence(VERSION_UNKNOWN, url=settings.url, command=_command(settings, "stop"))
+    return Sentence(OTHER_VERSION, service=version, client=__version__, command=_command(settings, "stop"))

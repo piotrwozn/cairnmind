@@ -1009,12 +1009,13 @@ def _stop_for_upgrade(settings, reason):
     so none runs the version being replaced (#319)."""
     import shlex
     from .cli import UpgradeInProgress, _data_dir_arguments
+    from .service_version import Sentence
     from .upgrade_mark import BROKER_STOP_FAILED
     try:
         stop_cockpit(settings)
     except (httpx.HTTPError, OSError):
         command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "cockpit", "stop"])
-        raise UpgradeInProgress(BROKER_STOP_FAILED.format(command=command)) from None
+        raise UpgradeInProgress(Sentence(BROKER_STOP_FAILED, command=command)) from None
     raise UpgradeInProgress(reason)
 
 

@@ -9,7 +9,7 @@ import pytest
 
 from cairnmind import __version__, service_version
 from cairnmind.config import Settings
-from cairnmind.service_version import OTHER_VERSION, VERSION_UNKNOWN, instance_id, refusal
+from cairnmind.service_version import NO_HEALTH, OTHER_VERSION, VERSION_UNKNOWN, instance_id, refusal
 from cairnmind.terminal_i18n import CATALOG
 
 
@@ -63,18 +63,36 @@ def test_another_data_directory_or_another_program_is_left_to_the_token_check(se
 
 
 @pytest.mark.parametrize("change", [
-    {"version": None}, {"version": 7}, {"version": "0.12.0\x1b[31m"}, {"version": "1" * 41}, "timeout",
+    {"version": None}, {"version": 7}, {"version": "0.12.0\x1b[31m"}, {"version": "1" * 41},
 ])
 def test_a_service_that_does_not_say_its_version_gets_nothing(settings, monkeypatch, change):
-    def handler(request):
-        if change == "timeout":
-            raise httpx.ReadTimeout("slow")
-        return httpx.Response(200, json=health(settings, **change))
-
-    answer(monkeypatch, handler)
+    answer(monkeypatch, lambda request: httpx.Response(200, json=health(settings, **change)))
     reason = refusal(settings)
     assert reason == VERSION_UNKNOWN.format(url=settings.url, command=command(settings))
     assert "\x1b" not in reason and "1" * 41 not in reason
+
+
+def test_a_program_that_does_not_answer_is_not_called_the_service_and_stop_is_not_advised(settings, monkeypatch):
+    def hang(request):
+        raise httpx.ReadTimeout("slow")
+
+    answer(monkeypatch, hang)
+    reason = refusal(settings)
+    doctor = command(settings).removesuffix("stop") + "doctor"
+    assert reason == NO_HEALTH.format(url=settings.url, command=doctor)
+    assert " stop" not in reason and "knowledge service at" not in reason
+
+
+def test_the_sentence_is_shown_in_polish_by_the_workspace(settings, monkeypatch):
+    from cairnmind.cli import ServiceOfOtherVersion
+    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal_i18n_messages import broker_error_text
+    answer(monkeypatch, lambda request: httpx.Response(200, json=health(settings, version="0.11.0")))
+    error = ServiceOfOtherVersion(refusal(settings))
+    english = broker_error_text(error, lambda text: tr(text, "en"))
+    polish = broker_error_text(error, lambda text: tr(text, "pl"))
+    assert english == str(error) and polish != english
+    assert polish.startswith("Usługa wiedzy tego katalogu") and "0.11.0" in polish and command(settings) in polish
 
 
 def test_every_version_sentence_has_its_polish_in_the_terminal_catalog():
