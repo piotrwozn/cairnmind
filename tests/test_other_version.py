@@ -80,8 +80,10 @@ def test_stop_and_doctor_still_reach_a_service_of_another_version(tmp_path, monk
     settings = Settings.load(tmp_path / "data", create=True)
     seen = old_service(monkeypatch, settings)
     monkeypatch.setattr(integrations, "doctor", lambda settings: {})
-    report = json.loads(invoke(settings, "doctor").output)
+    ran = invoke(settings, "doctor")
+    report = json.loads(ran.output)
     assert report["service_running"] is True
+    assert ran.exit_code == 1  # required and missing, so doctor exits 1 by #313's rule
     assert " ".join(sentence(settings).split()) in [" ".join(line.split()) for line in report["environment_notes"]]
     # In a terminal it is listed as required and not working, once, and the next step is to fix it (#319).
     from cairnmind.doctor_attention import summary
