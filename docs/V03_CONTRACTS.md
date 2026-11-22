@@ -124,6 +124,9 @@ state hash leaves it out. A
 confirm, dispute, edit or supersede counts, and so does every write of a person, a
 coding session or an external client, the session's own included. The mark is local:
 a memory package never exports or imports it, so an imported record always counts.
+The ack_resume reply and the status of an acknowledged session add
+newer_automatic_proposals (#299), the number of such proposals written after the
+packet, only when above zero; information only, never stored, never in a hash.
 Raw nativeCLI operations retain
 nativecontrols; no complete hardtoolgate claimed.
 
