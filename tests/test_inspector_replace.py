@@ -19,7 +19,7 @@ from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
 from cairnmind.terminal_inspector import InspectorApp
 from cairnmind.terminal_ui import FormModal
 from conftest import plain_words
-from consent_steps import consent_drawn
+from consent_steps import consent_drawn, form_ready
 from test_terminal_panels import FakeBroker, setup, settle
 from test_terminal_ux080 import screen_text
 
@@ -84,6 +84,7 @@ async def test_the_inspector_replaces_a_record(tmp_path, monkeypatch, language):
         field = app.screen.query_one("#field-content", TextArea)
         assert field.text == "Validate token safely."  # starts as the current text
         field.text = NEW
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await consent_drawn(app, pilot)
         assert posts(broker) == []  # the form sent nothing (#332)
@@ -134,6 +135,7 @@ async def test_the_form_refuses_the_same_text_and_a_too_long_text(tmp_path, monk
         await open_form(app, pilot)
         if how == "long":
             app.screen.query_one("#field-content", TextArea).text = "x" * 16001
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await pilot.pause()
         await pilot.pause()
@@ -152,6 +154,7 @@ async def test_a_refused_replace_reloads_the_record_and_says_why(tmp_path, monke
     async with app.run_test(size=(95, 42)) as pilot:
         await open_form(app, pilot)
         app.screen.query_one("#field-content", TextArea).text = NEW
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await consent_drawn(app, pilot)
         reads = [call for call in broker.calls if call[1] == "/api/inspector/records/record-a"]
@@ -167,6 +170,7 @@ async def test_a_refused_replace_reloads_the_record_and_says_why(tmp_path, monke
 async def send_replace(app, broker, pilot):
     await open_form(app, pilot)
     app.screen.query_one("#field-content", TextArea).text = NEW
+    await form_ready(app, pilot)
     await pilot.click("#form-submit")
     await consent_drawn(app, pilot)
     await pilot.click("#confirm-yes")
@@ -272,6 +276,7 @@ async def test_the_consent_dialog_itself_holds_the_current_text_and_scrolls_it(t
     async with app.run_test(size=(80, 24)) as pilot:
         await open_form(app, pilot)
         app.screen.query_one("#field-content", TextArea).text = NEW
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         modal = await consent_drawn(app, pilot)
         body = str(modal.query_one("#message-body", Static).render())  # the dialog's own text, not the screen behind

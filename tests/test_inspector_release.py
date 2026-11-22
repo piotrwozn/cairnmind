@@ -12,7 +12,7 @@ from cairnmind.person_proof import PROOF_MISSING
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
 from cairnmind.terminal_inspector import InspectorApp
-from consent_steps import consent_drawn
+from consent_steps import consent_drawn, form_ready
 from test_terminal_panels import FakeBroker, setup, settle
 
 RELEASE = "/api/inspector/records/record-a/release"
@@ -69,6 +69,7 @@ async def test_the_inspector_releases_a_record(tmp_path, monkeypatch, language):
         assert tr("Lets this record's current hits of the secrets scan be published. Your reason is published with "
                   "the record. A registered secret is never released.", language) in note
         app.screen.query_one("#field-reason", TextArea).text = "The documented example key."
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await consent_drawn(app, pilot)
         assert posts(broker) == []  # the form sent nothing (#332)
@@ -148,6 +149,7 @@ async def test_a_refused_release_says_why_and_is_not_sent_again(tmp_path, monkey
     async with app.run_test(size=(95, 42)) as pilot:
         await open_release_form(app, pilot)
         app.screen.query_one("#field-reason", TextArea).text = "Example."
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await consent_drawn(app, pilot)
         await pilot.click("#confirm-yes")
@@ -164,6 +166,7 @@ async def test_a_reason_the_form_refuses_is_not_sent(tmp_path, monkeypatch, reas
     async with app.run_test(size=(95, 42)) as pilot:
         await open_release_form(app, pilot)
         app.screen.query_one("#field-reason", TextArea).text = reason
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await pilot.pause()
         await pilot.pause()
