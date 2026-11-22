@@ -15,6 +15,7 @@ from test_terminal_activity import make as make_activity
 from test_terminal_graph import panel as panel  # noqa: F401  (fixture)
 from test_terminal_panels import settle
 from test_terminal_ux080 import screen_text, setup_ui
+from test_trial011_workspace import wait_until
 from test_workspace import manager as manager  # noqa: F401  (fixture)
 
 
@@ -297,8 +298,24 @@ async def test_confirmation_and_consent_both_start_on_cancel(tmp_path, monkeypat
         assert results == [False, False, True]
 
 
+HELD = 2.0  # seconds the handling of early input is held past the first refresh (#318)
+
+
+async def shown(pilot, modal):
+    """The dialog's buttons are laid out on screen (the first refresh is near)."""
+    await wait_until(pilot, lambda: modal.is_mounted and modal.query_one("#confirm-yes").region.area > 0, 10)
+
+
+def key_of(app, name, at=None):
+    from textual import events
+    event = events.Key(name, None).set_sender(app)
+    if at is not None:
+        event.time = at
+    return event
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size,text", [((120, 40), "A real request."), ((60, 24), "word " * 400)])
+@pytest.mark.parametrize("size,text", [((120, 40), "A real request."), ((60, 24), "word " * 400), ((80, 24), "word " * 400)])
 @pytest.mark.parametrize("keys", [("tab", "enter", "tab", "enter"), ("shift+tab", "enter")])
 async def test_keys_typed_before_the_first_refresh_never_approve_a_consent_dialog(tmp_path, monkeypatch, size, text, keys):
     from cairnmind.terminal_panels import ConfirmModal
@@ -307,22 +324,131 @@ async def test_keys_typed_before_the_first_refresh_never_approve_a_consent_dialo
     results = []
     async with app.run_test(size=size) as pilot:
         await settle(app, pilot)
-        app.push_screen(ConfirmModal("Run a command?", text, approve="Run", consent=True), results.append)
-        await pilot.press(*keys)  # queued before the dialog's first refresh
+        modal = ConfirmModal("Run a command?", text, approve="Run", consent=True)
+        app.push_screen(modal, results.append)
+        typed = [key_of(app, key) for key in keys]  # produced now, before the dialog is drawn
+        await shown(pilot, modal)
+        await pilot.pause(HELD)  # their handling is held seconds past the first refresh and the quiet moment
+        for key in typed:
+            app.post_message(key)
         await pilot.pause()
-        assert True not in results
-        if size[0] == 60:  # the text really scrolls here: the focus starts on it, not on a button
-            assert app.screen.query_one(".cm-dialog-body").virtual_size.height > app.screen.query_one(".cm-dialog-body").scrollable_content_region.height
-        if not results:  # still open (a Cancel by Enter ends it): a deliberate Tab and Enter, later, approve as before
-            await pilot.pause(.6)
-            for _ in range(3):
-                if app.focused is not None and app.focused.id == "confirm-yes":
-                    break
-                await pilot.press("tab")
-            await pilot.press("enter")
-            await pilot.pause()
-            assert results == [True]
+        assert results == []  # neither approved nor refused: they were typed before the question was shown
+        body = modal.query_one(".cm-dialog-body")
+        fits = body.virtual_size.height <= body.scrollable_content_region.height
+        assert app.focused is (modal.query_one("#confirm-no") if fits else body)  # no early focus move acted
+        await wait_until(pilot, lambda: key_of(app, "x").time >= modal.drawn_at + modal.QUIET)
+        for _ in range(3):  # a deliberate Tab and Enter, typed later, approve as before
+            if app.focused is not None and app.focused.id == "confirm-yes":
+                break
+            await pilot.press("tab")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert results == [True]
 
+
+@pytest.mark.asyncio
+async def test_keys_made_in_the_quiet_moment_move_nothing_however_late_they_are_handled(tmp_path, monkeypatch):
+    from cairnmind.terminal_panels import ConfirmModal
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    results = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        modal = ConfirmModal("Run a command?", "A real request.", approve="Run", consent=True)
+        app.push_screen(modal, results.append)
+        await shown(pilot, modal)
+        await wait_until(pilot, lambda: modal.drawn_at < float("inf"))
+        typed = [key_of(app, "shift+tab", modal.drawn_at + .1), key_of(app, "enter", modal.drawn_at + .2)]
+        await pilot.pause(HELD)
+        for key in typed:
+            app.post_message(key)
+        await pilot.pause()
+        assert results == [False]  # the focus move was dropped, so the Enter landed on Cancel and refused at once
+
+
+@pytest.mark.asyncio
+async def test_a_click_made_before_the_dialog_was_drawn_never_approves(tmp_path, monkeypatch):
+    from textual import events
+    from cairnmind.terminal_panels import ConfirmModal
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    results = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        modal = ConfirmModal("Run a command?", "A real request.", approve="Run", consent=True)
+        app.push_screen(modal, results.append)
+        early = key_of(app, "x").time
+        await shown(pilot, modal)
+        await pilot.pause(HELD)
+        yes = modal.query_one("#confirm-yes")
+        x, y = yes.region.x + yes.region.width // 2, yes.region.y + yes.region.height // 2
+        down = events.MouseDown(None, x, y, 0, 0, 1, False, False, False, screen_x=x, screen_y=y)
+        up = events.MouseUp(None, x, y, 0, 0, 1, False, False, False, screen_x=x, screen_y=y)
+        down.time = up.time = early
+        app.post_message(down)
+        app.post_message(up)
+        await pilot.pause()
+        assert results == [] and app.focused.id == "confirm-no"
+        await pilot.click("#confirm-yes")
+        await pilot.pause()
+        assert results == [True]
+
+
+async def early_key_below(app, pilot, base, modal, results):
+    """A shift+tab typed in a widget of the screen below before the dialog came, handled seconds after it is drawn."""
+    early = key_of(app, "shift+tab")
+    await shown(pilot, modal)
+    await pilot.pause(HELD)
+    base._forward_event(early)  # exactly what the App does to a key typed in that widget
+    await pilot.pause()
+    assert app.focused.id == "confirm-no"
+    await wait_until(pilot, lambda: key_of(app, "x").time >= modal.drawn_at + modal.QUIET)
+    await pilot.press("enter")
+    await pilot.pause()
+    assert results == [False]
+
+
+@pytest.mark.asyncio
+async def test_a_key_queued_below_a_consent_dialog_never_moves_its_focus(tmp_path, monkeypatch):
+    from cairnmind.terminal_panels import ConfirmModal
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    results = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        base = app.query_one("#project-rows")
+        modal = ConfirmModal("Run a command?", "A real request.", approve="Run", consent=True)
+        app.push_screen(modal, results.append)
+        await early_key_below(app, pilot, base, modal, results)
+
+
+@pytest.mark.asyncio
+async def test_a_key_typed_in_the_agent_prompt_before_an_approval_never_moves_its_focus(tmp_path):
+    from cairnmind.terminal_panels import ConfirmModal
+    from test_api_worker import make_app, settle as settle_agent
+    app = make_app(tmp_path)
+    results = []
+    async with app.run_test(size=(95, 42)) as pilot:
+        await settle_agent(app, pilot)
+        base = app.query_one("#agent-prompt")
+        modal = ConfirmModal("Approve one command", "echo hi", approve="Run once", consent=True)
+        app.push_screen(modal, results.append)
+        await early_key_below(app, pilot, base, modal, results)
+
+
+@pytest.mark.asyncio
+async def test_escape_refuses_a_consent_dialog_at_once_even_before_it_is_drawn(tmp_path, monkeypatch):
+    from cairnmind.terminal_panels import ConfirmModal
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    results = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        app.push_screen(ConfirmModal("Run a command?", "A real request.", approve="Run", consent=True), results.append)
+        app.post_message(key_of(app, "escape"))
+        await wait_until(pilot, lambda: results)
+        assert results == [False]
+    assert ConfirmModal("Remove?", "x").admits(key_of(app, "enter"))  # a plain confirmation takes every key
 
 @pytest.mark.asyncio
 async def test_a_stall_before_the_first_refresh_does_not_let_queued_keys_approve(tmp_path, monkeypatch):
