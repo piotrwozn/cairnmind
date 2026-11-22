@@ -485,16 +485,18 @@ def _formatted(text, translate) -> str:
     as it is."""
     from .project_removal import BROKER_TEMPLATES
     from .setup_mark import BROKER_TEMPLATES as SETUP_TEMPLATES
-    return _from_templates(text, translate, (*BROKER_TEMPLATES, *SETUP_TEMPLATES)) or text
+    return from_templates(text, translate, (*BROKER_TEMPLATES, *SETUP_TEMPLATES)) or text
 
 
 def setup_mark_text(detail, translate) -> str | None:
     """The sentence of a running change of setup in the panel's language when a broker's detail is one, else None."""
     from .setup_mark import BROKER_TEMPLATES
-    return _from_templates(" ".join(detail.split()), translate, BROKER_TEMPLATES) if isinstance(detail, str) else None
+    return from_templates(" ".join(detail.split()), translate, BROKER_TEMPLATES) if isinstance(detail, str) else None
 
 
-def _from_templates(text, translate, templates) -> str | None:
+def from_templates(text, translate, templates) -> str | None:
+    """``text`` put together again from the one of ``templates`` it was formatted from, in the language ``translate``
+    gives the template in; None when it is none of them."""
     import re
     from string import Formatter
 
