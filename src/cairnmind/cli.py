@@ -2260,7 +2260,9 @@ def backup(ctx: typer.Context, destination: Annotated[str, typer.Argument(
 def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
         metavar="SOURCE", exists=True, dir_okay=False, readable=True,
         help="A backup file written by `cairnmind backup`.")]):
-    """Replace the store with a backup, after a safety backup of the current one. The service must be stopped."""
+    """Replace the store with a backup, after a safety backup of the current one. The service must be stopped.
+
+    A person's confirmations in the backup are kept only while the workspace is open; otherwise each becomes the backup's claim and accepted record kinds are withdrawn."""
     # A missing path or a folder is refused while the arguments are read, before the store or engine is touched.
     with (ctx.obj.data_dir / "service.lock").open("a") as lock:
         try:
@@ -2269,11 +2271,21 @@ def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
             refuse("Run cairnmind stop first; the service still holds the store lock")
         if service_alive(ctx.obj):
             refuse("Run cairnmind stop first; restoring requires a stopped service")
+        from cairnmind.person_proof import restore_proof
+        from cairnmind.restore_claims import BackupClaims, restore_notice
+        proof = restore_proof(ctx.obj)  # read once, before anything changes; only "key" keeps a person's acts (#214)
+        claims = None if proof == "key" else BackupClaims(source.name)
         store = store_for(ctx.obj)
-        store.restore(source)
+        store.restore(source, claims=claims)
+    if claims is not None:
+        typer.echo(f"Cairnmind: {restore_notice(proof, claims)}", err=True)
+        output({"restored": True, "person_confirmations": "claims_of_the_backup",
+                "confirmations_turned_into_claims": claims.confirmations,
+                "record_kinds_withdrawn": claims.record_kinds})
+        return
     from cairnmind.confirmation_upgrade import report
     marks = report(getattr(store, "confirmations_before_rule", None))
-    output({"restored": True, **({"confirmations_before_rule": marks} if marks else {})})
+    output({"restored": True, "person_confirmations": "kept", **({"confirmations_before_rule": marks} if marks else {})})
 
 
 @app.command()

@@ -41,6 +41,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The inspector confirms a plan: open it in Plans and choose Confirm (#214).
 - The workspace refuses to open when its tmux server cannot give a key for a person's acts, and says to run `cairnmind workspace stop`. `cairnmind workspace status` reports whether the workspace holds the key (`person_key`: present, absent or unavailable), never the key itself (#214).
 - `docs/MEMORY_CONTRACTS.md` says what a program of the same user can still do, `cairnmind restore` included, and `docs/UPGRADING.md` says to stop and reopen the workspace after upgrading from 0.12.0 (#214).
+- `cairnmind restore` keeps a person's confirmations and accepted transcript record kinds only when it reads a key from the tmux server of this installation's open workspace; otherwise it still restores every row, turns each person's confirmation into the backup's claim ("as the backup says ... not verified here"), withdraws the accepted record kinds in the same transaction, and says which way it went, how many, and why no workspace answered (#214).
+- `cairnmind workspace status` shows `person_key` as present only for a socket that passes the same checks as a restore and a person's request (#214).
 ### Fixes
 
 - Two installations that first open one store at the same moment now end as one writer and one reader also when the database server runs in production mode, as the image of `deploy/arcadedb` does; before, the second one's command failed with the server's bare error (#277).
