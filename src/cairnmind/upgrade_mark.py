@@ -15,6 +15,7 @@ from . import process_identity
 
 INSTALLER = "install-wsl.sh"
 BLOCKING = frozenset({"running", "unreadable"})
+_SHELLS = frozenset({"bash", "sh", "dash", "zsh"})
 _MARK = re.compile(rb"([0-9]{1,10})\n?")
 
 NOTE_RUNNING = ("An upgrade of Cairnmind is in progress (installer process {pid}), so the knowledge service is not "
@@ -26,8 +27,9 @@ NOTE_UNREADABLE = ("The upgrade mark ~/.local/state/cairnmind/upgrade-in-progres
                    "service is not started. If no installer is running, remove that file.")
 UPGRADE_STOP_FAILED = ("An upgrade of Cairnmind began while the knowledge service was starting, and the service did "
                        "not stop when asked. Stop it with `{command}`, and try again when the installer has finished.")
-BRIDGE_UPGRADE = ("{reason} When the installer has finished, restart this MCP server in your editor so that it runs "
-                  "the new version, then call the tool again.")
+BRIDGE_UPGRADE = "{reason} Call the tool again when the installer has finished."
+CODE_UNREADABLE = ("The installed files of Cairnmind could not be read when this MCP server started, so it cannot tell "
+                   "whether they changed. Restart this MCP server in your editor, then call the tool again.")
 CODE_REPLACED = ("The installed Cairnmind changed after this MCP server started (an upgrade or a reinstall), so this "
                  "server still runs the code of version {version} it started with. When the upgrade has finished, "
                  "restart this MCP server in your editor, or the editor, then call the tool again.")
@@ -43,8 +45,10 @@ MESSAGES = {
     UPGRADE_STOP_FAILED: ("Aktualizacja Cairnmind zaczęła się w trakcie uruchamiania usługi wiedzy, a usługa nie "
                           "zatrzymała się na wezwanie. Zatrzymaj ją poleceniem `{command}` i spróbuj ponownie, gdy "
                           "instalator skończy."),
-    BRIDGE_UPGRADE: ("{reason} Gdy instalator skończy, uruchom ponownie ten serwer MCP w edytorze, aby działał w nowej "
-                     "wersji, a potem wywołaj narzędzie ponownie."),
+    BRIDGE_UPGRADE: "{reason} Wywołaj narzędzie ponownie, gdy instalator skończy.",
+    CODE_UNREADABLE: ("Nie udało się odczytać zainstalowanych plików Cairnmind, gdy ten serwer MCP startował, więc nie "
+                      "wiadomo, czy się zmieniły. Uruchom ponownie ten serwer MCP w edytorze, a potem wywołaj narzędzie "
+                      "ponownie."),
     CODE_REPLACED: ("Zainstalowany Cairnmind zmienił się po uruchomieniu tego serwera MCP (aktualizacja albo ponowna "
                     "instalacja), więc ten serwer nadal działa na kodzie wersji {version}, z którym wystartował. Gdy "
                     "aktualizacja się zakończy, uruchom ponownie ten serwer MCP w edytorze albo cały edytor, a potem "
@@ -71,8 +75,13 @@ def state() -> tuple[str, int | None]:
     if found is None:
         return "unreadable", None
     pid = int(found.group(1))
+    if process_identity._pid(pid) is None:  # 0 or beyond pid_t: the installer never writes it, so the file is malformed
+        return "unreadable", None
     arguments = process_identity.command_line(pid)
     if arguments is None:
+        program = process_identity.executable(pid)
+        if program is not None and Path(program).name not in _SHELLS:
+            return "stale", pid  # a program that is readable and is no shell is not the installer
         return ("running" if process_identity.alive(pid) else "stale"), pid
     return ("running" if any(Path(argument).name == INSTALLER for argument in arguments) else "stale"), pid
 

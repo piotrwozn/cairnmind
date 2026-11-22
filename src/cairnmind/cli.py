@@ -278,9 +278,12 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
             command.append("--defer-background-inference")
         process = subprocess.Popen(command,
                                    stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True, env=env)
+    seen = None  # an installer that began at any moment of this start, even one that has ended by the time it answers
     for _ in range(300):
+        seen = seen or upgrade_mark.refusal()
         if service_alive(settings):
-            _stop_if_upgrade_began(settings)
+            if seen:
+                _stop_started(settings, seen)
             return
         if getattr(process, "poll", lambda: None)() is not None:
             # It stopped instead of starting, for example on an installation that only reads the store (#70).
@@ -295,22 +298,29 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
                 raise ServiceDidNotStart(f"The service stopped at start: {said.removeprefix('Cairnmind: ')}")
             process = None
         time.sleep(0.2)
+    seen = seen or upgrade_mark.refusal()
+    if seen:
+        # Still starting when the installer began: its stop found nothing to stop. This start's own process goes.
+        if process is not None:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+        raise UpgradeInProgress(seen)
     raise ServiceDidNotStart(f"The service did not start. Check {log}; port {settings.port} may be in use.")
 
 
-def _stop_if_upgrade_began(settings: Settings) -> None:
+def _stop_started(settings: Settings, reason: str) -> None:
     """An installer that began after the check in ensure_service may have found no service to stop yet: the service
-    this start brought up is stopped here, so none runs the version being replaced (#298)."""
-    from cairnmind import upgrade_mark
-    reason = upgrade_mark.refusal()
-    if not reason:
-        return
+    this start brought up is stopped here, so none runs the version being replaced (#298). A start whose starter
+    ends first cannot be closed from here."""
     try:
         with httpx.Client(trust_env=False, timeout=5) as client:
             client.post(settings.url + "/shutdown",
                         headers={"Authorization": f"Bearer {settings.token}"}).raise_for_status()
     except httpx.HTTPError:
         import shlex
+        from cairnmind import upgrade_mark
         command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "stop"])
         raise UpgradeInProgress(upgrade_mark.UPGRADE_STOP_FAILED.format(command=command)) from None
     raise UpgradeInProgress(reason)

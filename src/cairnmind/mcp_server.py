@@ -17,7 +17,8 @@ from mcp.server.fastmcp import FastMCP
 
 from . import __version__
 from .config import Settings, env_names, session_value
-from .upgrade_mark import BRIDGE_UPGRADE, CODE_REPLACED
+from . import upgrade_mark
+from .upgrade_mark import BRIDGE_UPGRADE, CODE_REPLACED, CODE_UNREADABLE
 
 # store.ORIGIN_METADATA, repeated so the stdio bridge does not import the store: an external session's mark.
 ORIGIN_KEYS = ("origin_client", "origin_session_id", "origin_history", "origin_evidence")
@@ -141,6 +142,15 @@ def code_identity() -> tuple[int, int, int, int] | None:
 LOADED_CODE = code_identity()  # what this process started from
 
 
+def refuse_if_code_replaced() -> None:
+    """Before anything of the installed package is imported lazily: the new version's modules must not load into
+    this process (#298)."""
+    if LOADED_CODE is None:
+        raise RuntimeError(CODE_UNREADABLE)
+    if code_identity() != LOADED_CODE:
+        raise RuntimeError(CODE_REPLACED.format(version=__version__))
+
+
 def start_service(settings: Settings) -> None:
     """Start this installation's knowledge service as `ask`, `run` and `context` do (cli.ensure_service), for an
     external client, which no launcher started it for (#258). Prints nothing: stdout belongs to MCP."""
@@ -262,9 +272,7 @@ class ServiceClient:
 
     async def request(self, method: str, endpoint: str, *, payload: dict[str, Any] | None = None,
                       params: dict[str, Any] | None = None) -> dict[str, Any]:
-        if LOADED_CODE is None or code_identity() != LOADED_CODE:
-            # Its lazy imports would load the new version's modules into this old process: it must be restarted.
-            raise RuntimeError(CODE_REPLACED.format(version=__version__))
+        refuse_if_code_replaced()
         body = dict(payload or {})
         query = dict(params or {})
         if "session_id" in body and body["session_id"] != self.session_id:
@@ -315,6 +323,9 @@ class ServiceClient:
         except httpx.ConnectError:
             # Nothing listens: the request never reached a service, so sending it again cannot repeat a write.
             if self.external is None or started:
+                reason = upgrade_mark.refusal() if self.external is None else None
+                if reason:  # `cairnmind serve` is not what to do now: it would start the version being replaced
+                    raise RuntimeError(BRIDGE_UPGRADE.format(reason=reason)) from None
                 raise RuntimeError(UNAVAILABLE.format(error="ConnectError")) from None
         except (httpx.HTTPError, ValueError) as exc:
             raise RuntimeError(UNAVAILABLE.format(error=type(exc).__name__)) from None
@@ -355,6 +366,7 @@ def create_server(settings: Settings, service: ServiceClient | None = None, *,
             raise ValueError("question is too long; ask a focused question")
         payload = {"project": project, "question": question}
         if answer_schema is not None:
+            refuse_if_code_replaced()
             from .answer_contract import prepare_answer_schema
             payload["answer_schema"] = prepare_answer_schema(answer_schema)
         return await bridge.post("/ask", payload)

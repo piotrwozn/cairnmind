@@ -49,8 +49,9 @@ def test_a_running_service_is_still_used_during_an_upgrade_so_stop_works(tmp_pat
 def began_while_starting(tmp_path, monkeypatch, status):
     """No mark at the first check, a running installer once the started service answers."""
     settings = Settings.load(tmp_path / "data", create=True)
-    answers = iter([None, upgrade_mark.NOTE_RUNNING.format(pid=4242)])
-    monkeypatch.setattr(upgrade_mark, "refusal", lambda: next(answers))
+    calls = []
+    monkeypatch.setattr(upgrade_mark, "refusal", lambda: calls.append(1) or (
+        upgrade_mark.NOTE_RUNNING.format(pid=4242) if len(calls) > 1 else None))
     alive = iter([False, True])
     monkeypatch.setattr(cli, "service_alive", lambda settings: next(alive))
     monkeypatch.setattr(cli.subprocess, "Popen", lambda *args, **kwargs: SimpleNamespace(poll=lambda: None))
@@ -79,6 +80,35 @@ def test_a_service_that_does_not_stop_is_named_with_the_stop_command(tmp_path, m
         cli.ensure_service(settings)
     command = f"cairnmind --data-dir {settings.data_dir} stop"
     assert str(refused.value) == upgrade_mark.UPGRADE_STOP_FAILED.format(command=command)
+
+
+def test_an_installer_that_began_and_ended_while_the_service_started_still_stops_that_service(tmp_path, monkeypatch):
+    """The mark is there for one pass of the wait only: the service answers after the installer has removed it."""
+    settings, seen = began_while_starting(tmp_path, monkeypatch, 200)
+    marks = iter([None, upgrade_mark.NOTE_RUNNING.format(pid=4242), None])
+    monkeypatch.setattr(upgrade_mark, "refusal", lambda: next(marks, None))
+    alive = iter([False, False, True])
+    monkeypatch.setattr(cli, "service_alive", lambda settings: next(alive))
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    with pytest.raises(cli.UpgradeInProgress):
+        cli.ensure_service(settings)
+    assert seen == [("POST", "/shutdown", f"Bearer {settings.token}")]
+
+
+def test_a_start_that_outlasts_the_wait_while_an_upgrade_began_is_ended_and_says_why(tmp_path, monkeypatch):
+    settings = Settings.load(tmp_path / "data", create=True)
+    calls = []  # none at the gate, an installer from the first pass of the wait
+    monkeypatch.setattr(upgrade_mark, "refusal", lambda: calls.append(1) or (
+        upgrade_mark.NOTE_RUNNING.format(pid=4242) if len(calls) > 1 else None))
+    monkeypatch.setattr(cli, "service_alive", lambda settings: False)
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    ended = []
+    monkeypatch.setattr(cli.subprocess, "Popen",
+                        lambda *args, **kwargs: SimpleNamespace(poll=lambda: None, terminate=lambda: ended.append(1)))
+    with pytest.raises(cli.UpgradeInProgress) as refused:
+        cli.ensure_service(settings)
+    assert str(refused.value) == upgrade_mark.NOTE_RUNNING.format(pid=4242)
+    assert ended == [1]
 
 
 def test_ask_during_an_upgrade_is_refused_with_the_reason(tmp_path, monkeypatch):

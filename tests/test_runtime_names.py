@@ -240,7 +240,8 @@ def test_the_upgrade_mark_holds_the_installer_pid_and_only_its_installer_removes
     assert not list(mark.parent.glob("upgrade-in-progress.*"))  # no temporary file is left
 
 
-def test_an_installer_ended_by_a_signal_or_an_error_removes_its_mark(tmp_path):
+@pytest.mark.parametrize(("name", "code"), [("SIGINT", 130), ("SIGTERM", 143), ("SIGHUP", 129)])
+def test_an_installer_ended_by_a_signal_or_an_error_removes_its_mark(tmp_path, name, code):
     import signal
     mark = tmp_path / ".local" / "state" / "cairnmind" / "upgrade-in-progress"
     failed = mark_script(tmp_path, "trap end_upgrade EXIT\nbegin_upgrade\nexit 1")
@@ -250,8 +251,8 @@ def test_an_installer_ended_by_a_signal_or_an_error_removes_its_mark(tmp_path):
                                stdout=subprocess.PIPE, start_new_session=True)
     try:
         assert process.stdout.readline().strip() == "ready" and mark.read_text().strip() == str(process.pid)
-        process.send_signal(signal.SIGTERM)
-        assert process.wait(timeout=20) == 143
+        process.send_signal(getattr(signal, name))
+        assert process.wait(timeout=20) == code
         assert not mark.exists()
     finally:
         try:

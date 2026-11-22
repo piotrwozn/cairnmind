@@ -64,10 +64,21 @@ def test_a_process_that_runs_but_cannot_be_identified_counts_as_the_installer(ma
     mark.write_text("4242\n")
     monkeypatch.setattr(process_identity, "command_line", lambda pid: None)
     monkeypatch.setattr(process_identity, "alive", lambda pid: True)
+    monkeypatch.setattr(process_identity, "executable", lambda pid: None)
     assert upgrade_mark.state() == ("running", 4242)
 
 
-@pytest.mark.parametrize("content", [b"", b"abc\n", b"12 34\n", b"1" * 40, "directory", "no home"])
+@pytest.mark.parametrize(("program", "kind"), [("/sbin/launchd", "stale"), ("/bin/bash", "running")])
+def test_a_process_without_a_readable_command_line_is_told_by_its_program(mark, monkeypatch, program, kind):
+    """A reused id of a root daemon or a kernel thread must not block for ever; a shell may still be the installer."""
+    mark.write_text("4242\n")
+    monkeypatch.setattr(process_identity, "command_line", lambda pid: None)
+    monkeypatch.setattr(process_identity, "alive", lambda pid: True)
+    monkeypatch.setattr(process_identity, "executable", lambda pid: program)
+    assert upgrade_mark.state() == (kind, 4242)
+
+
+@pytest.mark.parametrize("content", [b"", b"abc\n", b"12 34\n", b"1" * 40, b"0\n", b"4294967296\n", "directory", "no home"])
 def test_a_mark_that_cannot_be_read_blocks(mark, monkeypatch, content):
     if content == "directory":
         mark.mkdir()

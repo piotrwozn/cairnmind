@@ -255,16 +255,23 @@ def test_the_mcp_server_check_and_the_upgrade_mark_run_on_the_bash_of_macos(tmp_
     tool(tmp_path / "bin" / "ps", "[ \"$*\" = '-A -ww -o pid= -o args=' ] || exit 64\n"
          "echo '  501 /u/tools/cairnmind/bin/python /u/bin/cairnmind mcp --client external --project /p'\n"
          "echo '  502 /usr/bin/python3 other mcp --client external'\n"
-         "echo '  503 /u/tools/cairnmind/bin/python /u/bin/cairnmind mcp'")
+         "echo '  503 /u/tools/cairnmind/bin/python /u/bin/cairnmind mcp'\n"
+         "echo '  504 /u/tools/cairnmind/bin/python /u/bin/cairnmind mcp --client=external'")
     mark = tmp_path / ".local" / "state" / "cairnmind" / "upgrade-in-progress"
+    env = {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "HOME": str(tmp_path)}
     result = subprocess.run(
         [BASH, "-c", "set -euo pipefail\n" + functions + "\nlive_bridges /u/tools/cairnmind/bin/python\n"
          'begin_upgrade\ncat "$upgrade_mark"\necho "pid=$$"\nend_upgrade\n'],
-        env={**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "HOME": str(tmp_path)},
-        capture_output=True, text=True, timeout=30)
+        env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
-    bridges, held, shown = result.stdout.splitlines()
-    assert bridges == "501" and shown == f"pid={held}" and not mark.exists()
+    first, second, held, shown = result.stdout.splitlines()
+    assert (first, second) == ("501", "504") and shown == f"pid={held}" and not mark.exists()
+    # The refusal joins the ids with the bash 3.2 pattern substitution and ends the installer.
+    refused = subprocess.run([BASH, "-c", "set -euo pipefail\n" + functions +
+                              "\nstop_installed /u/bin/cairnmind cairnmind /u/tools/cairnmind/bin/python\necho went on"],
+                             env=env, capture_output=True, text=True, timeout=30)
+    assert refused.returncode == 1 and "went on" not in refused.stdout
+    assert "processes: 501 504" in refused.stderr and "kill 501 504" in refused.stderr
 
 
 # --- Linux: what it printed before stays as it was -----------------------------------------------------------------

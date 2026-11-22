@@ -193,7 +193,7 @@ def test_once_the_mark_is_gone_the_same_bridge_starts_the_service_again(monkeypa
 @pytest.mark.parametrize("loaded", ["other", None])
 def test_a_bridge_whose_installed_code_changed_refuses_every_call(monkeypatch, settings, tmp_path, native, loaded):
     from cairnmind import __version__
-    from cairnmind.upgrade_mark import CODE_REPLACED
+    from cairnmind.upgrade_mark import CODE_REPLACED, CODE_UNREADABLE
     network = Network(monkeypatch)
     network.up = True
     if loaded is None:
@@ -204,8 +204,32 @@ def test_a_bridge_whose_installed_code_changed_refuses_every_call(monkeypatch, s
     bridge = mcp_server.ServiceClient(settings) if native else external(settings, tmp_path)
     with pytest.raises(RuntimeError) as caught:
         ask(bridge)
-    assert str(caught.value) == CODE_REPLACED.format(version=__version__)
+    # Files that could not be read at start are not "changed": the message says what is true.
+    assert str(caught.value) == (CODE_UNREADABLE if loaded is None else CODE_REPLACED.format(version=__version__))
     assert network.seen == []
+
+
+def test_a_native_bridge_during_an_upgrade_does_not_advise_serve(monkeypatch, settings):
+    from cairnmind import upgrade_mark
+    Network(monkeypatch)  # nothing listens
+    monkeypatch.setattr(upgrade_mark, "state", lambda: ("running", 4242))
+    with pytest.raises(RuntimeError) as caught:
+        ask(mcp_server.ServiceClient(settings))
+    assert str(caught.value) == upgrade_mark.BRIDGE_UPGRADE.format(reason=upgrade_mark.NOTE_RUNNING.format(pid=4242))
+    assert "cairnmind serve" not in str(caught.value)
+
+
+def test_ask_with_a_schema_imports_nothing_of_the_new_version_in_a_replaced_bridge(monkeypatch, settings):
+    from cairnmind import __version__
+    from cairnmind.upgrade_mark import CODE_REPLACED
+    monkeypatch.setattr(mcp_server, "code_identity", lambda: (1, 2, 3, 4))
+    monkeypatch.delitem(sys.modules, "cairnmind.answer_contract", raising=False)
+    server = mcp_server.create_server(settings, mcp_server.ServiceClient(settings))
+    arguments = {"project": "p", "question": "q", "answer_schema": {"type": "object"}}
+    with pytest.raises(Exception, match="changed after this MCP server started") as caught:
+        asyncio.run(server.call_tool("ask", arguments))
+    assert CODE_REPLACED.format(version=__version__) in str(caught.value)
+    assert "cairnmind.answer_contract" not in sys.modules
 
 
 def test_parallel_calls_wait_for_one_start(monkeypatch, settings, tmp_path):
