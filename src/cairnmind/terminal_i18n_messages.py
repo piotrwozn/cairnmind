@@ -57,6 +57,7 @@ ASK_MESSAGES = {
     "The answer has no verified citations.": "Odpowiedź nie zawiera zweryfikowanych cytowań.",
     "Could not check whether the quotes support the answer.":
         "Nie udało się sprawdzić, czy cytaty potwierdzają odpowiedź.",
+    "Could not check the names the answer gives.": "Nie udało się sprawdzić nazw, które podaje odpowiedź.",
     "The analysis reached the context budget; narrow the question.":
         "Analiza osiągnęła budżet kontekstu; zawęź pytanie.",
     "The budget for read sources was exceeded.": "Przekroczono budżet odczytanych źródeł.",
@@ -94,6 +95,10 @@ ASK_UNSUPPORTED_PREFIX_PL = "Cytaty nie potwierdzają odpowiedzi: "
 # question wrote them (a person's text, kept as is).
 ASK_SUBJECT_PREFIX = "The quoted sources do not name what the question asks about: "
 ASK_SUBJECT_PREFIX_PL = "Cytowane źródła nie wymieniają tego, czego dotyczy pytanie: "
+# The names check's gap (subject.NAMES_GAP, #245): this fixed prefix, then the names the answer gave
+# (a model's text, kept as is).
+ASK_NAMES_PREFIX = "The quoted sources do not state the names the answer gives: "
+ASK_NAMES_PREFIX_PL = "Cytowane źródła nie podają nazw, które podaje odpowiedź: "
 
 # Errors of the model providers (api_providers.py) and of Copilot (copilot_adapter.py).
 PROVIDER_MESSAGES = {
@@ -556,7 +561,7 @@ CONFIRMATION_MESSAGES = {
 }
 
 MESSAGES = {**ASK_MESSAGES, ASK_UNSUPPORTED_PREFIX: ASK_UNSUPPORTED_PREFIX_PL,
-            ASK_SUBJECT_PREFIX: ASK_SUBJECT_PREFIX_PL, "Complete": "Pełna",
+            ASK_SUBJECT_PREFIX: ASK_SUBJECT_PREFIX_PL, ASK_NAMES_PREFIX: ASK_NAMES_PREFIX_PL, "Complete": "Pełna",
             **CONFIRMATION_MESSAGES,
             **PROVIDER_MESSAGES, **LOGIN_MESSAGES, **WORDS, **BROKER_MESSAGES, **STATE_MESSAGES,
             "Cairnmind · Memory": "Cairnmind · Pamięć"}
@@ -570,7 +575,7 @@ def fixed_message(text, translate, known=ASK_MESSAGES) -> str:
     text = str(text)
     if text in known:
         return translate(text)
-    for prefix in (ASK_UNSUPPORTED_PREFIX, ASK_SUBJECT_PREFIX):
+    for prefix in (ASK_UNSUPPORTED_PREFIX, ASK_SUBJECT_PREFIX, ASK_NAMES_PREFIX):
         if text.startswith(prefix) and known is ASK_MESSAGES:
             return translate(prefix) + text[len(prefix):]
     return text

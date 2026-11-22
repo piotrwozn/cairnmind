@@ -15,8 +15,9 @@ import pytest
 
 from cairnmind.agent import KnowledgeAgent
 from cairnmind.repository_evaluation import load_questions
-from cairnmind.subject import (SUBJECT_GAP, _matcher, inflecting, mentions, missing_subject, names_directory,
-                               subject_terms, unnamed_subject)
+from cairnmind.ollama import OllamaUnavailable
+from cairnmind.subject import (NAMES_GAP, SUBJECT_GAP, _matcher, inflecting, mentions, missing_subject, names_directory,
+                               subject_terms, unnamed_answer_names, unnamed_subject)
 
 from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401 - workspace is a fixture
 
@@ -299,3 +300,139 @@ def test_the_gap_of_a_refused_subject_is_translated_and_the_names_are_kept():
     polish = fixed_message(SUBJECT_GAP + "Zookeeper, [bold]Consul", lambda text: tr(text, "pl"))
     assert polish == "Cytowane źródła nie wymieniają tego, czego dotyczy pytanie: Zookeeper, [bold]Consul"
     assert fixed_message(SUBJECT_GAP + "Zookeeper", lambda text: tr(text, "en")) == SUBJECT_GAP + "Zookeeper"
+
+
+def test_the_gaps_of_the_names_checks_are_translated_and_the_names_are_kept():
+    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal_i18n_messages import ASK_NAMES_PREFIX, fixed_message
+    assert ASK_NAMES_PREFIX == NAMES_GAP
+    polish = fixed_message(NAMES_GAP + "nginx, [bold]Redis", lambda text: tr(text, "pl"))
+    assert polish == "Cytowane źródła nie podają nazw, które podaje odpowiedź: nginx, [bold]Redis"
+    unreadable = "Could not check the names the answer gives."
+    assert fixed_message(unreadable, lambda text: tr(text, "pl")) == "Nie udało się sprawdzić nazw, które podaje odpowiedź."
+
+
+# The names the checks must pass, the shapes the review named as costs (the subject check withholds a right
+# answer when no quoted source has a name that is only context) and three that no check of shapes reads.
+SUBJECT_SET = REPOSITORY / "docs" / "evaluation" / "subject-questions.json"
+WITHHELD = {"context-operating-system": ["Fedora"], "context-person": ["Anna"],
+            "context-two-names": ["Fedora", "Anna"], "word-first-in-the-sentence": ["Roughly"],
+            "polish-infinitive": ["Sprawdzić"]}
+CONTROLS = ["service-port", "name-the-file-has", "java-is-a-name", "polish-request"]
+
+
+def test_what_the_subject_check_withholds_on_the_question_set_built_for_it_is_counted_without_a_model():
+    # No model, no engine: the question loads like the repository questions, and for each one that names a
+    # file the check is run against what a model that quoted the right file would have: its text and its path.
+    cases = {case["id"]: case for case in load_questions(SUBJECT_SET, REPOSITORY)}
+    withheld = {}
+    for case in cases.values():
+        if case["file"]:
+            text = (REPOSITORY / case["file"]).read_text(encoding="utf-8")
+            missing = missing_subject(case["question"], [text, case["file"]], ["cairnmind"])
+            if missing:
+                withheld[case["id"]] = missing
+    assert withheld == WITHHELD and all(case in cases for case in CONTROLS)
+    # N of M right-answer questions of the cost shapes: all of them, by the way they were chosen; none of the controls.
+    assert len(withheld) == 5 and len(cases) - 3 - len(CONTROLS) == 5
+    # The three about things the project does not have name nothing the check can read, except a real name.
+    absent = {case["id"]: subject_terms(case["question"], ["cairnmind"]) for case in cases.values() if case.get("absent")}
+    assert absent == {"lower-case-name": [], "headline-case-name": [], "real-name-other-thing": ["Ollama"]}
+
+
+async def test_a_lower_case_name_the_quotes_do_not_state_is_withheld_by_the_names_call(workspace):  # noqa: F811
+    # The shape no check reads: nginx in lower case. The judge accepts the quote that shares the number,
+    # the subject check sees no name, and the answer would be complete and wrong. The names call stops it.
+    store, project, settings = workspace
+    reply = {"content": json.dumps({"names": [{"name": "nginx", "stated": False}, {"name": "Cairnmind", "stated": True}]})}
+    uri = str(Path(project["root"]) / "src/example/config.py")
+    source, _ = document(store, project, CONFIG, uri=uri, metadata={"relative_path": "src/example/config.py"})
+    model = FakeOllama([final(source["id"], "port: int = 8765", "The service listens on 8765 behind nginx.")],
+                       names=reply)
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "On which port does the service listen?")
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "answer_unsupported"
+    assert "8765" not in result["answer"] and "nginx" not in result["answer"]  # withheld, not rewritten
+    assert result["unknowns"][-1] == NAMES_GAP + "nginx"
+    assert result["diagnostics"]["support_check"] == "names_unstated"
+    assert [call["phase"] for call in result["diagnostics"]["model_calls"]] == ["discovery", "support", "names"]
+    assert [source["quote"] for source in result["sources"]] == ["port: int = 8765"]
+
+
+async def test_a_right_answer_whose_names_the_quotes_state_stays_complete_and_the_call_treats_it_as_data(workspace):  # noqa: F811
+    store, project, settings = workspace
+    result, model = await _asked(store, project, settings, "On which port does the local service listen by default?")
+    assert result["status"] == "complete" and result["diagnostics"]["support_check"] == "supported"
+    call, = model.names_calls
+    assert call["tools"] is None and call["kwargs"]["format"]["required"] == ["names"]
+    assert "UNTRUSTED DATA" in call["messages"][0]["content"]
+    payload = json.loads(call["messages"][1]["content"])
+    assert payload["answer"] == "8765" and payload["citations"][0]["quote"] == "port: int = 8765"
+    assert "question" not in payload  # the names are the answer's, not the question's
+
+
+@pytest.mark.parametrize("names", [
+    OllamaUnavailable("names down"),
+    {"content": "no names"},
+    {"content": json.dumps({"names": "nginx"})},
+    {"content": json.dumps({"names": [{"name": "nginx"}]})},
+    {"content": json.dumps({"names": []}), "tool_calls": [{"function": {"name": "x", "arguments": {}}}]},
+])
+async def test_a_failed_or_unreadable_names_call_withholds_the_answer_and_says_why(workspace, names):  # noqa: F811
+    store, project, settings = workspace
+    uri = str(Path(project["root"]) / "src/example/config.py")
+    source, _ = document(store, project, CONFIG, uri=uri, metadata={"relative_path": "src/example/config.py"})
+    model = FakeOllama([final(source["id"], "port: int = 8765", "8765")], names=names)
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "On which port does the service listen?")
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "support_unverified"
+    assert "8765" not in result["answer"] and result["unknowns"][-1] == "Could not check the names the answer gives."
+    assert result["diagnostics"]["support_check"] == "names_failed" and len(model.names_calls) == 1
+
+
+async def test_the_names_call_is_made_only_for_a_complete_answer_the_judge_accepted(workspace):  # noqa: F811
+    store, project, settings = workspace
+    uri = str(Path(project["root"]) / "src/example/config.py")
+    source, _ = document(store, project, CONFIG, uri=uri, metadata={"relative_path": "src/example/config.py"})
+    quote = "port: int = 8765"
+    # An unknown answer is partial; a refused subject and a judge's no end before the call; so does a typed question.
+    unknown = FakeOllama([final(source["id"], quote, "unknown", ["Not stated."])] * 2)
+    refused = FakeOllama([final(source["id"], quote)])
+    judged = FakeOllama([final(source["id"], quote)], support={"content": json.dumps({"supported": False, "reason": "No."})})
+    typed = FakeOllama([final(source["id"], quote, {"port": 8765})])
+    contract = {"type": "object", "properties": {"port": {"type": "integer"}}, "required": ["port"],
+                "additionalProperties": False}
+    for model, question, schema in ((unknown, "On which port?", None), (refused, "What is the Zookeeper port?", None),
+                                    (judged, "On which port?", None), (typed, "Retrieve the port.", contract)):
+        await KnowledgeAgent(store, settings, model).ask(project["id"], question, answer_schema=schema)
+        assert model.names_calls == []
+    assert typed.support_calls and not unknown.support_calls
+
+
+async def test_the_names_an_answer_introduces_must_be_in_a_quote_or_a_path_once_the_check_is_on(
+        workspace, monkeypatch):  # noqa: F811
+    store, project, settings = workspace
+    monkeypatch.setattr("cairnmind.subject.CHECK_ANSWER_NAMES", True)
+    for answer, status in (("The project uses Zookeeper on 8765.", "partial"), ("The port is 8765.", "complete")):
+        result, model = await _asked(store, project, settings, "On which port does the local service listen by default?",
+                                     answer=answer)
+        assert result["status"] == status
+        if status == "partial":
+            assert result["unknowns"][-1] == NAMES_GAP + "Zookeeper" and not model.support_calls
+            assert result["diagnostics"]["support_check"] == "subject_missing" and "8765" not in result["answer"]
+    # The same answer with the check off (the default until the replay) is left to the two model calls.
+    monkeypatch.setattr("cairnmind.subject.CHECK_ANSWER_NAMES", False)
+    result, _ = await _asked(store, project, settings, "On which port does the local service listen by default?",
+                             answer="The project uses Zookeeper on 8765.")
+    assert result["status"] == "complete"
+
+
+async def test_a_name_of_the_question_the_project_or_a_quote_or_path_has_is_not_one_the_answer_introduces(workspace):  # noqa: F811
+    store, project, settings = workspace
+    result, _ = await _asked(store, project, settings, "On which port does the local service listen by default?")
+    sources = result["sources"]
+    ask = lambda question, answer: unnamed_answer_names(store, project["id"], question, answer, sources)  # noqa: E731
+    assert ask("On which port?", "Zookeeper listens on 8765") == ["Zookeeper"]
+    assert ask("On which port does Zookeeper listen?", "Zookeeper listens on 8765") == []   # the question has it
+    assert ask("On which port?", "Example listens on 8765") == []                           # the project's own name
+    assert ask("On which port?", "It is set in config.py") == []                            # the path has config.py
+    assert ask("On which port?", "listens on 8765, as the quote says: port") == []          # no name at all
+    assert ask("Na jakim porcie?", "Na porcie 8765 słucha Zookeeper.") == ["Zookeeper"]
