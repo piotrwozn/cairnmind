@@ -578,7 +578,29 @@ def _writer_items(found: dict, url: str) -> list:
     return items
 
 
-def _test_storage(plan, request, yes, result) -> None:
+def _plan_user(candidate, admin: str, url: str) -> dict:
+    """What creating the user would meet, found without creating anything. The dry run signs in as the administrator,
+    which a user that does not exist yet cannot (#365)."""
+    try:
+        return database_credentials.plan_user(candidate, admin)
+    except ArcadeError as exc:
+        if exc.status_code in (401, 403):
+            raise SetupRefused(STORAGE_REFUSED, url=url, error=(ADMIN_REFUSED, {"url": url})) from None
+        raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
+    except ValueError as exc:
+        raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
+
+
+def _create_sentence(found: dict) -> str:
+    """What --admin-password-file would create, for a user that does not sign in."""
+    # 403 is the answer to a user that exists and has no rights, 401 to one that does not or whose password differs
+    # and 404 to one with rights on a database that does not exist yet
+    if found["sign_in"] in (403, 404):
+        return NO_RIGHTS if found["database_exists"] else CREATE_DB
+    return CREATE_USER if found["database_exists"] else CREATE_BOTH
+
+
+def _test_storage(plan, request, yes, result, before_create=None) -> None:
     """Test the candidate store without saving anything; with --admin-password-file and --yes, create its user first.
 
     Without --yes the administrator's file only reads what can be read, and the plan says what --yes would create."""
@@ -592,32 +614,24 @@ def _test_storage(plan, request, yes, result) -> None:
         except ValueError as exc:
             raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
     if admin is not None and yes:
+        if before_create is not None:  # a database or user that appeared since the dry run: nothing is created for it
+            found = _plan_user(candidate, admin, url)
+            before_create((TEST_STORAGE_OK, {**named, "version": found["version"]}) if found["sign_in"] is None
+                          else (_create_sentence(found), named))
         try:
             created = database_credentials.create_user(candidate, admin)
         except (ValueError, ArcadeError) as exc:
             raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
-        result["done"].append((USER_CREATED if created["created"] else DATABASE_CREATED if created["database_created"]
-                               else USER_EXISTED, named))
+        # database_created tells "the user and the database" from "the user" for the plan check; it is not in a sentence
+        result["done"].append((USER_CREATED, {**named, "database_created": created["database_created"]}) if created["created"]
+                              else (DATABASE_CREATED if created["database_created"] else USER_EXISTED, named))
     if admin is not None and not yes:
-        # The dry run signs in as the administrator, which a user that does not exist yet cannot (#365).
-        try:
-            found = database_credentials.plan_user(candidate, admin)
-        except ArcadeError as exc:
-            if exc.status_code in (401, 403):
-                raise SetupRefused(STORAGE_REFUSED, url=url, error=(ADMIN_REFUSED, {"url": url})) from None
-            raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
-        except ValueError as exc:
-            raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
+        found = _plan_user(candidate, admin, url)
         if found["sign_in"] is None:
             result["tests"].append((TEST_STORAGE_OK, {**named, "version": found["version"]}))
         else:
             result["tests"].append((TEST_ADMIN_OK, {"url": url, "version": found["version"]}))
-            # 403 is the answer to a user that exists and has no rights, 401 to one that does not or whose password differs
-            # and 404 to one with rights on a database that does not exist yet
-            known = found["sign_in"] in (403, 404)
-            create = ((NO_RIGHTS if found["database_exists"] else CREATE_DB) if known
-                      else CREATE_USER if found["database_exists"] else CREATE_BOTH)
-            result["tests"].append((create, named))
+            result["tests"].append((_create_sentence(found), named))
         # A user that does not sign in cannot read the store either: no second refusal, no repeated advice.
         result["writer"] = ([(WRITER_AFTER_USER, {"url": url})] if found["sign_in"] is not None
                             else _writer_items(store_writer.inspect(candidate), url))
@@ -900,9 +914,33 @@ def _apply(settings, request, plan, moves, result, say, state) -> None:
                            NEXT_LOCAL_EMPTY if plan and not plan["target"] else NEXT_LOCAL, {}))
 
 
-def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) -> dict:
+def put_back(path: Path, snapshot: bytes, state: dict, notes: list | None = None) -> list:
+    """config.json as the snapshot has it, after a change that stopped half way or was applied and then refused. The
+    password a started engine uses stays. ``state`` is the change's (engine, engine_tried, arcade_is_new); what is left
+    is added to ``notes`` (the list is returned), also when the put-back itself raises an OSError, which propagates."""
+    notes = [] if notes is None else notes
+    # A started engine, or one whose start failed late, may hold the managed password this change generated.
+    kept = _generated_password(path, snapshot) if state["engine_tried"] else None
+    _put_back(path, snapshot)
+    if kept:
+        try:
+            _keep_password(path, kept)
+            notes.append((KEPT_PASSWORD if state["engine"] else KEPT_PASSWORD_START, {}))
+        except (OSError, ValueError) as failure:  # the put-back worked; the original error is still raised by the caller
+            notes.append((PASSWORD_NOT_KEPT_NEW if state["arcade_is_new"] else PASSWORD_NOT_KEPT_OLD,
+                          {"reason": str(failure)}))
+    return notes
+
+
+def run(settings, request: Request, *, yes: bool, say: Callable[[str], None],
+        before_change: Callable[[dict], None] | None = None,
+        before_create: Callable[[tuple], None] | None = None) -> dict:
     """Validate, test, plan and (with ``yes``) change. Raises SetupRefused before anything changed, SetupFailed
-    after config.json was put back. The result holds (template, values) items; see render."""
+    after config.json was put back. The result holds (template, values) items; see render. ``before_change`` is
+    called with the plan after every test and before anything changes; a SetupRefused it raises stops the run with
+    config.json untouched. ``before_create`` is called, before the administrator creates anything, with what the server
+    would have created now (the sentence and its values; TEST_STORAGE_OK when the user signs in), and may refuse in the
+    same way."""
     result: dict = {"profile": request.profile, "tests": [], "changes": [], "writer": [], "rebuild": [],
                     "left_behind": [], "applied": False, "done": [], "next": [], "topology": None}
     refused = environment_problem(settings)
@@ -915,16 +953,22 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) ->
         return result
     _test_models(settings, request, moves, result)  # the models first: they write nothing anywhere
     if plan and request.profile != "local":
-        _test_storage(plan, request, yes, result)
+        _test_storage(plan, request, yes, result, before_create)
     _plan_lines(settings, request, plan, moves, result)
     if not yes:
         return result
+    if before_change is not None:
+        before_change(result)
     path = settings.data_dir / "config.json"
     snapshot = path.read_bytes()
     state: dict = {"step": None, "backup": None, "engine": False, "engine_tried": False, "arcade_is_new": False,
                     "restored": None}
     try:
         _apply(settings, request, plan, moves, result, say, state)
+        # Not in as_json or render: what put_back needs when the caller refuses the change after it was made (#339).
+        result["applied_state"] = {key: state[key] for key in ("engine", "engine_tried", "arcade_is_new")}
+        result["topology"] = topology.topology(Settings.load(settings.data_dir))  # inside: a failure here is put back
+        result["applied"] = True
     except SetupFailed:  # the backup failed or did not pass its check: config.json was not touched yet
         raise
     except BaseException as exc:  # Ctrl-C too: the configuration is never left half changed
@@ -935,27 +979,16 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) ->
             notes.append((ENGINE_LEFT, {}))
         if state["restored"]:
             notes.append((RESTORE_DONE, {"path": state["restored"][0], "backups": state["restored"][1]}))
-        # A started engine, or one whose start failed late, may hold the managed password this change generated.
-        kept = _generated_password(path, snapshot) if state["engine_tried"] else None
         try:
-            _put_back(path, snapshot)
+            put_back(path, snapshot, state, notes)
         except OSError as failure:
             raise SetupFailed(PUT_BACK_FAILED, step=state["step"], error=str(exc), reason=str(failure),
                               notes=notes) from exc
-        if kept:
-            try:
-                _keep_password(path, kept)
-                notes.append((KEPT_PASSWORD if state["engine"] else KEPT_PASSWORD_START, {}))
-            except (OSError, ValueError) as failure:  # the put-back worked; the original error is still raised below
-                notes.append((PASSWORD_NOT_KEPT_NEW if state["arcade_is_new"] else PASSWORD_NOT_KEPT_OLD,
-                              {"reason": str(failure)}))
         if not isinstance(exc, Exception):
             say(render_one((PUT_BACK, {"step": state["step"], "error": str(exc) or type(exc).__name__,
                                        "notes": notes})))
             raise
         raise SetupFailed(PUT_BACK, step=state["step"], error=str(exc), notes=notes) from exc
-    result["applied"] = True
-    result["topology"] = topology.topology(Settings.load(settings.data_dir))
     return result
 
 

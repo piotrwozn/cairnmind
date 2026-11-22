@@ -194,9 +194,10 @@ def start_service(settings: Settings) -> None:
     external client, which no launcher started it for (#258). Stdout belongs to MCP; a start it makes is said on
     standard error (#287)."""
     import shlex
-    from .cli import (ServiceOfOtherVersion, UpgradeInProgress, _data_dir_arguments, _os_error_text,
+    from .cli import (ServiceOfOtherVersion, SetupInProgress, UpgradeInProgress, _data_dir_arguments, _os_error_text,
                       _service_unavailable, ensure_service, say_service_started)
     from .first_start import SERVICE_NOT_STARTED
+    from .setup_mark import BRIDGE_SETUP
     from .store_writer import inspect
     try:
         role = inspect(settings).get("role")
@@ -213,6 +214,8 @@ def start_service(settings: Settings) -> None:
     except UpgradeInProgress as exc:
         # Not SERVICE_NOT_STARTED, whose "start it with `cairnmind serve`" would be wrong advice now (#298).
         raise RuntimeError(BRIDGE_UPGRADE.format(reason=str(exc))) from None
+    except SetupInProgress as exc:
+        raise RuntimeError(BRIDGE_SETUP.format(reason=str(exc))) from None  # a change of setup, not an upgrade (#339)
     except (ValueError, OSError) as exc:  # ServiceDidNotStart is a ValueError
         command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "serve"])
         reason = (_os_error_text(exc) if isinstance(exc, OSError) else str(exc)).strip().rstrip(".") + "."
@@ -389,6 +392,10 @@ class ServiceClient:
                 reason = upgrade_mark.refusal() if self.external is None else None
                 if reason:  # `cairnmind serve` is not what to do now: it would start the version being replaced
                     raise RuntimeError(BRIDGE_UPGRADE.format(reason=reason)) from None
+                from .setup_mark import BRIDGE_SETUP, refusal as setup_refusal
+                reason = setup_refusal(self.settings.data_dir) if self.external is None else None
+                if reason:  # a change of setup stopped the service on purpose (#339): `cairnmind serve` is not the answer
+                    raise RuntimeError(BRIDGE_SETUP.format(reason=str(reason))) from None
                 raise RuntimeError(UNAVAILABLE.format(error="ConnectError")) from None
         except (httpx.HTTPError, ValueError) as exc:
             raise RuntimeError(UNAVAILABLE.format(error=type(exc).__name__)) from None
