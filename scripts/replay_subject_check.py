@@ -33,6 +33,7 @@ from cairnmind.agent import EXCERPT_CHARS
 from cairnmind.subject import missing_answer_names, missing_subject
 
 REPORT_QUOTE_CHARS = 300  # where repository_evaluation.case_result cuts a quote
+REPORT_ANSWER_CHARS = 600  # where case_result cuts an answer; one this long may be cut (a quote of exactly 300 likewise)
 PROJECT_NAMES = ("repository", "evaluation")  # what the evaluation calls the copy it indexes
 
 
@@ -71,6 +72,9 @@ def replay_report(repo: Path, path: Path, commit: str) -> dict:
         out["complete"] += 1
         right = bool(row.get("right")) and not row.get("absent")
         out["right"] += right
+        answer = str(row.get("answer", ""))
+        if len(answer) >= REPORT_ANSWER_CHARS:  # a name after the cut is invisible: never read as "none withheld"
+            out["unreadable"].append(f"{row['id']}: the report may have cut the answer at {REPORT_ANSWER_CHARS} characters")
         texts, passages = [], []
         for cite in row.get("citations") or []:
             text = git(repo, "show", f"{commit}:{cite['path']}")
@@ -82,7 +86,7 @@ def replay_report(repo: Path, path: Path, commit: str) -> dict:
         if not passages:
             continue
         found = {"subject": missing_subject(row["question"], [*passages, *texts], own),
-                 "names": missing_answer_names(row["question"], str(row.get("answer", "")), passages, own)}
+                 "names": missing_answer_names(row["question"], answer, passages, own)}
         for check, missing in found.items():
             if missing:
                 out[check]["right_withheld" if right else "wrong_stopped"].append({"id": row["id"], "names": missing})
