@@ -26,3 +26,30 @@ def test_the_refusal_is_a_fixed_sentence_with_a_polish_form(tmp_path):
     with pytest.raises(ValueError) as refusal:
         store.add_project('demo', store.data_dir / 'proj')
     assert tr(str(refusal.value), 'pl') != str(refusal.value)
+
+
+def test_a_project_registered_inside_the_data_directory_by_an_earlier_version_is_named_by_indexing(tmp_path):
+    from cairnmind.ingest import index_project
+    from cairnmind.sql import insert_document
+    store = Store(tmp_path / 'data')
+    inside = store.data_dir / 'proj'
+    inside.mkdir()
+    (inside / 'a.py').write_text('x = 1\n')
+    with store.transaction() as tx:  # as 0.12.0 registered it, before the refusal existed
+        insert_document(tx, 'projects', {'id': 'old', 'name': 'old', 'root': str(inside), 'created_at': 'x'})
+    result = index_project(store, 'old')
+    assert result['files'] == 0
+    assert any('inside the data directory' in error and "'old'" in error and 'project add' in error
+               for error in result['errors'])
+    assert [row['name'] for row in store.list_projects()] == ['old']  # nothing is removed
+
+
+def test_the_credential_store_refusal_has_a_polish_form(tmp_path):
+    from cairnmind.terminal_i18n import tr
+    store = Store(tmp_path / 'data')
+    (store.data_dir / 'credentials').mkdir()
+    (store.data_dir / 'credentials' / 'api-keys.json').write_text('{}')
+    with pytest.raises(ValueError) as refusal:
+        store.add_project('demo', tmp_path)
+    assert 'credential store' in str(refusal.value)
+    assert tr(str(refusal.value), 'pl') != str(refusal.value)
