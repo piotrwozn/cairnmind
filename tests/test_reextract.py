@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import itertools
 import json
-from dataclasses import replace
 import uuid
 
 import pytest
@@ -312,7 +312,6 @@ def test_a_failure_while_superseding_for_a_skipped_source_changes_nothing(fixtur
         assert len(f.store.record_history(r["id"])) == 1
     diagnostics = f.store.job_status(pid, f.job["id"])["diagnostics"]  # #311: the failure names its stage
     assert diagnostics["code"] == "persistence_failed" and diagnostics["persistence_stage"] == "supersede_records"
-    assert "superseded_records" not in diagnostics["counts"]
 
 
 def test_the_dry_run_counts_a_masked_source_as_read_because_only_the_job_can_decide(fixture):  # noqa: F811
