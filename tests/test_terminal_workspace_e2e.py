@@ -744,6 +744,10 @@ async def test_attached_outer_terminal_prefix_unicode_paste_compact_resize_and_d
         await key(b"\x02\x02\r\x022", lambda: active("client2") and any(row.get("text") == "\x02" for row in stack.trace("input")))
         os.write(master, "\x1b[200~OUTER_PASTE_你好\x1b[201~\r".encode())
         await wait_async(lambda: any("OUTER_PASTE_你好" in row.get("text", "") for row in stack.trace("input")), seen=seen)
+        # A bracketed paste holding the prefix and a bound key goes to the assistant whole, as text: tmux does not
+        # look a pasted key up in its bindings, with paste detection off either (#356; shown in bare tmux 3.4 too).
+        await key(b"\x1b[200~PASTED_\x021_PREFIX\x1b[201~\r", lambda: any(row.get("text") == "PASTED_\x021_PREFIX" for row in stack.trace("input")))
+        assert active("client2") and not active("client1"), seen()
         os.write(master, b"\x03")
         wait_pane(manager, panes["client2"], "INTERRUPTED claude")
         before = {row["id"]: (row["pid"], row["session_id"]) for row in stack.runtime.list_runs()}
