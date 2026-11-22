@@ -125,7 +125,8 @@ LOCAL_DATA_FOUND = ("The store on this machine still holds the database {databas
 LOCAL_DATA_NEW = "The store on this machine has no database {database}; with --empty it starts empty."
 BACKUP_PLAN = ("The backup: the store at {url} is read into {path}, and nothing is written to it; the file is checked, "
                "then restored into the store on this machine, whose current contents first go to a safety backup in "
-               "backups/.")
+               "backups/. The backup carries no vectors: after the restore the service rebuilds them from the text, "
+               "and until then search uses the text only.")
 RESTORE_WILL_KEEP = ("A person's confirmations in the backup: the open workspace of this installation answers with its "
                      "key now, so they will be kept, as `cairnmind restore` keeps them; the key is read again just "
                      "before the restore.")
@@ -256,7 +257,7 @@ MESSAGES = {
     ENGINE_CHOSEN: "natywny z Javą 21 albo w Dockerze, gdy Javy 21 nie ma, tak jak wybiera `cairnmind init`",
     LOCAL_DATA_FOUND: "Baza na tym komputerze nadal ma bazę danych {database} sprzed zmiany; z --empty jest używana tak, jak została zostawiona, bez niczego z bazy pod adresem {url}.",
     LOCAL_DATA_NEW: "Baza na tym komputerze nie ma bazy danych {database}; z --empty zaczyna pusta.",
-    BACKUP_PLAN: "Kopia zapasowa: baza pod adresem {url} jest czytana do {path}, bez żadnego zapisu do niej; plik jest sprawdzany, a potem odtwarzany w bazie na tym komputerze, której obecna zawartość najpierw trafia do kopii bezpieczeństwa w backups/.",
+    BACKUP_PLAN: "Kopia zapasowa: baza pod adresem {url} jest czytana do {path}, bez żadnego zapisu do niej; plik jest sprawdzany, a potem odtwarzany w bazie na tym komputerze, której obecna zawartość najpierw trafia do kopii bezpieczeństwa w backups/. Kopia zapasowa nie zawiera wektorów: po odtworzeniu usługa odbudowuje je z tekstu, a do tego czasu wyszukiwanie korzysta tylko z tekstu.",
     RESTORE_WILL_KEEP: "Potwierdzenia osoby w kopii zapasowej: otwarte środowisko tej instalacji odpowiada teraz swoim kluczem, więc zostaną zachowane, tak jak zachowuje je `cairnmind restore`; klucz jest czytany ponownie tuż przed odtwarzaniem.",
     RESTORE_WILL_CLAIM: "Potwierdzenia osoby w kopii zapasowej: żadne otwarte środowisko tej instalacji nie odpowiada teraz swoim kluczem, więc, tak jak przy `cairnmind restore`, każde zostanie zachowane tylko jako twierdzenie kopii zapasowej, niezweryfikowane tutaj, a zaakceptowane rodzaje rekordów transkrypcji zostaną wycofane. Aby je zachować, otwórz środowisko (`cairnmind`), zatrzymaj usługę (`cairnmind stop`) i uruchom to polecenie stamtąd; klucz jest czytany ponownie tuż przed odtwarzaniem.",
     RESTORE_KEPT: "Potwierdzenia osoby w kopii zapasowej zostały zachowane: otwarte środowisko tej instalacji odpowiedziało swoim kluczem, czego wymaga `cairnmind restore`.",
@@ -796,6 +797,8 @@ def _back_to_local(settings, plan, result, say, state) -> Settings:
         result["restore"] = outcome
         marks = outcome.get("confirmations_before_rule")
         result["done"].append(notice or (RESTORE_KEPT, {}))
+        if outcome.get("vectors_notice"):
+            result["done"].append(outcome.pop("vectors_notice"))  # said, as `cairnmind restore` says it (#187)
         if marks:
             result["done"].append((CONFIRMATIONS, {"marked": marks["marked_as_a_persons"],
                                                    "left": marks["still_before_the_rule"]}))

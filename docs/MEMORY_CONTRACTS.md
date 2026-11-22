@@ -615,6 +615,12 @@ and a source's detail, which `read_source` uses) and a record (`/inspector/recor
 which `memory_records` uses, and a record's detail). The terminal detail view and
 `cairnmind memory show` print it. Which classes may go to a memory model server on
 another computer is the setting `memory_remote_classes` (see [API.md](API.md#the-knowledge-agents-models)).
+The same setting decides what the built-in agent receives when its model is hosted (every Copilot
+connection, every API profile whose address is not loopback): `read_source` refuses a held source and
+`memory_records` lists a held record without its content, each naming the class and the setting; `ask`
+answers without held passages, and the resume packet without held record previews, both saying so and
+counting them under `held_back`. The source of the run's own session stays readable. Codex CLI, Claude
+Code and external MCP clients are not gated, and their provider receives what they read.
 
 ## Validation budgets and quality evaluation
 

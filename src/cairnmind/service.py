@@ -10,7 +10,7 @@ import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -77,6 +77,8 @@ class AskBody(BaseModel):
     answer_schema: dict | None = None
     # Keep this answer in the project's answer log (#15); None follows the answer_log setting.
     log: bool | None = None
+    # Classes a hosted built-in run must not receive (#183); they can only shrink what the answer reads.
+    held_classes: list[Literal["project", "conversation", "third_party"]] | None = None
 
 
 class RememberBody(BaseModel):
@@ -149,6 +151,8 @@ class SessionPrepareBody(BaseModel):
     worktree: str | None = None
     session_id: str | None = None
     reason: str = "startup"
+    # Classes whose record previews a hosted built-in session's packet leaves out (#183).
+    held_classes: list[Literal["project", "conversation", "third_party"]] | None = None
 
 
 class SessionContextBody(BaseModel):
@@ -1070,7 +1074,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         from cairnmind.integrations import drain_hook_spool
         await asyncio.to_thread(drain_hook_spool, settings, store)
         return await asyncio.to_thread(sessions.prepare, project(body.project)["id"], body.client,
-                                       body.worktree, body.session_id, body.reason)
+                                       body.worktree, body.session_id, body.reason,
+                                       held_classes=body.held_classes)
 
     @app.post("/sessions/context", dependencies=auth)
     async def resume_context(body: SessionContextBody):
@@ -1156,12 +1161,13 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         answer_schema = prepare_answer_schema(body.answer_schema)
         contract_key = json.dumps(answer_schema, sort_keys=True, separators=(",", ":"))
         scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
+        also_held = frozenset(body.held_classes or ())
         if not models_on:  # no model is asked; full-text matches, never an answer: not cached, logged or evaluated (#274)
             indexed = await asyncio.to_thread(index_project_if_changed, store, pid)
             pending = await asyncio.to_thread(index_pending_sources, store)
             try:
                 found = await asyncio.wait_for(
-                    inference.submit(lambda: knowledge_mode.text_matches(agent, pid, body.question, scope)),
+                    inference.submit(lambda: knowledge_mode.text_matches(agent, pid, body.question, scope, also_held)),
                     timeout=settings.ask_timeout + 5)
             except TimeoutError:  # bounded as the models path is; the timeout is said, not hidden
                 found = {"matches": [], "held_back": None, "left_out": False, "timed_out": True, "warnings": [],
@@ -1188,7 +1194,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pending = await asyncio.to_thread(index_pending_sources, store)
         index_errors.extend(pending.get("errors", []))
         stamp = await asyncio.to_thread(store.cache_stamp, pid)
-        key = (pid, body.question, scope, stamp, identity, contract_key)
+        key = (pid, body.question, scope, stamp, identity, contract_key, also_held)
         hit = cache.get(key)
         if hit and identity is not None and not index_errors and time.monotonic() - hit[0] < 60:
             if keep:
@@ -1197,7 +1203,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         try:
             result = await asyncio.wait_for(
                 inference.submit(lambda: agent.ask(pid, body.question, worktree=scope,
-                                                   answer_schema=answer_schema), priority=0),
+                                                   answer_schema=answer_schema, also_held=also_held), priority=0),
                 timeout=settings.ask_timeout + 5,
             )
         except TimeoutError:

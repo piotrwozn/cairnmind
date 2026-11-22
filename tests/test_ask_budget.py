@@ -20,7 +20,7 @@ from cairnmind import agent as agent_module
 from cairnmind import config
 from cairnmind.agent import KnowledgeAgent
 from cairnmind.config import Settings
-from cairnmind.support import SUPPORT_SYSTEM
+from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 
 SCALE = 0.05
 # Discovery measured on the Mac (10,677 prompt tokens); repair and support are smaller prompts,
@@ -40,7 +40,7 @@ class SlowModel(FakeOllama):
         self.seconds = seconds
 
     async def chat(self, messages, tools=None, **kwargs):
-        phase = ("support" if messages and messages[0].get("content") == SUPPORT_SYSTEM
+        phase = ("support" if messages and messages[0].get("content") in (SUPPORT_SYSTEM, NAMES_SYSTEM)
                  else "repair" if kwargs.get("format") is not None else "discovery")
         await asyncio.sleep(self.seconds[phase])
         return await super().chat(messages, tools, **kwargs)

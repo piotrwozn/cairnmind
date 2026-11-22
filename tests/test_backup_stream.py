@@ -78,7 +78,9 @@ def test_streamed_backup_has_the_bytes_of_the_in_memory_envelope(store, tmp_path
     exported = store.export()
     assert {key: value for key, value in envelope["payload"].items() if key != "exported_at"} == {
         key: value for key, value in exported.items() if key != "exported_at"}
-    assert envelope["payload"]["vector_data"] and all(envelope["payload"]["vector_data"].values())
+    # The store holds vectors, the backup does not carry them (#187): no row of embeddings, of the registry or of an index type.
+    assert store.query("SELECT count(*) AS n FROM embeddings")[0]["n"] > 0
+    assert [envelope["payload"][name] for name in ("embeddings", "vector_indexes", "vector_data")] == [[], [], {}]
     assert oct(path.stat().st_mode & 0o777) == "0o600"
 
 
@@ -96,12 +98,16 @@ def test_new_backup_restores_to_the_same_store(store, tmp_path, monkeypatch):
     target = Store(tmp_path / "target")
     target.restore(path)
     assert comparable(target.export()) == comparable(before)
-    # Vectors are searchable again after the restore, from the native index the backup recreated.
-    namespace = "fixture-embedding@digest"
+    # The backup brought no vectors (#187): none are in the restored store, text search answers at once, and a
+    # search that wanted vectors says they are not ready instead of looking like a project without the text.
+    assert target.query("SELECT count(*) AS n FROM embeddings")[0]["n"] == 0
+    assert target.query("SELECT count(*) AS n FROM vector_indexes")[0]["n"] == 0
     project = next(row for row in target.list_projects() if row["name"] == "backup-fixture")
-    found = Retriever(target, target.settings).search(project["id"], "unrelated", query_vector=[1, 0, 0],
-                                                      embedding_key=namespace)
+    retriever = Retriever(target, target.settings)
+    found = retriever.search(project["id"], "signed tokens", query_vector=[1, 0, 0],
+                             embedding_key="fixture-embedding@digest")
     assert found[0]["id"] == "fixture-chunk"
+    assert any("not ready" in warning and "text only" in warning for warning in retriever.warnings)
 
 
 def test_backup_written_by_0_10_0_still_restores(store, tmp_path):
@@ -113,9 +119,14 @@ def test_backup_written_by_0_10_0_still_restores(store, tmp_path):
     assert {row["content"] for row in records if row["kind"] == "decision"} == {"Use signed tokens"}
     source = next(row for row in store.export()["sources"] if row["uri"] == "conversation://fixture-0.10.0")
     assert source["content"].startswith("Zażółć gęślą jaźń  ")
-    # What a 0.10.0 file restored into is what the stream writes back out and restores again.
+    # A file that carries vectors restores with them: searchable at once, from the native index it recreates.
+    found = Retriever(store, store.settings).search(project["id"], "unrelated", query_vector=[1, 0, 0],
+                                                    embedding_key="fixture-embedding@digest")
+    assert found[0]["id"] == "fixture-chunk"
+    assert store.query("SELECT count(*) AS n FROM embeddings")[0]["n"] == 1 and store.embed_jobs_requeued is None
+    # What a 0.10.0 file restored into is what the stream writes back out (without vectors) and restores again.
     restored = comparable(store.export())
-    assert restored == comparable(envelope["payload"])
+    assert restored == comparable({**envelope["payload"], "embeddings": [], "vector_indexes": [], "vector_data": {}})
     again = Store(tmp_path / "again")
     again.restore(store.backup(tmp_path / "again.cairnmind.json.gz"))
     assert comparable(again.export()) == restored

@@ -18,7 +18,7 @@ from cairnmind.journal import Journal
 from cairnmind.plans import PlanManager
 from cairnmind.service import create_app
 from cairnmind.sessions import SessionManager
-from cairnmind.support import SUPPORT_SYSTEM
+from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 from cairnmind.inspector import Inspector
 from cairnmind.store import Store
 
@@ -36,6 +36,8 @@ class LocalModel:
     async def chat(self, messages, tools=None, **kwargs):
         if messages[0].get("content") == SUPPORT_SYSTEM:  # the support check of a complete answer
             return {"message": {"content": json.dumps({"supported": True, "reason": "Stated."})}}
+        if messages[0].get("content") == NAMES_SYSTEM:  # the names call: nothing unstated
+            return {"message": {"content": json.dumps({"names": []})}}
         self.calls += 1
         evidence = json.loads(messages[1]["content"])["initial_evidence"][0]
         return {"message": {"content": json.dumps({
