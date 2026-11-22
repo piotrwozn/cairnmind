@@ -821,9 +821,30 @@ def _apply(settings, request, plan, moves, result, say, state) -> None:
                            NEXT_LOCAL_EMPTY if plan and not plan["target"] else NEXT_LOCAL, {}))
 
 
-def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) -> dict:
+def put_back(path: Path, snapshot: bytes, state: dict, notes: list | None = None) -> list:
+    """config.json as the snapshot has it, after a change that stopped half way or was applied and then refused. The
+    password a started engine uses stays. ``state`` is the change's (engine, engine_tried, arcade_is_new); what is left
+    is added to ``notes`` (the list is returned), also when the put-back itself raises an OSError, which propagates."""
+    notes = [] if notes is None else notes
+    # A started engine, or one whose start failed late, may hold the managed password this change generated.
+    kept = _generated_password(path, snapshot) if state["engine_tried"] else None
+    _put_back(path, snapshot)
+    if kept:
+        try:
+            _keep_password(path, kept)
+            notes.append((KEPT_PASSWORD if state["engine"] else KEPT_PASSWORD_START, {}))
+        except (OSError, ValueError) as failure:  # the put-back worked; the original error is still raised by the caller
+            notes.append((PASSWORD_NOT_KEPT_NEW if state["arcade_is_new"] else PASSWORD_NOT_KEPT_OLD,
+                          {"reason": str(failure)}))
+    return notes
+
+
+def run(settings, request: Request, *, yes: bool, say: Callable[[str], None],
+        before_change: Callable[[dict], None] | None = None) -> dict:
     """Validate, test, plan and (with ``yes``) change. Raises SetupRefused before anything changed, SetupFailed
-    after config.json was put back. The result holds (template, values) items; see render."""
+    after config.json was put back. The result holds (template, values) items; see render. ``before_change`` is
+    called with the plan after every test and before anything changes; a SetupRefused it raises stops the run with
+    config.json untouched."""
     result: dict = {"profile": request.profile, "tests": [], "changes": [], "writer": [], "rebuild": [],
                     "left_behind": [], "applied": False, "done": [], "next": [], "topology": None}
     refused = environment_problem(settings)
@@ -840,6 +861,8 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) ->
     _plan_lines(settings, request, plan, moves, result)
     if not yes:
         return result
+    if before_change is not None:
+        before_change(result)
     path = settings.data_dir / "config.json"
     snapshot = path.read_bytes()
     state: dict = {"step": None, "backup": None, "engine": False, "engine_tried": False, "arcade_is_new": False,
@@ -856,26 +879,19 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) ->
             notes.append((ENGINE_LEFT, {}))
         if state["restored"]:
             notes.append((RESTORE_DONE, {"path": state["restored"][0], "backups": state["restored"][1]}))
-        # A started engine, or one whose start failed late, may hold the managed password this change generated.
-        kept = _generated_password(path, snapshot) if state["engine_tried"] else None
         try:
-            _put_back(path, snapshot)
+            put_back(path, snapshot, state, notes)
         except OSError as failure:
             raise SetupFailed(PUT_BACK_FAILED, step=state["step"], error=str(exc), reason=str(failure),
                               notes=notes) from exc
-        if kept:
-            try:
-                _keep_password(path, kept)
-                notes.append((KEPT_PASSWORD if state["engine"] else KEPT_PASSWORD_START, {}))
-            except (OSError, ValueError) as failure:  # the put-back worked; the original error is still raised below
-                notes.append((PASSWORD_NOT_KEPT_NEW if state["arcade_is_new"] else PASSWORD_NOT_KEPT_OLD,
-                              {"reason": str(failure)}))
         if not isinstance(exc, Exception):
             say(render_one((PUT_BACK, {"step": state["step"], "error": str(exc) or type(exc).__name__,
                                        "notes": notes})))
             raise
         raise SetupFailed(PUT_BACK, step=state["step"], error=str(exc), notes=notes) from exc
     result["applied"] = True
+    # Not in as_json or render: what put_back needs when the caller refuses the change after it was made (#339).
+    result["applied_state"] = {key: state[key] for key in ("engine", "engine_tried", "arcade_is_new")}
     result["topology"] = topology.topology(Settings.load(settings.data_dir))
     return result
 
