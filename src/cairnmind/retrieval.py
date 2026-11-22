@@ -25,6 +25,23 @@ VECTORS_NOT_READY = ("Vectors for the current embedding model are not ready (bei
                      "off): this search used the text only and may miss matches")
 VECTORS_BUILDING = "Vectors are still being built, so this search may miss matches; embedding jobs left: "  # + the number
 
+VECTORS_FAILED = ("Vectors are missing for chunks whose embedding failed, so this search may miss matches "
+                  "(`cairnmind retry-jobs` tries again); chunks: ")  # + the number
+VECTOR_WARNINGS = (VECTORS_NOT_READY, VECTORS_BUILDING, VECTORS_FAILED)
+
+
+def last_warnings(warnings, limit: int, width: int = 240) -> list[str]:
+    """The last `limit` distinct warnings, cut to `width`, in order; a warning about missing vectors is never the one
+    that is cut (#187), since it is what keeps an answer from reading as if the project had no such text."""
+    unique = list(dict.fromkeys(str(w)[:width] for w in warnings))
+    if len(unique) <= limit:
+        return unique
+    vectors = [w for w in unique if w.startswith(VECTOR_WARNINGS)][-limit:]
+    rest = [w for w in unique if w not in vectors]
+    keep = set(vectors) | set(rest[len(rest) - (limit - len(vectors)):] if limit > len(vectors) else [])
+    return [w for w in unique if w in keep]
+
+
 STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "i", "in", "is",
     "it", "of", "on", "or", "the", "this", "to", "was", "what", "where", "which", "why", "with",
@@ -435,6 +452,22 @@ class Retriever:
                  for position, hit in enumerate(ranking)}
         ranking.sort(key=lambda hit: order[id(hit)])
 
+    def _failed_vector_chunks(self, project_id: str, namespace: str) -> int:
+        """How many current chunks have no vector for the namespace while their embed job is failed: nothing is
+        pending for them, so only `retry-jobs` brings the vectors (#187)."""
+        rows = self.store.query("SELECT payload FROM jobs WHERE project_id=:project AND kind='embed' AND state='failed'",
+                                {"project": project_id})
+        ids = list({chunk for row in rows if (chunk := (json_value(row.get("payload"), {}) or {}).get("chunk_id"))})
+        if not ids:
+            return 0
+        current = {row["id"] for row in self.store.query(
+            "SELECT id FROM chunks WHERE project_id=:project AND is_current=true AND id IN :ids",
+            {"project": project_id, "ids": ids})}
+        done = {row["chunk_id"] for row in self.store.query(
+            "SELECT chunk_id FROM embeddings WHERE project_id=:project AND namespace=:namespace AND chunk_id IN :ids",
+            {"project": project_id, "namespace": namespace, "ids": ids})}
+        return len(current - done)
+
     def search(
         self, project_id: str, query: str, limit: int = 8,
         query_vector: list[float] | None = None, embedding_key: str | None = None,
@@ -510,6 +543,8 @@ class Retriever:
                     "AND state IN ['pending','running']", {"project": project_id})
                 if left and left[0].get("n"):
                     self.warnings.append(f"{VECTORS_BUILDING}{left[0]['n']}")
+                elif failed := self._failed_vector_chunks(project_id, namespace):
+                    self.warnings.append(f"{VECTORS_FAILED}{failed}")
             else:
                 # After a restore, which brings no vectors, this is the state until the rebuild ends (#187).
                 self.warnings.append(VECTORS_NOT_READY)

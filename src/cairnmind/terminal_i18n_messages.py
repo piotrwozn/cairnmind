@@ -95,6 +95,11 @@ ASK_MESSAGES = {
 # retrieval.VECTORS_BUILDING (#187): this fixed prefix, then the number of embedding jobs left.
 VECTORS_BUILDING_PREFIX = "Vectors are still being built, so this search may miss matches; embedding jobs left: "
 VECTORS_BUILDING_PREFIX_PL = "Wektory są wciąż budowane, więc to wyszukiwanie może pominąć trafienia; pozostałe zadania osadzania: "
+# retrieval.VECTORS_FAILED (#187): this fixed prefix, then the number of chunks whose embedding failed.
+VECTORS_FAILED_PREFIX = ("Vectors are missing for chunks whose embedding failed, so this search may miss matches "
+                         "(`cairnmind retry-jobs` tries again); chunks: ")
+VECTORS_FAILED_PREFIX_PL = ("Brakuje wektorów dla fragmentów, których osadzanie się nie powiodło, więc to wyszukiwanie "
+                            "może pominąć trafienia (`cairnmind retry-jobs` próbuje ponownie); fragmenty: ")
 # The support check's gap: this fixed prefix, then the judging model's own reason (untrusted, kept as is).
 ASK_UNSUPPORTED_PREFIX = "The quotes do not support the answer: "
 ASK_UNSUPPORTED_PREFIX_PL = "Cytaty nie potwierdzają odpowiedzi: "
@@ -587,7 +592,7 @@ CONFIRMATION_MESSAGES = {
 
 MESSAGES = {**ASK_MESSAGES, ASK_UNSUPPORTED_PREFIX: ASK_UNSUPPORTED_PREFIX_PL,
             ASK_SUBJECT_PREFIX: ASK_SUBJECT_PREFIX_PL, VECTORS_BUILDING_PREFIX: VECTORS_BUILDING_PREFIX_PL,
-            "Complete": "Pełna", **CONFIRMATION_MESSAGES,
+            VECTORS_FAILED_PREFIX: VECTORS_FAILED_PREFIX_PL, "Complete": "Pełna", **CONFIRMATION_MESSAGES,
             **PROVIDER_MESSAGES, **LOGIN_MESSAGES, **WORDS, **BROKER_MESSAGES, **STATE_MESSAGES,
             "Cairnmind · Memory": "Cairnmind · Pamięć"}
 
@@ -600,7 +605,7 @@ def fixed_message(text, translate, known=ASK_MESSAGES) -> str:
     text = str(text)
     if text in known:
         return translate(text)
-    for prefix in (ASK_UNSUPPORTED_PREFIX, ASK_SUBJECT_PREFIX, VECTORS_BUILDING_PREFIX):
+    for prefix in (ASK_UNSUPPORTED_PREFIX, ASK_SUBJECT_PREFIX, VECTORS_BUILDING_PREFIX, VECTORS_FAILED_PREFIX):
         if text.startswith(prefix) and known is ASK_MESSAGES:
             return translate(prefix) + text[len(prefix):]
     return text

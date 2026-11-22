@@ -184,7 +184,9 @@ Additional root-facing methods needed:
   `cairnmind setup local --backup` (one job per chunk, so the number is of chunks without a vector, apart from
   jobs held back from a remote embedding server). Until the jobs are done, `Retriever.search` with a query vector
   warns: that vectors are not ready while no index exists for the namespace, and, once the first chunk is embedded,
-  that vectors are still being built, with the number of embed jobs left; the text ranking answers.
+  that vectors are still being built, with the number of embed jobs left, or, with none pending, that vectors are missing
+  for the current chunks whose embed job failed (`retry-jobs`); the text ranking answers. `retrieval.last_warnings` keeps
+  these warnings when an answer cuts its warnings to the last few.
 - whole-database backup (`Store.backup`, the daily backup and the `before-*` safety copies, `store_backup.py`, #196):
   written as a stream inside one transaction under the writer lock. Each type is read in record id order
   (`WHERE @rid > :rid ORDER BY @rid LIMIT n`, the page size adapting to the row size), each row serialized

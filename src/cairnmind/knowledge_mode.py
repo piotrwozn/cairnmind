@@ -118,6 +118,7 @@ async def text_matches(agent, project_id: str, question: str, worktree=None) -> 
     answer: unavailable_answer presents them."""
     from .agent import INITIAL_HITS
     from .memory_egress import ASK, ask_gate
+    from .retrieval import last_warnings
     if not isinstance(question, str) or not question.strip() or len(question) > 16000:
         raise ValueError("Question must contain 1–16000 characters")  # as KnowledgeAgent._ask_impl refuses it
     started = time.monotonic()
@@ -150,13 +151,14 @@ async def text_matches(agent, project_id: str, question: str, worktree=None) -> 
     # Found but not shown: held by the gate, unverifiable on disk (_hits drops it) or changed since indexing.
     left_out = bool(held_back) or len(shown) < len(hits) or refreshed > 0
     return {"matches": matches, "held_back": held_back, "left_out": left_out,
-            "warnings": list(dict.fromkeys(w[:240] for w in agent.retriever.warnings))[-8:],
+            "warnings": last_warnings(agent.retriever.warnings, 8),
             "elapsed_seconds": round(time.monotonic() - started, 3)}
 
 
 def unavailable_answer(found: dict, index_errors=()) -> dict:
     """What /ask returns in deterministic-only mode: no answer (status unavailable, no source), and the passages
     text_matches found, in their own key, said by the answer sentence to be search results and not an answer."""
+    from .retrieval import last_warnings
     errors = [str(error)[:240] for error in list(index_errors)[:5]]
     unknowns = [GET_MODELS, *([MATCHES_HELD_BACK] if found["held_back"] else []), *errors]
     diagnostics = {"stage": "ask", "code": UNAVAILABLE_CODE}
@@ -166,7 +168,7 @@ def unavailable_answer(found: dict, index_errors=()) -> dict:
               else ASK_LEFT_OUT if found["left_out"] else ASK_NO_MATCH)
     return {"status": "unavailable", "answer": answer, "sources": [],
             "full_text_matches": found["matches"], "unknowns": list(dict.fromkeys(unknowns))[:8],
-            "freshness": {"warnings": [*found["warnings"], *errors][-8:]},
+            "freshness": {"warnings": last_warnings([*found["warnings"], *errors], 8, 10**6)},
             "elapsed_seconds": found["elapsed_seconds"], "cached": False, "diagnostics": diagnostics}
 
 

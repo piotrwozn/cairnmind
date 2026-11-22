@@ -13,8 +13,8 @@ from typer.testing import CliRunner
 from cairnmind import person_proof
 from cairnmind.cli import app
 from cairnmind.ingest import _write_chunks
-from cairnmind.restore_claims import VECTORS_REBUILT, VECTORS_WAIT, checked_restore
-from cairnmind.retrieval import VECTORS_BUILDING, VECTORS_NOT_READY, Retriever
+from cairnmind.restore_claims import VECTORS_REBUILT, VECTORS_UNDECIDED, VECTORS_WAIT, checked_restore
+from cairnmind.retrieval import VECTORS_BUILDING, VECTORS_FAILED, VECTORS_NOT_READY, Retriever, last_warnings
 from cairnmind.store import Store
 from cairnmind.terminal_i18n import tr
 
@@ -145,7 +145,42 @@ def test_the_output_of_restore_says_how_many_jobs_and_that_search_is_text_only(e
     assert "search uses the text only" in result.stderr and "cairnmind status" in result.stderr
 
 
-@pytest.mark.parametrize("agent, template", [("enabled", VECTORS_REBUILT), ("", VECTORS_REBUILT), ("disabled", VECTORS_WAIT)])
+def test_a_rebuild_whose_jobs_failed_still_says_vectors_are_missing(embedded):
+    for number in range(2):
+        text = f"note {number} about nightly rotation\n" * 30
+        source = embedded.store.snapshot(embedded.project, f"manual://more{number}", text, "manual")
+        assert _write_chunks(embedded.store, embedded.project, source["id"], text) > 0
+    rebuild(embedded.store)
+    target = Store(embedded.tmp / "target")
+    target.restore(embedded.store.backup(embedded.tmp / "more.cairnmind.json.gz"))
+    retriever = Retriever(target, target.settings, Vectors())
+    job = target.claim_job("test", kinds=["embed"])
+    asyncio.run(retriever.embed_pending(job))
+    target.finish_job(job["id"], worker=job["worker"], expected_attempts=job["attempts"])
+    target.command("UPDATE jobs SET state='failed' WHERE kind='embed' AND state<>'completed'")
+    missing = len(target.missing_embeddings(NAMESPACE))
+    assert missing > 0 and target.job_summary()["indexing"]["pending"] == 0
+    search = Retriever(target, target.settings)
+    search.search(embedded.project, "rotated", query_vector=[0.25, 0.5, 0.75, 1.0], embedding_key=NAMESPACE)
+    assert f"{VECTORS_FAILED}{missing}" in search.warnings
+    from cairnmind.terminal_commands import ask_summary
+    shown = ask_summary({"status": "complete", "answer": "x", "freshness": {"warnings": search.warnings}}, lambda text: tr(text, "pl"))
+    assert f"fragmenty: {missing}" in shown and "retry-jobs" in shown and VECTORS_FAILED not in shown
+    target.retry_jobs()  # the sentence's own advice: the jobs run again and the warning goes
+    assert rebuild(target) == missing
+    done = Retriever(target, target.settings)
+    done.search(embedded.project, "rotated", query_vector=[0.25, 0.5, 0.75, 1.0], embedding_key=NAMESPACE)
+    assert not done.warnings
+
+
+def test_the_vector_warning_survives_the_cut_to_the_last_warnings():
+    others = [f"Cannot verify current source: file{n}" for n in range(9)]
+    kept = last_warnings([f"{VECTORS_BUILDING}4", *others], 8)
+    assert len(kept) == 8 and kept[0] == f"{VECTORS_BUILDING}4" and kept[1:] == others[-7:]
+    assert last_warnings([*others, "last"], 8) == [*others[2:], "last"]  # nothing about vectors: the plain tail
+
+
+@pytest.mark.parametrize("agent, template", [("enabled", VECTORS_REBUILT), ("", VECTORS_UNDECIDED), ("disabled", VECTORS_WAIT)])
 def test_checked_restore_names_the_count_and_a_deterministic_only_store_says_the_jobs_wait(embedded, monkeypatch, agent, template):
     monkeypatch.setattr(person_proof, "restore_proof", lambda settings: "key")
     outcome = checked_restore(types.SimpleNamespace(knowledge_agent=agent), embedded.backup,

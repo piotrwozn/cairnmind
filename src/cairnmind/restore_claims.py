@@ -45,7 +45,19 @@ VECTORS_WAIT = (
     "A backup holds no vectors: {jobs} embedding job(s) are pending again, and they wait, as every embedding job does "
     "without models (deterministic-only mode), until models are turned on (`cairnmind models pull`). Until then, search "
     "uses the text only, and an answer that needs vectors says so.")
+# knowledge_agent "" (not chosen yet): the service's first start decides, by whether the models are there (knowledge_mode.choose).
+VECTORS_UNDECIDED = (
+    "A backup holds no vectors: {jobs} embedding job(s) are pending again. When the service starts with the models "
+    "available, it rebuilds the vectors in the background (progress: `cairnmind status`, pipeline_jobs.indexing); "
+    "when they are missing, it starts in deterministic-only mode and the jobs wait until models are turned on "
+    "(`cairnmind models pull`). Until the vectors exist, search uses the text only, and an answer that needs vectors says so.")
 MESSAGES = {
+    VECTORS_UNDECIDED: (
+        "Kopia zapasowa nie zawiera wektorów: zadań osadzania, które znów czekają, jest {jobs}. Gdy usługa startuje z "
+        "dostępnymi modelami, odbuduje wektory w tle (postęp: `cairnmind status`, pipeline_jobs.indexing); gdy ich "
+        "brakuje, startuje w trybie tylko deterministycznym, a zadania czekają, aż modele zostaną włączone (`cairnmind "
+        "models pull`). Do czasu odbudowy wektorów wyszukiwanie korzysta tylko z tekstu, a odpowiedź, która wymaga "
+        "wektorów, mówi o tym."),
     VECTORS_REBUILT: (
         "Kopia zapasowa nie zawiera wektorów: zadań osadzania, które znów czekają, jest {jobs}, a usługa odbuduje "
         "wektory w tle. Do tego czasu wyszukiwanie korzysta tylko z tekstu, a odpowiedź, która wymaga wektorów, mówi "
@@ -140,8 +152,8 @@ def checked_restore(settings, source, open_store) -> dict:
     jobs = getattr(store, "embed_jobs_requeued", None)
     rebuilt = {} if not jobs else {
         "embed_jobs_requeued": jobs,
-        "vectors_notice": ((VECTORS_WAIT if getattr(settings, "knowledge_agent", "") == "disabled" else VECTORS_REBUILT),
-                           {"jobs": jobs})}
+        "vectors_notice": ({"disabled": VECTORS_WAIT, "enabled": VECTORS_REBUILT}.get(
+            getattr(settings, "knowledge_agent", ""), VECTORS_UNDECIDED), {"jobs": jobs})}
     if claims is not None:
         return {"person_confirmations": "claims_of_the_backup", "confirmations_turned_into_claims": claims.confirmations,
                 "record_kinds_withdrawn": claims.record_kinds, "notice": notice_item(proof, claims), **rebuilt}
