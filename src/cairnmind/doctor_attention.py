@@ -17,7 +17,8 @@ from .engine_docker import DOCKER_ATTENTION
 from .first_start import (
     CLIENT_NAMES, CLIENT_OFF, CLIENT_ON, DATA_DIR, ENGINE_DOWN, ENGINE_NOT_INSTALLED, ENGINE_ON_DEMAND, ENGINE_READY,
     ENGINE_RELEASE, FULL_REPORT, JAVA_NEEDED, KNOWLEDGE_DISABLED, MODELS_OFF, MODELS_ON, NEXT_FIX, NEXT_PROJECTS,
-    NEXT_START, NOTES, NOTHING_MISSING, OPTIONAL_BROKEN, OPTIONAL_OFF, OPTIONAL_ON, READER_ROLE, REPORT_UNREADABLE, REQUIRED_MISSING, REQUIRED_PRESENT, SERVER_DOWN_CONNECT, SERVICE_ON_DEMAND, SERVICE_RUNNING, WORKSPACE_OFF,
+    NEXT_START, NOTES, NOTHING_MISSING, OPTIONAL_BROKEN, OPTIONAL_OFF, OPTIONAL_ON, READER_ROLE, REPORT_UNREADABLE, REQUIRED_MISSING,
+    REQUIRED_PRESENT, SERVER_DOWN_CONNECT, SERVICE_ON_DEMAND, SERVICE_RUNNING, THIS_MAC, WORKSPACE_OFF,
     WORKSPACE_ON, cockpit_status)
 from .terminal_safe import safe_text
 
@@ -216,6 +217,9 @@ def summary(report: dict) -> list[str]:
     # Storage, memory models and what runs here: topology's own three lines, the one wording of where things run.
     place = report.get("topology") if isinstance(report.get("topology"), dict) else {}
     lines += [_line(text, limit=1000) for text in place.get("lines") or []]
+    gpu = report.get("gpu") if isinstance(report.get("gpu"), dict) else {}
+    if gpu.get("chip") and gpu.get("memory_gib"):  # only a Mac with an Apple chip has them; Linux and WSL do not
+        lines.append(_line(THIS_MAC.format(chip=gpu["chip"], gib=gpu["memory_gib"])))
     lines.append(REQUIRED_PRESENT)
     lines += [f"  - {_line(item)}" for item in present]
     if missing:

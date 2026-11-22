@@ -117,6 +117,22 @@ def test_where_things_run_is_the_topology_lines_and_a_server_that_is_down_names_
             "runs and that this machine reaches it.") in SUMMARY(down)
 
 
+def test_a_mac_names_its_chip_and_unified_memory_once_and_linux_says_what_it_said():
+    from cairnmind.terminal_i18n import tr
+    mac = healthy(gpu={"chip": "Apple M3 Pro", "memory_gib": 18, "note": "Apple M3 Pro, 18 GiB unified memory shared "
+                                                                         "with the models"})
+    lines = SUMMARY(mac)
+    assert lines[1] == "This Mac: Apple M3 Pro, 18 GiB of unified memory, shared with the models."
+    assert lines[2] == first_start.REQUIRED_PRESENT and sum("Apple M3 Pro" in line for line in lines) == 1
+    assert tr(first_start.THIS_MAC, "pl", chip="Apple M3 Pro", gib=18) == (
+        "Ten Mac: Apple M3 Pro, 18 GiB pamięci zunifikowanej, współdzielonej z modelami.")
+    # A Mac whose chip could not be read, Linux and WSL: the summary is the one without a gpu block.
+    for gpu in ({"note": "The GPU is not checked on macOS."},
+                {"available": False, "note": "nvidia-smi not found; verify Windows NVIDIA driver and WSL GPU access."},
+                {"available": True, "devices": ["RTX 4090, 24564 MiB, 555.42"]}):
+        assert SUMMARY(healthy(gpu=gpu)) == SUMMARY(healthy())
+
+
 STOPPED = "Local ArcadeDB is unavailable (ConnectError); run cairnmind engine status or cairnmind engine start"
 
 

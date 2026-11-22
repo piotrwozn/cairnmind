@@ -49,6 +49,8 @@ As done for 0.9.0 (#66, which changed `pyproject.toml`, `src/cairnmind/__init__.
 
    The v0.9.0 release has exactly these three assets. Downloads are verified with `sha256sum -c SHA256SUMS`.
 
+   **The database on another host (#68, #225).** The notes of 0.11.0 said that it was checked locally: one machine, a loopback address or a relay for the network. The notes of the release that includes #225 say instead that it was checked between two machines, once, on 22 November 2026 (the figures and what failed are in [DEPLOYMENT.md](DEPLOYMENT.md#two-installations-and-one-store-what-a-trial-between-two-machines-showed)), and name what was not checked: a model server on another computer, the published image (the trial built its own) and Docker Desktop (it used Colima), indexing after every file changed, a service with models on over the network (#363), more than one run of anything, and `restore` over the connection, which failed (#362). Remove from that sentence what a later trial covers, and no more; the open issues of the trial (#362, #371, #373, #365, #363) stay in Known limits until each is fixed.
+
 ## The database image
 
 The image of `deploy/arcadedb` is published to `ghcr.io/piotrwozn/cairnmind-arcadedb` by the workflow `Database image` (`.github/workflows/database-image.yml`), for linux/amd64 and linux/arm64, tagged with the pinned ArcadeDB version. It is run by hand, from main only, when the pinned ArcadeDB version or anything under `deploy/arcadedb` changes:
