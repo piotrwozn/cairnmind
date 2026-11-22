@@ -154,7 +154,7 @@ if [[ -z "$connect_url" ]]; then
             exit 1
         fi
         if docker_asked; then
-            printf 'Java 21 was not found and Docker answers, so cairnmind init can run the engine in Docker; it says which mode it chose.\n'
+            printf 'Java 21 or newer was not found and Docker answers, so cairnmind init can run the engine in Docker; it says which mode it chose.\n'
             engine_in_docker=true
         else
             # What docker said is untrusted text: its first non-blank line, printable characters only, cut short.

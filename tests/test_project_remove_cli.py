@@ -220,6 +220,9 @@ class AddStore:
     def add_project(self, name, root):
         return {"id": "p1", "name": name, "root": str(root)}
 
+    def job_summary(self, project_id):
+        return {group: {state: 0 for state in ("pending", "running")} for group in ("indexing", "extraction")}
+
 
 @pytest.fixture
 def add_world(monkeypatch, tmp_path):
@@ -258,7 +261,7 @@ def test_project_add_of_a_new_project_names_the_removed_one_it_did_not_bring_bac
     assert "restored" not in piped
     monkeypatch.setattr(removal, "removed_rows", lambda reader: [])
     plain = json.loads(run("project", "add", "plain", str(add_world), terminal=False).stdout)
-    assert set(plain) == {"project", "indexed", "history"}  # the JSON of a plain add is what it was
+    assert set(plain) == {"project", "indexed", "history", "jobs"}  # a plain add's JSON, and what its jobs need (#366)
 
 
 class ListStore:
