@@ -26,18 +26,28 @@ DATA_DIR=$(realpath -m "$1"); REPORT_DIR=$(realpath -m "$2"); V1_URL=$3; REPOSIT
 MODEL=qwen3.5:9b
 CAIRNMIND=(python3 -m cairnmind --data-dir "$DATA_DIR")
 
-# Refuse the installation before any model call: its data directory, its service port, its engine port.
-python3 - "$DATA_DIR" <<'PY'
-import json, os, sys
+# Refuse before any model call, failing closed: the installation's data directory (either name), any CAIRNMIND_ or
+# DEVBRAIN_ variable (they override config.json and can point at the installation), the installation's ports, and a
+# chat role that is not the plain default the native series needs (so that restoring it restores what was there).
+python3 - "$DATA_DIR" "$MODEL" <<'PY'
+import os, sys
 from pathlib import Path
-data = Path(sys.argv[1]).resolve()
-installed = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share").resolve() / "cairnmind"
-config = data / "config.json"
-if data in (installed, Path.home() / ".local/share/cairnmind") or not config.is_file():
+from urllib.parse import urlsplit
+from cairnmind import config
+
+data, model = Path(sys.argv[1]).resolve(), sys.argv[2]
+installed = [(Path("~/.local/share").expanduser() / name).resolve() for name in config.DATA_DIR_NAMES]
+own = sorted(key for key in os.environ if config.is_own_variable(key))
+if data == config.default_data_dir() or data in installed or not (data / "config.json").is_file():
     sys.exit(f"{data} is the installation's data directory or has no config.json; use a prepared throwaway directory.")
-values = json.loads(config.read_text())
-if values.get("port", 8765) == 8765 or ":2480" in str(values.get("arcade_url", ":2480")):
-    sys.exit("config.json must set its own port and arcade_url (not 8765 and not 2480) before anything is run.")
+if own:
+    sys.exit(f"Unset {', '.join(own)}: they override config.json and may point at the installation.")
+settings = config.Settings.load(data)
+engine_port = urlsplit(settings.arcade_connect_url or settings.arcade_url).port
+if type(settings.port) is not int or settings.port == 8765 or engine_port in (None, 2480):
+    sys.exit("config.json must set its own integer port and an arcade_url with its own port (not 8765, not 2480).")
+if settings.memory_chat is not None or settings.chat_model != model or settings.num_ctx != 16384:
+    sys.exit(f"The native series needs the default chat role: no memory_chat, chat_model {model}, num_ctx 16384.")
 PY
 
 mkdir -p "$REPORT_DIR"
@@ -52,9 +62,9 @@ series() {  # series NAME: three runs of each evaluation; a failed run still lea
 }
 
 series native
-trap restore EXIT
 "${CAIRNMIND[@]}" models set --role chat --provider openai_compatible --base-url "$V1_URL" --model "$MODEL" \
     --reasoning-effort none --context-window 16384 >"$REPORT_DIR/v1-models-set.json"
+trap restore EXIT  # only now: a failed `models set` changed nothing, and the check above makes restoring exact
 series v1
 
 python3 - "$REPORT_DIR" <<'PY'

@@ -17,6 +17,8 @@ This page is kept out of the copy that the evaluation indexes (see [../EVALUATIO
 | native | 1, 2, 3 | not measured | not measured | not measured | not measured | not measured | not measured |
 | `/v1`, chat only | 1, 2, 3 | not measured | not measured | not measured | not measured | not measured | not measured |
 
+The last two columns hold the `eval run` runs only: the `eval repository` report keeps no per-call length reason or prompt tokens, so they stay empty for it.
+
 What differed between the paths is to be written here after the run. Also to be recorded: whether the model check of `cairnmind models set --role chat --provider openai_compatible` without `--reasoning-effort` ends at the length limit on the real server.
 
 ## Questions about things the project does not have (issue #245)

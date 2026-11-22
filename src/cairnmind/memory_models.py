@@ -70,14 +70,15 @@ MESSAGES = {REMOTE_OLLAMA: ("{setting} wskazuje {host}, serwer na innym komputer
 
 LENGTH_CUT = ("The chat model's reply to the test call ended at the length limit before the answer was complete, so "
               "it could not be read as JSON. Nothing was saved.")
-LENGTH_CUT_EFFORT = (LENGTH_CUT + " A reasoning model can spend that limit on its reasoning. Turn thinking off with "
-                     "`cairnmind models set --role chat --provider openai_compatible --base-url URL --model NAME "
-                     "--reasoning-effort none`.")
+LENGTH_CUT_EFFORT = (LENGTH_CUT + " A reasoning model can spend that limit on its reasoning. Turn thinking off by "
+                     "running `cairnmind models set` again with the options you gave (`--base-url`, `--model`, "
+                     "`--context-window`, `--credential-ref`, `--allow-remote`) and `--reasoning-effort none` added.")
 MESSAGES[LENGTH_CUT] = ("Odpowiedź modelu czatu na wywołanie testowe urwała się na limicie długości, zanim "
                         "odpowiedź była kompletna, więc nie dało się jej odczytać jako JSON. Nic nie zapisano.")
 MESSAGES[LENGTH_CUT_EFFORT] = (MESSAGES[LENGTH_CUT] + " Model rozumujący może zużyć ten limit na rozumowanie. Wyłącz "
-                               "myślenie poleceniem `cairnmind models set --role chat --provider openai_compatible "
-                               "--base-url URL --model NAME --reasoning-effort none`.")
+                               "myślenie, uruchamiając `cairnmind models set` ponownie z podanymi opcjami "
+                               "(`--base-url`, `--model`, `--context-window`, `--credential-ref`, `--allow-remote`) "
+                               "i dodanym `--reasoning-effort none`.")
 
 
 class RemoteServerRefused(ValueError):

@@ -447,6 +447,19 @@ def test_a_check_reply_cut_at_the_length_limit_says_so_and_names_the_setting_tha
     assert memory_models.LENGTH_CUT in memory_models.MESSAGES and memory_models.LENGTH_CUT_EFFORT in memory_models.MESSAGES
 
 
+def test_a_native_reply_cut_at_the_length_limit_says_so_without_the_openai_option(tmp_path, monkeypatch):
+    from cairnmind import cli
+    mock_async_client(monkeypatch, lambda request: httpx.Response(200, json=(
+        {"models": [{"name": "qwen3.5:9b", "digest": "a" * 64}]} if request.url.path == "/api/tags"
+        else {"message": {"role": "assistant", "content": '{"ok": tr'}, "done_reason": "length"})))
+    data = tmp_path / "data"
+    result = CliRunner().invoke(cli.app, ["--data-dir", str(data), "models", "set", "--role", "chat",
+                                          "--provider", "ollama", "--model", "qwen3.5:9b"])
+    words = plain_words(result.output)
+    assert result.exit_code != 0 and "length limit" in words and "--reasoning-effort" not in words
+    assert Settings.load(data).memory_chat is None
+
+
 def test_models_set_refuses_a_remote_server_without_consent(tmp_path):
     from cairnmind import cli
     data = tmp_path / "data"
