@@ -1,12 +1,18 @@
-"""The devbrain command is gone in 0.13.0; what an upgrade needs stays (#314)."""
+﻿"""The devbrain command is gone in 0.13.0; what an upgrade needs stays (#314)."""
 
 from __future__ import annotations
 
+import json
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
+
+from cairnmind import first_start, integrations
+from cairnmind.config import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "install-wsl.sh"
@@ -64,3 +70,72 @@ def test_the_installer_looks_for_the_leftover_after_installing_and_still_replace
     stop = script.index('stop_installed "$(uv tool dir --bin)/devbrain" devbrain "$(uv tool dir)/devbrain/bin/python"')
     assert stop < script.index("uv tool uninstall devbrain") < install
     subprocess.run([BASH, "-n", str(SCRIPT)], check=True)
+
+
+def test_an_upgrade_from_0_12_0_leaves_no_client_file_calling_a_missing_command(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    for name in (*integrations.SESSION_ENV_VARS, "CAIRNMIND_HOME", "DEVBRAIN_HOME",
+                 "CAIRNMIND_CONTEXT_FILE", "DEVBRAIN_CONTEXT_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(integrations, "_probe_cli", lambda *args, **kwargs: {
+        "installed": True, "version": "9.9.9", "mcp": True, "hooks": True, "packet_passing": True,
+        "session_binding": True, "verified_resume": True, "notes": []})
+    data = tmp_path / "home/.local/share/devbrain"
+    Settings.load(data, create=True)
+    settings = Settings.load()
+    assert settings.data_dir == data.resolve()  # the data directory keeps its name
+
+    root = tmp_path / "project"
+    (root / ".codex").mkdir(parents=True)
+    (root / ".claude").mkdir()
+    project = {"id": "project-a", "name": "Example", "root": str(root)}
+    earlier_mcp = integrations._earlier_command(settings, "mcp")[1:]
+    block = "# Notes\n\n<!-- BEGIN DEVBRAIN -->\nold text\n<!-- END DEVBRAIN -->\n"
+    (root / "AGENTS.md").write_text(block)
+    (root / "CLAUDE.md").write_text(block)
+    (root / ".mcp.json").write_text(json.dumps({"mcpServers": {
+        "devbrain": {"command": sys.executable, "args": earlier_mcp,
+                     "env": {n: "${" + n + ":-}" for n in integrations.EARLIER_SESSION_ENV_VARS}},
+        "other": {"command": "keep"}}}))
+    (root / ".codex/config.toml").write_text(
+        'model = "keep"\n# BEGIN DEVBRAIN\n[mcp_servers.devbrain]\ncommand = ' + json.dumps(sys.executable)
+        + "\nargs = " + json.dumps(earlier_mcp)
+        + '\nenv_vars = ["DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID"]\nstartup_timeout_sec = 15\n'
+        'tool_timeout_sec = 75\n# END DEVBRAIN\n')
+    for path, client in ((".codex/hooks.json", "codex"), (".claude/settings.local.json", "claude")):
+        (root / path).write_text(json.dumps({"hooks": {"SessionStart": [{"hooks": [
+            {"type": "command",
+             "command": shlex.join(integrations._earlier_command(settings, "hook", "--client", client))},
+            {"type": "command", "command": "echo user hook"}]}]}}))
+
+    result = integrations.install_integrations(settings, project)
+
+    assert [w for w in result["warnings"] if w != first_start.TRUST_NOTE] == []
+    servers = json.loads((root / ".mcp.json").read_text())["mcpServers"]
+    assert list(servers) == ["cairnmind", "other"]
+    assert servers["cairnmind"]["command"] == sys.executable
+    assert servers["cairnmind"]["args"] == integrations._command(settings, "mcp")[1:]
+    assert ["--data-dir", str(data.resolve())] == servers["cairnmind"]["args"][3:5]
+
+    text = (root / ".codex/config.toml").read_text()
+    codex = tomllib.loads(text)["mcp_servers"]
+    assert set(codex) == {"cairnmind"}
+    assert codex["cairnmind"]["args"] == integrations._command(settings, "mcp")[1:]
+    assert "# BEGIN CAIRNMIND" in text
+    # The earlier session variable names are still forwarded on purpose.
+    assert "DEVBRAIN" not in text.replace("DEVBRAIN_SESSION_ID", "").replace("DEVBRAIN_PACKET_ID", "")
+
+    commands = [servers["cairnmind"]["command"], codex["cairnmind"]["command"]]
+    for path in (".codex/hooks.json", ".claude/settings.local.json"):
+        handlers = [h["command"] for entry in json.loads((root / path).read_text())["hooks"]["SessionStart"]
+                    for h in entry["hooks"]]
+        ours = [c for c in handlers if c != "echo user hook"]
+        assert ours and "echo user hook" in handlers
+        assert all(shlex.split(c)[:4] == [sys.executable, "-I", "-m", "cairnmind"] for c in ours)
+        assert not any("-m devbrain " in c for c in ours)
+        commands += [shlex.split(c)[0] for c in ours]
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        body = (root / name).read_text()
+        assert "<!-- BEGIN CAIRNMIND -->" in body and "BEGIN DEVBRAIN" not in body
+    # The rule: no client file starts a command that is gone with the executable.
+    assert all(c == sys.executable and Path(c).is_file() and Path(c).name != "devbrain" for c in commands)
