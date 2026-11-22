@@ -14,14 +14,22 @@ import asyncio
 import time
 
 from .terminal_notices import about as notice_about
-from .terminal_person_act import agreed, typed
+from .terminal_person_act import agreed, refused, typed
 from .terminal_safe import safe_text
 
 CHECK_SECONDS = 60
 EXAMPLE = 300
 NOTE_LABEL = "Why is this kind technical? Kept with the date."
+NOT_ACCEPTED = "The kind was not accepted."
+ACCEPT_UNCLEAR = "The service did not confirm it, so the kind may have been accepted."
+NOT_WITHDRAWN = "The acceptance was not withdrawn."
+WITHDRAW_UNCLEAR = "The service did not confirm it, so the acceptance may have been withdrawn."
 
 MESSAGES = {
+    NOT_ACCEPTED: "Rodzaj nie został zaakceptowany.",
+    ACCEPT_UNCLEAR: "Usługa tego nie potwierdziła, więc rodzaj mógł zostać zaakceptowany.",
+    NOT_WITHDRAWN: "Akceptacja nie została wycofana.",
+    WITHDRAW_UNCLEAR: "Usługa tego nie potwierdziła, więc akceptacja mogła zostać wycofana.",
     "Transcript record kinds": "Rodzaje rekordów transkrypcji",
     "No unknown transcript record kinds in this project.": "W tym projekcie nie ma nieznanych rodzajów rekordów transkrypcji.",
     "{client} · {kind} · {records} records · blocks the resume packet":
@@ -136,8 +144,8 @@ async def open_view(app):
         text = describe(item, app.t) + "\n\n" + typed(app.t, NOTE_LABEL, values["note"])
         if not await agreed(app, "Treat this kind as technical?", text, "Treat as technical"):
             return
-        await app.request("POST", "/api/inspector/record-kinds/accept", json={**body, "note": values["note"]})
-        app.notice_for(subject, app.t("Kind {kind} from {client} is accepted as technical in this project.", **words))
+        if await _send(app, subject, "accept", {**body, "note": values["note"]}, NOT_ACCEPTED, ACCEPT_UNCLEAR):
+            app.notice_for(subject, app.t("Kind {kind} from {client} is accepted as technical in this project.", **words))
         return
     name = item.get("accepted_by")
     text = "\n".join([
@@ -145,9 +153,20 @@ async def open_view(app):
               name=_word(name, 120) if name else app.t("an unnamed person"), note=safe_text(str(item.get("note") or ""),
                                                                                           limit=1000)),
         "", app.t("After withdrawing, records of this kind block the resume packets of this project again.")])
-    if await agreed(app, "Withdraw an acceptance", text, "Withdraw"):
-        await app.request("POST", "/api/inspector/record-kinds/withdraw", json=body)
+    if (await agreed(app, "Withdraw an acceptance", text, "Withdraw")
+            and await _send(app, subject, "withdraw", body, NOT_WITHDRAWN, WITHDRAW_UNCLEAR)):
         app.notice_for(subject, app.t("The acceptance of {kind} from {client} is withdrawn.", **words))
+
+
+async def _send(app, subject, route, body, not_done, unclear) -> bool:
+    """The act's request alone: a refusal says it was not done, any other failure says it may have been (#354)."""
+    from .terminal_i18n_messages import broker_error_text
+    try:
+        await app.request("POST", f"/api/inspector/record-kinds/{route}", json=body)
+    except (OSError, ValueError, RuntimeError) as exc:
+        app.notice_for(subject, app.t(not_done if refused(exc) else unclear) + " " + broker_error_text(exc, app.t), "error")
+        return False
+    return True
 
 
 def _checked(app) -> dict:
