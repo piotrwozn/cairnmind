@@ -25,7 +25,7 @@ PLAN = {"project": PROJECT, "root": None, "applied": False, "removed_at": None,
                  "backups": "/data/backups", "folder": ["/src/demo/CLAUDE.md"]},
         "nested": [{"root": "/src/demo", "project": "mono", "parent": "/src"}],
         "bring_back": "cairnmind project add demo /src/demo", "no_way_back": False, "extra_roots": ["/src/demo-wt"],
-        "delete": "cairnmind forget p1 --delete-project"}
+        "delete": "workspace: More, then Delete project memory"}
 
 
 class FakeStore:
@@ -92,7 +92,7 @@ def test_dry_run_says_what_stops_and_what_stays_and_changes_nothing(remove_world
     assert "/data/answer-log/p1/answers.jsonl" in text and "these stay as they are: /src/demo/CLAUDE.md" in text
     assert "lies inside the folder /src of mono" in text
     assert "cairnmind project add demo /src/demo brings back the same project" in text
-    assert "adds each again: /src/demo-wt" in text and "cairnmind forget p1 --delete-project" in text
+    assert "adds each again: /src/demo-wt" in text and removal.DELETE_STEP in text and "forget" not in text
 
 
 def test_yes_applies_and_the_json_in_a_pipe_is_the_result(remove_world, run):
@@ -285,7 +285,7 @@ def test_project_list_removed_and_the_hint(monkeypatch, run):
     monkeypatch.setattr(removal, "removed_rows", lambda reader: [inside])
     stuck = run("project", "list", "--removed").stdout
     assert "cairnmind project add cannot bring old back: its folder /data/old lies inside the data directory" in stuck
-    assert "cairnmind forget p9 --delete-project" in stuck
+    assert "deleted in the workspace (More, then Delete project memory)" in stuck and "forget" not in stuck
     monkeypatch.setattr(removal, "removed_rows", lambda reader: [row])
     assert json.loads(run("project", "list", terminal=False).stdout) == ListStore().list_projects()
     monkeypatch.setattr(removal, "removed_rows", lambda reader: [])

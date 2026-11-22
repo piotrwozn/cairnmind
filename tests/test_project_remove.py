@@ -132,18 +132,6 @@ def test_dropping_an_extra_root_deletes_only_that_row(world):
     assert [uri for uri, is_current in current.items() if is_current and uri.endswith("b.py")] == []
 
 
-def test_forget_deletes_a_removed_project_by_id(world):
-    store, project, root, extra, confirmed = world
-    remove(store, project)
-    assert removal.forget_target(store, project["id"])["id"] == project["id"]
-    with pytest.raises(ValueError, match=rf"app was removed .* forget takes its id: .*cairnmind forget {project['id']} "
-                                         r"--delete-project"):
-        removal.forget_target(store, "app")  # by name it is refused, and the refusal names the id form
-    store.forget_project(project["id"])
-    assert not store.query("SELECT FROM projects WHERE id=:p", {"p": project["id"]})
-    assert store._count("records", project["id"]) == 0
-
-
 def test_restore_refuses_when_the_folder_is_now_another_projects_root(world, tmp_path):
     store, project, root, extra, confirmed = world
     remove(store, project)

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
-from . import conflicts, impact_verdicts, person_proof
+from . import conflicts, impact_verdicts, person_proof, project_forget
 from . import stale_proposed as proposed
 from .arcade import ArcadeError
 from .findings import MAX_FINDING_CHARS
@@ -88,6 +88,12 @@ class AdoptGroupBody(BaseModel):
     worktree: str | None = Field(default=None, max_length=4096)
 
 
+class ForgetProjectBody(BaseModel):
+    # No session field: only a person deletes a project's memory, in the workspace (#347).
+    model_config = ConfigDict(extra="forbid")
+    project: str = Field(min_length=1, max_length=200)
+
+
 class ReplaceBody(BaseModel):
     # No session field: only a person replaces a record with a new text (#222).
     model_config = ConfigDict(extra="forbid")
@@ -133,6 +139,10 @@ def create_inspector_router(store, settings):
         # A person's act (#214): the open workspace's key, on top of the token. Nothing is written without it.
         await person_proof.require(request, settings)
     person = [Depends(person_route)]
+
+    async def forget_route(request: Request):
+        # Deleting a project's memory (#347): the open workspace's key, with its own refusal.
+        await person_proof.require(request, settings, person_proof.FORGET_REFUSED)
 
     async def call(method, *args, **kwargs):
         try:
@@ -336,6 +346,21 @@ def create_inspector_router(store, settings):
         project_id = (await call(inspector._project, body.project))["id"]
         return await call(adopt_group, store, project_id, body.group, body.task_versions, title=body.title,
                           worktree=body.worktree)
+
+    @router.get("/inspector/projects/deletable")
+    async def deletable_projects():
+        # Read-only: the projects that have memory in the store, for the workspace's Delete project memory (#347).
+        return await call(project_forget.deletable, store)
+
+    @router.get("/inspector/projects/forget")
+    async def forget_plan(project: str = Query(min_length=1, max_length=200)):
+        # Read-only: the checks of the deletion and what it would delete, for the consent dialog (#347).
+        return await call(project_forget.plan, settings, store, project)
+
+    @router.post("/inspector/projects/forget", dependencies=[Depends(forget_route)])
+    async def forget_project(body: ForgetProjectBody):
+        # A person deletes a project's whole memory (#347); it needs the open workspace's key.
+        return await call(project_forget.delete, settings, store, body.project)
 
     @router.get("/events")
     async def events(request: Request, after: str | None = None, project: str | None = None, once: bool = False,

@@ -8,8 +8,10 @@ the inspector read; the inspector route checks it, and the workspace's key trave
 from __future__ import annotations
 
 from .terminal_notices import about
-from .terminal_person_act import agreed, typed
+from .terminal_person_act import agreed, refused, typed
 from .terminal_safe import safe_text
+
+PLAN_UNCLEAR = "The service did not confirm the plan, so it may have been confirmed."
 
 MESSAGES = {
     "Confirm plan": "Potwierdź plan",
@@ -18,6 +20,8 @@ MESSAGES = {
     "Confirm this plan?": "Potwierdzić ten plan?",
     "Title: {title}": "Tytuł: {title}",
     "Plan confirmed with an audit note.": "Plan potwierdzony z notatką audytu.",
+    "The plan was not confirmed.": "Plan nie został potwierdzony.",
+    PLAN_UNCLEAR: "Usługa nie potwierdziła planu, więc mógł zostać potwierdzony.",
     "The plan was not confirmed. The current version was reloaded.":
         "Plan nie został potwierdzony. Wczytano bieżącą wersję.",
 }
@@ -50,9 +54,14 @@ async def confirm_plan(app):
         await app.request("POST", f"/api/inspector/plans/{plan['id']}/confirm", json=payload)
         if scope == app._scope_version:
             await app.open_entity(plan["id"], "plans")
-            app.notice(app.t("Plan confirmed with an audit note."))
+        app.tell(scope, about(project_id), app.t("Plan confirmed with an audit note."))
     except (OSError, ValueError, RuntimeError) as exc:
-        if scope == app._scope_version:
+        reloaded = scope == app._scope_version
+        if reloaded:
             await app.open_entity(plan["id"], "plans")
-            app.notice(app.t("The plan was not confirmed. The current version was reloaded.") + " "
-                       + broker_error_text(exc, app.t), "error")
+        if refused(exc):
+            said = app.t("The plan was not confirmed. The current version was reloaded." if reloaded
+                         else "The plan was not confirmed.")
+        else:  # a 5xx or a lost connection may follow the commit (#354)
+            said = app.t(PLAN_UNCLEAR) + (" " + app.t("The current version was reloaded.") if reloaded else "")
+        app.tell(scope, about(project_id), said + " " + broker_error_text(exc, app.t), "error")
