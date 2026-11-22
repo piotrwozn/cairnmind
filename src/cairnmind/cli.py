@@ -260,7 +260,12 @@ def _bind_failed(log: Path, since: int) -> bool:
 
 def ensure_service(settings: Settings, *, background_inference: bool = True) -> None:
     if service_alive(settings):
-        return
+        return  # used, and stoppable, during an upgrade too: the mark only stops a start
+    from cairnmind import upgrade_mark
+    reason = upgrade_mark.refusal()
+    if reason:
+        # The installer is replacing this code: a start now would run the version being replaced (#298).
+        raise UpgradeInProgress(reason)
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     log = settings.data_dir / "service.log"
     with log.open("ab") as handle:
@@ -275,6 +280,7 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
                                    stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True, env=env)
     for _ in range(300):
         if service_alive(settings):
+            _stop_if_upgrade_began(settings)
             return
         if getattr(process, "poll", lambda: None)() is not None:
             # It stopped instead of starting, for example on an installation that only reads the store (#70).
@@ -292,9 +298,31 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
     raise ServiceDidNotStart(f"The service did not start. Check {log}; port {settings.port} may be in use.")
 
 
+def _stop_if_upgrade_began(settings: Settings) -> None:
+    """An installer that began after the check in ensure_service may have found no service to stop yet: the service
+    this start brought up is stopped here, so none runs the version being replaced (#298)."""
+    from cairnmind import upgrade_mark
+    reason = upgrade_mark.refusal()
+    if not reason:
+        return
+    try:
+        with httpx.Client(trust_env=False, timeout=5) as client:
+            client.post(settings.url + "/shutdown",
+                        headers={"Authorization": f"Bearer {settings.token}"}).raise_for_status()
+    except httpx.HTTPError:
+        import shlex
+        command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "stop"])
+        raise UpgradeInProgress(upgrade_mark.UPGRADE_STOP_FAILED.format(command=command)) from None
+    raise UpgradeInProgress(reason)
+
+
 class ServiceDidNotStart(ValueError):
     """The knowledge service did not start. A command shows it as a refusal, not as a wrong argument (#244);
     the workspace and the cockpit, which call ensure_service too, get an ordinary error with the reason."""
+
+
+class UpgradeInProgress(ServiceDidNotStart):
+    """An installer is replacing Cairnmind (upgrade_mark.py): nothing starts the service until it has finished (#298)."""
 
 
 def _ensure_service_or_refuse(settings: Settings) -> None:
@@ -323,6 +351,10 @@ def _service_unavailable(settings: Settings) -> str:
         return (f"{safe_text(role.get('reason') or '')} This command asks the running service, which only the "
                 "writer runs. Here `cairnmind store writer` and `cairnmind doctor` show this installation's role, "
                 "and the commands that only read the store work.").strip()
+    from cairnmind import upgrade_mark
+    reason = upgrade_mark.refusal()
+    if reason:
+        return reason  # stopped for an upgrade: `cairnmind serve` would start the version being replaced (#298)
     return ("The existing Cairnmind service is unavailable; diagnostics do not start it. "
             "Run `cairnmind serve` explicitly.")
 
@@ -679,13 +711,14 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["data_dir"] = str(ctx.obj.data_dir)
     result["service_url"] = ctx.obj.url  # the address every command here talks to, so a collision is visible
     from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, env_names, session_conflicts
+    from cairnmind.upgrade_mark import note as upgrade_note
     # Shown here and nowhere else: a hook or an MCP server must not print notes of its own.
     result["environment_notes"] = [
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} are both set and differ; {ENV_PREFIXES[0]}{name} is used."
         for name in env_conflicts()] + [
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} name different sessions; neither is used: commands in "
         "this shell are refused and hooks and the MCP server stay unbound. Start the client again through the launcher."
-        for name in session_conflicts()] + [note for note in [data_dir_note()] if note]
+        for name in session_conflicts()] + [note for note in [data_dir_note(), upgrade_note()] if note]
     for name, variable in (("port", "PORT"), ("cockpit_port", "COCKPIT_PORT"), ("ollama_url", "OLLAMA_URL")):
         if name in ctx.obj._origin.get("kept", {}):
             stored, used = ctx.obj._origin["kept"][name]
