@@ -428,6 +428,25 @@ def test_models_set_saves_nothing_when_the_check_fails(tmp_path, monkeypatch):
     assert Settings.load(data).memory_chat is None
 
 
+def test_a_check_reply_cut_at_the_length_limit_says_so_and_names_the_setting_that_helps(tmp_path, monkeypatch):
+    # No model and no network; the mock is the server, so the test is the same on macOS and Linux.
+    from cairnmind import cli
+    mock_async_client(monkeypatch, lambda request: httpx.Response(200, json=(
+        {"data": [{"id": "m"}]} if request.url.path == "/v1/models"
+        else chat_reply({"role": "assistant", "content": ""}, finish="length"))))
+    data = tmp_path / "data"
+    command = ["--data-dir", str(data), "models", "set", "--role", "chat", "--provider", "openai_compatible",
+               "--base-url", "http://127.0.0.1:1234/v1", "--model", "m"]
+    result = CliRunner().invoke(cli.app, command)
+    words = plain_words(result.output)
+    assert result.exit_code != 0 and "length limit" in words and "--reasoning-effort none" in words
+    assert "cairnmind models set" in words and Settings.load(data).memory_chat is None
+    done = CliRunner().invoke(cli.app, [*command, "--reasoning-effort", "none"])  # already given: no advice
+    words = plain_words(done.output)
+    assert done.exit_code != 0 and "length limit" in words and "--reasoning-effort" not in words
+    assert memory_models.LENGTH_CUT in memory_models.MESSAGES and memory_models.LENGTH_CUT_EFFORT in memory_models.MESSAGES
+
+
 def test_models_set_refuses_a_remote_server_without_consent(tmp_path):
     from cairnmind import cli
     data = tmp_path / "data"
