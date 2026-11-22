@@ -1036,41 +1036,88 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
     if not root.is_dir():
         raise typer.BadParameter("The path must be a folder, not a file")
     store = store_for(ctx.obj)
+    from cairnmind import project_removal as removal
     known = {row["id"] for row in store.list_projects()}
+    removed = removal.removed_rows(store)
     project = store.add_project(name, root)
     from cairnmind.ingest import index_project, register_default_histories
     result = index_project(store, project["id"])
     discovery = register_default_histories(store, project["id"], Path(project["root"]))
+    # Said, never silent (#327): whether a removed project came back, or one that keeps its memory did not.
+    restored, kept, details = removal.add_outcome(removed, known, project)
 
     def sentences():
         shown = safe_text(str(root))
         existed = project["id"] in known
         quoted = shlex.quote(safe_text(name))
-        lines = [(first_start.PROJECT_EXISTED if existed else first_start.PROJECT_ADDED).format(
-            project=quoted, root=shown, files=result.get("files", 0))]
+        lines = (removal.restored_lines(project, restored, result.get("files", 0)) if restored else
+                 [(first_start.PROJECT_EXISTED if existed else first_start.PROJECT_ADDED).format(
+                     project=quoted, root=shown, files=result.get("files", 0))])
         if _git_out(root, "rev-parse", "--is-inside-work-tree") is None:
             lines.append(first_start.NOT_GIT.format(root=shown))
         elif _git_out(root, "rev-parse", "--verify", "-q", "HEAD") is None:
             lines.append(first_start.NO_COMMIT.format(root=shown))
+        lines.extend(removal.not_brought_back(row) for row in kept)
         # The warning comes before the next step, which stays last (#326).
-        lines.append((first_start.PROJECT_EXISTED_NEXT if existed else first_start.PROJECT_ADDED_NEXT).format(
-            project=quoted))
+        lines.append((first_start.PROJECT_EXISTED_NEXT if existed or restored else first_start.PROJECT_ADDED_NEXT)
+                     .format(project=quoted))
         return lines
-    _human_or_json({"project": project, "indexed": result, "history": discovery}, as_json, sentences)
+    _human_or_json({"project": project, "indexed": result, "history": discovery, **details}, as_json, sentences)
 
 
 @projects_app.command("list")
-def project_list(ctx: typer.Context, as_json: JSON_FLAG = False):
+def project_list(ctx: typer.Context, as_json: JSON_FLAG = False,
+                 removed: Annotated[bool, typer.Option(
+                     "--removed", help="List the removed projects, whose memory is kept.")] = False):
     """List the registered projects with their folders."""
-    projects = store_for_read(ctx.obj).list_projects()
+    from cairnmind import project_removal as removal
+    store = store_for_read(ctx.obj)
+    if removed:
+        rows = removal.removed_view(store)
+        _human_or_json(rows, as_json, lambda: removal.removed_sentences(rows))
+        return
+    projects = store.list_projects()
 
     def sentences():
         from cairnmind import first_start
+        hint = removal.removed_rows(store)
         if not projects:
-            return [first_start.PROJECTS_NONE]
+            return [*([removal.REMOVED_HINT.format(count=len(hint))] if hint else []), first_start.PROJECTS_NONE]
         return [first_start.PROJECTS_HEADING, *(f"  - {row['name']}: {row['root']}" for row in projects),
-                first_start.PROJECTS_NEXT]
+                *([removal.REMOVED_HINT.format(count=len(hint))] if hint else []), first_start.PROJECTS_NEXT]
     _human_or_json(projects, as_json, sentences)
+
+
+@projects_app.command("remove")
+@initialized
+def project_remove(ctx: typer.Context, project: ProjectArg,
+                   root: Annotated[Path | None, typer.Option(
+                       "--root", help="Remove only this extra folder of the project.")] = None,
+                   yes: Annotated[bool, typer.Option(
+                       "--yes", help="Make the change; without it nothing changes.")] = False,
+                   as_json: JSON_FLAG = False):
+    """Remove a project, or one extra folder of it, from the registry. Its memory is kept and nothing is deleted.
+
+    Without --yes it only says what would stop, what stays and where, and how to bring the project back.
+    """
+    from cairnmind import project_removal as removal
+    from cairnmind.store_writer import require_writer
+    # A session must not unregister projects: a person does, as with takeover and setup.
+    if session_value("SESSION_ID"):
+        refuse(removal.IN_SESSION)
+    store = store_for(ctx.obj)
+    require_writer(store)
+    row = store.resolve_project(project)
+    try:
+        removal.require_idle(ctx.obj, store, row)
+        result = removal.plan(ctx.obj, store, row, root.expanduser().resolve() if root else None)
+        if yes:
+            result = removal.apply(store, result)
+    except removal.Refused as exc:
+        refuse(str(exc))
+    _human_or_json(result, as_json, lambda: removal.sentences(result))
+    if not yes:
+        raise typer.Exit(1)
 
 
 @projects_app.command("root")
@@ -2497,11 +2544,12 @@ def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
 @initialized
 def forget(ctx: typer.Context, project: ProjectArg,
            delete_project: Annotated[bool, typer.Option("--delete-project", help="Explicitly delete the project's data")] = False):
-    """Delete a project and all its memory from the store. Backups are not changed; only a restore brings it back."""
+    """Delete a project (or a removed project, by its id) and all its memory from the store. Backups are not changed; only a restore brings it back."""
     if not delete_project:
         raise typer.BadParameter("Deleting requires --delete-project. Existing backups stay unchanged.")
+    from cairnmind.project_removal import forget_target
     store = store_for(ctx.obj)
-    pid = store.resolve_project(project)["id"]
+    pid = forget_target(store, project)["id"]
     store.forget_project(pid)
     from cairnmind.answer_log import forget as forget_answers
     forget_answers(ctx.obj, pid)

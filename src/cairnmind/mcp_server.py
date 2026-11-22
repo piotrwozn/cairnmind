@@ -45,11 +45,47 @@ def _saved_plan_view(result: dict[str, Any]) -> dict[str, Any]:
     previews = [{"id": row.get("id"), "version": row.get("version"),
                  "step_key": str(row.get("metadata", {}).get("step_key", ""))[:300],
                  "step_key_truncated": len(str(row.get("metadata", {}).get("step_key", ""))) > 300,
+                 "status": row.get("status"),
                  "state": row.get("metadata", {}).get("state", "todo")}
                 for row in tasks[:200]]
-    return {"plan": _plan_header(result["plan"]), "tasks": previews,
+    # The title is what the client just sent: not repeated (#325).
+    header = {key: value for key, value in (_plan_header(result["plan"]) or {}).items() if key != "title"}
+    return {"plan": header or None, "tasks": previews,
             "omitted_tasks": max(0, len(tasks) - len(previews)),
             "replayed": result.get("replayed", False)}
+
+
+def _saved_record_view(result: dict[str, Any], sent: Any) -> dict[str, Any]:
+    """What the service stored and decided, not an echo of what the client just sent (#325).
+
+    ``sent`` is the metadata the client sent (remember: the record's; checkpoint: the state).
+    """
+    if not isinstance(result, dict) or not {"id", "version", "status"} <= set(result):
+        return result
+    metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+    view = {"id": result["id"], "version": result["version"], "status": result["status"],
+            "kind": result.get("kind"), "key": str(result.get("key", ""))[:300],
+            "source_ids": list(result.get("source_ids") or [])[-8:]}
+    if len(result.get("source_ids") or []) > 8:
+        view["omitted_source_ids"] = len(result["source_ids"]) - 8
+    if isinstance(result.get("metadata_dropped"), list) and result["metadata_dropped"]:
+        # Only in the service's answer to this bridge (name_dropped), never in the store's result (#325).
+        view["metadata_dropped"] = [str(name)[:100] for name in result["metadata_dropped"][:50]]
+    if result.get("supersedes"):
+        view["supersedes"] = result["supersedes"]
+    for name in (*ORIGIN_KEYS, "supersede_warning", "supersede_replaced_evidence_latest"):
+        if name in metadata:
+            view[name] = metadata[name]
+    conflicts = metadata.get("possible_conflicts")
+    if isinstance(conflicts, list) and conflicts:
+        view["possible_conflicts"] = [str(item)[:200] for item in conflicts[:20]]
+    if isinstance(sent, dict):
+        # The store drops or rewrites some metadata (its own marks, derived fields): say so instead of hiding it.
+        differs = sorted(str(name)[:100] for name, value in sent.items()
+                         if name not in metadata or metadata[name] != value)
+        if differs:
+            view["metadata_not_stored_as_sent"] = differs[:50]
+    return view
 
 
 def _next_task_view(result: dict[str, Any]) -> dict[str, Any]:
@@ -272,6 +308,11 @@ class ServiceClient:
             if not isinstance(packet.get("id"), str) or not isinstance(packet.get("hash"), str):
                 raise ValueError("Invalid resume packet identity")
             self.packet_id = packet["id"]
+        elif result.get("unchanged") is True:
+            # The short answer names the packet this session acknowledged (#325); ack_resume may name only that one.
+            if not isinstance(result.get("packet_id"), str) or not isinstance(result.get("packet_hash"), str):
+                raise ValueError("Invalid resume packet identity")
+            self.packet_id = result["packet_id"]
         return result
 
     async def post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -351,6 +392,12 @@ class ServiceClient:
         return await self._send(method, endpoint, body, query, adopt=adopt, allow_list=allow_list, started=True)
 
 
+SHORT_RESUME = (
+    " Once this session has acknowledged the current packet and nothing it promises has changed, the answer is "
+    "short: unchanged: true, acknowledged: true, packet_id, packet_hash and newer_automatic_proposals (written "
+    "after the packet; read them with ask). It is not an acknowledgement and extends none. Pass full_packet: true "
+    "to get the whole packet again. A new or changed packet always comes whole and needs ack_resume.")
+
 EXTERNAL_INSTRUCTIONS = (
     " External client: Cairnmind cannot read or archive this conversation. The first resume_context starts "
     "this session; its packet says history: unarchived and evidence: degraded, the ACK is still required, "
@@ -388,7 +435,11 @@ def create_server(settings: Settings, service: ServiceClient | None = None, *,
         "Delivery of context is not an ACK. Every record you save is proposed: only the person confirms a "
         "record, and a write that asks for status confirmed is refused. Save complete plans atomically "
         "with save_plan, get next_task, and use native CLI cairnmind check run for named test profiles; "
-        "check_status is read-only and cannot execute commands." + (EXTERNAL_INSTRUCTIONS if degraded else "")))
+        "check_status is read-only and cannot execute commands. After your ACK, reading resume_context again "
+        "costs little: while the acknowledged packet is current it answers unchanged: true with its id and hash, "
+        "and full_packet: true returns the whole packet. remember, checkpoint and save_plan answer with the "
+        "stored id, version, status and what the service changed, not the content you sent."
+        + (EXTERNAL_INSTRUCTIONS if degraded else "")))
 
     @server.tool()
     async def ask(project: str, question: str, answer_schema: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -414,8 +465,18 @@ def create_server(settings: Settings, service: ServiceClient | None = None, *,
         on a confirmed task is. Save what you found as a new proposed record under another key and name the
         confirmed one in metadata.possible_conflicts: the person decides between the two.
         An external session may send sources: [] and its report becomes the record's own unverified source.
+
+        Answers with the stored record's id, version, status, kind, key and source_ids and, only where they
+        apply, the origin mark the service set, supersedes, possible_conflicts, a supersede warning, and
+        metadata_not_stored_as_sent naming the metadata keys you sent that the stored version does not hold
+        with the value you sent, metadata_dropped naming the keys the version before held that this version
+        no longer holds (the service removes some by itself, such as reported proof or criteria links when a
+        task's definition changes), and omitted_source_ids (how many source ids beyond the last eight are not
+        listed). The content you sent is not repeated.
         """
-        return await bridge.post("/remember", {"project": project, "record": record, "sources": sources})
+        saved = await bridge.post("/remember", {"project": project, "record": record, "sources": sources,
+                                                "name_dropped": True})
+        return _saved_record_view(saved, record.get("metadata"))
 
     @server.tool()
     async def checkpoint(project: str, state: dict[str, Any]) -> dict[str, Any]:
@@ -424,8 +485,12 @@ def create_server(settings: Settings, service: ServiceClient | None = None, *,
         A checkpoint is client-reported evidence, never a machine check or user
         approval. Run named profiles through native cairnmind check run to create
         immutable check_runs; reference those using metadata.check_run_ids.
+
+        Answers like remember: the checkpoint record's id, version, status and source_ids, not the state
+        you sent, with metadata_not_stored_as_sent and metadata_dropped where they apply.
         """
-        return await bridge.post("/checkpoint", {"project": project, "state": state})
+        saved = await bridge.post("/checkpoint", {"project": project, "state": state, "name_dropped": True})
+        return _saved_record_view(saved, state)
 
     @server.tool()
     async def save_plan(project: str, plan: dict[str, Any], steps: list[dict[str, Any]],
@@ -438,6 +503,9 @@ def create_server(settings: Settings, service: ServiceClient | None = None, *,
         existing id. New steps start todo. Updates require expected_version and
         task_versions for all existing members. Retry exact input with the same
         idempotency_key; changed input requires a new key.
+
+        Answers with the plan's id, version, step_count and source_ids and, for each step, its task id,
+        version, status, step_key and state; not the plan's text.
         """
         result = await bridge.post("/plans/save", {
             "project": project, "plan": plan, "steps": steps, "idempotency_key": idempotency_key,
@@ -454,10 +522,10 @@ def create_server(settings: Settings, service: ServiceClient | None = None, *,
 
     @server.tool(description=(
         "Start (first call) or read/refresh this external session's evidence-degraded resume packet before ACK "
-        "or project-memory writes." if degraded else None))
-    async def resume_context() -> dict[str, Any]:
-        """Read/refresh this launcher's resume packet before ACK or project-memory writes."""
-        return await bridge.post("/sessions/context", {})
+        "or project-memory writes." if degraded else
+        "Read/refresh this launcher's resume packet before ACK or project-memory writes.") + SHORT_RESUME)
+    async def resume_context(full_packet: bool = False) -> dict[str, Any]:
+        return await bridge.post("/sessions/context", {"short": not full_packet})
 
     @server.tool()
     async def ack_resume(packet_id: str, packet_hash: str, readback: dict[str, Any]) -> dict[str, Any]:
