@@ -469,6 +469,23 @@ async def test_back_to_ollama_without_an_address_means_the_configured_ollama(tmp
     assert reloaded.memory_chat is None and reloaded.chat_model == "other:4b"
 
 
+async def test_check_role_saves_nothing(tmp_path, monkeypatch):
+    async def check(settings, role):
+        return {"structured_output": True}, "c@1"
+    monkeypatch.setattr(memory_models, "_check", check)
+    settings = settings_with(tmp_path)
+    settings.save()
+    stored = (tmp_path / "config.json").read_bytes()
+    checked = await memory_models.check_role(settings, "chat", provider="openai_compatible", model="m1",
+                                             base_url="http://127.0.0.1:1234/v1")
+    assert (tmp_path / "config.json").read_bytes() == stored
+    assert checked["identity"] == "c@1" and checked["saved_row"] == LMSTUDIO
+    await memory_models.configure_role(settings, "chat", provider="openai_compatible", model="m1",
+                                       base_url="http://127.0.0.1:1234/v1")
+    reloaded = Settings.load(tmp_path)
+    assert reloaded.memory_chat == checked["saved_row"] and reloaded.chat_model == "m1"
+
+
 @pytest.mark.parametrize("body", [[], {"data": None, "models": None}, {"data": "x", "models": {}}])
 def test_doctor_reports_a_malformed_model_list_instead_of_failing(tmp_path, body):
     settings = settings_with(tmp_path, memory_chat=dict(LMSTUDIO))

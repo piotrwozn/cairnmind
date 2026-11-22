@@ -516,10 +516,10 @@ def save_role(data_dir: Path, role: str, row: dict | None, model: str) -> None:
         _write_json(path, values)
 
 
-async def configure_role(settings: Settings, role: str, *, provider: str, model: str, base_url: str | None = None,
-                         credential_ref: str | None = None, context_window: int | None = None,
-                         reasoning_effort: str | None = None, allow_remote: bool = False) -> dict:
-    """Check one role on its server, then save it. Nothing is saved when the check fails."""
+async def check_role(settings: Settings, role: str, *, provider: str, model: str, base_url: str | None = None,
+                     credential_ref: str | None = None, context_window: int | None = None,
+                     reasoning_effort: str | None = None, allow_remote: bool = False) -> dict:
+    """Validate one role and test it on its server; saves nothing. configure_role saves what this checked."""
     if role not in ROLES:
         raise ValueError("The role is chat or embedding.")
     if not isinstance(model, str) or not MODEL_ID.fullmatch(model):
@@ -540,6 +540,20 @@ async def configure_role(settings: Settings, role: str, *, provider: str, model:
     saved_row = None if local_default else row
     candidate = replace(settings, **{FIELDS[role]: saved_row, MODEL_FIELDS[role]: model})
     checked, identity = await _check(candidate, role)
+    return {"row": row, "saved_row": saved_row, "candidate": candidate, "checked": checked, "identity": identity,
+            "from_environment": from_environment, "local_default": local_default}
+
+
+async def configure_role(settings: Settings, role: str, *, provider: str, model: str, base_url: str | None = None,
+                         credential_ref: str | None = None, context_window: int | None = None,
+                         reasoning_effort: str | None = None, allow_remote: bool = False) -> dict:
+    """Check one role on its server, then save it. Nothing is saved when the check fails."""
+    tested = await check_role(settings, role, provider=provider, model=model, base_url=base_url,
+                              credential_ref=credential_ref, context_window=context_window,
+                              reasoning_effort=reasoning_effort, allow_remote=allow_remote)
+    row, saved_row, candidate = tested["row"], tested["saved_row"], tested["candidate"]
+    checked, identity = tested["checked"], tested["identity"]
+    from_environment, local_default = tested["from_environment"], tested["local_default"]
     previous = None
     if role == "embedding":
         try:
