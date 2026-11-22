@@ -105,9 +105,10 @@ def client_for(store):
     return TestClient(app), {"Authorization": "Bearer " + store.settings.token}
 
 
-def test_the_inspector_route_lists_and_only_the_review_route_changes_a_record(memory):
+def test_the_inspector_route_lists_and_only_the_review_route_changes_a_record(memory, workspace_person):
     store, project, root, other, records = memory
     client, headers = client_for(store)
+    headers = {**headers, **workspace_person}  # the review route is a person's (#214)
     before = store.export(project["id"])
     before.pop("exported_at", None)
     answer = client.get("/inspector/proposed", params={"project": project["id"], "worktree": str(root), "days": 30},

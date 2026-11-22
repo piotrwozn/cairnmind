@@ -92,8 +92,8 @@ def register(memory_app, initialized):
                                     "--take-published",
                                     help="A diverged record ID: append the published version locally; nothing is removed.")] = None,
                                 replace_confirmed: Annotated[bool, typer.Option(
-                                    "--replace-confirmed", help="Let the files replace records that were confirmed or "
-                                    "disputed on this machine; the dry run lists them.")] = False):
+                                    "--replace-confirmed", help="Ask to replace records that were confirmed or disputed "
+                                    "on this machine; the service refuses it outside the workspace, the dry run lists them.")] = False):
         """Import a merged published memory directory; nothing imported is shown as verified."""
         from cairnmind.cli import output, refuse, request
         from cairnmind.config import Settings
@@ -117,8 +117,8 @@ def register(memory_app, initialized):
                              bind: Annotated[bool, typer.Option(
                                  "--bind", help="Replace the project's publication identity with the commit's.")] = False,
                              replace_confirmed: Annotated[bool, typer.Option(
-                                 "--replace-confirmed", help="Let the commit replace records that were confirmed or "
-                                 "disputed on this machine; the dry run lists them.")] = False):
+                                 "--replace-confirmed", help="Ask to replace records that were confirmed or disputed "
+                                 "on this machine; the service refuses it outside the workspace, the dry run lists them.")] = False):
         """Import the published memory of a commit (the main branch after a merge) and re-check every quoted
         passage against that commit's code: still there anchors a record, gone leaves it orphaned. Nothing
         imported is verified. Reads Git only; writes nothing to the repository."""
@@ -224,20 +224,8 @@ def register(memory_app, initialized):
     def memory_confirm_plan(ctx: typer.Context, project: ProjectArg, plan: PlanArg,
                             expected_version: Annotated[int, typer.Option("--expected-version", min=1)],
                             reason: str | None = None, worktree: Path | None = None):
-        """Confirm a plan and all its active steps as a person, so that they can be published."""
-        from cairnmind.cli import output, refuse, request
-        from cairnmind.config import session_value
-        if session_value("SESSION_ID"):
-            # A coding session's agent runs commands too; only a person confirms (the inspector works for both).
-            refuse("A coding session cannot confirm a plan; a person confirms it outside the session or in the inspector.")
+        """Refused since 0.13.0: a person confirms a plan in the inspector of the workspace."""
         from cairnmind import confirmation
-        if not confirmation.person_at_terminal():
-            # An agent's command and a script have no terminal (#177): the same refusal as for a session.
-            refuse("Only a person confirms a plan: run this command in your own terminal, with input and output "
-                   "not piped or redirected. Nothing was confirmed.")
-        from cairnmind.memory_published_format import canonical_uuid
-        if not canonical_uuid(plan):
-            raise typer.BadParameter("PLAN must be a plan ID")
-        output(request(ctx.obj, "POST", f"/inspector/plans/{plan}/confirm",
-                       json={"project": project, "expected_plan_version": expected_version, "reason": reason,
-                             "worktree": str(worktree.expanduser().resolve()) if worktree else None}))
+        from cairnmind.cli import refuse
+        # The command line confirms nothing (#214). The options stay so that a script gets this sentence.
+        refuse(confirmation.CLI_PLAN_REFUSED)

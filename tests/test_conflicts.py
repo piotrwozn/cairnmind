@@ -211,13 +211,14 @@ def test_only_facts_and_decisions_in_scope_are_listed(workspace):
         conflicts.resolve(inspector, project["id"], listed_candidate["id"], "missing", "dismiss", 1, 1)
 
 
-def test_http_routes_list_and_resolve_with_validation_and_authentication(workspace):
+def test_http_routes_list_and_resolve_with_validation_and_authentication(workspace, workspace_person):
     store, project, _ = workspace
     candidate, existing = pair(store, project)
     app = FastAPI()
     attach_inspector_routes(app, store, store.settings)
     client = TestClient(app)
-    headers = {"Authorization": "Bearer " + store.settings.token}
+    token_only = {"Authorization": "Bearer " + store.settings.token}
+    headers = {**token_only, **workspace_person}
     assert client.get("/inspector/conflicts", params={"project": project["id"]}).status_code == 401
     listed = client.get("/inspector/conflicts", params={"project": project["id"]}, headers=headers)
     assert listed.status_code == 200 and listed.json()["total"] == 1
@@ -225,6 +226,8 @@ def test_http_routes_list_and_resolve_with_validation_and_authentication(workspa
             "expected_version": 1, "other_expected_version": 1, "keep": candidate["id"], "reason": "Decided"}
     before = normalized_export(store)
     assert client.post("/inspector/conflicts/resolve", json=body).status_code == 401
+    # The token alone is no person's decision (#214): nothing changes.
+    assert client.post("/inspector/conflicts/resolve", json=body, headers=token_only).status_code == 403
     assert client.post("/inspector/conflicts/resolve", json={**body, "session_id": "forged"}, headers=headers).status_code == 422
     assert client.post("/inspector/conflicts/resolve", json={**body, "action": "merge"}, headers=headers).status_code == 422
     assert client.post("/inspector/conflicts/resolve", json={**body, "expected_version": 7},

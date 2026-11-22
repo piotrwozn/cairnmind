@@ -54,10 +54,10 @@ MESSAGES = {
         "Transkrypcje tego projektu zawierają rodzaj rekordu {kind} od {client}, nieznany tej wersji; blokuje on "
         "pakiety wznowienia tego projektu. Obejrzyj go i zaakceptuj w Więcej → Rodzaje rekordów transkrypcji.",
     "Only the first {count} unknown transcript records of this project were read, so a kind further on is not "
-    "listed here. A partial packet names its kind and the `cairnmind record-kind accept` command for it.":
+    "listed here. A partial packet names its kind and where a person accepts it.":
         "Odczytano tylko pierwsze {count} nieznanych rekordów transkrypcji tego projektu, więc rodzaj zapisany "
-        "dalej nie jest tu wymieniony. Częściowy pakiet podaje jego rodzaj i polecenie `cairnmind record-kind "
-        "accept` dla niego.",
+        "dalej nie jest tu wymieniony. Częściowy pakiet podaje jego rodzaj i miejsce, w którym osoba go "
+        "akceptuje.",
 }
 
 
@@ -110,7 +110,7 @@ async def open_view(app, confirm_modal):
         count = view.get("scanned") if type(view.get("scanned")) is int else "?"
         app.notice_for(subject, app.t(
             "Only the first {count} unknown transcript records of this project were read, so a kind further on is "
-            "not listed here. A partial packet names its kind and the `cairnmind record-kind accept` command for it.",
+            "not listed here. A partial packet names its kind and where a person accepts it.",
             count=count), "warn")
     elif not choices:
         app.notice_for(subject, app.t("No unknown transcript record kinds in this project."))

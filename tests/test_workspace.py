@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
 import shlex
 import shutil
 import signal
+import subprocess
 import sys
 import time
 
@@ -362,3 +364,46 @@ def test_stop_with_clients_still_reports_a_broker_that_does_not_answer(manager, 
     result = module.stop_workspace(workspace.settings, stop_clients=True)
     assert result["errors"] == [{"run_id": "kept", "code": "client_stop_unavailable"}] and result["clients_unknown"] == []
     assert workspace.state.read()["run_ids"] == ["kept"]  # still adopted: it may be running
+
+def test_a_real_tmux_server_holds_and_answers_the_key(manager, tmp_path):
+    from cairnmind import person_proof
+    from cairnmind.workspace import SESSION
+    workspace, _, _ = manager
+    workspace.create(start_supervisor=False)
+    kind, key = person_proof.read_key(workspace.settings, workspace.socket, workspace.binary)
+    assert kind == "key" and len(key) == 64 and set(key) <= set("0123456789abcdef")
+    assert person_proof.workspace_socket(workspace.settings, str(workspace.socket)) == workspace.socket
+    assert workspace.status()["person_key"] == "present" and key not in json.dumps(workspace.status())
+    # The key is in no command line of the server's processes and never changes while it lives.
+    workspace.create(start_supervisor=False)
+    assert person_proof.read_key(workspace.settings, workspace.socket, workspace.binary) == ("key", key)
+    # A panel started by the server sees TMUX, with the socket that holds the key.
+    seen = tmp_path / "tmux_env"
+    workspace.tmux("new-window", "-d", "-t", SESSION, "sh", "-c", f'echo "$TMUX" > {seen}')
+    for _ in range(50):
+        if seen.exists() and seen.read_text().strip():
+            break
+        time.sleep(.1)
+    assert seen.read_text().split(",")[0] == str(workspace.socket)
+    workspace.settings.tmux_executable = workspace.binary
+    sent = person_proof.workspace_headers(workspace.settings, {"TMUX": seen.read_text().strip()})
+    assert sent == {person_proof.KEY_HEADER: key, person_proof.SOCKET_HEADER: str(workspace.socket)}
+    person_proof.check(workspace.settings, sent)  # what the service does with it: accepted by the real server
+    with pytest.raises(person_proof.PersonProofRefused) as refused:
+        person_proof.check(workspace.settings, {**sent, person_proof.KEY_HEADER: "cd" * 32})
+    assert refused.value.message == person_proof.PROOF_REFUSED
+
+
+def test_a_server_without_the_option_and_a_missing_server_answer_no_key_and_unavailable(manager, short_tmp_path):
+    from cairnmind import person_proof
+    workspace, _, _ = manager
+    socket = short_tmp_path / "bare.sock"
+    # No server there: unavailable, and asking starts none.
+    assert person_proof.read_key(workspace.settings, socket, workspace.binary) == ("unavailable", None)
+    assert not socket.exists()
+    subprocess.run([workspace.binary, "-S", str(socket), "-f", "/dev/null", "new-session", "-d", "sleep", "60"],
+                   check=True, env={k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")})
+    try:
+        assert person_proof.read_key(workspace.settings, socket, workspace.binary) == ("no_key", None)
+    finally:
+        subprocess.run([workspace.binary, "-S", str(socket), "kill-server"], check=False)

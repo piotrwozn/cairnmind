@@ -441,6 +441,10 @@ class Store:
         Only the code of a person's route opens it, where it knows a person is acting, and it names the
         audit or note source that route has just written. Nothing in a request can open it. The write
         itself checks the source again (_confirmation), so a wrong caller is refused, not trusted.
+
+        Opening it is not enough (#214): the act counts only when the request that opened it passed
+        person_proof.require, which proves the open workspace (_proven_act). An act that does not count is
+        what a session's write is: it confirms nothing and takes no confirmation away.
         """
         from .confirmation import PERSON_ROUTES, SEED_ROUTE
         if route not in PERSON_ROUTES and route != SEED_ROUTE:
@@ -451,6 +455,16 @@ class Store:
             yield
         finally:
             self._local.person_act = previous
+
+    def _proven_act(self):
+        """The person's act open on this thread, counted only when the request that opened it carried the
+        workspace's key (#214). Evaluation seed data is not a person and needs none."""
+        act = getattr(self._local, "person_act", None)
+        if not act:
+            return None
+        from .confirmation import SEED_ROUTE
+        from .person_proof import present
+        return act if act["route"] == SEED_ROUTE or present() else None
 
     def _confirmation(self, tx, project_id, old, asked, status, statement, sources, version):
         """The one rule for the status confirmed (#177): (status, mark) as this write stores them.
@@ -464,14 +478,16 @@ class Store:
         mark that says the confirmation lapsed; the same mark is left when such a write sets another status.
         A person's act leaves no such mark.
         """
-        from .confirmation import (MARK, PERSON_ROUTES, SEED_ROUTE, SEED_SOURCE, ConfirmationRefused, lowered,
-                                   person_mark, said)
-        act = getattr(self._local, "person_act", None)
+        from .confirmation import (MARK, NOT_PROVEN, PERSON_ROUTES, SEED_ROUTE, SEED_SOURCE, ConfirmationRefused,
+                                   lowered, person_mark, said)
+        act = self._proven_act()
         if status != "confirmed":
             # A person's act (a dispute, a conflict decision) leaves no such mark and clears an earlier one.
             was = ((old or {}).get("metadata") or {}).get(MARK)
             return status, None if act else lowered(old, status, version) or (
                 was if isinstance(was, dict) and was.get("by") == "lapsed" else None)
+        if asked == "confirmed" and not act and getattr(self._local, "person_act", None):
+            raise ConfirmationRefused(NOT_PROVEN)  # an act is open, but not proven by the workspace's key
         if asked == "confirmed" and act:
             if self.current_origin() or getattr(self._local, "session_write", None):
                 raise ConfirmationRefused()
@@ -495,7 +511,7 @@ class Store:
         """Whether this thread writes as a person: an act of a person's route is open (evaluation seed data
         is not one), and no session or marked origin writes."""
         from .confirmation import PERSON_ROUTES
-        act = getattr(self._local, "person_act", None)
+        act = self._proven_act()
         return bool(act) and act["route"] in PERSON_ROUTES and not (
             self.current_origin() or getattr(self._local, "session_write", None))
 
@@ -1286,11 +1302,11 @@ class Store:
                 raise ValueError("Record version conflict; replaced record has changed")
             from .confirmation import MARK as mark_name, lowered
             self._keep_verdict(previous, "replace")
-            if not getattr(self._local, "person_act", None) and previous["status"] == "confirmed":
+            act = self._proven_act()
+            if not act and previous["status"] == "confirmed":
                 # A replacement that is not a person's act takes a confirmed record out of use: it says so.
                 previous["metadata"] = {**(previous.get("metadata") or {}),
                                         mark_name: lowered(previous, "superseded", previous["version"] + 1)}
-            act = getattr(self._local, "person_act", None)
             if conflict_review and act:
                 # A conflict decision judged both findings (#239): the replaced one's last version cites its audit,
                 # so that version travels as the person's act and not as a mechanical supersession.
