@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from installer_script import installer_functions
 from cairnmind import process_identity, upgrade_mark
 from cairnmind.terminal_i18n import CATALOG
 
@@ -147,10 +148,7 @@ def test_a_mark_that_cannot_be_read_blocks(mark, monkeypatch, content):
 def test_the_installer_and_the_package_agree_on_the_mark(tmp_path):
     """The path, the format and the identity the installer writes are the ones the package reads: a real bash,
     named install-wsl.sh, writes the mark and a Python reads it, while it runs and after it removed the mark."""
-    scripts = Path(__file__).resolve().parents[1] / "scripts" / "install-wsl.sh"
-    text = scripts.read_text()
-    start = text.index("# --- what an installed version left running")
-    functions = text[start:text.index("# --- end ---", start)]
+    functions = installer_functions(tmp_path / "sockets")
     reader = ("import sys; from cairnmind import upgrade_mark as u; "
               "u.mark_path = lambda: __import__('pathlib').Path(sys.argv[1]); print(u.state())")
     mark = tmp_path / ".local" / "state" / "cairnmind" / "upgrade-in-progress"

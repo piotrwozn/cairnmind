@@ -15,7 +15,9 @@ import time
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+from installer_script import installer_functions
+
+ROOT =Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "install-wsl.sh"
 JAVA_HOME_TOOL = "/usr/libexec/java_home"
 # macOS's own /bin/bash is 3.2; prefer it there, as a person running the documented command gets it.
@@ -229,15 +231,33 @@ def test_a_connect_only_mac_needs_no_java(mac):
     assert result.returncode == 0, result.stderr
 
 
+def test_no_test_takes_the_installers_socket_rules_without_a_folder_of_its_own():
+    """#364, as for the default ports: a test that cut the functions out itself would read the machine's /private/tmp."""
+    own = Path(__file__).with_name("installer_script.py")
+    for path in sorted(Path(__file__).parent.glob("test_*.py")):
+        text = path.read_text()
+        for marker in ('"# --- what an installed version left running', "'# --- what an installed version left running"):
+            # this file names the marker in this very check
+            assert path == Path(__file__) or marker not in text, (
+                f"{path.name} cuts the installer's functions out itself: take them from installer_script.installer_functions, "
+                f"which moves the macOS socket folder under a directory of the test's own ({own.name}).")
+    with pytest.raises(AssertionError, match="no longer names"):  # a rule that moved is not redirected in silence
+        import installer_script
+        original = installer_script.MACOS_SOCKET_ROOT
+        installer_script.MACOS_SOCKET_ROOT = "/somewhere/else"
+        try:
+            installer_script.installer_functions(Path("/x"))
+        finally:
+            installer_script.MACOS_SOCKET_ROOT = original
+
+
 def test_an_upgrade_finds_a_workspace_in_the_macos_socket_folder(tmp_path):
     import socket
     import tempfile
-    script = SCRIPT.read_text()
-    start = script.index("# --- what an installed version left running")
     # Kept short: a socket path has a limit of about a hundred bytes.
     system_temp = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp"))
     try:
-        functions = script[start:script.index("# --- end ---", start)].replace("/private/tmp", str(system_temp))
+        functions = installer_functions(system_temp)
         folder = system_temp / f"cairnmind-{os.getuid()}" / "ui-0123456789abcdef"
         folder.mkdir(parents=True)
         server = socket.socket(socket.AF_UNIX)
@@ -256,11 +276,9 @@ def test_an_upgrade_finds_a_workspace_in_the_macos_socket_folder(tmp_path):
 def test_an_upgrade_without_tmux_counts_a_server_it_cannot_ask_as_live(tmp_path):
     import socket
     import tempfile
-    script = SCRIPT.read_text()
-    start = script.index("# --- what an installed version left running")
     system_temp = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp"))
     try:
-        functions = script[start:script.index("# --- end ---", start)]
+        functions = installer_functions(system_temp)
         folder = system_temp / f"cairnmind-ui-{os.getuid()}-0123456789abcdef"
         folder.mkdir()
         server = socket.socket(socket.AF_UNIX)
@@ -279,9 +297,7 @@ def test_an_upgrade_without_tmux_counts_a_server_it_cannot_ask_as_live(tmp_path)
 
 
 def test_the_mcp_server_check_and_the_upgrade_mark_run_on_the_bash_of_macos(tmp_path):
-    script = SCRIPT.read_text()
-    start = script.index("# --- what an installed version left running")
-    functions = script[start:script.index("# --- end ---", start)]
+    functions = installer_functions(tmp_path / "sockets")
     tool(tmp_path / "bin" / "ps", "[ \"$*\" = '-A -ww -o pid= -o args=' ] || exit 64\n"
          "echo '  501 /u/tools/cairnmind/bin/python /u/bin/cairnmind mcp --client external --project /p'\n"
          "echo '  502 /usr/bin/python3 other mcp --client external'\n"
@@ -308,11 +324,9 @@ def test_an_upgrade_without_tmux_does_not_count_a_socket_nothing_listens_on(tmp_
     """#287: with the installed version's Python a leftover socket is told from a live server by a connect."""
     import socket
     import tempfile
-    script = SCRIPT.read_text()
-    start = script.index("# --- what an installed version left running")
     system_temp = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp"))
     try:
-        functions = script[start:script.index("# --- end ---", start)]
+        functions = installer_functions(system_temp)
         bin_dir = tmp_path / "bin"  # `id` only: no tmux on PATH
         bin_dir.mkdir()
         (bin_dir / "id").symlink_to(shutil.which("id"))
@@ -345,11 +359,9 @@ def test_an_upgrade_without_tmux_does_not_count_a_socket_nothing_listens_on(tmp_
 def test_the_refusal_to_replace_a_running_workspace_shows_a_count_and_five_paths(tmp_path):
     import socket
     import tempfile
-    script = SCRIPT.read_text()
-    start = script.index("# --- what an installed version left running")
     system_temp = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp"))
     try:
-        functions = script[start:script.index("# --- end ---", start)]
+        functions = installer_functions(system_temp)
         bin_dir = tmp_path / "bin"  # a tmux that finds every server alive, and an installed command with no workspace
         tool(bin_dir / "tmux", "exit 0")
         tool(bin_dir / "cairnmind", 'if [ "$1 $2" = "workspace status" ]; then echo \'{"available": false}\'; fi')
@@ -382,12 +394,10 @@ def test_the_refusal_names_the_data_directory_of_each_socket_it_can_ask(tmp_path
     """#169: a person tells a real session from a leftover by its data directory. Bash builtins only, bash 3.2 syntax."""
     import socket
     import tempfile
-    script = SCRIPT.read_text()
-    start = script.index("# --- what an installed version left running")
     system_temp = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp"))
     try:
-        functions = script[start:script.index("# --- end ---", start)]
-        panes = tmp_path / "panes"
+        functions = installer_functions(system_temp)
+        panes =tmp_path / "panes"
         panes.mkdir()
         starts = {  # the first pane's start command of each server; tmux prints a shell string in double quotes
             "ui-0000000000000001": "\"'/usr/bin/python3' -I -m cairnmind.terminal_panels --kind sidebar --workspace-id default "
@@ -427,9 +437,7 @@ def test_the_refusal_names_the_data_directory_of_each_socket_it_can_ask(tmp_path
 
 
 def test_the_run_and_service_checks_and_a_failed_stop_run_on_the_bash_of_macos(tmp_path):
-    script = SCRIPT.read_text()
-    start = script.index("# --- what an installed version left running")
-    functions = script[start:script.index("# --- end ---", start)]
+    functions = installer_functions(tmp_path / "sockets")
     tool(tmp_path / "bin" / "ps", "[ \"$*\" = '-A -ww -o pid= -o args=' ] || exit 64\n"
          "echo '  601 /u/tools/cairnmind/bin/python /u/bin/cairnmind run demo claude'\n"
          "echo '  602 /u/tools/cairnmind/bin/python /u/bin/cairnmind check run unit'\n"
@@ -454,11 +462,9 @@ def test_a_socket_without_tmux_is_named_with_both_ways_out_and_nothing_is_remove
     #307: asking the installer to close the workspace does not change that: it could close nothing."""
     import socket
     import tempfile
-    script = SCRIPT.read_text()
-    start = script.index("# --- what an installed version left running")
     system_temp = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp"))
     try:
-        functions = script[start:script.index("# --- end ---", start)]
+        functions = installer_functions(system_temp)
         folder = system_temp / f"cairnmind-ui-{os.getuid()}-0123456789abcdef"
         folder.mkdir()
         server = socket.socket(socket.AF_UNIX)
@@ -484,9 +490,7 @@ def test_a_socket_without_tmux_is_named_with_both_ways_out_and_nothing_is_remove
 @pytest.mark.parametrize("arguments", ["", " /u/tools/cairnmind/bin/python"])
 def test_stop_installed_says_it_could_not_look_for_mcp_servers_without_a_python_or_a_ps(tmp_path, arguments):
     """No third argument, or no ps on the PATH: one note, never a claim that none is open, and the stop goes on (#298)."""
-    script = SCRIPT.read_text()
-    start = script.index("# --- what an installed version left running")
-    functions = script[start:script.index("# --- end ---", start)]
+    functions = installer_functions(tmp_path / "sockets")
     bin_dir = tmp_path / "bin"  # `id` only: no tmux, no ps
     bin_dir.mkdir()
     (bin_dir / "id").symlink_to(shutil.which("id"))
@@ -539,9 +543,7 @@ def test_without_java_and_without_docker_both_ways_and_run_again_are_named(mac):
 
 
 def test_the_installer_says_it_stopped_the_service(tmp_path):
-    script = SCRIPT.read_text()
-    start = script.index("# --- what an installed version left running")
-    functions = script[start:script.index("# --- end ---", start)]
+    functions = installer_functions(tmp_path / "sockets")
     bin_dir = tmp_path / "bin"  # `id` only: nothing else is on PATH, so the lines are shell builtins
     bin_dir.mkdir()
     (bin_dir / "id").symlink_to(shutil.which("id"))
