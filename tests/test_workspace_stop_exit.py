@@ -33,10 +33,13 @@ def _attached(workspace):
     def drain():  # a terminal nobody reads blocks the tmux client
         while True:
             try:
-                if not os.read(master, 65536):
+                chunk = os.read(master, 65536)
+                if not chunk:
                     return
+                process.captured += chunk
             except OSError:
                 return
+    process.captured = bytearray()
     threading.Thread(target=drain, daemon=True).start()
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline and process.poll() is None and not workspace.clients():
@@ -80,6 +83,20 @@ def test_stop_asked_for_by_the_person_ends_the_attached_process_with_zero(manage
         code = process.wait(timeout=8)
         # Killed from outside, tmux reports that the server exited unexpectedly: a failure, not zero.
         assert (code == 0) is (expected == 0), code
+        # #169: a stop the person asked for is said in one sentence after tmux's own "server exited".
+        # The slave stays open, so the reader never sees EOF: wait for the sentence, or for the output to stop growing.
+        def said_now():
+            return " ".join(bytes(process.captured).decode(errors="replace").split())
+        deadline, size, still = time.monotonic() + 5, -1, 0
+        while time.monotonic() < deadline:
+            if by_person and module.STOPPED_ON_PURPOSE in said_now():
+                break
+            still = still + 1 if len(process.captured) == size else 0
+            if not by_person and still >= 6:
+                break
+            size = len(process.captured)
+            time.sleep(.05)
+        assert (module.STOPPED_ON_PURPOSE in said_now()) is by_person
     finally:
         if process.poll() is None:
             process.kill()

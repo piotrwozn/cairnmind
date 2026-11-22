@@ -378,3 +378,9 @@ async def test_command_menu_descriptions_wrap_instead_of_being_cut_at_80x24(tmp_
             for _ in range(3):
                 await pilot.pause()
             assert table.cursor_row == target
+
+def test_the_palette_says_run_next_stage_only_moves_to_the_button():  # #169
+    from cairnmind.terminal_commands import COMMANDS
+    english = next(row[1] for row in COMMANDS if row[3] == "next_stage")
+    assert "move to its Run next stage button" in english
+    assert tr(english, "pl") != english
