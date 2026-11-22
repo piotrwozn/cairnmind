@@ -1587,16 +1587,15 @@ def poll_imports(store) -> dict:
         if secrets_readable and key in _POLLED and _at_end(Path(row["path"]), row):
             continue
         try:
-            was_at_end = _at_end(Path(row["path"]), row)
             item = import_history(store, Path(row["path"]), row["project_id"], row["client"])
             for name, value in item.items():
                 if name == "errors":
                     result[name].extend(value)
                 elif name in result:
                     result[name] += value
-            # Remembered only when the file stood at its end before the import and the import changed and
-            # reported nothing: a line appended meanwhile is archived (or errors) and so is not remembered.
-            if was_at_end and not (item["archived"] or item["inbox"] or item["repaired"] or item["errors"]):
+            # Remembered only when the import changed and reported nothing; a line appended after the look
+            # makes _at_end false at the next skip check.
+            if not (item["archived"] or item["inbox"] or item["repaired"] or item["errors"]):
                 _POLLED.add(key)
             else:
                 _POLLED.discard(key)
