@@ -80,3 +80,16 @@ def test_impact_verdict_and_release_commands_are_refused_in_a_person_terminal(
     result = CliRunner().invoke(app, ["--data-dir", str(tmp_path / "memory"), *arguments])
     assert result.exit_code == 2 and sentence in words(result.output), result.output
     assert "inspector of the workspace" in words(result.output)
+def test_the_command_line_refusals_name_team_memory():
+    from cairnmind import person_proof
+    for sentence in (confirmation.replaces_refusal(["fact/x.md"]), confirmation.REPLACES_NOTE,
+                     person_proof.IMPORT_REPLACE):
+        assert "Team memory" in sentence and "memory view of the workspace" in sentence, sentence
+        assert "cannot replace" not in sentence and "yet" not in sentence.split(), sentence
+    environment = {"COLUMNS": "200"}
+    for command, named in ((["memory", "import-published"], "Team memory"), (["memory", "import-commit"], "Team memory"),
+                           (["memory", "import"], "Import in the memory view")):
+        output = words(CliRunner().invoke(app, [*command, "--help"], env=environment).output)
+        assert named in output and "cannot" not in output.split("--replace-confirmed")[1][:300], (command, output)
+    assert "Team memory" in words(CliRunner().invoke(app, ["memory", "import-published", "--help"],
+                                                     env=environment).output).split("--take-published")[1][:300]

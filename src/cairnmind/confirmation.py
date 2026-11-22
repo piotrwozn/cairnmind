@@ -234,7 +234,8 @@ def kept_verdict(head) -> bool:
 
 
 REPLACES_NOTE = ("these records were confirmed or disputed on this machine and the import puts another text or "
-                 "status in their place; a person applies it in the memory view of the workspace, never the command line")
+                 "status in their place; a person applies it in the memory view of the workspace (Import for an "
+                 "archive, Team memory for a published folder or a commit), never the command line")
 
 
 IMPORT_IN_SESSION = ("A memory import is run only by a person, not inside a coding session: it can bring records "
@@ -250,8 +251,8 @@ def replaces_refusal(names) -> str:
     return (f"This import would replace {len(names)} record(s) that were confirmed or disputed on this machine: "
             + ", ".join(str(name) for name in names[:50]) + (" and more" if len(names) > 50 else "")
             + ". Nothing was imported. Read them in the dry run. If the imported side is the one "
-              "to keep, a person imports an archive in the memory view of the workspace; a published directory or a "
-              "commit cannot replace them yet.")
+              "to keep, a person imports it in the memory view of the workspace (`cairnmind`): Import for an "
+              "archive, Team memory for a published folder or a commit.")
 
 
 def person_mark(route, source, version, at) -> dict:

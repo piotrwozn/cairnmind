@@ -249,8 +249,8 @@ BROKER_MESSAGES = {
         "którym działa tmux (`cairnmind stop`, potem `cairnmind`).",
     IMPORT_REPLACE:
         "Zastąpienie tego, co osoba potwierdziła lub zakwestionowała na tym komputerze, wymaga środowiska osoby, a "
-        "ten import z niego nie pochodzi. Niczego nie zaimportowano. Zaimportuj pakiet z widoku pamięci w "
-        "środowisku (`cairnmind`); katalog publikacji ani commit nie mogą jeszcze zastąpić takich ustaleń.",
+        "ten import z niego nie pochodzi. Niczego nie zaimportowano. Zaimportuj go w widoku pamięci w środowisku "
+        "(`cairnmind`): Import dla archiwum, Pamięć zespołu dla katalogu publikacji albo commita.",
     REPLACED_CHANGED:
         "To, co ten import zastępuje spośród rekordów potwierdzonych lub zakwestionowanych na tym komputerze, zmieniło "
         "się od sprawdzenia. Niczego nie zaimportowano. Sprawdź import ponownie i przeczytaj nową listę.",

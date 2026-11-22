@@ -52,8 +52,8 @@ TMUX_MISSING = (
     "(`cairnmind stop`, then `cairnmind`).")
 IMPORT_REPLACE = (
     "Replacing what a person confirmed or disputed on this machine needs the person's workspace, and this import did "
-    "not come from it. Nothing was imported. Import the package from the memory view of the workspace "
-    "(`cairnmind`); a published directory or a commit cannot replace such records yet.")
+    "not come from it. Nothing was imported. Import it in the memory view of the workspace (`cairnmind`): "
+    "Import for an archive, Team memory for a published folder or a commit.")
 
 
 class PersonProofRefused(Exception):
