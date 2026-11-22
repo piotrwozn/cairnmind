@@ -174,6 +174,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The upgrade check reads a process's command line again before calling an upgrade mark stale, so a living process that cannot be read once is not called finished (#348).
 - A workspace stop that arrives while the terminal is still attaching ends the attached terminal with exit code 0, instead of sometimes 1 (#343).
 - A session that ended cleanly is no longer recorded as failed, and its pane no longer misses the Session ended line, when tmux 3.4 misses the exit of its client (#349).
+- When the view cannot be reloaded after a review, plan confirmation, conflict decision or team memory import that was saved, the workspace says the act was saved and that the view could not be reloaded, instead of saying it was not saved or may have been (#359).
+- The sidebar's memory import says the memory was imported when only the refresh afterwards failed, and tells a refused or unclear import as not done or maybe done; accepting or withdrawing a transcript record kind does the same for a refused or unclear request; an unclear impact verdict no longer says the list was reloaded when its reload failed (#359).
 
 ### Development and CI
 
