@@ -24,8 +24,8 @@ from .terminal_safe import safe_text
 REPORT_KEYS = frozenset({"environment_notes", "data_dir", "store_writer"})
 
 
-def _line(text: object) -> str:
-    return safe_text(" ".join(str(text).split()), limit=300)
+def _line(text: object, limit: int = 300) -> str:
+    return safe_text(" ".join(str(text).split()), limit=limit)
 
 
 def _address(url: object) -> str:
@@ -93,7 +93,7 @@ def attention(report: dict) -> list[str]:
     if knowledge and knowledge != KNOWLEDGE_DISABLED:
         lines.append(_line(knowledge))  # a stored value that is neither enabled nor disabled
     ollama = report.get("ollama") or {}
-    ollama_down = ollama.get("available") is False
+    ollama_down = ollama.get("available") is False and not ollama.get("refused")  # refused: nothing was asked
     if knowledge == KNOWLEDGE_DISABLED:
         pass  # no models are configured, which init said and how to get them: not a fault (#274)
     elif ollama_down:
@@ -106,6 +106,11 @@ def attention(report: dict) -> list[str]:
         if knowledge == KNOWLEDGE_DISABLED:
             break
         if not isinstance(model, dict) or model.get("reachable") is not False:
+            continue
+        if model.get("refused"):  # the address was refused, not asked: the refusal says why, once for both roles
+            refusal = _line(model.get("error"), limit=600)
+            if refusal not in lines:
+                lines.append(refusal)
             continue
         if ollama_down and ollama.get("url") and _address(model.get("base_url")) == _address(ollama["url"]):
             continue  # the same server as the Ollama line above: one cause, one line

@@ -711,7 +711,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pipeline = await asyncio.to_thread(store.job_summary, pid)
         writer = await asyncio.to_thread(store.writer_state)
         from cairnmind.database_mode import address, describe
+        from cairnmind.topology import topology
+        # The service's own settings, loaded when it started; its model servers are not asked here, so the
+        # evaluation reads "not checked" (cairnmind doctor checks it).
         report = {**result, "writer": writer, "storage": {**describe(settings), "url": address(settings)},
+                  "topology": topology(settings, writer=writer),
                   "background": {**background_status, "inference": inference_status()}, "pipeline_jobs": pipeline,
                   "inference_queue": inference.queue.qsize(), "cached_answers": len(cache),
                   "recent_job_errors": error_rows}
@@ -737,7 +741,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 raise ValueError("Background processing requires a registered project worktree")
 
         await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id, authorize_enable)
-        return enable_background(pid)
+        from cairnmind.first_start import PROCESS_OFF, PROCESS_RESTART
+        notice = {} if models_on else {"notice": PROCESS_RESTART if knowledge_mode.restart_pending(settings) else PROCESS_OFF}
+        return {**enable_background(pid), **notice}  # the panel shows it
 
     def person_imports(body):
         """A memory import writes records that count as confirmed and can move on what a person confirmed

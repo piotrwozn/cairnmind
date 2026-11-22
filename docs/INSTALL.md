@@ -172,6 +172,8 @@ Models are optional. When `cairnmind init` finds no model server, or not both mo
 
 `cairnmind doctor` checks Python, Java, tmux, the engine, Ollama and the coding clients, read-only (no logins, downloads or model sessions), and exits 0. In a terminal it prints a summary: required and present, required and missing, optional and off (without tmux 3.4+ the terminal workspace, without models the local models), and the next step. `cairnmind doctor --json` prints the full report, which is also what a pipe, a file or a script gets; there, without tmux 3.4+ it has `cockpit: unavailable (tmux 3.4+ not found)`, and with no models `knowledge_agent: disabled (deterministic-only mode)`.
 
+`cairnmind setup` shows, in three lines, where storage runs (and whether this installation writes it), where each memory model runs, where memory text goes, whether the models were evaluated, and what runs on this machine; `--json` prints the structured form. It changes no setting of an initialized installation: it ends with the commands that do. Like every command, it first creates a missing `config.json` and saves a database address seen for the first time in `CAIRNMIND_ARCADE_CONNECT_URL`; an empty variable counts as unset. `cairnmind doctor` starts with the same lines as its `topology` key, and `cairnmind status` has it for the running service. A value that comes from a variable (`CAIRNMIND_ARCADE_CONNECT_URL`, `CAIRNMIND_OLLAMA_URL`, `CAIRNMIND_PORT`) names the variable; "config.json" in the report means "not from a variable".
+
 ## 6. Connect your coding assistants
 
 Install and sign in to the clients you want to use, in the same Ubuntu distribution, with their own installers:
@@ -240,6 +242,7 @@ This keeps your memory in the data directory that `cairnmind doctor` names ("Mem
 | --- | --- |
 | `cairnmind: command not found` | Add the directory printed by the installer to `PATH`, or run `uv tool update-shell` and open a new terminal. |
 | `Java 21+ is required` | `sudo apt install openjdk-21-jre-headless`, and check that `java -version` reports 21 or newer. On macOS: `brew install openjdk@21` and the `sudo ln -sfn` line of step 2; when the message names `JAVA_HOME`, that Java is too old: point `JAVA_HOME` at Java 21 or unset it. |
+| `Docker is on the path but did not answer` | No Java 21, and `docker` is installed but its daemon does not answer (Docker Desktop stopped, or its WSL integration off). Start Docker and run the installer again, or install Java 21 as above. |
 | `Java not found` or `macOS answers so when no JDK is installed` on macOS | No Java 21 is found. If Homebrew's `openjdk@21` is installed, the installer prints the `sudo ln -sfn ...` line that links it where macOS finds it. |
 | `Version 3.4+ is required` for tmux, or `The terminal workspace needs tmux 3.4 or newer` | Only the terminal workspace needs tmux 3.4+; `cairnmind serve`, `run`, `mcp` and `brief` work without it. Ubuntu 24.04 ships tmux 3.4. On older releases, upgrade Ubuntu or build tmux 3.4. On macOS: `brew upgrade tmux`. |
 | `Cannot reach Ollama` | Start `ollama serve`, then run `cairnmind models pull` again. |

@@ -266,7 +266,9 @@ def doctor(settings: Settings) -> dict[str, Any]:
     with httpx.Client(timeout=1.5, trust_env=False) as client:
         # Read-only diagnostics: never construct Store, create a database, start
         # Java or install/download an engine just to report its availability.
+        from .memory_models import RemoteServerRefused, local_server
         try:
+            local_server(settings)  # another computer is not asked without consent (#288)
             response = client.get(f"{settings.ollama_url.rstrip('/')}/api/tags")
             response.raise_for_status()
             models = response.json().get("models", [])
@@ -283,6 +285,8 @@ def doctor(settings: Settings) -> dict[str, Any]:
                     for model in running.json().get("models", [])]
             except (httpx.HTTPError, ValueError, AttributeError, TypeError):
                 pass
+        except RemoteServerRefused as exc:
+            result["ollama"].update(error=str(exc), refused=True)
         except (httpx.HTTPError, ValueError, AttributeError, TypeError) as exc:  # a reply of another shape
             result["ollama"]["error"] = type(exc).__name__
         # The address asked, so a reader of the report can tell a model server at the same address (#244).
@@ -806,7 +810,9 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
     prepared = _prepare_session(settings, project, client, root, args)
     if prepared.get("status") != "ready":
         unknowns = "; ".join(str(value) for value in prepared.get("unknowns", []))
-        raise ValueError(f"Verified resume is {prepared.get('status', 'unavailable')}; native launch blocked. {unknowns}")
+        # A partial packet carries a stable code the workspace maps to the record-kind hint (#246).
+        code = "resume_partial: " if prepared.get("status") == "partial" else ""
+        raise ValueError(f"{code}Verified resume is {prepared.get('status', 'unavailable')}; native launch blocked. {unknowns}")
     context_path = _packet_file(settings, prepared, project, client, root)
     packet = prepared["packet"]
     command = [binary]
@@ -832,7 +838,13 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
 
 def run_client(settings: Settings, project: dict[str, Any], client: str,
                args: list[str] | None = None) -> int:
-    launch = prepare_client_launch(settings, project, client, args)
+    try:
+        launch = prepare_client_launch(settings, project, client, args)
+    except ValueError as exc:
+        if not str(exc).startswith("resume_partial: "):
+            raise  # keeps subclasses such as StoreNotWriter, which the CLI tells apart
+        # The stable code is for the workspace (client_runtime); a person at the command line reads the sentence.
+        raise ValueError(str(exc).removeprefix("resume_partial: ")) from None
     root = Path(launch["cwd"])
     try:
         return subprocess.call(launch["command"], cwd=root, env=launch["env"])

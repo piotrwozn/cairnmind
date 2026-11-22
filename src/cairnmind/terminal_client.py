@@ -14,8 +14,12 @@ import httpx
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus
 
+from .service_token import foreign_service, foreign_service_text, refused_token
+
 
 class BrokerError(ValueError):
+    foreign = None  # {"url", "data_dir"} when the service refused this directory's token (service_token)
+
     def __init__(self, status_code, detail):
         self.status_code = status_code
         self.detail = detail
@@ -139,7 +143,16 @@ class BrokerClient:
                 if response.status_code == 401 and attempt == 0:
                     self._authenticate()
                     continue
-                return self._decode(response)
+                try:
+                    return self._decode(response)
+                except BrokerError as exc:
+                    # Only a service not started or matched by instance id here (ensure): after that match a 401 is
+                    # this directory's own service with a changed token, as in the command line.
+                    if self._allow_start or not refused_token(exc.status_code, exc.detail):
+                        raise
+                    error = BrokerError(401, foreign_service_text(self.settings))
+                    error.foreign = foreign_service(self.settings)
+                    raise error from None
 
     def _session(self, renew=False):
         with self._lock:

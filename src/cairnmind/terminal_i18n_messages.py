@@ -6,7 +6,9 @@ translated: text from a model, a provider or a source is never looked up here (s
 """
 from __future__ import annotations
 
+from .code_graph import CODE_GRAPH_NOT_BUILT
 from .first_start import ASK_NO_MATCH, ASK_OFF, GET_MODELS, MATCHES_HELD_BACK, MESSAGES as FIRST_START
+from .service_token import FOREIGN_SERVICE
 
 # Answers and gaps of the memory agent's /ask (agent.py, service.py).
 ASK_MESSAGES = {
@@ -47,6 +49,9 @@ ASK_MESSAGES = {
     "(memory_remote_classes).":
         "Część pamięci projektu nie została wysłana do zdalnego serwera modelu z powodu jej klasy "
         "wrażliwości (memory_remote_classes).",
+    CODE_GRAPH_NOT_BUILT:
+        "Graf kodu tego projektu nie jest jeszcze zbudowany: buduje go indeksowanie plików projektu, więc to, "
+        "co znaleziono o kodzie, może być puste lub niepełne.",
     "The answer has no verified citations.": "Odpowiedź nie zawiera zweryfikowanych cytowań.",
     "Could not check whether the quotes support the answer.":
         "Nie udało się sprawdzić, czy cytaty potwierdzają odpowiedź.",
@@ -197,6 +202,10 @@ BROKER_MESSAGES = {
     "The local broker is unavailable or needs a restart.":
         "Lokalny broker jest niedostępny lub wymaga ponownego uruchomienia.",
     "The local broker does not answer.": "Lokalny broker nie odpowiada.",
+    FOREIGN_SERVICE: (
+        "Usługa pod adresem {url} nie przyjmuje tokenu katalogu {data_dir}, więc najpewniej należy do innego "
+        "katalogu danych. Nadaj temu katalogowi danych własny port: `port` w {data_dir}/config.json albo "
+        "CAIRNMIND_PORT dla jednego polecenia."),
     "The local broker address is invalid.": "Niepoprawny adres lokalnego brokera.",
     "The local broker gave an invalid answer.": "Niepoprawna odpowiedź lokalnego brokera.",
     "The request was refused.": "Żądanie zostało odrzucone.",
@@ -310,6 +319,8 @@ STATE_MESSAGES = {
     "Invalid credential store.": "Niepoprawny magazyn poświadczeń.",
     "Unsupported credential store.": "Nieobsługiwany magazyn poświadczeń.",
     "The credential store exceeds its size limit.": "Magazyn poświadczeń przekroczył limit rozmiaru.",
+    "Project folder cannot be inside the data directory: Cairnmind never indexes it; choose a folder outside it":
+        "Folder projektu nie może leżeć w katalogu danych: Cairnmind go nie indeksuje; wybierz folder poza nim.",
     "Choose how the key is stored.": "Wybierz sposób przechowywania klucza.",
     "Invalid credential profile.": "Niepoprawny profil poświadczeń.",
     "Invalid credential reference.": "Niepoprawne odwołanie do poświadczeń.",
@@ -404,6 +415,8 @@ _BROKER_FIXED = frozenset(sentence for catalog in (BROKER_MESSAGES, STATE_MESSAG
 def broker_error_text(exc, translate) -> str:
     """One line for an error of the local broker, with its fixed detail in the panel's language."""
     detail, status = getattr(exc, "detail", None), getattr(exc, "status_code", None)
+    if isinstance(getattr(exc, "foreign", None), dict) and type(status) is int:
+        return f"Broker {status}: " + translate(FOREIGN_SERVICE).format(**exc.foreign)
     if isinstance(detail, str) and type(status) is int:
         text = " ".join(detail.split())
         return f"Broker {status}: " + (translate(text) if text in _BROKER_FIXED else text)

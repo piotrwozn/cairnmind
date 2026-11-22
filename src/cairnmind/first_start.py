@@ -53,6 +53,10 @@ NEEDS_MODELS = ("{command} needs the knowledge agent's models, and the knowledge
 KNOWLEDGE_INVALID = "knowledge_agent in config.json is {value}; it must be enabled or disabled."
 RESTART_FOR_MODELS = ("knowledge_agent is enabled in config.json, but this service started without models. Restart "
                       "the knowledge service (cairnmind stop, then start Cairnmind again) so that it uses them.")
+MODE_HEADING = "Deterministic-only mode (no models)"
+# Short on purpose: the sidebar shows this on a 24-column line of at most 5 rows, so the command must fit (#294).
+PROCESS_OFF = "No models configured. Run `cairnmind models pull` to process memory."
+PROCESS_RESTART = "Models are enabled. Restart the service (`cairnmind stop`, then start) to use them."
 
 CLIENT_NAMES = {"codex": "Codex", "claude": "Claude Code"}  # as the first start's sentences call the clients
 
@@ -295,7 +299,10 @@ MESSAGES = {
     ENGINE_EXITED: ("ArcadeDB zakończył działanie podczas startu. Zobacz {log}. Zwykle przyczyną jest zajęty port "
                     "({url}) albo za mało pamięci; po usunięciu przyczyny uruchom cairnmind engine start."),
     ENGINE_TIMED_OUT: "Start ArcadeDB przekroczył limit czasu. Zobacz {log}. Po usunięciu przyczyny uruchom cairnmind engine start.",
+    MODE_HEADING: "Tryb tylko deterministyczny (brak modeli)",
 }
+MESSAGES[PROCESS_OFF] = "Brak modeli. Uruchom `cairnmind models pull`, aby przetwarzać pamięć."
+MESSAGES[PROCESS_RESTART] = "Modele włączone. Zrestartuj usługę (`cairnmind stop`, potem start), by ich użyła."
 
 
 def _version(found: dict) -> str:

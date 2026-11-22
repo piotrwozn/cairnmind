@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -58,7 +59,8 @@ def mac(tmp_path):
 
     tool(bin_dir / "tmux", "echo 'tmux 3.5a'")
     tool(bin_dir / "uv", "exit 0")
-    os.symlink(shutil.which("tr"), bin_dir / "tr")
+    for name in ("tr", "mktemp", "sleep", "rm"):  # what the Docker question uses
+        os.symlink(shutil.which(name), bin_dir / name)
 
     def run(show_flag=False, pull_models=False, **environment):
         write()
@@ -347,6 +349,36 @@ def test_the_refusal_to_replace_a_running_workspace_shows_a_count_and_five_paths
         shutil.rmtree(system_temp, ignore_errors=True)
 
 
+def test_a_socket_without_tmux_is_named_with_both_ways_out_and_nothing_is_removed(tmp_path):
+    """#290: `workspace stop --clients` cannot reach a server without a tmux client, so it is not the advice."""
+    import socket
+    import tempfile
+    script = SCRIPT.read_text()
+    start = script.index("# --- what an installed version left running")
+    system_temp = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp"))
+    try:
+        functions = script[start:script.index("# --- end ---", start)]
+        folder = system_temp / f"cairnmind-ui-{os.getuid()}-0123456789abcdef"
+        folder.mkdir()
+        server = socket.socket(socket.AF_UNIX)
+        server.bind(str(folder / "tmux.sock"))
+        bin_dir = tmp_path / "bin"  # `id` only: no tmux on PATH
+        bin_dir.mkdir()
+        (bin_dir / "id").symlink_to(shutil.which("id"))
+        installed = tool(tmp_path / "cairnmind", "exit 1")
+        result = subprocess.run([BASH, "-c", f"set -euo pipefail\n{functions}\nstop_installed {installed} cairnmind"],
+                                env={"PATH": str(bin_dir), "TMPDIR": str(system_temp)},
+                                capture_output=True, text=True, timeout=30)
+        server.close()
+        assert result.returncode == 1
+        assert str(folder / "tmux.sock") in result.stderr
+        assert "tmux is not on the PATH here" in result.stderr and "Install tmux" in result.stderr
+        assert "remove each socket file" in result.stderr and "workspace stop" not in result.stderr
+        assert (folder / "tmux.sock").exists()
+    finally:
+        shutil.rmtree(system_temp, ignore_errors=True)
+
+
 # --- Linux: what it printed before stays as it was -----------------------------------------------------------------
 
 @pytest.mark.parametrize("release,short,line", [
@@ -399,17 +431,74 @@ def test_the_installer_runs_the_engine_in_docker_when_java_is_missing_and_docker
     result = run(show_flag=True)
     assert result.returncode == 0 and "Docker" not in result.stdout + result.stderr
     assert "engine_in_docker=false" in result.stdout
-    # A Docker that does not answer changes nothing: the Java message is the end.
+    # A Docker that does not answer is not an engine: the Java message stays and names both ways (#285).
     (bin_dir / "java").unlink()
-    tool(bin_dir / "docker", "echo 'Cannot connect to the Docker daemon' >&2; exit 1")
+    # Like docker/cli: an empty line on stdout, then the error on stderr. Like the Docker Desktop stub in WSL: a bare echo first.
+    tool(bin_dir / "docker", "echo; echo 'Cannot connect to the Docker daemon' >&2; echo second line >&2; exit 1")
     result = run()
     assert result.returncode == 1 and "Docker" not in result.stdout and "passed" not in result.stdout
-    assert result.stderr == f"Java not found. Install Java 21+: {hint}\n"
+    assert result.stderr == (f"Java not found. Install Java 21+: {hint}\n"
+                             "Docker is on the path but did not answer (it said: Cannot connect to the Docker daemon). "
+                             f"Either start Docker and run the installer again, so the engine runs in Docker, "
+                             f"or install Java 21+: {hint}\n")
+    tool(bin_dir / "docker", "echo; echo 'The command docker could not be found in this WSL 2 distro.'; exit 1")
+    result = run()
+    assert "(it said: The command docker could not be found in this WSL 2 distro.)" in result.stderr
+    # No docker on the path: exactly the old message.
+    (bin_dir / "docker").unlink()
+    result = run()
+    assert result.returncode == 1 and result.stderr == f"Java not found. Install Java 21+: {hint}\n"
     # With Docker, the install branch runs init and does not download an engine.
     script = SCRIPT.read_text()
-    branch = script.index('elif [[ "$engine_in_docker" == true ]]; then')
+    branch = script.index('elif [[ "$engine_in_docker" == true || "$(stored_engine_mode)" == docker ]]; then')
     body = script[branch:script.index("\nelse\n", branch)]
     assert '"$cairnmind_bin" init' in body and "engine install" not in body
+
+
+def test_a_docker_that_does_not_answer_does_not_hold_the_installer(mac):
+    """#290: the question to Docker is bounded in the shell (no timeout command on macOS); bash 3.2 runs it too."""
+    run, state, bin_dir, tmp_path = mac
+    state.update(system="Linux")
+    hint = "sudo apt install openjdk-21-jre-headless"
+    tool(bin_dir / "docker", "trap '' TERM; exec sleep 60")  # ignores SIGTERM: only SIGKILL ends it
+    started = time.monotonic()
+    result = run(TMPDIR=str(tmp_path))
+    assert time.monotonic() - started < 15
+    assert result.returncode == 1 and "passed" not in result.stdout
+    assert result.stderr == (f"Java not found. Install Java 21+: {hint}\n"
+                             "Docker is on the path but did not answer (it said: no answer within 5 seconds). "
+                             f"Either start Docker and run the installer again, so the engine runs in Docker, "
+                             f"or install Java 21+: {hint}\n")
+    assert list(tmp_path.glob("cairnmind-docker.*")) == []  # the answer file is removed too
+
+
+def test_a_stored_docker_mode_is_read_from_the_installed_version(tmp_path, monkeypatch):
+    """#290: with engine_mode docker stored the installer takes the Docker branch, so no engine archive is downloaded."""
+    script = SCRIPT.read_text()
+    start = script.index("stored_engine_mode() {")
+    function = script[start:script.index("\n}\n", start) + 3]
+    tool_dir = tmp_path / "uvtool"
+    python = tool(tool_dir / "cairnmind" / "bin" / "python", f'exec "{sys.executable}" "$@"')
+    uv = tool(tmp_path / "bin" / "uv", f'echo "{tool_dir}"')
+
+    def stored(config: str | None) -> str:
+        home = tmp_path / "home"
+        shutil.rmtree(home, ignore_errors=True)
+        home.mkdir()
+        if config is not None:
+            (home / "config.json").write_text(config)
+        result = subprocess.run(
+            [BASH, "-c", "set -euo pipefail\n" + function + '\nstored_engine_mode'],
+            env={**os.environ, "PATH": f"{uv.parent}:{os.environ['PATH']}", "CAIRNMIND_HOME": str(home)},
+            capture_output=True, text=True, timeout=60)
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip()
+
+    assert python.exists()
+    assert stored('{"engine_mode": "docker"}') == "docker"
+    assert stored('{"engine_mode": "native"}') == "native"
+    assert stored(None) == "native"  # no stored mode: as before
+    assert stored('{"engine_mode": "banana"}') == ""  # unreadable: as before, init names the problem
 
 
 def test_on_linux_java_home_does_not_replace_the_java_on_path(mac):
@@ -453,7 +542,7 @@ def test_the_macos_guide_says_what_the_script_does():
     # Every message the troubleshooting table quotes is one the script prints.
     table = guide[guide.index("## Troubleshooting"):]
     for message in ("Java not found", "macOS answers so when no JDK is installed", "Version 3.4+ is required",
-                    "Java 21+ is required"):
+                    "Java 21+ is required", "Docker is on the path but did not answer"):
         assert message in table and message in script, message
 
 
