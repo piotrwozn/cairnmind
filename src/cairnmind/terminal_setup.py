@@ -44,10 +44,12 @@ MODELS_HOME = ("A memory model on another computer moves to the Ollama on this c
 REMOTE_DB_HEAD = ("A database this installation only connects to, and the memory models on this computer "
                   "(remote-db):")
 REMOTE_DB = (
-    "Storage moves to the ArcadeDB at DB_URL, which this installation then only connects to. The command tests that "
+    "This installation switches to the ArcadeDB at DB_URL, which it then only connects to. The command tests that "
     "it answers with a supported version and that USER signs in to DATABASE with the password in PASSWORD_FILE, a "
     "private file (mode 0600) you created; only the file's path is saved. It reads which installation writes that "
-    "store and never takes it over. The store used before is left as it is, with its data; the command names it.")
+    "store and never takes it over. The store used before is left as it is, with its data; the command names it. "
+    "Its data is not copied to the new store: run `cairnmind backup FILE` before the command, and `cairnmind init` "
+    "and `cairnmind restore FILE` after it.")
 OPTIONAL_DB = (
     "Optional: --ca-file CA_FILE checks the server's certificate against a private certificate authority; "
     "--admin-password-file ADMIN_PASSWORD_FILE, a private file with the server's root password, makes --yes create "
@@ -65,8 +67,10 @@ OPTIONAL_KEY = ("Optional: --credential-ref env:NAME or --credential-ref profile
                 "kept; the key itself is never typed here, shown or saved.")
 UNREADABLE = ("The knowledge service did not say where storage and the models run, so nothing is shown here; "
               "`cairnmind doctor` in a terminal shows it.")
+NO_ANSWER = "Nothing is shown here; `cairnmind doctor` in a terminal shows where storage and the models run."
 
 MESSAGES = {
+    NO_ANSWER: "Nic tu nie jest pokazane; `cairnmind doctor` w terminalu pokazuje, gdzie działają baza i modele.",
     TITLE: "Baza i modele",
     NOW: "Gdzie działają baza i modele pamięci, według ustawień, które działająca usługa wiedzy wczytała przy "
          "starcie:",
@@ -98,11 +102,13 @@ MESSAGES = {
                  "wydania dla swojej roli, gdy test pokaże, że ta Ollama go udostępnia; serwer modeli, którego "
                  "przestaje używać, zostaje bez zmian. Wyłączony agent wiedzy pozostaje wyłączony.",
     REMOTE_DB_HEAD: "Baza, z którą ta instalacja tylko się łączy, i modele pamięci na tym komputerze (remote-db):",
-    REMOTE_DB: "Baza przenosi się do ArcadeDB pod adresem DB_URL, z którą ta instalacja odtąd tylko się łączy. "
+    REMOTE_DB: "Instalacja przełącza się na ArcadeDB pod adresem DB_URL, z którą odtąd tylko się łączy. "
                "Polecenie sprawdza, że odpowiada ona w obsługiwanej wersji i że USER loguje się do DATABASE hasłem "
                "z PASSWORD_FILE, prywatnego pliku (tryb 0600), który utworzyłeś; zapisywana jest tylko ścieżka do "
                "pliku. Odczytuje, która instalacja zapisuje tę bazę, i nigdy jej nie przejmuje. Poprzednio używana "
-               "baza zostaje bez zmian, z danymi; polecenie ją wymienia.",
+               "baza zostaje bez zmian, z danymi; polecenie ją wymienia. Jej dane nie są kopiowane do nowej bazy: "
+               "uruchom `cairnmind backup FILE` przed poleceniem, a `cairnmind init` i `cairnmind restore FILE` po "
+               "nim.",
     OPTIONAL_DB: "Opcjonalnie: --ca-file CA_FILE sprawdza certyfikat serwera względem prywatnego urzędu "
                  "certyfikacji; --admin-password-file ADMIN_PASSWORD_FILE, prywatny plik z hasłem roota serwera, "
                  "sprawia, że --yes najpierw tworzy użytkownika i bazę, tak jak `cairnmind db create-user`, i "
@@ -160,7 +166,8 @@ def describe(status, language: str) -> str:
         if not isinstance(place, dict) or place["storage"]["mode"] not in ("managed", "connect"):
             raise ValueError
         three = topology.lines(place, language)
-        marks = topology.status_words(place)
+        # the status row is computed without the writer role, so its Storage mark never carries that problem
+        marks = topology.status_words({**place, "storage": {k: v for k, v in place["storage"].items() if k != "writer"}})
         connect = place["storage"]["mode"] == "connect"
         url = safe_text(place["storage"]["url"], limit=200)
     except (KeyError, TypeError, AttributeError, ValueError, IndexError):
@@ -190,6 +197,12 @@ def describe(status, language: str) -> str:
 
 async def open_view(app) -> None:
     """Read the running service's topology and show it; one GET, nothing written."""
+    from .terminal_client import BrokerError
+    from .terminal_i18n import tr
     from .terminal_ui import MessageModal
-    status = await app.request("GET", "/api/status")
-    await app.push_screen_wait(MessageModal(TITLE, describe(status, getattr(app, "language", "en"))))
+    language = getattr(app, "language", "en")
+    try:
+        status = await app.request("GET", "/api/status")
+    except BrokerError as exc:  # /status reads the store too: when it fails, the service's reason is named, not replaced
+        raise BrokerError(exc.status_code, f"{exc.detail} {tr(NO_ANSWER, language)}") from exc
+    await app.push_screen_wait(MessageModal(TITLE, describe(status, language)))

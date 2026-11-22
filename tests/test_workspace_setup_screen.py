@@ -15,9 +15,10 @@ import typer.main
 from textual.widgets import Button, Static
 
 from cairnmind import cli, setup_profiles, terminal_setup, topology as topology_module
+from cairnmind.config import Settings
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_setup import (
-    CHIP_PROBLEM, CHIPS, HOW, KEEP_OPEN, LOADED, LOCAL_BACK, MESSAGES, OPTIONAL_KEY, PLACEHOLDERS_OF, UNREADABLE,
+    CHIP_PROBLEM, CHIPS, HOW, KEEP_OPEN, LOADED, LOCAL_BACK, MESSAGES, NO_ANSWER, OPTIONAL_KEY, PLACEHOLDERS_OF, UNREADABLE,
     commands, describe, shown)
 from cairnmind.terminal_safe import safe_text
 from cairnmind.topology import lines, topology
@@ -117,9 +118,20 @@ def test_the_screen_names_what_the_marks_abbreviate(tmp_path, monkeypatch):
     assert tr(CHIP_PROBLEM, "en", marks="Models") in words(make(sub(tmp_path, "m"), memory_chat={"provider": "x"}))
 
 
-def test_the_screen_says_it_shows_what_the_service_loaded(tmp_path):
+def test_the_status_row_mark_ignores_the_writer_problem(tmp_path):
+    # the real row is computed without the writer role, so the screen must not promise a problem colour there
+    contradicted = {"role": "writer", "problem": "the journal head names another installation"}
+    text = describe(served(make(tmp_path), contradicted), "en")
+    assert CHIP_PROBLEM.split("{")[0] not in text and contradicted["problem"] in plain_words(text)
+
+
+def test_the_screen_says_it_shows_what_the_service_loaded(tmp_path, monkeypatch):
     status = served(make(sub(tmp_path, "a"), chat_model="served:1"))
     make(tmp_path / "a", chat_model="on-disk:2")  # config.json changed after the service started
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("describe read settings")
+    monkeypatch.setattr(Settings, "load", forbidden)
     text = describe(status, "en")
     assert "served:1" in text and LOADED in text and "on-disk:2" not in text
 
@@ -140,6 +152,13 @@ COMMANDS = {
 def has_block(text, block):
     rows = text.split("\n")
     return any(rows[at:at + len(block)] == block for at in range(len(rows)))
+
+
+def test_remote_db_says_the_data_is_not_copied(tmp_path):
+    for language in ("en", "pl"):
+        text = plain_words(describe(served(make(tmp_path)), language))
+        assert plain_words(tr(terminal_setup.REMOTE_DB, language)) in text
+        assert "cairnmind backup FILE" in text and "cairnmind restore FILE" in text
 
 
 def test_each_profile_names_its_exact_command(tmp_path, monkeypatch):
@@ -277,6 +296,8 @@ async def choose_the_entry(app, pilot):
     app.action_settings()
     await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
     assert app.screen.choices[-1][1] == "topology" and len(app.screen.choices) == 5
+    if getattr(app, "language", "en") == "pl":
+        assert "Baza i modele" in screen_text(app)
     await pilot.press("down", "down", "down", "down", "enter")
 
 
@@ -296,6 +317,8 @@ async def test_settings_opens_the_screen_with_one_read(tmp_path, monkeypatch, la
         await wait_until(pilot, lambda: isinstance(app.screen, MessageModal))
         assert app.screen.heading == "Storage and models"
         await pilot.pause()
+        if language == "pl":
+            assert tr(terminal_setup.TITLE, "pl") == "Baza i modele" and "Baza i modele" in screen_text(app)
         assert plain_words(lines(status["topology"], language)[0])[:30] in plain_words(screen_text(app))
         await pilot.press("escape")
         await wait_until(pilot, lambda: not isinstance(app.screen, MessageModal))
@@ -318,6 +341,10 @@ async def test_the_screen_fits_and_scrolls_at_80_by_24(tmp_path, monkeypatch):
         await pilot.pause()
         assert body.scroll_y == body.max_scroll_y and plain_words(OPTIONAL_KEY).endswith("or saved.")
         assert "or saved." in screen_text(app)  # the last words of the last paragraph; the rows are wrapped inside the frame
+        for page in range(body.max_scroll_y + 1):  # nothing is cut: no rendered row of the body ends in an ellipsis
+            body.scroll_to(y=page, animate=False)
+            await pilot.pause()
+            assert not any("…" in row for row in screen_text(app).split("\n")), page
 
 
 @pytest.mark.asyncio
@@ -330,6 +357,7 @@ async def test_a_service_that_does_not_answer_is_said_and_nothing_is_shown(tmp_p
         await choose_the_entry(app, pilot)
         await wait_until(pilot, lambda: "running sessions are kept" in notice_of(app) or "sesje" in notice_of(app))
         assert not isinstance(app.screen, MessageModal)
+        assert tr(NO_ANSWER, language)[:30] in notice_of(app)  # and where to look instead
         broker.refuse = None  # an answer of another shape
         await choose_the_entry(app, pilot)
         await wait_until(pilot, lambda: tr(UNREADABLE, language)[:40] in notice_of(app))
