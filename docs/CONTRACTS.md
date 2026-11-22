@@ -96,9 +96,12 @@ write as before. In every other case the answer is what it was: the stored packe
 status, kind, key and source ids, the store's `origin_*` mark, `supersedes`, `possible_conflicts` and the
 supersede warning where present, and `metadata_not_stored_as_sent`: the keys of the metadata the client sent
 (for a checkpoint, its state) that the stored version does not hold with the same value; `metadata_dropped`: the
-keys the write removed from the stored metadata (reported proof, criteria links); and `omitted_source_ids`: how many
-source ids beyond the last eight are not listed. The routes still return the whole stored record (with
-`metadata_dropped` when the write removed keys).
+keys the version before held that this version does not (the store removes some by itself: reported proof, criteria
+links, an external checkpoint's fields); and `omitted_source_ids`: how many source ids beyond the last eight are not
+listed. The routes still return the whole stored record, exactly as `Store.remember` returns it. Only with
+`"name_dropped": true`, which only the MCP bridge sends, do `POST /remember` and `POST /checkpoint` add
+`metadata_dropped` to a copy of that record, read from the immutable revision before it; nothing stored, compared
+or hashed (record and plan revisions, plan requests, snapshots) holds it.
 
 A captured transcript horizon is complete only when every line in it is an archived record the reader
 understood. A line stored as `transcript_unknown` keeps the packet partial, with one exception (#210): a
