@@ -10,7 +10,7 @@ This page is kept out of the copy that the evaluation indexes (see [../EVALUATIO
 
 ## The default chat model through the native path and through Ollama's `/v1` (issue #217)
 
-**NOT MEASURED YET.** Nothing below is a result. The figures need about one hour on the machine with the models: `scripts/compare_model_paths.sh` runs `cairnmind eval run` and `cairnmind eval repository` three times each on the native path, then the same through `/v1` for the chat role only (`--reasoning-effort none`, a second `ollama serve` whose context length is 16,384, because Cairnmind sends no `num_ctx` there), in a throwaway data directory with its own ports.
+**NOT MEASURED YET** for the two paths (the reason is below the table); the model check without `--reasoning-effort` is measured (also below). Nothing in the table is a result. The figures need about one hour on the machine with the models: `scripts/compare_model_paths.sh` runs `cairnmind eval run` and `cairnmind eval repository` three times each on the native path, then the same through `/v1` for the chat role only (`--reasoning-effort none`, a second `ollama serve` whose context length is 16,384, because Cairnmind sends no `num_ctx` there), in a throwaway data directory with its own ports.
 
 | Path | Run | `eval run` right of 20 | `eval repository` right, complete and wrong | Model calls | Seconds | Calls cut at the length limit | Highest prompt tokens |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -19,7 +19,11 @@ This page is kept out of the copy that the evaluation indexes (see [../EVALUATIO
 
 The last two columns hold the `eval run` runs only: the `eval repository` report keeps no per-call length reason or prompt tokens, so they stay empty for it.
 
-What differed between the paths is to be written here after the run. Also to be recorded: whether the model check of `cairnmind models set --role chat --provider openai_compatible` without `--reasoning-effort` ends at the length limit on the real server.
+What differed between the paths is to be written here after the run.
+
+**Why the table is still empty (22 November 2026).** On the machine of the measurements the only model server is the owner's Ollama (0.40.14, port 11434), cleared for inference only. Its `/v1` loads `qwen3.5:9b` with a context of 4,096 tokens (one request through `/v1`, then `/api/ps`; the embedding model also runs at 4,096 there), so a `/v1` series against it would measure a context a quarter of the native 16,384, not the path, which is what the script's own header warns against. The second `ollama serve` with `OLLAMA_CONTEXT_LENGTH=16384` that the script needs was not started, because starting a model server is outside that clearance. Neither series was run.
+
+**The model check without `--reasoning-effort` on the real server: it ends at the length limit.** Measured on 22 November 2026 on the code of main at 3ea6aa1, in a throwaway data directory, against the owner's Ollama `/v1` (`qwen3.5:9b`, digest 56671c2a…), on an NVIDIA RTX 4080 SUPER under WSL 2: `cairnmind models set --role chat --provider openai_compatible --base-url http://127.0.0.1:11434/v1 --model qwen3.5:9b` failed in 3 of 3 tries (exit 2, nothing saved) with "The chat model's reply to the test call ended at the length limit before the answer was complete, so it could not be read as JSON", naming `--reasoning-effort none` as the option to add; the same command with `--reasoning-effort none` passed the check (`structured_output: true`, identity `qwen3.5:9b@openai_compatible:9b514b1a65f6ebfa`). The chat role was set back to the local Ollama after each try. The server ran at its 4,096 context; the check's reply is cut by its own limit of 256 tokens (`memory_models.py`), far inside that context, so this result does not depend on the missing second server.
 
 ## Questions about things the project does not have (issue #245)
 
