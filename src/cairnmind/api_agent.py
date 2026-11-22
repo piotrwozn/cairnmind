@@ -18,6 +18,7 @@ from uuid import uuid4
 from jsonschema import Draft202012Validator
 
 from .agent_reads import ReadLedger, projected_read
+from .memory_egress import coding_held_classes, coding_read
 
 
 SYSTEM = """You are Cairnmind's programming agent. Answer in the user's language.
@@ -114,8 +115,12 @@ class AgentEngine:
         self.journal = journal if journal is not None else AgentJournal(settings, run["session_id"])
         if key and hasattr(self.journal, "add_secrets"):
             self.journal.add_secrets(key)
+        # What a hosted model must not read of memory (#183): read_source and memory_records are held below,
+        # ask and the resume packet by the service, which the memory client tells.
+        self._held = coding_held_classes(settings, run["client"], self.profile)
         self.memory = memory if memory is not None else AgentMemoryClient(
-            settings, run["project_id"], run["worktree"], run["session_id"], client=run["client"])
+            settings, run["project_id"], run["worktree"], run["session_id"], client=run["client"],
+            held=self._held)
         self._approve_callback = approve
         self.tools = tools if tools is not None else ToolExecutor(
             settings, run["worktree"], session_id=run["session_id"], run_id=run["id"],
@@ -558,6 +563,8 @@ class AgentEngine:
                 return self._error("resume_required", unknowns=[
                     "Read the complete ready packet using resume_context before its exact ACK."])
         result = await self.memory.execute(name, arguments)
+        if self._held and name in ("read_source", "memory_records"):
+            return coding_read(name, result, self._held, self.run["session_id"])
         if name == "resume_context":
             packet = result.get("packet") if isinstance(result, dict) else None
             # The service hands back the same packet while nothing changed, and its ACK stays valid; reading

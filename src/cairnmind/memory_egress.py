@@ -13,8 +13,12 @@ enforced at the three places where source text leaves for a memory model:
 - the context `ask` builds (agent.py, retrieval.py while ASK holds a Gate): its chunks, records, plans
   and sources are left out, and the answer's diagnostics count them (held_back).
 
-With the local Ollama of the settings nothing changes. Not gated here: the question itself, and what
-coding clients and the built-in agent read from memory and send to their own providers (#183).
+With the local Ollama of the settings nothing changes. Not gated here: the question itself.
+
+The same setting holds classes back from the built-in agent when its model is hosted (coding_held_classes,
+#183): its read_source and memory_records, the quotes of the ask answers it gets and the record previews of
+its resume packet. Codex, Claude Code and external MCP clients are not gated: ask answers and resume packets
+go to their own provider (docs/EXTERNAL_CLIENTS.md).
 """
 from __future__ import annotations
 
@@ -62,6 +66,64 @@ def held_classes(settings, role: str) -> frozenset:
 
 def ordered(classes) -> list[str]:
     return [name for name in CLASSES if name in classes]
+
+
+HOSTED_READ_REFUSED = ("This memory is of the class {name}, which the setting memory_remote_classes does not allow "
+                       "for a hosted model. Nothing was read. Ask the person to add {name} to that setting if you "
+                       "need it.")
+HOSTED_RECORDS_HELD = ("Records of classes the setting memory_remote_classes does not allow for a hosted model are "
+                       "listed without their content: they are marked held_back.")
+HOSTED_ASK_UNKNOWN = ("Passages of some sensitivity classes were left out of this answer, because the setting "
+                      "memory_remote_classes does not allow them for a hosted model; diagnostics.held_back counts them.")
+HOSTED_PACKET_NOTE = ("Record previews of some sensitivity classes are left out, because the setting "
+                      "memory_remote_classes does not allow them for a hosted model; held_back counts them.")
+
+
+def coding_held_classes(settings, client: str, profile) -> frozenset:
+    """The classes a built-in agent run must not receive (#183): none from a model server on this computer;
+    from a hosted one (every Copilot connection, every API profile whose address is not loopback, or not
+    readable) all but the allowed. Codex, Claude Code and external MCP clients are never asked."""
+    if client != "copilot":
+        try:
+            if is_loopback(profile["base_url"]):
+                return frozenset()
+        except (KeyError, TypeError, AttributeError, ValueError):
+            pass  # an address that cannot be read is not the local one
+    return frozenset(CLASSES) - allowed_classes(settings)[0]
+
+
+def coding_read(name: str, result, held: frozenset, session_id: str) -> dict:
+    """What a hosted run is given of a read_source or memory_records result: for a held source the refusal
+    naming its class, for held records the listing without their content. A source this run's own session
+    archived stays readable. A result whose class cannot be read counts as held (fail closed)."""
+    def refused(class_name):
+        return {"ok": False, "error_code": "held_back_by_class", "class": class_name,
+                "message": HOSTED_READ_REFUSED.format(name=class_name)}
+    result = result if isinstance(result, dict) else {}
+    if name == "read_source":
+        source = result.get("source") if isinstance(result.get("source"), dict) else {}
+        metadata = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
+        found = result.get("sensitivity")
+        if (found in CLASSES and found not in held) or (
+                source.get("kind") == "agent_transcript" and metadata.get("session_id") == session_id):
+            return result
+        return refused(found if found in CLASSES else "conversation")
+    items = result.get("items")
+    if not isinstance(items, list):
+        return refused("conversation")
+    shown, count = [], 0
+    for item in items:
+        item = item if isinstance(item, dict) else {}
+        if item.get("sensitivity") in CLASSES and item["sensitivity"] not in held:
+            shown.append(item)
+        else:
+            count += 1
+            shown.append({key: item[key] for key in ("id", "kind", "status", "version", "sensitivity")
+                          if key in item} | {"held_back": True})
+    if not count:
+        return result
+    return {**result, "items": shown,
+            "held_back": {"classes": ordered(held), "records": count, "message": HOSTED_RECORDS_HELD}}
 
 
 def held_back_class(settings, role: str, source) -> str | None:
@@ -176,8 +238,9 @@ class Gate:
 ASK: ContextVar[Gate | None] = ContextVar("cairnmind_ask_gate", default=None)
 
 
-def ask_gate(settings, store) -> Gate | None:
-    held = held_classes(settings, "chat")
+def ask_gate(settings, store, also_held=frozenset()) -> Gate | None:
+    """``also_held``: classes the asking hosted run must not receive (#183); they only add to the chat role's."""
+    held = held_classes(settings, "chat") | frozenset(also_held)
     return Gate(store, held) if held else None
 
 

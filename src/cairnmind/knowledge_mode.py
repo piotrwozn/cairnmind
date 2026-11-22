@@ -111,7 +111,7 @@ def _without_copies(matches: list[dict]) -> list[dict]:
     return [match for match in matches if match.get("status") or (match["source_id"], text(match)) not in records]
 
 
-async def text_matches(agent, project_id: str, question: str, worktree=None) -> dict:
+async def text_matches(agent, project_id: str, question: str, worktree=None, also_held=frozenset()) -> dict:
     """The passages a full-text search finds for the question's words, through exactly the filters of the first,
     lexical search of `ask` (KnowledgeAgent._ask_impl): Retriever.search without a query vector, then agent._hits,
     with the sensitivity gate set as KnowledgeAgent.ask sets it. No model is asked. Search results, never an
@@ -122,7 +122,7 @@ async def text_matches(agent, project_id: str, question: str, worktree=None) -> 
         raise ValueError("Question must contain 1–16000 characters")  # as KnowledgeAgent._ask_impl refuses it
     started = time.monotonic()
     agent.retriever.warnings.clear()
-    gate = ask_gate(agent.settings, agent.store)
+    gate = ask_gate(agent.settings, agent.store, also_held)
     token = ASK.set(gate)
     evidence: dict = {}
     try:

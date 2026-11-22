@@ -21,7 +21,8 @@ from .definitions import MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, definition_li
 from .extraction_input import EXTRACTION_SCHEMA, EXTRACTION_TOKENS, REPAIR_TOKENS, extraction_request, extractor_stamp
 from .extraction_input import extraction_schema as _extraction_schema
 from .extraction_input import repair_prompt, source_text
-from .memory_egress import ASK, HELD_BACK_SOURCE, HELD_BACK_UNKNOWN, REMOTE_NOT_ALLOWED, ask_gate, held_back_class
+from .memory_egress import (ASK, HELD_BACK_SOURCE, HELD_BACK_UNKNOWN, HOSTED_ASK_UNKNOWN, REMOTE_NOT_ALLOWED, ask_gate,
+                            held_back_class)
 from .memory_models import answer_label, context_tokens, from_settings
 from .ollama import OllamaUnavailable
 from .retrieval import (Retriever, json_value, public_metadata, public_record, public_source_metadata, terms,
@@ -981,7 +982,7 @@ class KnowledgeAgent:
         return result, invalid_unknowns
 
     async def ask(self, project_id: str, question: str, worktree=None,
-                  answer_schema: dict | None = None) -> dict:
+                  answer_schema: dict | None = None, also_held=frozenset()) -> dict:
         diagnostics = {"stage": "ask", "repair_attempted": False, "repair_outcome": "not_needed",
                        "validation_codes": [], "model_calls": [],
                        "budget": {"timeout_seconds": self.settings.ask_timeout, "max_steps": self.settings.max_steps,
@@ -989,7 +990,7 @@ class KnowledgeAgent:
         started = time.monotonic()
         # For a chat server on another computer, memory of a class it may not receive is left out (#181).
         # The gate holds for both passes: the second look reads through the same checks.
-        gate = ask_gate(self.settings, self.store)
+        gate = ask_gate(self.settings, self.store, also_held)
         token = ASK.set(gate)
         try:
             result = await self._ask_impl(project_id, question, worktree, answer_schema, diagnostics)
@@ -1023,7 +1024,14 @@ class KnowledgeAgent:
         held = gate.summary() if gate else None
         if held:
             diagnostics["held_back"] = held
-            if result.get("status") != "complete":  # the answer may lack sources for that reason
+            if also_held:  # a hosted run is told in every answer, a complete one in its warnings (#183)
+                if result.get("status") != "complete":
+                    result = {**result, "unknowns": [HOSTED_ASK_UNKNOWN, *result.get("unknowns", [])][:8]}
+                else:
+                    fresh = result.get("freshness") or {}
+                    result = {**result, "freshness": {**fresh, "warnings": [*fresh.get("warnings", []),
+                                                                            HOSTED_ASK_UNKNOWN][-8:]}}
+            elif result.get("status") != "complete":  # the answer may lack sources for that reason
                 result = {**result, "unknowns": [HELD_BACK_UNKNOWN, *result.get("unknowns", [])][:8]}
         diagnostics["code"] = result.get("diagnostics", {}).get("code", "unavailable")
         label = await answer_label(self.settings, self.ollama)  # None with the release's models
