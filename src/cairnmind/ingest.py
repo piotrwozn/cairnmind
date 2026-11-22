@@ -23,6 +23,7 @@ import pathspec
 
 from cairnmind.parsing import analyze_code, parser_identity
 from cairnmind.arcade import ArcadeError
+from cairnmind.embed_jobs import queue_embed_jobs
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
 from cairnmind.journal import MAX_TRANSACTION_EVENTS
@@ -318,10 +319,9 @@ def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: d
                     ids.append(chunk_id)
             else:
                 ids = [row["id"] for row in existing]
-    for chunk_id in ids:
-        # Replaying this is intentional: a crash after chunk commit but before
-        # enqueue must not leave permanently unindexed evidence.
-        store.enqueue("embed", project_id, {"chunk_id": chunk_id}, f"embed:{chunk_id}")
+    # Replaying this is intentional: a crash after chunk commit but before
+    # enqueue must not leave permanently unindexed evidence.
+    queue_embed_jobs(store, project_id, ids)
     return 0 if existing else len(ids)
 
 
