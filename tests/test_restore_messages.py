@@ -80,7 +80,7 @@ def test_every_refusal_names_the_way_out_from_another_installation(sentence):
 def test_every_sentence_of_the_restore_has_its_polish():
     english = [value for name, value in vars(restore_staged).items()
                if name.isupper() and not name.startswith("_") and isinstance(value, str) and " " in value]
-    assert len(english) == 15  # MARK_KEPT is the one added after the recheck; TIME_PER_TRANSACTION and the like are numbers
+    assert len(english) == 16  # MARK_KEPT and MARK_NOT_CLEARED are the ones added after the rechecks; TIME_PER_TRANSACTION and the like are numbers
 
     def placeholders(sentence):
         return sorted(field for _, field, _, _ in string.Formatter().parse(sentence) if field)

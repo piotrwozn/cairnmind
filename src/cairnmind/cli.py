@@ -152,11 +152,15 @@ def _pasteable(message: str) -> str:
     writes to the store, so pasting it bare would register the folder in another installation. Other commands a
     refusal names (`cairnmind init`, `cairnmind serve`) are printed as they are."""
     arguments = _data_dir_arguments(_INVOCATION.get("data_dir"))
-    if not arguments or "`cairnmind project root " not in message:
+    if not arguments:
         return message
     import shlex
     from cairnmind.terminal_safe import safe_text
-    return message.replace("`cairnmind project root ", f"`cairnmind {safe_text(shlex.join(arguments))} project root ")
+    # `cairnmind restore` (the refusal of an unfinished restore, #362) and `cairnmind store takeover` replace or take
+    # over a whole store: pasted bare they would act on the default installation.
+    for command in ("project root ", "restore ", "store takeover "):
+        message = message.replace(f"`cairnmind {command}", f"`cairnmind {safe_text(shlex.join(arguments))} {command}")
+    return message
 
 
 def _json_file(path: Path):
@@ -294,12 +298,13 @@ def last_log_line(path: Path) -> str:
     """The last line of a log, bounded and with control characters replaced: what a stopped process said."""
     try:
         with path.open("rb") as handle:
-            handle.seek(max(0, path.stat().st_size - 4096))
+            handle.seek(max(0, path.stat().st_size - 8192))
             lines = [line for line in handle.read().decode("utf-8", "replace").splitlines() if line.strip()]
     except OSError:
         return f"see {path}"
     text = lines[-1] if lines else f"see {path}"
-    return "".join(char if char.isprintable() else "?" for char in text)[:500]
+    # Long enough for the refusal of an unfinished restore (#362), whose last words are the way out.
+    return "".join(char if char.isprintable() else "?" for char in text)[:2000]
 
 
 from cairnmind.service_token import PORT_ADVICE as _PORT_ADVICE, foreign_service_text, refused_token  # noqa: E402

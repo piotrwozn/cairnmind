@@ -35,8 +35,8 @@ runner = CliRunner()
 
 def _mark(store, **changes):
     mark = {"backup": "/somewhere/the-backup.cairnmind.json.gz", "before": "/somewhere/before-restore-x.cairnmind.json.gz",
-            "before_sha256": "0" * 64, "installation_id": store.installation.id, "started_at": utc_now(),
-            "undoing": False, **changes}
+            "before_sha256": "0" * 64, "installation_id": store.installation.id, "before_installation": store.installation.id,
+            "started_at": utc_now(), "undoing": False, **changes}
     restore_staged.write_mark(store, mark)
     return mark
 
@@ -393,6 +393,7 @@ def test_a_marked_store_gives_no_backup_and_no_export_and_a_takeover_does_not_hi
     # Taking the writer role is a person's act on a marked store, and it leaves the mark where it is.
     taken = store_writer.take_over_at(second_dir)
     assert taken["taken_over"] is True and "did not finish" in taken["next"]
+    assert "cannot prepare" not in taken["next"] and "refused until a restore finishes" in taken["next"]
     assert restore_staged.unfinished(first.client) == mark
     for opening in (lambda: Store(second_dir), lambda: Store(first.data_dir)):
         with pytest.raises(StoreNotReady, match="did not finish"):
@@ -496,3 +497,71 @@ def test_after_a_staged_restore_the_store_is_used_as_before(tmp_path, monkeypatc
     assert MemoryManager(target).preview(project, worktree=str(root))["status"] == "preview"
     monkeypatch.setenv(PUBLICATION_SWITCH, "1")
     assert Publisher(target).publish(project, str(root), preview=True)
+
+
+def test_a_restore_finished_from_another_installation_keeps_where_the_copy_is(tmp_path, monkeypatch):
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    _mark(store, before="/gone/before-restore-x.cairnmind.json.gz", installation_id="first-installation",
+          before_installation="first-installation")
+    _failing_commits(monkeypatch, 3)
+    with pytest.raises(RestoreFailed, match="is not on this machine"):  # the copy is the first installation's
+        Store(store.data_dir, for_restore=True).restore(path)
+    monkeypatch.undo()
+    mark = restore_staged.unfinished(store.client)
+    assert mark["installation_id"] == store.installation.id and mark["before_installation"] == "first-installation"
+    with pytest.raises(RestoreUnfinished, match="backups of installation first-installation"):
+        Store(store.data_dir)
+
+
+def test_a_mark_that_cannot_be_removed_after_every_row_was_written_says_so(tmp_path, monkeypatch):
+    store, path, before, known = _world(tmp_path, monkeypatch)
+
+    def gone(target):
+        raise OSError("the engine is gone")
+
+    monkeypatch.setattr(restore_staged, "clear_mark", gone)
+    with pytest.raises(RestoreFailed) as failed:
+        store.restore(path)
+    monkeypatch.undo()
+    text = " ".join(str(failed.value).split())
+    assert "Every row of the backup was written" in text and "the engine is gone" in text
+    assert f"cairnmind restore {path}" in text
+    with pytest.raises(RestoreUnfinished):
+        Store(store.data_dir)
+    Store(store.data_dir, for_restore=True).restore(path)
+    assert restore_staged.unfinished(store.client) is None
+
+
+def test_a_transaction_of_the_write_phase_is_committed_when_it_has_been_open_for_the_time_bound(tmp_path, monkeypatch):
+    store, commits = Store(tmp_path / "memory"), []
+    commit = restore_staged.Batches.commit
+    monkeypatch.setattr(restore_staged.Batches, "commit", lambda self: (commits.append(self.rows), commit(self))[1])
+    monkeypatch.setattr(restore_staged, "TIME_PER_TRANSACTION", 0.0)
+    batches = restore_staged.Batches(store)
+    for _ in range(3):
+        batches.wrote(1)  # one row of a bound of 5,000: only the time commits it
+    batches.commit()
+    assert commits == [1, 1, 1, 0]
+    monkeypatch.setattr(restore_staged, "TIME_PER_TRANSACTION", 3600.0)
+    del commits[:]
+    batches = restore_staged.Batches(store)
+    batches.wrote(1)
+    batches.commit()
+    assert commits == [1]
+
+
+def test_setup_of_a_marked_store_is_refused_with_the_whole_sentence_and_the_pasted_commands_name_the_data_dir(
+        tmp_path, monkeypatch):
+    store = Store(tmp_path / "memory")
+    _mark(store)
+    found = store_writer.inspect(store.settings)
+    assert found["restore_unfinished"] and found["reason"].endswith("removes the mark.")  # not cut to 300 characters
+    from cairnmind import setup_profiles
+    monkeypatch.setattr(store_writer, "inspect", lambda settings: found)
+    with pytest.raises(setup_profiles.SetupRefused):
+        setup_profiles._inspected(store.settings, "http://db")
+    monkeypatch.setitem(cli._INVOCATION, "data_dir", tmp_path / "memory")
+    pasted = cli._pasteable(found["reason"])
+    assert f"`cairnmind --data-dir {tmp_path / 'memory'} restore " in pasted and "store takeover --yes" in pasted
+    assert f"--data-dir {tmp_path / 'memory'} store takeover" in pasted
+    assert len(cli.last_log_line.__doc__) and "?" not in pasted[:0]

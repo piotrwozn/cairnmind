@@ -57,12 +57,13 @@ UNFINISHED = (
     "A restore of this store did not finish: it began at {started_at} on installation {installation}, from {backup}. "
     "Until a restore finishes, the store holds only part of that backup and no command uses it. On the installation "
     "that writes this store, run `cairnmind restore {backup}` to finish it, or `cairnmind restore {before}` to go back "
-    "to the rows the store held before (that file is in the backups of that installation)." + _ELSEWHERE)
+    "to the rows the store held before (that file is in the backups of installation {before_installation})." + _ELSEWHERE)
 UNDO_UNFINISHED = (
     "A restore of this store failed, and putting the store back did not finish either: it began at {started_at} on "
     "installation {installation}, from {backup}. Until a restore finishes, no command uses the store. On the "
     "installation that writes this store, run `cairnmind restore {before}` to go back to the rows the store held "
-    "before, or `cairnmind restore {backup}` to restore that backup." + _ELSEWHERE)
+    "before (that file is in the backups of installation {before_installation}), or `cairnmind restore {backup}` to "
+    "restore that backup." + _ELSEWHERE)
 UNREADABLE = (
     "This store carries a mark of an unfinished restore that cannot be read, so no command uses it. On the "
     "installation that writes this store, restore a whole backup with `cairnmind restore FILE`; the copies made before "
@@ -72,6 +73,9 @@ NOTHING_CHANGED = "{error} The restore stopped before it changed any row: the st
 MARK_KEPT = (
     "{error} The restore stopped before it changed any row, but its mark could not be removed ({mark_error}). Until a "
     "restore finishes, no command uses the store: run `cairnmind restore {backup}` again to remove it.")
+MARK_NOT_CLEARED = (
+    "Every row of the backup was written, but the mark of the restore could not be removed ({error}). Until a restore "
+    "finishes, no command uses the store: run `cairnmind restore {backup}` again to remove it.")
 UNKNOWN_STATE = (
     "{error} The restore stopped. The mark of an earlier, unfinished restore could not be read, so what the store holds "
     "is not known and it was not put back. No command uses the store: run `cairnmind restore FILE` again with a whole "
@@ -118,6 +122,10 @@ MESSAGES = {
         "{error} Przywracanie zostało przerwane, zanim zmieniło jakikolwiek wiersz, ale nie udało się usunąć jego "
         "znacznika ({mark_error}). Dopóki jakieś przywracanie się nie zakończy, żadne polecenie nie używa magazynu: "
         "uruchom ponownie `cairnmind restore {backup}`, aby go usunąć."),
+    MARK_NOT_CLEARED: (
+        "Zapisano każdy wiersz kopii, ale nie udało się usunąć znacznika przywracania ({error}). Dopóki jakieś "
+        "przywracanie się nie zakończy, żadne polecenie nie używa magazynu: uruchom ponownie `cairnmind restore "
+        "{backup}`, aby go usunąć."),
     UNKNOWN_STATE: (
         "{error} Przywracanie zostało przerwane. Znacznika wcześniejszego, niedokończonego przywracania nie dało się "
         "odczytać, więc nie wiadomo, co zawiera magazyn, i nie przywrócono go. Żadne polecenie nie używa magazynu: "
@@ -138,13 +146,13 @@ MESSAGES = {
         "pliku {backup}. Dopóki jakieś przywracanie się nie zakończy, magazyn zawiera tylko część tej kopii i żadne "
         "polecenie go nie używa. W instalacji, która zapisuje ten magazyn, uruchom `cairnmind restore {backup}`, aby je "
         "dokończyć, albo `cairnmind restore {before}`, aby wrócić do wierszy sprzed przywracania (ten plik jest w "
-        "kopiach zapasowych tamtej instalacji)." + _ELSEWHERE_PL),
+        "kopiach zapasowych instalacji {before_installation})." + _ELSEWHERE_PL),
     UNDO_UNFINISHED: (
         "Przywracanie tego magazynu nie powiodło się i przywrócenie poprzedniego stanu też nie zostało dokończone: "
         "zaczęło się {started_at} w instalacji {installation}, z pliku {backup}. Dopóki jakieś przywracanie się nie "
         "zakończy, żadne polecenie nie używa magazynu. W instalacji, która zapisuje ten magazyn, uruchom `cairnmind "
-        "restore {before}`, aby wrócić do wierszy sprzed przywracania, albo `cairnmind restore {backup}`, aby "
-        "przywrócić tamtą kopię." + _ELSEWHERE_PL),
+        "restore {before}`, aby wrócić do wierszy sprzed przywracania (ten plik jest w kopiach zapasowych instalacji "
+        "{before_installation}), albo `cairnmind restore {backup}`, aby przywrócić tamtą kopię." + _ELSEWHERE_PL),
     UNREADABLE: (
         "Ten magazyn ma znacznik niedokończonego przywracania, którego nie da się odczytać, więc żadne polecenie go "
         "nie używa. W instalacji, która zapisuje ten magazyn, przywróć całą kopię poleceniem `cairnmind restore "
@@ -152,7 +160,7 @@ MESSAGES = {
         "(before-restore-*)." + _ELSEWHERE_PL),
 }
 
-_TEXT_FIELDS = ("backup", "before", "installation_id", "started_at")
+_TEXT_FIELDS = ("backup", "before", "installation_id", "before_installation", "started_at")
 
 
 class RestoreFailed(ValueError):
@@ -191,7 +199,8 @@ def refusal(mark: dict) -> str:
         return UNREADABLE
     template = UNDO_UNFINISHED if mark["undoing"] else UNFINISHED
     return template.format(started_at=safe_text(mark["started_at"]), installation=safe_text(mark["installation_id"]),
-                           backup=safe_text(mark["backup"]), before=safe_text(mark["before"]))
+                           backup=safe_text(mark["backup"]), before=safe_text(mark["before"]),
+                           before_installation=safe_text(mark["before_installation"]))
 
 
 def refuse_if_unfinished(reader) -> None:
@@ -373,12 +382,14 @@ def _staged(store, source, path: Path, claims) -> None:
         if found:
             # Finishing an unfinished restore: the copy to go back to is the one from before it, not its half store.
             before, before_sha256 = Path(found["before"]), found["before_sha256"]
+            copy_on = found["before_installation"]
         else:
             before = store.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}"
             store.backup(before)
-            before_sha256 = _file_sha256(before)
+            before_sha256, copy_on = _file_sha256(before), store.installation.id
         mark = {"backup": str(path), "before": str(before), "before_sha256": before_sha256,
-                "installation_id": store.installation.id, "started_at": utc_now(), "undoing": False}
+                "installation_id": store.installation.id, "before_installation": copy_on, "started_at": utc_now(),
+                "undoing": False}
         write_mark(store, mark)
     store.restore_changed = False
     try:
@@ -395,7 +406,11 @@ def _staged(store, source, path: Path, claims) -> None:
                                                      mark_error=_described(second, store.settings, None).rstrip("."))) from exc
             raise RestoreFailed(NOTHING_CHANGED.format(error=error)) from exc
         _undo(store, mark, error, exc)
-    clear_mark(store)
+    try:
+        clear_mark(store)
+    except Exception as exc:  # noqa: BLE001 - every row is written: say so, and that the mark stays until a restore ends
+        raise RestoreFailed(MARK_NOT_CLEARED.format(
+            error=_described(exc, store.settings, None).rstrip("."), backup=safe_text(path))) from exc
 
 
 def _undo(store, mark: dict, error: str, cause: BaseException) -> NoReturn:

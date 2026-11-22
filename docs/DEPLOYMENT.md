@@ -287,6 +287,8 @@ When the connection is cut after the server received a commit and before the ans
 
 A transaction that was cut stays open on the server until its session times out; it holds no lock that stops other work.
 
+A command waits 30 s for the answer to a request and 120 s for the answer to a commit (`arcade.py`, `COMMIT_TIMEOUT`), whichever command it is: on a silent cut, such as a lost Wi-Fi link, it reports the server unavailable after up to that long, not after 30 s.
+
 ### How long indexing takes over a connection
 
 The commands below were run on 22 November 2026, once each: every figure is one run, not an average, and no spread is known. The server was ArcadeDB 26.11.1 in the image of `deploy/arcadedb`, in a kind cluster made from `deploy/kubernetes` on a MacBook Pro (Apple M3 Pro, 18 GiB; Docker through Colima with 4 CPUs and 6 GB), with TLS from the private authority of this page, and the heap raised to 3 GB for the restores (see [What to change](#what-to-change)). The two columns are two different clients and two different stores:
