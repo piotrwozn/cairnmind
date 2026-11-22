@@ -259,7 +259,7 @@ The three options that were compared, with the verdict:
 | Option | What it would need | Verdict |
 | --- | --- | --- |
 | A full split: the service on a server, the laptop sends what it reads | A new authenticated, non-loopback protocol for parsed sources, fingerprints, hook events and transcript segments, with TLS and tokens; in effect a rewrite of the service's API | Not built. Large, and it contradicts one writer per store. |
-| The service stays local; the database and the models are remote (what `cairnmind setup remote-db` and `setup remote` set up) | Nothing more | The supported way. What stays on the laptop is Python parsing, `git`, hashing and the service's many small database requests; over a network the requests matter more than CPU (measured once between two machines: [first indexing took](#how-long-indexing-takes-over-a-connection) 33.4 s on a loopback and 80.4 s over a real network at 18.5 ms). |
+| The service stays local; the database and the models are remote (what `cairnmind setup remote-db` and `setup remote` set up) | Nothing more | The supported way. What stays on the laptop is Python parsing, `git`, hashing and the service's many small database requests; over a network the requests matter more than CPU (inferred, not measured; for context, [first indexing took](#how-long-indexing-takes-over-a-connection) 33.4 s and 80.4 s on two different machines, so those seconds do not separate requests from CPU). |
 | A remote service with its own clone | A server that clones the project | Not built. Every answer and check status would describe the server's clone, not your work; fit only for read-only questions at a pinned commit. |
 
 A headless worker process for extraction and embedding on a server is not planned and has no issue: the models already run on a server, so it would move only the service's HTTP calls and database writes, and it needs a second writer.
@@ -313,9 +313,9 @@ Other things seen, all one run:
 - On the Mac a running service with models on sent a burst of about 21,000 requests (5,700 transactions) about every 90 s, 35 to 40 s long (#363). It was not measured over the real network: the second machine ran without models.
 - The size of the repository differs by 5 files between the columns, and the machines differ (an M3 Pro through Colima against a Windows computer's WSL 2), so the seconds of two columns are not a measure of latency alone.
 
-**How to read it.** Over a connection a command's time depends on the number of requests, but not as the earlier version of this section said. That version assumed each request waits for the previous one and multiplied the request count by the round-trip time. For the first indexing that would be 9,500 requests at 18.5 ms, 176 s (computed, not measured), against 80.4 s measured, so the requests are not paid one after another and the multiplication overstates the wait; it was not investigated why. Use it only as an upper bound. What the table shows is what a command costs on a real network for a store of this size: 80 s for a first indexing, 21 s for a backup, and a restore that does not finish (below). For your network, measure the round-trip time (`ping`, or the time of `cairnmind engine status`) and then one command. Not measured: a network with loss, a server under load from other clients, indexing after every file changed, and more than one run of anything.
+**How to read it.** Over a connection a command's time depends on the number of requests. For the first indexing, 9,500 requests were served in 80.4 s with a mean ping of 18.5 ms (2.4 to 70 ms on Wi-Fi). Multiplying the requests by the mean ping gives 176 s (computed, not measured), which overstated this run; the cause was not investigated. What the table shows is what a command costs on a real network for a store of this size: 80 s for a first indexing, 21 s for a backup, and a restore that does not finish (below). For your network, measure the round-trip time (`ping`, or the time of `cairnmind engine status`) and then one command. Not measured: a network with loss, a server under load from other clients, indexing after every file changed, and more than one run of anything.
 
-The figures of this section replace those of 15 November 2026 (128 files, 2,313 requests for the first indexing, 119 for a backup, about 1,100 for a restore), which were counted by a relay written in Python and are out of date for a repository four times the size; the counts here are the server's own and no relay is in the path.
+The figures of this section replace those of 15 November 2026 (128 files, 2,313 requests for the first indexing, 119 for a backup, about 1,100 for a restore) and are out of date for a repository four times the size; the counts here are the server's own.
 
 On 15 November 2026 a restore took 297,454 requests and 397 s on `127.0.0.1` in a development build of 0.11.0 before #219, which wrote the graph and the chunks one row at a time. Since #219 restore writes them in groups of a few hundred rows per request, as indexing does: 3,280 requests in 3 transactions and 58.8 s for the store of the table above on the loopback. Over the real network the restore did not finish: see [Two installations and one store](#two-installations-and-one-store-what-a-trial-between-two-machines-showed).
 
@@ -338,7 +338,8 @@ Until 22 November 2026 the database on another host (the headline of 0.11.0) had
 - **A project can be left without its graph after the writer moves.** A project indexed on the first machine (81,488 graph nodes) had no graph at all after the second machine had become the writer and had run its service; that project's folder does not exist on the second machine. The cause was not known when this was written (#371). Until that is understood, do not rely on a project's graph surviving a move of the writer to a machine that does not have the project's folder.
 - **`doctor --json` on a reader ends with exit status 1 while naming nothing as missing** (#373). Read the report, not the status, until it is fixed.
 - **`setup remote-db --admin-password-file` without `--yes` answers HTTP 401 instead of a plan** when the user does not exist yet (#365).
-**Not tried.** A model server on another computer (`setup remote` over HTTPS with a key); the published image from `ghcr.io` and Docker Desktop (the trial built the image and used Colima); indexing after a change of every file; `scripts/measure_service_spend.py`, which needs Docker on the Linux side; and more than one run of anything.
+
+**Not tried.** A model server on another computer (`setup remote` over HTTPS with a key); the published image from `ghcr.io` and Docker Desktop (the trial built the image and used Colima); indexing after a change of every file; the service with models on over the network (#363, about 21,000 requests every 90 s, not measured over a real network); `scripts/measure_service_spend.py`, which needs Docker on the Linux side; and more than one run of anything.
 
 ### The engine tests against this server
 
@@ -426,7 +427,7 @@ The `kubernetes-manifests` CI job, beside the other jobs and not a required chec
 | --- | --- |
 | The image | `image:` in `30-statefulset.yaml` (and `backup/volume-pod.yaml`): build it with `docker build -t REGISTRY/cairnmind-arcadedb:VERSION deploy/arcadedb` and push it where the cluster pulls from, or load it into a local cluster (`kind load docker-image cairnmind-arcadedb:local`). Build it from the checkout of the Cairnmind version you use, so that the ArcadeDB versions match. |
 | Storage | `volumeClaimTemplates` in `30-statefulset.yaml`: the size, and `storageClassName` for a class other than the default. `backup/data-claim.yaml` must stay equal. |
-| Memory | The heap is 1 GB (`-Xmx1024m`). For more, add `-Xmx4g` to `ARCADEDB_JAVA_OPTS` and raise `resources` with it. That default is not enough to restore a store of this repository's size until #362 is fixed: on 1 GB the server ran out of memory (`OutOfMemoryError`) in two restores of a 19.4 MB backup (the store of 550 files and about 81,000 graph nodes), and the trial restored it with `-Xmx3g`, `requests.memory` 3584Mi and `limits.memory` 4Gi (set on the live object only; the manifests are unchanged). A restore over the network from the second machine timed out with that heap too, so more memory is not the whole answer (see below). |
+| Memory | The heap is 1 GB (`-Xmx1024m`). For more, add `-Xmx4g` to `ARCADEDB_JAVA_OPTS` and raise `resources` with it. That default is not enough to restore a store of this repository's size until #362 is fixed: on 1 GB the server ran out of memory (`OutOfMemoryError`) in two restores of a 19.4 MB backup (the store of 550 files and about 81,000 graph nodes), and the trial restored it with `-Xmx3g`, `requests.memory` 3584Mi and `limits.memory` 4Gi (set on the live object only; the manifests are unchanged). A restore over the network from the second machine timed out with that heap too, so more memory is not the whole answer (see [Two installations and one store](#two-installations-and-one-store-what-a-trial-between-two-machines-showed)). |
 | The namespace | `namespace:` in every file, and the certificate's names below. |
 | Who may connect | The `from` of `10-networkpolicy.yaml`: today any namespace; add a `matchLabels` to its `namespaceSelector` to narrow it. |
 
@@ -459,6 +460,7 @@ The store password must be letters and digits (as here): it reaches the JVM on i
 0. A cluster to run it in. Any cluster does; for a local one with [kind](https://kind.sigs.k8s.io/), build the image as in [What to change](#what-to-change), create the cluster and load the image into it:
 
    ```bash
+   docker build -t cairnmind-arcadedb:local deploy/arcadedb
    kind create cluster --name <name> --wait 180s
    kind load docker-image cairnmind-arcadedb:local --name <name>
    ```
@@ -539,6 +541,8 @@ Everything above reaches the server from the machine that runs the cluster. To r
    kubectl -n cairnmind-db port-forward --address 127.0.0.1,<LAN address> svc/arcadedb 2490:2490
    ```
 
+   Stop the forward started earlier in this guide (the & job) before starting this one: it also listens on `127.0.0.1:2490`, and when any address cannot be bound `kubectl` ends the whole listener.
+
 3. **It runs detached and starts again when it ends.** It ends with the shell or session that started it, and when the pod restarts. Run it in a session that outlives the shell, in a loop (the trial used a tmux server of its own):
 
    ```bash
@@ -548,6 +552,7 @@ Everything above reaches the server from the machine that runs the cluster. To r
 **A fixed address, or a name.** `--address` takes addresses the host has. When the host's address changed, the forward kept listening on an address the host no longer had, and with one address that cannot be bound `kubectl` ends the whole listener, loopback included: the loop above then only starts it again and it ends again. In the trial the Wi-Fi reconnected and the Mac got another address from DHCP (it uses a private, rotating hardware address for that network), and the server was unreachable from the second machine for 8 min 44 s, until the old address was added to the host again as an alias. So give the host a fixed address on that network (a DHCP reservation, or a fixed hardware address for that network), or put a host name, not an IP address, in the certificate and in the second machine's `arcade_connect_url`, so that a new address needs no new certificate and no change on the client; the forward's own `--address` must still name an address the host has, so restart it after a change (`--address 0.0.0.0`, which does not depend on one address, was not tried).
 
 **A laptop that serves must not sleep.** While the Mac's Wi-Fi slept the ping from the second machine rose from 18.5 ms to 404 ms on average. Keep `caffeinate -dimsu` running on macOS for as long as the server is to be reached.
+
 ### Backup and restore
 
 **Logical backup.** Through the port-forward and the settings above, as for any server: `cairnmind backup "$HOME/backups/"`, and `cairnmind restore` as described in [Backup and restore](#backup-and-restore), on the installation that writes the database, after stopping its service. The dedicated user can do both.
