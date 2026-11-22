@@ -368,7 +368,7 @@ What you change: wherever you start Cairnmind as `devbrain` yourself, write `cai
 What you do not change:
 
 - The files `cairnmind install` writes never call the `devbrain` command; they start Cairnmind's own Python. It still rewrites the entries and blocks that DevBrain 0.8.0 wrote under the `devbrain` name.
-- Your data keeps its names: the data directory `~/.local/share/devbrain` (if your installation started there), the database `devbrain_<hash>`, `.memory/devbrain`, `.devbrain/checks.toml`, backups ending in `.devbrain.json.gz` and the `DEVBRAIN_*` variables are still read.
+- Your data keeps its names: the data directory `~/.local/share/devbrain` (if your installation started there), the database `devbrain_<hash>` (a new installation, from 0.13.0, names its database `cairnmind_<hash>`; one that has a config.json or database files keeps the earlier name, and `devbrain_meta` and the other type names inside the database are not renamed), `.memory/devbrain`, `.devbrain/checks.toml`, backups ending in `.devbrain.json.gz` and the `DEVBRAIN_*` variables are still read.
 - `python -m devbrain` still works for project files of DevBrain 0.8.0.
 
 Going back to 0.12.0 with its installer brings the `devbrain` alias back.
