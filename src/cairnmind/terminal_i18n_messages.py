@@ -319,6 +319,8 @@ STATE_MESSAGES = {
     "Invalid credential store.": "Niepoprawny magazyn poświadczeń.",
     "Unsupported credential store.": "Nieobsługiwany magazyn poświadczeń.",
     "The credential store exceeds its size limit.": "Magazyn poświadczeń przekroczył limit rozmiaru.",
+    "Project folder cannot be inside the data directory: Cairnmind never indexes it; choose a folder outside it":
+        "Folder projektu nie może leżeć w katalogu danych: Cairnmind go nie indeksuje; wybierz folder poza nim.",
     "Choose how the key is stored.": "Wybierz sposób przechowywania klucza.",
     "Invalid credential profile.": "Niepoprawny profil poświadczeń.",
     "Invalid credential reference.": "Niepoprawne odwołanie do poświadczeń.",
