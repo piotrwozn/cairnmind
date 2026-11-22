@@ -62,6 +62,12 @@ def test_a_request_the_test_engine_does_not_answer_says_what_it_waited_for(tmp_p
     assert "engine threads:" in shown and "Full thread dump" in shown
 
 
+def test_the_engine_fixture_wraps_requests_in_the_stall_watch():
+    """Without the watch a stalled request is only reported after the client gave up (#221)."""
+    wrapped = [cell.cell_contents for cell in ArcadeClient._request.__closure__]
+    assert any(getattr(item, "__module__", None) == "stall_watch" for item in wrapped)
+
+
 def test_native_transaction_rolls_back_and_query_rejects_writes(tmp_path):
     from cairnmind.store import Store
     store = Store(tmp_path)
