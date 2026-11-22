@@ -297,11 +297,13 @@ bash scripts/install-wsl.sh
 
 The installer no longer stops when tmux 3.4+ is missing: it says that the workspace is unavailable and goes on. It also no longer stops when Java 21 is missing and Docker answers; that matters for a new installation, because an installation that has a native engine keeps it (below). If Java 21 is no longer on the machine, install it, or move the engine to Docker as in the bullet "The engine in Docker" below; the installer's message that `init` can run the engine in Docker does not apply to an installation that already has a native engine.
 
+The installer now ends with the exit code of `cairnmind doctor`: 1 when something required is missing. A connect-only installation whose database user does not exist yet therefore ends with 1 until `cairnmind db create-user` has run; do not chain other commands to the installer with `&&`. It says when it stops the service of the installed version, and it no longer announces the download when the pinned engine is already unpacked. It may also print two lines about the removed `devbrain` command; see "The `devbrain` command is gone" below.
+
 The same script installs on macOS ([INSTALL.md](INSTALL.md)).
 
 ### 4. Reconnect your projects
 
-Nothing that `cairnmind install` writes into a project changed in this release, so an existing project needs no new `cairnmind install`. Start the editors you closed in step 2 again.
+Nothing that `cairnmind install` writes for an installed coding client changed in this release, so an existing project needs no new `cairnmind install`. Run it once anyway if you ever started Cairnmind as `devbrain` in a project's client files by hand: it names each such entry (below). Start the editors you closed in step 2 again.
 
 ### 5. Check
 
@@ -310,7 +312,9 @@ cairnmind version
 cairnmind doctor
 ```
 
-`cairnmind doctor` and `cairnmind status` now start with a `topology` report, and `doctor` names the engine mode (`arcadedb.engine`). A script that reads their output meets new keys.
+`cairnmind doctor` and `cairnmind status` now start with a `topology` report, and `doctor` names the engine mode (`arcadedb.engine`). A script that reads their output meets new keys. `doctor`'s JSON also has `projects` (the number of registered projects, `null` when the store cannot be read) and, for an engine that refuses this data directory's sign-in, `arcadedb.sign_in_refused: true`.
+
+`cairnmind doctor` exits 1 when something required is missing (the engine, Java or Docker for it, the store writer, a shell whose commands are refused, an invalid `knowledge_agent`) and 0 otherwise; models, tmux and coding clients never change the exit code. Models or a client that are set up and fail are listed under "Optional and not working". A script that ran `doctor` and expected 0 must accept 1 and read the report (`cairnmind doctor --json`).
 
 ### What the upgrade does to a store
 
@@ -339,6 +343,22 @@ cairnmind doctor
 - **A project inside the data directory.** `cairnmind project add` refuses a folder inside Cairnmind's data directory and says why (#295). A project that 0.12.0 registered there stays registered and indexes no files; move its files out and register them again.
 - **`cairnmind setup`** is new. It shows where storage and the models run, and changes no setting of an initialized installation.
 - **The README is short.** Its detail moved under `docs/`, so a link to a README anchor other than "How it compares", "Quick start", "What it guarantees, and what it does not", "Measured results", "Documentation", "Contributing" and "License" no longer reaches a heading. The text is now in [ARCHITECTURE.md](ARCHITECTURE.md) (how it works, built with, repository layout, development), [EXTERNAL_CLIENTS.md](EXTERNAL_CLIENTS.md) (Cursor, Cline, Zed and other MCP clients), [MEMORY.md](MEMORY.md) (portable project memory, team memory), [STORAGE_AND_MAINTENANCE.md](STORAGE_AND_MAINTENANCE.md) (data and backups), [CONTRACTS.md](CONTRACTS.md#limits) (limits), [TERMINAL.md](TERMINAL.md#everyday-use-of-the-workspace) (the workspace, everyday use, your first project), [API.md](API.md#third-party-mcp-tools) (third-party MCP tools for the built-in agent) and [WORKFLOW.md](WORKFLOW.md) (plans, tasks and evidence). The headings "Without the launcher", "Look before you install", "Who it is for" and "Status and roadmap" were dropped or folded into the Quick start.
+- **Sentences in a terminal, JSON in a pipe.** In a terminal, `doctor`, `project add`, `project list`, `remember`, `ask`, `install`, `init`, `stop` and `engine stop` print what they did and the next step instead of JSON. With `--json`, or in a pipe, a file or a script, they print the full JSON as before; in a terminal, add `--json` to see it. The sentences of `project add`, `remember` and `install` no longer go to standard error.
+- **What `cairnmind install` writes and indexes.** A coding client that is not installed gets nothing in the project, not even its block in `AGENTS.md` or `CLAUDE.md`; a block an earlier version wrote there stays until you remove it, or install the client and run `cairnmind install` again. Cairnmind's own block in those two files is no longer indexed, so it no longer comes back in `ask`; a block indexed earlier leaves the index the next time the project is indexed (`cairnmind index PROJECT`).
+
+### The `devbrain` command is gone
+
+0.13.0 installs one command, `cairnmind`. The `devbrain` alias that 0.9.0 to 0.12.0 installed beside it is removed; uv takes it out of its tool folder (usually `~/.local/bin`) when the installer reinstalls Cairnmind. If the installer prints "Cairnmind no longer installs the devbrain command, but ... is still there", nothing removed that file: remove it with the `rm` command it prints, unless something else of yours uses it. If it stops with "An earlier DevBrain uv tool is in ... but uv does not list it", stop what that tool may still run with the commands it prints, run `uv tool uninstall devbrain` (your memory is kept) and run the installer again.
+
+What you change: wherever you start Cairnmind as `devbrain` yourself, write `cairnmind` with the same arguments. Look in shell scripts, shell aliases, cron or service files, and the MCP settings of editors that you wrote by hand (`devbrain mcp --client external` becomes `cairnmind mcp --client external`). Until you do, those calls fail with `devbrain: command not found`. In a project's `.mcp.json`, `.claude/settings.local.json`, `.codex/config.toml` and `.codex/hooks.json`, `cairnmind install` names each MCP server or hook that starts `devbrain` and leaves it unchanged: where it has just written its own entry, remove yours; otherwise write `cairnmind` in it.
+
+What you do not change:
+
+- The files `cairnmind install` writes never call the `devbrain` command; they start Cairnmind's own Python. It still rewrites the entries and blocks that DevBrain 0.8.0 wrote under the `devbrain` name.
+- Your data keeps its names: the data directory `~/.local/share/devbrain` (if your installation started there), the database `devbrain_<hash>`, `.memory/devbrain`, `.devbrain/checks.toml`, backups ending in `.devbrain.json.gz` and the `DEVBRAIN_*` variables are still read.
+- `python -m devbrain` still works for project files of DevBrain 0.8.0.
+
+Going back to 0.12.0 with its installer brings the `devbrain` alias back.
 
 ### Only a person confirms, in the open workspace
 
