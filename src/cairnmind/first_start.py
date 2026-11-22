@@ -420,7 +420,7 @@ MESSAGES[JOBS_HELD_NO_MODELS] = ("Zadania ekstrakcji i osadzania w kolejce: {cou
                                  "Aby używać modeli: `cairnmind models pull` pobiera lokalne modele do Ollamy (około 7 GB); "
                                  "`cairnmind models set` wybiera serwer modeli.")
 MESSAGES[THIS_MAC] = "Ten Mac: {chip}, {gib} GiB pamięci zunifikowanej, współdzielonej z modelami."
-MESSAGES[PROCESS_OFF] ="Brak modeli. Uruchom `cairnmind models pull`, aby przetwarzać pamięć."
+MESSAGES[PROCESS_OFF] = "Brak modeli. Uruchom `cairnmind models pull`, aby przetwarzać pamięć."
 MESSAGES[PROCESS_RESTART] = "Modele włączone. Zrestartuj usługę (`cairnmind stop`, potem start), by ich użyła."
 
 
