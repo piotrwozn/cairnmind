@@ -75,7 +75,7 @@ def test_everything_local_reads_as_three_lines(tmp_path, offline):
     place = topology(settings, models=models, writer=WRITER)
     assert place["lines"] == [
         "Storage: ArcadeDB on this machine at http://127.0.0.1:2480, started and stopped by Cairnmind "
-        "(native engine, Java 21). This installation writes it.",
+        "(native engine, Java 21). This installation is the one that writes to the store.",
         "Memory models: chat qwen3.5:9b and embedding qwen3-embedding:0.6b, both on this machine "
         "(Ollama at http://127.0.0.1:11434). These are the release's models, evaluated for this release.",
         "On this machine: the knowledge service at http://127.0.0.1:8765; the ArcadeDB engine (native, Java 21); "
@@ -237,7 +237,7 @@ def test_an_ollama_url_on_another_computer_is_the_refusal_not_a_server_that_rece
 def test_a_writer_row_that_the_journal_head_contradicts_is_not_called_the_writer(tmp_path, offline):
     problem = "the journal head names another installation; run cairnmind store takeover --yes"
     place = topology(make(tmp_path), writer={"role": "writer", "head_writer": "other", "problem": problem})
-    assert place["lines"][0].endswith(" " + problem) and "This installation writes it." not in place["lines"][0]
+    assert place["lines"][0].endswith(" " + problem) and "writes to the store" not in place["lines"][0]
     assert place["storage"]["writer"]["problem"] == problem
     assert status_words(place)[0] == ("local", True)
 
@@ -311,7 +311,7 @@ def test_setup_shows_three_lines_and_how_to_change_them(tmp_path, requests_repla
     assert result.exit_code == 0, result.output
     expected = topology(Settings.load(tmp_path / "data"), models=requests_replaced, writer=WRITER)["lines"]
     assert result.output == "\n".join([*expected, "", CHANGE_HINT]) + "\n"
-    assert expected[1].endswith(" " + EVALUATED_PASSED) and expected[0].endswith("This installation writes it.")
+    assert expected[1].endswith(" " + EVALUATED_PASSED) and expected[0].endswith("This installation is the one that writes to the store.")
     assert "cairnmind engine start --docker" in CHANGE_HINT and "cairnmind models set" in CHANGE_HINT
 
 

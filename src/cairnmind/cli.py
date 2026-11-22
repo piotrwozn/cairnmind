@@ -18,6 +18,7 @@ from typing import Annotated
 
 import httpx
 import typer
+from typer.core import TyperArgument, TyperGroup
 
 from cairnmind.cli_arguments import (
     AnswerIdArg, ClientArg, ExportArg, FolderArg, GroupArg, JobIdArg, PacketHashArg, PacketIdArg, PlanIdArg,
@@ -28,7 +29,26 @@ from cairnmind.config import SERVICE_NAMES, Settings, drop_env, session_value
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.arcade import ArcadeError
 
-app = typer.Typer(no_args_is_help=False, pretty_exceptions_enable=False,
+class _ProjectFirstGroup(TyperGroup):
+    """A command whose first argument is the project and that is given only one: the error says the project comes
+    first (#326). A question cannot be told from a project name, so nothing is looked up and nothing is started."""
+
+    def invoke(self, ctx):
+        try:
+            return super().invoke(ctx)
+        except Exception as exc:
+            # By name: newer Typer carries its own copy of Click, so click.MissingParameter would not match.
+            if type(exc).__name__ != "MissingParameter":
+                raise
+            arguments = [p for p in exc.ctx.command.params if isinstance(p, TyperArgument)] if exc.ctx else []
+            if (len(arguments) > 1 and arguments[0].metavar == "PROJECT" and isinstance(exc.param, TyperArgument)
+                    and exc.param is not arguments[0]):
+                from cairnmind.first_start import PROJECT_FIRST
+                exc.message = PROJECT_FIRST.format(missing=exc.param.metavar or exc.param.name)
+            raise
+
+
+app = typer.Typer(cls=_ProjectFirstGroup, no_args_is_help=False, pretty_exceptions_enable=False,
                   help="A terminal workspace with memory: Codex, Claude, Ollama, API and GitHub Copilot. Start: "
                        "cairnmind doctor, then cairnmind project add NAME FOLDER, cairnmind remember NAME TEXT and "
                        "cairnmind brief NAME.")
@@ -845,6 +865,7 @@ def stop(ctx: typer.Context, as_json: JSON_FLAG = False):
 @projects_app.command("add")
 @initialized
 def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, as_json: JSON_FLAG = False):
+    """Register a project: its name and the folder of its files, which are indexed."""
     import shlex
     from cairnmind import first_start
     from cairnmind.brief import _git_out
@@ -865,18 +886,24 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
 
     def sentences():
         shown = safe_text(str(root))
-        said = first_start.PROJECT_EXISTED if project["id"] in known else first_start.PROJECT_ADDED
-        lines = [said.format(project=shlex.quote(safe_text(name)), root=shown, files=result.get("files", 0))]
+        existed = project["id"] in known
+        quoted = shlex.quote(safe_text(name))
+        lines = [(first_start.PROJECT_EXISTED if existed else first_start.PROJECT_ADDED).format(
+            project=quoted, root=shown, files=result.get("files", 0))]
         if _git_out(root, "rev-parse", "--is-inside-work-tree") is None:
             lines.append(first_start.NOT_GIT.format(root=shown))
         elif _git_out(root, "rev-parse", "--verify", "-q", "HEAD") is None:
             lines.append(first_start.NO_COMMIT.format(root=shown))
+        # The warning comes before the next step, which stays last (#326).
+        lines.append((first_start.PROJECT_EXISTED_NEXT if existed else first_start.PROJECT_ADDED_NEXT).format(
+            project=quoted))
         return lines
     _human_or_json({"project": project, "indexed": result, "history": discovery}, as_json, sentences)
 
 
 @projects_app.command("list")
 def project_list(ctx: typer.Context, as_json: JSON_FLAG = False):
+    """List the registered projects with their folders."""
     projects = store_for_read(ctx.obj).list_projects()
 
     def sentences():

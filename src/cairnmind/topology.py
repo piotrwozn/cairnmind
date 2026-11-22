@@ -25,9 +25,9 @@ STORAGE_CONNECT_HERE = ("Storage: ArcadeDB at {url} on this machine, which this 
                         "not installed, started or stopped here.")
 STORAGE_CONNECT_REMOTE = ("Storage: ArcadeDB at {url} on {host}, which this installation only connects to; it is not "
                           "installed, started or stopped here.")
-FROM_VARIABLE = "The address comes from {variable}, for this process only."
+FROM_VARIABLE = "The address is set by the environment variable {variable}, for this process only."
 STORAGE_PROBLEM = "It cannot be used: {problem}"
-WRITER_YES = "This installation writes it."
+WRITER_YES = "This installation is the one that writes to the store."
 WRITER_UNKNOWN = "Whether this installation writes it is unknown: {reason}"
 
 MODELS_DISABLED = "Memory models: none in use; the knowledge agent is disabled (deterministic-only mode)."
@@ -81,9 +81,9 @@ MESSAGES = {
     STORAGE_ENGINE_UNKNOWN: "Baza: ArcadeDB na tym komputerze pod adresem {url}, zarządzana przez Cairnmind, ale jej trybu silnika nie można użyć: {problem}",
     STORAGE_CONNECT_HERE: "Baza: ArcadeDB pod adresem {url} na tym komputerze; ta instalacja tylko się z nią łączy, nie instaluje jej, nie uruchamia ani nie zatrzymuje.",
     STORAGE_CONNECT_REMOTE: "Baza: ArcadeDB pod adresem {url} na {host}; ta instalacja tylko się z nią łączy, nie instaluje jej, nie uruchamia ani nie zatrzymuje.",
-    FROM_VARIABLE: "Adres pochodzi z {variable}, tylko dla tego procesu.",
+    FROM_VARIABLE: "Adres ustawia zmienna środowiskowa {variable}, tylko dla tego procesu.",
     STORAGE_PROBLEM: "Nie można jej użyć: {problem}",
-    WRITER_YES: "Ta instalacja do niej zapisuje.",
+    WRITER_YES: "Ta instalacja jest tą, która zapisuje do magazynu.",
     WRITER_UNKNOWN: "Nie wiadomo, czy ta instalacja do niej zapisuje: {reason}",
     MODELS_DISABLED: "Modele pamięci: żadne nie są używane; agent wiedzy jest wyłączony (tryb tylko deterministyczny).",
     MODELS_INVALID: "Modele pamięci: nie można ich użyć: {problem}",

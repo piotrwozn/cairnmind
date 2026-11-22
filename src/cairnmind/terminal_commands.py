@@ -12,7 +12,7 @@ from textual.widgets import Button, DataTable, Footer, Input, Static
 
 from . import terminal_theme
 from .cockpit_state import CockpitState
-from .first_start import GET_MODELS, MATCHES_HEADING, MODE_HEADING, MODE_STATUS
+from .first_start import ASK_NEXT, GET_MODELS, MATCHES_HEADING, MODE_STATUS, STORED_FINDING
 from .terminal_i18n_messages import ASK_STATUS, fixed_message
 from .terminal_safe import plain
 
@@ -212,12 +212,15 @@ def help_text(value):
     return terminal_theme.assemble(parts)
 
 
-def _passages(items, text_key, translate=str) -> list[str]:
+def _passages(items, text_key, translate=str, *, name_notes=False) -> list[str]:
     """One line per source or match: where it is, its lines, the status of a record that is not confirmed, and
-    its text on one line (240 characters)."""
+    its text on one line (240 characters). With name_notes a note saved by remember, whose address is an id that
+    says nothing (manual://), is named a stored finding; it is not called the person's, as an assistant saves them too."""
     lines = []
     for item in items:
         where = str(item.get("uri", item.get("id", "")))
+        if name_notes and where.startswith("manual://"):
+            where = translate(STORED_FINDING)
         if item.get("line_start"):
             where += f" ({item['line_start']}-{item.get('line_end', item['line_start'])})"
         status = item.get("status")
@@ -247,9 +250,9 @@ def ask_summary(result, translate) -> str:
         lines += ["", translate("Sources") + ":", *_passages(sources, "quote", translate)]
     matches = [match for match in result.get("full_text_matches", []) if isinstance(match, dict)][:8]
     if matches:  # search results without models (#274): their own heading, never "Sources"
-        lines += ["", translate(MATCHES_HEADING) + ":", *_passages(matches, "excerpt", translate)]
-    if GET_MODELS in raw:  # the way to get models is not missing evidence: the mode's own heading (#294)
-        lines += ["", translate(MODE_HEADING) + ":", translate(GET_MODELS)]
+        lines += ["", translate(MATCHES_HEADING) + ":", *_passages(matches, "excerpt", translate, name_notes=True)]
+    if GET_MODELS in raw:  # the way to get models is not missing evidence; then the one next step (#294, #326)
+        lines += ["", translate(GET_MODELS), translate(ASK_NEXT)]
     unknowns = [fixed_message(item, translate) for item in raw if item != GET_MODELS][:8]
     if unknowns:
         lines += ["", translate("Missing evidence") + ":"] + [f"- {item}" for item in unknowns]

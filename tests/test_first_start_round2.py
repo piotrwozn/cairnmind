@@ -475,11 +475,12 @@ def test_ask_names_a_proposed_finding_and_the_warnings_of_the_json():
     answer = unavailable(record, {**MATCH, "id": "kept", "uri": "/w/b.py", "status": "confirmed"})
     answer["freshness"]["warnings"] = ["Current source changed since it was indexed: /w/a.py"]
     shown = ask_summary(answer, str)
-    assert 'manual://note/1 (1-3) (unconfirmed): "We deploy blue green."' in shown
+    # #326: a note saved with remember is a stored finding, not an opaque address.
+    assert 'stored finding (1-3) (unconfirmed): "We deploy blue green."' in shown and "manual://" not in shown
     assert "/w/b.py (1-3):" in shown  # a confirmed record carries no mark
     assert shown.splitlines()[shown.splitlines().index("Warnings:") + 1] == (
         "- Current source changed since it was indexed: /w/a.py")
-    assert "(niepotwierdzone)" in ask_summary(answer, lambda text: tr(text, "pl"))
+    assert "zapisane ustalenie (1-3) (niepotwierdzone)" in ask_summary(answer, lambda text: tr(text, "pl"))
     assert "Ostrzeżenia:" in ask_summary(answer, lambda text: tr(text, "pl"))
 
 

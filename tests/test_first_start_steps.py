@@ -63,8 +63,9 @@ def test_project_add_says_what_it_did_and_warns_about_a_folder_without_git(tmp_p
     added = run("project", "add", "my-app", str(root))
     assert added.exit_code == 0, added.output
     assert json.loads(added.stdout)["project"]["name"] == "my-app"  # the JSON is unchanged
-    assert told[0].startswith(f"Registered my-app in {root.resolve()}; files indexed: ") and "Next: cairnmind remember my-app" in told[0]
-    assert told[1:] == [first_start.NOT_GIT.format(root=root.resolve())]
+    assert told[0].startswith(f"Registered my-app in {root.resolve()}; files indexed: ")
+    assert told[-1].startswith("Next: cairnmind remember my-app")  # #326: the warning comes before the next step
+    assert told[1:-1] == [first_start.NOT_GIT.format(root=root.resolve())]
 
 
 def test_project_add_warns_about_a_repository_without_a_commit_and_stays_quiet_with_one(tmp_path, run, told):
@@ -72,11 +73,11 @@ def test_project_add_warns_about_a_repository_without_a_commit_and_stays_quiet_w
     told.clear()
     empty = folder(tmp_path, "empty", repository=True)
     assert run("project", "add", "empty", str(empty)).exit_code == 0
-    assert told[1:] == [first_start.NO_COMMIT.format(root=empty.resolve())]
+    assert told[1:-1] == [first_start.NO_COMMIT.format(root=empty.resolve())]
     told.clear()
     ready = folder(tmp_path, "ready", repository=True, commit=True)
     assert run("project", "add", "ready", str(ready)).exit_code == 0
-    assert len(told) == 1 and told[0].startswith("Registered ready in ")
+    assert len(told) == 2 and told[0].startswith("Registered ready in ") and told[1].startswith("Next: ")
 
 
 def test_a_project_name_with_a_space_is_quoted_in_the_next_step(tmp_path, run, told):
@@ -84,7 +85,7 @@ def test_a_project_name_with_a_space_is_quoted_in_the_next_step(tmp_path, run, t
     told.clear()
     root = folder(tmp_path, repository=True, commit=True)
     assert run("project", "add", "my app", str(root)).exit_code == 0
-    assert "cairnmind remember 'my app' " in told[0]
+    assert "cairnmind remember 'my app' " in told[-1]
 
 
 def test_adding_a_registered_project_says_it_existed(tmp_path, run, told):

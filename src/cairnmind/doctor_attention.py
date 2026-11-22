@@ -91,7 +91,7 @@ def required_missing(report: dict) -> list[str]:
                                                  found=arcade.get("version") or "unknown",
                                                  pinned=arcade.get("configured_version") or "release")))
     elif arcade.get("database_available") is False:
-        lines.append(_line(f"The database {arcade.get('database') or ''} cannot be read; see cairnmind doctor --json."))
+        lines.append(_line("The memory database cannot be read; see cairnmind doctor --json."))
     knowledge = report.get("knowledge_agent")
     if knowledge and knowledge != KNOWLEDGE_DISABLED:
         lines.append(_line(knowledge))  # a stored value that is neither enabled nor disabled
@@ -152,7 +152,7 @@ def _engine_present(report: dict) -> list[str]:
             "engine_problem") or arcade.get("version_matches") is False:
         return []
     # Where it runs is said once, by the topology lines at the top (#300).
-    return [ENGINE_READY.format(url=arcade.get("url") or "its address", database=arcade.get("database") or "")]
+    return [ENGINE_READY.format(url=arcade.get("url") or "its address")]
 
 
 def _models_on(report: dict) -> bool:

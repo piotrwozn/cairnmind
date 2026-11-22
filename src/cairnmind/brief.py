@@ -23,7 +23,9 @@ from cairnmind.terminal_safe import safe_text
 MAX_LINES = 40
 ACTIVE_STATES = ("in_progress", "needs_test", "needs_review")
 _CHECKPOINT_KEYS = ("summary", "done", "completed", "in_progress", "next", "next_steps", "blockers", "notes")
-_LEGEND = "machine = measured now by Cairnmind; reported = stored claim, not verified; text after | is a stored title"
+# One part for each mark the printed lines use (#326); the separator is the " | " that precedes a stored title.
+_LEGEND = {"machine": "[machine] = measured now by Cairnmind", "reported": "[reported] = stored by an assistant or a "
+           "person, not verified", "|": "text after | is a stored title"}
 # Characters that render as empty cells without being whitespace could push forged text onto a new terminal row.
 _BLANK = {0x2800, 0x3164, 0x115F, 0x1160, 0xFFA0}
 
@@ -257,10 +259,12 @@ def build_brief(store, project_id, worktree=None, *, now=None):
     lines += _verification(store, tasks, str(root))
     lines += _commits(root, saved)
     lines += _proposed(records)
-    head = [f"Brief for {_line(project['name'], 60)} in {_line(root, 120)}", _LEGEND]
-    budget = MAX_LINES - len(head)
+    budget = MAX_LINES - 2
     if len(lines) > budget:
         lines = lines[:budget - 1] + [("machine", f"{len(lines) - budget + 1} more lines were left out to keep the brief short.")]
+    used = {basis for basis, _ in lines} | {"|" for _, text in lines if " | " in text}
+    head = [f"Brief for {_line(project['name'], 60)} in {_line(root, 120)}",
+            "; ".join(part for key, part in _LEGEND.items() if key in used)]
     marked = [{"basis": basis, "text": text} for basis, text in lines]
     text = "\n".join(head + [f"{'[' + line['basis'] + ']':<10} {line['text']}" for line in marked])
     return {"project": {"id": project["id"], "name": project["name"]}, "worktree": str(root),

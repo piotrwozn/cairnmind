@@ -69,6 +69,7 @@ def test_cockpit_status_words_each_state():
                                           ("darwin", "Install tmux >= 3.4, for example with: brew install tmux.")])
 def test_workspace_refusal_names_the_need_the_version_the_hint_and_what_works(monkeypatch, system, hint):
     monkeypatch.setattr(platform_hints, "host_system", lambda *a, **k: system)
+    monkeypatch.setattr(first_start.shutil, "which", lambda name, *a, **k: f"/usr/bin/{name}")  # a coding client is installed (#326)
     refusal = first_start.workspace_refusal
     need = "The terminal workspace needs tmux 3.4 or newer."
     assert refusal({"available": False, "code": "tmux_missing"}) == f"{need} tmux was not found. {hint} {SENTENCE_TAIL}"

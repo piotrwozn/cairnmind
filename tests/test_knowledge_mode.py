@@ -473,14 +473,15 @@ def test_rebuild_vectors_refuses_without_models(monkeypatch, tmp_path):
 
 def test_the_ask_panel_names_the_mode_apart_from_missing_evidence():
     from cairnmind.terminal_commands import ask_summary
-    for language, heading, missing in (("en", "Deterministic-only mode (no models)", "Missing evidence"),
-                                       ("pl", "Tryb tylko deterministyczny (brak modeli)", "Brakujące dowody")):
+    # #326: no heading of its own above the one line; the way to get models, then the next step.
+    for language, missing in (("en", "Missing evidence"), ("pl", "Brakujące dowody")):
         def say(text, language=language):
             return tr(text, language)
         shown = ask_summary(knowledge_mode.unavailable_answer(NOTHING_FOUND), say)
-        assert heading + ":\n" + say(first_start.GET_MODELS) in shown and missing not in shown
+        assert say(first_start.GET_MODELS) + "\n" + say(first_start.ASK_NEXT) in shown and missing not in shown
+        assert "Deterministic-only" not in shown and "Tryb tylko deterministyczny (brak" not in shown
         held = ask_summary(knowledge_mode.unavailable_answer({**NOTHING_FOUND, "held_back": {"chunks": 1}}), say)
-        assert heading + ":\n" + say(first_start.GET_MODELS) in held
+        assert say(first_start.GET_MODELS) + "\n" + say(first_start.ASK_NEXT) in held
         assert missing + ":\n- " + say(first_start.MATCHES_HELD_BACK) in held
         assert "- " + say(first_start.GET_MODELS) not in held
     configured = {"status": "unverified", "answer": "x", "unknowns": ["No decision explains it."]}

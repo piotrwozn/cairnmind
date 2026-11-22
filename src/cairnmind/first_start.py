@@ -8,8 +8,11 @@ choice, the answer without models with its full-text matches and doctor's inform
 #287 adds the first start's summary, next steps and stops.
 #313 adds the second round: the sentences of the commands that print JSON only outside a terminal, the foreign
 engine, the optional parts that do not work.
+#326 adds the third round: a project name that comes first, the brief's legend, the only place a person confirms.
 """
 from __future__ import annotations
+
+import shutil
 
 from . import platform_hints
 from .terminal_safe import safe_text
@@ -20,6 +23,9 @@ TMUX_FOUND = "Found {version}."
 TMUX_SILENT = "tmux did not report its version."
 WITHOUT_WORKSPACE = ("Without it, every other command works, for example cairnmind brief, cairnmind remember, "
                      "cairnmind ask and cairnmind run.")
+# cairnmind run starts a coding assistant: it is named only when one is installed (#326).
+WITHOUT_WORKSPACE_NO_CLIENT = ("Without it, every other command works, for example cairnmind brief, cairnmind "
+                               "remember and cairnmind ask.")
 COCKPIT_MISSING = "unavailable (tmux 3.4+ not found)"
 COCKPIT_OLD = "unavailable (tmux 3.4+ not found; found {version})"
 COCKPIT_OTHER = "unavailable (tmux 3.4+ not found; {code})"
@@ -55,7 +61,9 @@ NEEDS_MODELS = ("{command} needs the knowledge agent's models, and the knowledge
 KNOWLEDGE_INVALID = "knowledge_agent in config.json is {value}; it must be enabled or disabled."
 RESTART_FOR_MODELS = ("knowledge_agent is enabled in config.json, but this service started without models. Restart "
                       "the knowledge service (cairnmind stop, then start Cairnmind again) so that it uses them.")
-MODE_HEADING = "Deterministic-only mode (no models)"
+ASK_NEXT = ("Next: to use this memory from a coding assistant, install Codex or Claude Code, then run cairnmind "
+            "install NAME.")
+STORED_FINDING = "stored finding"  # how a note saved with remember is named in a list of matches
 # Short on purpose: the sidebar shows this on a 24-column line of at most 5 rows, so the command must fit (#294).
 PROCESS_OFF = "No models configured. Run `cairnmind models pull` to process memory."
 PROCESS_RESTART = "Models are enabled. Restart the service (`cairnmind stop`, then start) to use them."
@@ -78,7 +86,7 @@ NEXT_START = ('Next: cairnmind project add NAME FOLDER registers a project; then
               'stores a first finding and cairnmind brief NAME shows it.')
 NEXT_PROJECTS = ('Next: cairnmind project list names your projects; cairnmind brief NAME shows where work stands in one, '
                  'and cairnmind remember NAME "..." stores a finding.')
-ENGINE_READY = "Database engine: answers at {url}; the database {database} can be read."
+ENGINE_READY = "Database engine: answers at {url}; the memory database can be read."  # its internal name is in --json
 SERVICE_RUNNING = "Local service: running at {url}."
 SERVICE_ON_DEMAND = "Local service: not running now; the next command that needs it starts it."
 ENGINE_ON_DEMAND = ("Database engine: not running now at {url}; the next command that needs it starts it "
@@ -102,27 +110,28 @@ CLIENT_OFF = "{client}: not installed; needed only for coding sessions (cairnmin
 CLIENT_ON = "{client}: installed and verified; start it with cairnmind run NAME {command}."
 
 # What each command of the first start says it did and what comes next.
-PROJECT_EXISTED = ('{project} was already registered for {root}; its files were checked again (files indexed: {files}). '
-                   'Next: cairnmind brief {project} shows where work stands.')
+PROJECT_EXISTED = ('{project} was already registered for {root}; its files were checked again (files indexed: {files}).')
+PROJECT_EXISTED_NEXT = 'Next: cairnmind brief {project} shows where work stands.'
 PROJECT_FOLDER_MISSING = ("{root} does not exist. cairnmind project add NAME FOLDER takes the folder of a project you "
                           "already have: check the path, or create the folder first (mkdir -p {quoted}).")
-PROJECT_ADDED = ('Registered {project} in {root}; files indexed: {files}. Next: cairnmind remember {project} "..." '
-                 'stores a first finding, and cairnmind brief {project} shows it.')
+PROJECT_ADDED = 'Registered {project} in {root}; files indexed: {files}.'
+PROJECT_ADDED_NEXT = ('Next: cairnmind remember {project} "..." stores a first finding, and cairnmind brief {project} '
+                      'shows it.')
 NOT_GIT = ("{root} is not a Git repository. Memory works without Git; impact, the commits in brief and coding "
            "sessions (cairnmind run) need a repository with a first commit (git init, git add, git commit).")
 NO_COMMIT = ("{root} is a Git repository without a commit yet. Memory works; impact, the commits in brief and "
              "coding sessions (cairnmind run) need a first commit (git add, git commit).")
 REMEMBER_PROPOSED = ("Stored as a proposed {kind}. Nothing more is needed to go on: cairnmind brief {project} and "
                      "cairnmind ask {project} already use it, marked as unconfirmed. A person can confirm or dispute "
-                     "it later in the memory inspector of the terminal workspace (cairnmind, then Ctrl+B i; needs "
-                     "tmux 3.4+).")
+                     "it later, only in the memory inspector of the terminal workspace (cairnmind, then Ctrl+B i; "
+                     "needs tmux 3.4+): the command line confirms nothing.")
 REMEMBER_STORED = "Stored as {status} ({kind}), record {id}; cairnmind records {project} lists it."
 BRIEF_START = ('Next: nothing is stored for this project yet. cairnmind remember {project} "..." stores a first '
                'finding; a coding session started with cairnmind run {project} claude (or codex) saves '
                'checkpoints, plans and tasks here.')
 BRIEF_REVIEW = ("Next: nothing more is needed to go on; brief and ask already use proposed findings, marked as "
-                "unconfirmed. A person can confirm or dispute them later in the memory inspector of the terminal "
-                "workspace (cairnmind, then Ctrl+B i; needs tmux 3.4+).")
+                "unconfirmed. A person can confirm or dispute them later, only in the memory inspector of the "
+                "terminal workspace (cairnmind, then Ctrl+B i; needs tmux 3.4+): the command line confirms nothing.")
 INSTALL_NO_CLIENT = ("Neither Codex nor Claude Code is installed here, so nothing was written and no client was "
                      "connected. Memory works without a client (cairnmind remember, brief, ask); after installing "
                      "one, run cairnmind install {project} again.")
@@ -177,6 +186,8 @@ OWN_ENGINE_REFUSED = ("The database engine of this data directory at {url} refus
 # Stops that name the next step.
 UNKNOWN_PROJECT_NEXT = ("cairnmind project list shows the registered projects; cairnmind project add NAME FOLDER "
                         "registers one.")
+PROJECT_FIRST = ("The project name comes first, then {missing}; cairnmind project list shows the registered "
+                 "projects.")
 PROJECT_NAME_TAKEN = ("The name {name} is already registered, for {root}. Choose another name; cairnmind project "
                       "list shows the registered projects.")
 PROJECT_ROOT_TAKEN = "{root} is already registered, as the project {name}. cairnmind project list shows the registered projects."
@@ -204,6 +215,16 @@ MESSAGES = {
     TMUX_SILENT: "tmux nie podał swojej wersji.",
     WITHOUT_WORKSPACE: ("Bez niego działają wszystkie inne polecenia, na przykład cairnmind brief, cairnmind "
                         "remember, cairnmind ask i cairnmind run."),
+    WITHOUT_WORKSPACE_NO_CLIENT: ("Bez niego działają wszystkie inne polecenia, na przykład cairnmind brief, "
+                                  "cairnmind remember i cairnmind ask."),
+    ASK_NEXT: ("Dalej: aby używać tej pamięci z asystentem programistycznym, zainstaluj Codexa lub Claude Code, a "
+               "potem uruchom cairnmind install NAZWA."),
+    STORED_FINDING: "zapisane ustalenie",
+    PROJECT_FIRST: ("Najpierw podaje się nazwę projektu, potem {missing}; cairnmind project list pokazuje "
+                    "zarejestrowane projekty."),
+    PROJECT_ADDED_NEXT: ('Dalej: cairnmind remember {project} "..." zapisuje pierwsze ustalenie, a cairnmind brief '
+                         '{project} je pokazuje.'),
+    PROJECT_EXISTED_NEXT: "Dalej: cairnmind brief {project} pokazuje, na czym stoi praca.",
     COCKPIT_MISSING: "niedostępny (nie znaleziono tmux 3.4+)",
     COCKPIT_OLD: "niedostępny (nie znaleziono tmux 3.4+; znaleziono {version})",
     COCKPIT_OTHER: "niedostępny (nie znaleziono tmux 3.4+; {code})",
@@ -253,7 +274,7 @@ MESSAGES = {
     NEXT_FIX: "Dalej: usuń braki wymienione w części Wymagane i brakujące, a potem uruchom ponownie cairnmind doctor.",
     NEXT_START: ('Dalej: cairnmind project add NAZWA FOLDER rejestruje projekt; potem cairnmind remember NAZWA "..." '
                  'zapisuje pierwsze ustalenie, a cairnmind brief NAZWA je pokazuje.'),
-    ENGINE_READY: "Silnik bazy danych: odpowiada pod {url}; bazę {database} można odczytać.",
+    ENGINE_READY: "Silnik bazy danych: odpowiada pod {url}; bazę pamięci można odczytać.",
     SERVICE_RUNNING: "Usługa lokalna: działa pod {url}.",
     SERVICE_ON_DEMAND: "Usługa lokalna: teraz nie działa; uruchomi ją następne polecenie, które jej potrzebuje.",
     ENGINE_ON_DEMAND: ("Silnik bazy danych: teraz nie działa pod {url}; uruchomi go następne polecenie, które go "
@@ -277,8 +298,7 @@ MESSAGES = {
     CLIENT_OFF: ("{client}: nie zainstalowano; potrzebny tylko do sesji programistycznych (cairnmind run). "
                  "{note}"),
     CLIENT_ON: "{client}: zainstalowany i sprawdzony; uruchom go poleceniem cairnmind run NAZWA {command}.",
-    PROJECT_ADDED: ('Zarejestrowano {project} w {root}; zindeksowane pliki: {files}. Dalej: cairnmind remember '
-                    '{project} "..." zapisuje pierwsze ustalenie, a cairnmind brief {project} je pokazuje.'),
+    PROJECT_ADDED: "Zarejestrowano {project} w {root}; zindeksowane pliki: {files}.",
     NOT_GIT: ("{root} nie jest repozytorium Git. Pamięć działa bez Gita; impact, commity w brief i sesje "
               "programistyczne (cairnmind run) wymagają repozytorium z pierwszym commitem (git init, git add, "
               "git commit)."),
@@ -286,16 +306,16 @@ MESSAGES = {
                 "programistyczne (cairnmind run) wymagają pierwszego commita (git add, git commit)."),
     REMEMBER_PROPOSED: ("Zapisano jako proponowane ({kind}). Nic więcej nie jest potrzebne, aby pracować dalej: "
                         "cairnmind brief {project} i cairnmind ask {project} już z tego korzystają, z oznaczeniem "
-                        "jako niepotwierdzone. Człowiek może je później potwierdzić lub zakwestionować w "
+                        "jako niepotwierdzone. Człowiek może je później potwierdzić lub zakwestionować, tylko w "
                         "inspektorze pamięci środowiska terminalowego (cairnmind, potem Ctrl+B i; wymaga "
-                        "tmux 3.4+)."),
+                        "tmux 3.4+): wiersz poleceń niczego nie potwierdza."),
     BRIEF_START: ('Dalej: dla tego projektu nic jeszcze nie zapisano. cairnmind remember {project} "..." zapisuje '
                   'pierwsze ustalenie; sesja programistyczna uruchomiona przez cairnmind run {project} claude '
                   '(lub codex) zapisuje tu punkty kontrolne, plany i zadania.'),
     BRIEF_REVIEW: ("Dalej: nic więcej nie jest potrzebne, aby pracować dalej; brief i ask już korzystają z "
                    "proponowanych ustaleń, z oznaczeniem jako niepotwierdzone. Człowiek może je później potwierdzić "
-                   "lub zakwestionować w inspektorze pamięci środowiska terminalowego (cairnmind, potem Ctrl+B i; "
-                   "wymaga tmux 3.4+)."),
+                   "lub zakwestionować, tylko w inspektorze pamięci środowiska terminalowego (cairnmind, potem "
+                   "Ctrl+B i; wymaga tmux 3.4+): wiersz poleceń niczego nie potwierdza."),
     INSTALL_NO_CLIENT: ("Nie zainstalowano tu ani Codexa, ani Claude Code, więc niczego nie zapisano i nie połączono "
                         "żadnego klienta. Pamięć działa bez klienta (cairnmind remember, brief, ask); po "
                         "zainstalowaniu jednego z nich uruchom ponownie cairnmind install {project}."),
@@ -343,12 +363,11 @@ MESSAGES = {
     ENGINE_EXITED: ("ArcadeDB zakończył działanie podczas startu. Zobacz {log}. Zwykle przyczyną jest zajęty port "
                     "({url}) albo za mało pamięci; po usunięciu przyczyny uruchom cairnmind engine start."),
     ENGINE_TIMED_OUT: "Start ArcadeDB przekroczył limit czasu. Zobacz {log}. Po usunięciu przyczyny uruchom cairnmind engine start.",
-    MODE_HEADING: "Tryb tylko deterministyczny (brak modeli)",
     OPTIONAL_BROKEN: "Opcjonalne i niedziałające:",
     NEXT_PROJECTS: ('Dalej: cairnmind project list wymienia twoje projekty; cairnmind brief NAZWA pokazuje, na czym '
                     'stoi praca w jednym z nich, a cairnmind remember NAZWA "..." zapisuje ustalenie.'),
     PROJECT_EXISTED: ('{project} był już zarejestrowany dla {root}; jego pliki sprawdzono ponownie (zindeksowane '
-                      'pliki: {files}). Dalej: cairnmind brief {project} pokazuje, na czym stoi praca.'),
+                      'pliki: {files}).'),
     PROJECT_FOLDER_MISSING: ("{root} nie istnieje. cairnmind project add NAZWA FOLDER przyjmuje folder projektu, "
                              "który już masz: sprawdź ścieżkę albo najpierw utwórz folder (mkdir -p {quoted})."),
     REMEMBER_STORED: "Zapisano jako {status} ({kind}), rekord {id}; cairnmind records {project} go wymienia.",
@@ -413,4 +432,6 @@ def workspace_refusal(found: dict) -> str:
     else:
         state = TMUX_NOT_FOUND
     hint = platform_hints.hint("tmux_launch").rstrip(".") + "."
-    return " ".join((WORKSPACE_NEEDS, state, hint, WITHOUT_WORKSPACE))
+    # The check doctor makes: the command is on PATH (integrations._probe_cli).
+    works = WITHOUT_WORKSPACE if any(shutil.which(name) for name in CLIENT_NAMES) else WITHOUT_WORKSPACE_NO_CLIENT
+    return " ".join((WORKSPACE_NEEDS, state, hint, works))
