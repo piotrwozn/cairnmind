@@ -172,8 +172,8 @@ def kept_step_refusal(step_key, refusal, adoption=False, title=None) -> str:
         return (f"Task {name!r} (task {refusal.record_id}) was confirmed by a person, or before "
                 "only a person could confirm, and adopting it into a plan gives it a plan key: this command is not "
                 f"a person's act, and it would {would}. Only a person takes a confirmation away. Nothing was saved. "
-                "The person disputes the task in the inspector of the workspace; it can then be adopted, and its step "
-                "is proposed until they confirm the plan.")
+                "The person adopts the group in the workspace (`cairnmind`): More, then Old task groups, choose the "
+                "group, then Adopt; its steps are proposed until they confirm the plan.")
     return (f"Step {str(step_key)[:200]!r} of this plan (task {refusal.record_id}) was confirmed by a person, and "
             f"{NOT_A_PERSON_SAVE}: it would {would}. Only a person takes a confirmation away. Nothing "
             "was saved. Save the plan with that step exactly as `plan show` returns it, every field included (other "

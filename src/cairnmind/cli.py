@@ -1627,7 +1627,8 @@ def plan_adopt(ctx: typer.Context, project: ProjectArg, group: GroupArg,
     from cairnmind.plans import PlanManager
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
-    # Adoption gives each task a plan key: a task a person confirmed is refused, never adopted here (#214).
+    # Adoption gives each task a plan key: a task a person confirmed is refused here; the person adopts that group
+    # in the workspace (#214, #305).
     with actor_write(store, ctx.obj, pid, worktree) as scope:
         result = PlanManager(store).adopt_legacy(pid, group, plan={"title": title} if title else None,
             idempotency_key=idempotency_key, worktree=scope, activate=activate)
