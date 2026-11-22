@@ -149,7 +149,7 @@ async def text_matches(agent, project_id: str, question: str, worktree=None, als
     held_back = gate.summary() if gate else None
     # Found but not shown: held by the gate, unverifiable on disk (_hits drops it) or changed since indexing.
     left_out = bool(held_back) or len(shown) < len(hits) or refreshed > 0
-    return {"matches": matches, "held_back": held_back, "left_out": left_out,
+    return {"matches": matches, "held_back": held_back, "left_out": left_out, "hosted": bool(also_held),
             "warnings": list(dict.fromkeys(w[:240] for w in agent.retriever.warnings))[-8:],
             "elapsed_seconds": round(time.monotonic() - started, 3)}
 
@@ -158,7 +158,10 @@ def unavailable_answer(found: dict, index_errors=()) -> dict:
     """What /ask returns in deterministic-only mode: no answer (status unavailable, no source), and the passages
     text_matches found, in their own key, said by the answer sentence to be search results and not an answer."""
     errors = [str(error)[:240] for error in list(index_errors)[:5]]
-    unknowns = [GET_MODELS, *([MATCHES_HELD_BACK] if found["held_back"] else []), *errors]
+    from .memory_egress import HOSTED_ASK_UNKNOWN
+    # A hosted built-in run is told why in its own words: there is no remote model server in its case (#183).
+    held = HOSTED_ASK_UNKNOWN if found.get("hosted") else MATCHES_HELD_BACK
+    unknowns = [GET_MODELS, *([held] if found["held_back"] else []), *errors]
     diagnostics = {"stage": "ask", "code": UNAVAILABLE_CODE}
     if found["held_back"]:
         diagnostics["held_back"] = found["held_back"]

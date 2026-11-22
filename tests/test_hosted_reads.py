@@ -278,6 +278,9 @@ def test_the_service_takes_the_held_classes_of_a_run_only_as_known_classes(ledge
         hosted, local, invalid = ask(held_classes=HELD), ask(held_classes=[]), ask(held_classes=["everything"])
     assert "we chose Postgres" not in json.dumps(hosted.json()["full_text_matches"])
     assert hosted.json()["diagnostics"]["held_back"]["classes"] == HELD
+    # The reason given is the hosted model's, not a remote model server's, which a hosted run does not have.
+    assert memory_egress.HOSTED_ASK_UNKNOWN in hosted.json()["unknowns"]
+    assert not any("remote model server" in gap for gap in hosted.json()["unknowns"])
     assert "we chose Postgres" in json.dumps(local.json()["full_text_matches"])
     assert invalid.status_code == 422
 
