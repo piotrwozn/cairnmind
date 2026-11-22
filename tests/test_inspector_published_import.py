@@ -19,7 +19,7 @@ from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
 from cairnmind.terminal_inspector import InspectorApp
 from cairnmind import terminal_published_import as published
 from cairnmind.terminal_published_import import MESSAGES, folder_error, taken_ids, take_error
-from consent_steps import form_ready
+from consent_steps import form_ready, form_state
 from test_terminal_panels import FakeBroker, setup, settle
 from test_trial011_workspace import wait_until
 
@@ -87,7 +87,7 @@ async def checked(app, pilot):
             modal = app.screen  # a consent dialog takes only input made after its draw and its quiet moment (#328)
             await wait_until(pilot, lambda: modal.drawn_at + modal.QUIET <= textual_time.get_time())
             return
-    raise AssertionError("no consent dialog")
+    raise AssertionError("no consent dialog; the top screen is " + type(app.screen).__name__ + form_state(app.screen))
 
 
 async def refused_form(app, pilot):
@@ -320,7 +320,7 @@ async def test_the_dialog_works_at_80_by_24(tmp_path, monkeypatch):
         await pilot.click("#memory-published")
         await pilot.pause()
         await pilot.press("enter")
-        await pilot.pause()
+        await form_ready(app, pilot)
         assert inside(app, app.screen.query_one("#form-submit", Button))
         assert inside(app, app.screen.query_one("#form-cancel", Button))
         await checked(app, pilot)

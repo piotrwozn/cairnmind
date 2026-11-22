@@ -19,6 +19,7 @@ from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
 from cairnmind.terminal_legacy_groups import MESSAGES, TOO_LONG
 from cairnmind.terminal_panels import ConfirmModal, SidebarApp
 from cairnmind.terminal_ui import ChoiceModal, FormModal, drop_unseen_key
+from consent_steps import form_ready
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, screen_text, setup_ui
 from test_workspace_stage_scope import wait_until
@@ -117,8 +118,7 @@ async def test_the_dialog_works_at_80_by_24(tmp_path, monkeypatch):
         app.legacy_groups()
         await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
         await pilot.press("enter")
-        await wait_until(pilot, lambda: isinstance(app.screen, FormModal))
-        await pilot.pause()
+        await form_ready(app, pilot)
         for identifier in ("#form-submit", "#form-cancel"):
             region = app.screen.query_one(identifier, Button).region
             assert region.width > 0 and region.x >= 0 and region.right <= 80 and region.bottom <= 24, identifier
