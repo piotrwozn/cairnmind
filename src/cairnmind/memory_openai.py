@@ -123,6 +123,7 @@ class OpenAICompatible(Ollama):
         options = {"num_predict": self.settings.answer_tokens, "temperature": 0}
         options.update(kwargs.pop("options", {}))
         schema = kwargs.pop("format", None)
+        read_timeout = kwargs.pop("read_timeout", None)
         if kwargs:
             raise ValueError("Unsupported option for an OpenAI-compatible model server")
         payload: dict[str, Any] = {"model": self.settings.chat_model, "messages": request_messages(messages),
@@ -135,7 +136,8 @@ class OpenAICompatible(Ollama):
         if schema is not None:
             payload["response_format"] = {"type": "json_schema",
                                           "json_schema": {"name": "cairnmind_response", "schema": schema}}
-        return ollama_reply(await self._request("POST", "/chat/completions", json=payload))
+        return ollama_reply(await self._request("POST", "/chat/completions", json=payload,
+                                                  read_timeout=read_timeout))
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:

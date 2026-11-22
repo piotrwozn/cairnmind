@@ -197,6 +197,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - A model server on another computer is no longer called the local runtime or a local model in errors: not when it does not answer, and not when it answers without the model (#367).
 - The refusals of `cairnmind setup` put a full stop after the error they quote, before the sentence that follows ("... cannot be used: ... runtime. Nothing was saved."), in English and Polish (#367).
 - A prefix key typed while a workspace shortcut was still running (for example Ctrl+B 1, a few letters, then Ctrl+B 2) could reach the assistant as the text Ctrl+B and 2 instead of switching panes; the workspace now turns off tmux's paste detection. A paste from a terminal that brackets pastes still goes to the assistant whole; in a terminal that does not, a pasted raw Ctrl+B now acts as the prefix (#356).
+- An extraction job has one bound, a budget of 180 seconds (120 before) for the first model call and its single repair: each call waits as long as the budget has left, whatever `ask_timeout` holds, so a cut answer and its repair of about a minute each complete on a slow model. A model that never answers ends the job at 180 seconds as a timeout, a server that cannot be reached still fails it at once, and a hung model holds the extraction worker, and the questions behind it, for up to 3 minutes. Measured on an Apple M3 Pro: 33 of 33 extraction jobs completed, the longest in 107.4 s (#266).
 
 ### Development and CI
 
