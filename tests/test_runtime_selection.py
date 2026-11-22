@@ -228,7 +228,8 @@ def test_java_older_than_21_is_still_refused_with_the_existing_message(tmp_path,
     binary = fake_java(tmp_path, 'echo \'openjdk version "17.0.1"\' >&2\n')
     settings = Settings(tmp_path, java_executable=str(binary))
     prepare_start(settings, monkeypatch)
-    with pytest.raises(ArcadeError, match="^ArcadeDB requires Java 21 or newer$"):
+    # doctor's sentence, which also names Docker as the other way (#313)
+    with pytest.raises(ArcadeError, match=r"^Java 21 or newer is needed for the engine: Java 17\. .*engine start --docker\.$"):
         engine.start_engine(settings)
 
 

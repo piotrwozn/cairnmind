@@ -154,9 +154,13 @@ class ArcadeClient:
                 if self.settings.arcade_password:
                     safe_message = safe_message.replace(self.settings.arcade_password, "[redacted]")
                 safe_message = safe_message[:500]
-                if response.status_code == 401 and not self._administrator and connect_only(self.settings):
-                    # The usual first run of a connect-only installation (#68): the user does not exist yet.
-                    safe_message += sign_in_refused(self.settings)
+                if response.status_code == 401 and not self._administrator:
+                    if connect_only(self.settings):
+                        # The usual first run of a connect-only installation (#68): the user does not exist yet.
+                        safe_message += sign_in_refused(self.settings)
+                    else:
+                        from .first_start import FOREIGN_ENGINE  # another data directory's engine on this port (#313)
+                        safe_message = safe_message.rstrip(".") + ". " + FOREIGN_ENGINE.format(url=self._base_url, data_dir=self.settings.data_dir)
                 raise ArcadeError(f"ArcadeDB HTTP {response.status_code}: {safe_message}",
                                   status_code=response.status_code,
                                   exception_name=str(error.get("exception", "")) if isinstance(error, dict) else "")

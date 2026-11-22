@@ -23,7 +23,8 @@ import urllib.request
 from . import process_identity
 from .arcade import ArcadeClient, ArcadeError
 from .config import Settings
-from .first_start import ENGINE_EXITED, ENGINE_NOT_INSTALLED, ENGINE_STARTED, ENGINE_STARTING, ENGINE_TIMED_OUT
+from .first_start import (
+    ENGINE_EXITED, ENGINE_NOT_INSTALLED, ENGINE_STARTED, ENGINE_STARTING, ENGINE_TIMED_OUT, JAVA_NEEDED)
 from .database_mode import (address, connect_only, describe, engine_mode, is_managed_url, refusal,  # noqa: F401
                             server_version, supported_versions, version_problem)
 
@@ -235,6 +236,8 @@ def engine_status(settings: Settings, ask_docker: bool = True) -> dict:
             result["problem"] = refused
     except ArcadeError as exc:
         result["error"] = str(exc)
+        if exc.status_code == 401:
+            result["sign_in_refused"] = True  # an engine answers and does not accept this sign-in (#313)
         if not connect_only(settings) and result["error"].startswith("Local ArcadeDB is unavailable"):
             # The client's generic advice names this very command (#238).
             result["error"] = stopped_engine_advice(result["error"])
@@ -317,6 +320,8 @@ def start_engine(settings: Settings) -> dict:
         from .engine_docker import refuse_if_container_runs
         refuse_if_container_runs(settings)  # never two engines on one data directory (#272)
         existing = engine_status(settings)
+        if existing.get("sign_in_refused"):
+            raise ArcadeError(existing["error"])  # an engine answers on this port: never a second one (#313)
         if existing["available"]:
             if not existing.get("version_matches"):
                 raise ArcadeError(f"ArcadeDB release does not match the pinned {settings.arcade_version}")
@@ -325,12 +330,13 @@ def start_engine(settings: Settings) -> dict:
         if not (home / "lib").is_dir():
             raise ArcadeError(ENGINE_NOT_INSTALLED)
         java = resolve_java(settings)
-        if not java:
-            from .platform_hints import hint
-            raise ArcadeError(hint("java"))
+        from .platform_hints import hint
+        if not java:  # what doctor says, with Docker as the other way (#313)
+            raise ArcadeError(JAVA_NEEDED.format(found="not found", hint=hint("java")))
         major = java_major(java)
         if major is None or major < 21:
-            raise ArcadeError("ArcadeDB requires Java 21 or newer")
+            found = f"Java {major}" if major else f"the version of {java} could not be read"
+            raise ArcadeError(JAVA_NEEDED.format(found=found, hint=hint("java")))
         state = settings.data_dir / "arcade"
         state.mkdir(exist_ok=True, mode=0o700)
         for name in ("config", "databases", "backups", "log"):
@@ -435,6 +441,8 @@ def ensure_engine(settings: Settings) -> None:
     docker = engine_mode(settings) == "docker"
     # An engine in Docker that answers needs no `docker container inspect` on every command.
     status = engine_status(settings, ask_docker=False) if docker else engine_status(settings)
+    if status.get("sign_in_refused"):
+        raise ArcadeError(status["error"])  # an engine answers on this port but refuses this data directory (#313)
     if status["available"] and not status.get("version_matches"):
         raise ArcadeError(f"ArcadeDB release does not match the pinned {settings.arcade_version}")
     if not status["available"]:

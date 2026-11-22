@@ -329,6 +329,8 @@ def doctor_block(settings, *, timeout: float = 1.5) -> dict[str, Any]:
                     pass
     except (ArcadeError, ValueError, AttributeError) as exc:
         result["error"] = str(exc) if isinstance(exc, ArcadeError) else type(exc).__name__
+        if isinstance(exc, ArcadeError) and exc.status_code == 401:
+            result["sign_in_refused"] = True  # a server answers and does not accept this sign-in (#313)
     finally:
         client.close()
     return result
