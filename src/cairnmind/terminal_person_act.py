@@ -16,7 +16,9 @@ RECORD = "Record: {record}"  # not {text}: the translator's first parameter is n
 NOT_GIVEN = "{label}: none given."
 CONFIRMING = "Confirming makes this record confirmed by you on this computer, with an audit note."
 DISPUTING = "Disputing marks this record as disputed by you on this computer, with an audit note."
+NOT_RELOADED = "The view could not be reloaded."
 MESSAGES = {
+    NOT_RELOADED: "Nie udało się wczytać widoku ponownie.",
     RECORD: "Ustalenie: {record}",
     NOT_GIVEN: "{label}: nie podano.",
     "Confirm this record?": "Potwierdzić to ustalenie?",
@@ -34,6 +36,24 @@ def refused(exc) -> bool:
     may follow a commit, so they are unclear, never "not done" (#354)."""
     from .terminal_client import BrokerError, BrokerUnreachable
     return isinstance(exc, BrokerError) and not isinstance(exc, BrokerUnreachable) and 400 <= exc.status_code < 500
+
+
+async def reloaded(reload) -> bool:
+    """Run the reload of a view after a person's act; False when it failed. What the act did never depends on it (#359)."""
+    try:
+        await reload()
+    except (OSError, ValueError, RuntimeError):
+        return False
+    return True
+
+
+async def tell_saved(app, scope, project_id, done, reload, **fields) -> None:
+    """The act got a 2xx answer: tell it done (for its own project after a switch, #354). The view is reloaded only
+    while that project is shown, and a reload that fails adds its own sentence instead of replacing the outcome."""
+    from .terminal_notices import about
+    ok = scope != app._scope_version or await reloaded(reload)
+    app.tell(scope, about(project_id), app.t(done, **fields) + ("" if ok else " " + app.t(NOT_RELOADED)),
+             "info" if ok else "warn")
 
 
 def record_line(item) -> str:

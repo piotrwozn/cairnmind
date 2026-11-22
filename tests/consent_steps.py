@@ -12,13 +12,16 @@ from cairnmind.terminal_ui import FormModal
 
 
 async def consent_drawn(app, pilot, seconds=6.0):
-    """Wait, bounded, until the top screen is a consent dialog past its draw and quiet moment (#318); return it."""
+    """Wait, bounded, until the top screen is a consent dialog past its draw and quiet moment (#318) whose approval
+    button is laid out on the screen (a click before that lands at (0, 0), #352); return it."""
     for _ in range(int(seconds / .02)):
         await pilot.pause(.02)
         screen = app.screen
         if (isinstance(screen, ConfirmModal) and screen.consent
                 and screen.drawn_at + screen.QUIET <= textual_time.get_time()):
-            return screen
+            button = screen.query_one("#confirm-yes", Button)
+            if button.region.area and button.region in screen.size.region:
+                return screen
     raise AssertionError("no consent dialog; the top screen is " + type(app.screen).__name__ + form_state(app.screen))
 
 

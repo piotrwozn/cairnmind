@@ -16,7 +16,7 @@ from .terminal_i18n import tr_count
 from .terminal_i18n_messages import broker_error_text
 from .terminal_impact import COLUMNS, ImpactView
 from .terminal_notices import about
-from .terminal_person_act import agreed, refused, resolve_text, review_text
+from .terminal_person_act import agreed, refused, reloaded, resolve_text, review_text, tell_saved
 from .terminal_proposed import ProposedView
 from .terminal_published_import import archive_replaced, archive_text
 from .terminal_safe import plain, safe_text
@@ -528,20 +528,18 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             payload["expected_plan_version"] = plan_version
         try:
             await self.request("POST", f"/api/inspector/records/{record['id']}/review", json=payload)
-            if scope == self._scope_version:
-                await self.open_entity(record["id"], "records")
-            self.tell(scope, about(project_id), self.t("Review saved with an audit note."))
         except (OSError, ValueError, RuntimeError) as exc:
-            reloaded = scope == self._scope_version
-            if reloaded:
-                await self.open_entity(record["id"], "records")
+            shown = scope == self._scope_version and await reloaded(lambda: self.open_entity(record["id"], "records"))
             if refused(exc):
-                said = self.t("Review was not retried. The current version was reloaded." if reloaded
+                said = self.t("Review was not retried. The current version was reloaded." if shown
                               else "The review was not saved.")
             else:  # a 5xx or a lost connection may follow the commit (#354)
                 said = self.t("The service did not confirm the review, so it may have been saved.") + (
-                    " " + self.t("The current version was reloaded.") if reloaded else "")
+                    " " + self.t("The current version was reloaded.") if shown else "")
             self.tell(scope, about(project_id), said + " " + broker_error_text(exc, self.t), "error")
+            return
+        await tell_saved(self, scope, project_id, "Review saved with an audit note.",
+                         lambda: self.open_entity(record["id"], "records"))
 
     @work(group="inspector-review", exclusive=True, exit_on_error=False)
     async def resolve_conflict(self):
@@ -583,20 +581,17 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             payload["keep"] = first["id"] if choice == "keep-first" else second["id"]
         try:
             await self.request("POST", "/api/inspector/conflicts/resolve", json=payload)
-            if scope == self._scope_version:
-                await self.load_page()
-            self.tell(scope, about(project_id), self.t("Decision saved with an audit note."))
         except (OSError, ValueError, RuntimeError) as exc:
-            reloaded = scope == self._scope_version
-            if reloaded:
-                await self.load_page()
+            shown = scope == self._scope_version and await reloaded(self.load_page)
             if refused(exc):
-                said = self.t("The decision was not saved. The current list was reloaded." if reloaded
+                said = self.t("The decision was not saved. The current list was reloaded." if shown
                               else "The decision was not saved.")
             else:  # a 5xx or a lost connection may follow the commit (#354)
                 said = self.t("The service did not confirm the decision, so it may have been saved.") + (
-                    " " + self.t("The current list was reloaded.") if reloaded else "")
+                    " " + self.t("The current list was reloaded.") if shown else "")
             self.tell(scope, about(project_id), said + " " + broker_error_text(exc, self.t), "error")
+            return
+        await tell_saved(self, scope, project_id, "Decision saved with an audit note.", self.load_page)
 
     @work(group="inspector-history", exclusive=True, exit_on_error=False)
     async def action_history(self, cursor=None):
