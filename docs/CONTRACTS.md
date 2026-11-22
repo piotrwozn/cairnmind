@@ -118,7 +118,7 @@ or hashed (record and plan revisions, plan requests, snapshots) holds it.
 
 The `cairnmind-recorder` subagent that install writes for Claude Code (#376) is an ordinary external session of its
 own: its MCP server is a separate process, so the gate, the state hash and the stored rows are unchanged, it writes
-only on its own acknowledged packet, and its records carry its own `origin_*` mark. A decision, constraint,
+only on its own acknowledged packet, and its records carry its own `origin_*` mark. A decision, constraint or
 preference it writes makes every other session's packet in the worktree stale, as any such record does.
 
 A captured transcript horizon is complete only when every line in it is an archived record the reader
