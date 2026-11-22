@@ -83,6 +83,27 @@ def test_a_mark_that_cannot_be_read_blocks(mark, monkeypatch, content):
     assert upgrade_mark.refusal() == upgrade_mark.NOTE_UNREADABLE
 
 
+def test_the_installer_and_the_package_agree_on_the_mark(tmp_path):
+    """The path, the format and the identity the installer writes are the ones the package reads: a real bash,
+    named install-wsl.sh, writes the mark and a Python reads it, while it runs and after it removed the mark."""
+    scripts = Path(__file__).resolve().parents[1] / "scripts" / "install-wsl.sh"
+    text = scripts.read_text()
+    start = text.index("# --- what an installed version left running")
+    functions = text[start:text.index("# --- end ---", start)]
+    reader = ("import sys; from cairnmind import upgrade_mark as u; "
+              "u.mark_path = lambda: __import__('pathlib').Path(sys.argv[1]); print(u.state())")
+    mark = tmp_path / ".local" / "state" / "cairnmind" / "upgrade-in-progress"
+    installer = tmp_path / "install-wsl.sh"
+    installer.write_text("set -euo pipefail\n" + functions + f"\nbegin_upgrade\n"
+                         f"\"{sys.executable}\" -I -c \"{reader}\" \"{mark}\"\nend_upgrade\ntest ! -e \"$upgrade_mark\"\n")
+    ran = subprocess.run(["bash", str(installer)], env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+                         capture_output=True, text=True, timeout=30)
+    assert ran.returncode == 0, ran.stderr
+    kind, pid = eval(ran.stdout)  # noqa: S307 - the tuple printed just above
+    assert kind == "running" and pid > 1
+    assert not mark.exists()
+
+
 def test_every_upgrade_sentence_has_its_polish_in_the_terminal_catalog():
     placeholders = lambda text: sorted(re.findall(r"\{(\w+)\}", text))  # noqa: E731
     assert upgrade_mark.MESSAGES

@@ -248,6 +248,25 @@ def test_an_upgrade_without_tmux_counts_a_server_it_cannot_ask_as_live(tmp_path)
         shutil.rmtree(system_temp, ignore_errors=True)
 
 
+def test_the_mcp_server_check_and_the_upgrade_mark_run_on_the_bash_of_macos(tmp_path):
+    script = SCRIPT.read_text()
+    start = script.index("# --- what an installed version left running")
+    functions = script[start:script.index("# --- end ---", start)]
+    tool(tmp_path / "bin" / "ps", "[ \"$*\" = '-A -ww -o pid= -o args=' ] || exit 64\n"
+         "echo '  501 /u/tools/cairnmind/bin/python /u/bin/cairnmind mcp --client external --project /p'\n"
+         "echo '  502 /usr/bin/python3 other mcp --client external'\n"
+         "echo '  503 /u/tools/cairnmind/bin/python /u/bin/cairnmind mcp'")
+    mark = tmp_path / ".local" / "state" / "cairnmind" / "upgrade-in-progress"
+    result = subprocess.run(
+        [BASH, "-c", "set -euo pipefail\n" + functions + "\nlive_bridges /u/tools/cairnmind/bin/python\n"
+         'begin_upgrade\ncat "$upgrade_mark"\necho "pid=$$"\nend_upgrade\n'],
+        env={**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "HOME": str(tmp_path)},
+        capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    bridges, held, shown = result.stdout.splitlines()
+    assert bridges == "501" and shown == f"pid={held}" and not mark.exists()
+
+
 # --- Linux: what it printed before stays as it was -----------------------------------------------------------------
 
 @pytest.mark.parametrize("release,line", [

@@ -112,6 +112,10 @@ def stand_ins(tmp_path):
         "#!/bin/sh\necho \"$*\" >> " + str(log) + "\n"
         "if [ \"$1 $2\" = 'workspace status' ]; then [ \"$STATUS\" = fail ] && exit 3; "
         "printf '{\\n  \"available\": %s\\n}\\n' \"$STATUS\"; fi\n")
+    # `ps -A -ww -o pid= -o args=`: prints the file $PS_LINES (nothing by default) and ends with $PS_STATUS (0).
+    (tools / "ps").write_text(
+        "#!/bin/sh\n[ \"$*\" = '-A -ww -o pid= -o args=' ] || exit 64\n"
+        "[ -n \"$PS_LINES\" ] && cat \"$PS_LINES\"\nexit \"${PS_STATUS:-0}\"\n")
     for tool in tools.iterdir():
         tool.chmod(0o755)
 
@@ -125,13 +129,16 @@ def stand_ins(tmp_path):
         (folder / "tmux.sock.alive").write_text("")
         return server, folder / "tmux.sock"
 
-    def run(status="false", **extra):
+    def run(status="false", installed="cairnmind", ps=None, **extra):
         log.write_text("")
         environment = {key: value for key, value in os.environ.items() if key != "CAIRNMIND_INSTALL_STOP_WORKSPACE"}
         environment.update(PATH=f"{tools}:{os.environ['PATH']}", TMPDIR=str(sockets), STATUS=status, **extra)
+        if ps is not None:  # lines of `ps`, with {tools} standing for the installed tool's directory
+            (tmp_path / "ps.txt").write_text("".join(line.format(tools=tools) + "\n" for line in ps))
+            environment["PS_LINES"] = str(tmp_path / "ps.txt")
         result = subprocess.run(
             ["bash", "-c", "set -euo pipefail\n" + installer_functions()
-             + f'\nstop_installed "{tools}/cairnmind" cairnmind\necho continued'],
+             + f'\nstop_installed "{tools}/{installed}" cairnmind "{tools}/python"\necho continued'],
             env=environment, capture_output=True, text=True, timeout=30)
         return result, [line for line in log.read_text().splitlines() if not line.startswith("tmux list-sessions")]
 
@@ -180,6 +187,92 @@ def test_a_status_that_cannot_be_read_is_said_and_not_taken_for_no_workspace(sta
     run, terminal = stand_ins
     result, calls = run(status="fail")
     assert result.returncode == 0 and "could not be ruled out" in result.stderr
+
+
+def test_the_installer_names_open_mcp_servers_of_the_installed_version_and_stops_nothing(stand_ins):
+    run, terminal = stand_ins
+    result, calls = run(ps=[
+        "  101 {tools}/python /h/.local/bin/cairnmind mcp --client external --project /p",
+        "  102 {tools}/python3.12 /h/.local/bin/cairnmind --data-dir /d mcp --client=external",
+        "  103 /usr/bin/vim notes.txt"])
+    assert result.returncode == 1 and "continued" not in result.stdout
+    assert "processes: 101 102" in result.stderr and "kill 101 102" in result.stderr
+    assert "/p" not in result.stderr.replace("/python", "") and "/d" not in result.stderr
+    assert calls == []  # not even the workspace was asked
+
+
+def test_mcp_servers_of_other_pythons_and_native_ones_are_not_named(stand_ins):
+    run, terminal = stand_ins
+    result, calls = run(ps=[
+        "101 /usr/bin/python3 /h/.local/bin/cairnmind mcp --client external",
+        "102 {tools}/python /h/.local/bin/cairnmind mcp",
+        "103 grep mcp --client external"])
+    assert result.returncode == 0 and "continued" in result.stdout
+    assert calls == ["workspace status", "cockpit stop", "stop"]
+
+
+def test_a_ps_that_fails_is_said_and_the_installer_goes_on(stand_ins):
+    run, terminal = stand_ins
+    result, calls = run(PS_STATUS="1")
+    assert result.returncode == 0 and "continued" in result.stdout
+    assert "Note: ps failed" in result.stderr and "could not be ruled out" in result.stderr
+
+
+def test_open_mcp_servers_are_named_even_when_the_installed_command_is_missing(stand_ins):
+    run, terminal = stand_ins
+    result, calls = run(installed="not-installed", ps=["101 {tools}/python /x/cairnmind mcp --client external"])
+    assert result.returncode == 1 and "processes: 101" in result.stderr and calls == []
+
+
+def mark_script(tmp_path, body):
+    return subprocess.run(["bash", "-c", "set -euo pipefail\n" + installer_functions() + "\n" + body],
+                          env={**os.environ, "HOME": str(tmp_path)}, capture_output=True, text=True, timeout=30)
+
+
+def test_the_upgrade_mark_holds_the_installer_pid_and_only_its_installer_removes_it(tmp_path):
+    mark = tmp_path / ".local" / "state" / "cairnmind" / "upgrade-in-progress"
+    result = mark_script(tmp_path, f'begin_upgrade\ncat "{mark}"\necho "pid=$$"\nend_upgrade\n[ ! -e "{mark}" ] && echo gone\n'
+                                   f'echo 99999 > "{mark}"\nend_upgrade\n[ -e "{mark}" ] && echo kept')
+    assert result.returncode == 0, result.stderr
+    held, shown = result.stdout.split("\n")[:2]
+    assert shown == f"pid={held}"
+    assert result.stdout.split("\n")[2:4] == ["gone", "kept"]
+    assert not list(mark.parent.glob("upgrade-in-progress.*"))  # no temporary file is left
+
+
+def test_an_installer_ended_by_a_signal_or_an_error_removes_its_mark(tmp_path):
+    import signal
+    mark = tmp_path / ".local" / "state" / "cairnmind" / "upgrade-in-progress"
+    failed = mark_script(tmp_path, "trap end_upgrade EXIT\nbegin_upgrade\nexit 1")
+    assert failed.returncode == 1 and not mark.exists()
+    script = "set -euo pipefail\n" + installer_functions() + "\ntrap end_upgrade EXIT\nbegin_upgrade\necho ready\nsleep 30 &\nwait $!\n"
+    process = subprocess.Popen(["bash", "-c", script], env={**os.environ, "HOME": str(tmp_path)}, text=True,
+                               stdout=subprocess.PIPE, start_new_session=True)
+    try:
+        assert process.stdout.readline().strip() == "ready" and mark.read_text().strip() == str(process.pid)
+        process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=20) == 143
+        assert not mark.exists()
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+
+
+def test_the_installer_marks_the_upgrade_around_the_replacement():
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "install-wsl.sh").read_text()
+    after = script.index("# --- end ---")
+    trap = script.index("trap 'rm -f -- \"$constraints_file\"; end_upgrade' EXIT")
+    begin = script.index("\nbegin_upgrade\n", after)
+    first_stop = script.index('stop_installed "$(uv tool dir --bin)', after)
+    assert after < trap < begin < first_stop
+    for tool in ("devbrain", "cairnmind"):
+        assert f'stop_installed "$(uv tool dir --bin)/{tool}" {tool} "$(uv tool dir)/{tool}/bin/python"' in script
+    finished = script.index("end_upgrade  #", first_stop)
+    assert script.index("Installation did not provide the executable") < finished < script.index('if [[ -n "$connect_url" ]]', first_stop)
+    assert script.index("uv tool install --python") < finished
 
 
 def test_scheduled_backups_of_both_suffixes_are_ordered_by_the_time_in_their_name(tmp_path):
