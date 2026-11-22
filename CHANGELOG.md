@@ -115,6 +115,14 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The installer names by process id the knowledge services of the installed version that still run in other data directories, and stops none of them (#319).
 - The installer names open coding sessions started as `cairnmind run ...` of the installed version by process id and stops until they are closed; other spellings are listed in docs/UPGRADING.md (#319).
 - No workspace, `cairnmind run` session or interface broker starts while the installer replaces Cairnmind, even beside a running service; a service the workspace started at that moment is stopped with its broker, and its start is not announced (#319).
+- `cairnmind project remove PROJECT` removes a project from the registry and deletes nothing: without `--yes` it says what would stop, what stays in the store and in the folder, and how to bring it back; with `--yes` the project leaves `project list`, the workspace and indexing, and no new session or command can name it; it is refused inside a coding session, while the project has a session in the workspace (or that cannot be ruled out) or a job in work, and on an installation that only reads the store (#327).
+- `cairnmind project add` with the same name and folder brings a removed project back with all its memory and says so, in the terminal and in the workspace's Add folder, with the extra folders it did not add back; any other name or folder is a new project, and both say that the removed one keeps its memory. The workspace's choice of a new identity for a removed project's name and folder is refused with a sentence instead of bringing the old project back (#327).
+- `cairnmind project remove PROJECT --root FOLDER` removes one extra folder of a project; the main folder cannot be removed this way (#327).
+- `cairnmind project list --removed` lists removed projects with the command that brings each back; `cairnmind forget ID --delete-project` also deletes a removed project, by its id, and forget by name says to use the id; `cairnmind status` counts `removed_projects` (#327).
+- A command, a session, a workspace action (old task groups and team memory among them) or a memory package that names a removed project is refused with a sentence that says it was removed and how to bring it back, in English and Polish (#327).
+- A removed project whose folder lies inside the data directory cannot be brought back by `project add`; the dry run, `project list --removed` and every later refusal say so and name the delete step (#327).
+- The indexing message about a folder inside the data directory now names `cairnmind project remove` instead of registering the files again (#327).
+- Hook events of a folder that is not registered no longer use up the 100-event drain limit, and each is read again only after a project is added or removed, so they cannot delay or slow down the events of registered projects (#327).
 
 ### Development and CI
 
