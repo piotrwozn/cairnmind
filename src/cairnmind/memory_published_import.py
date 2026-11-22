@@ -219,6 +219,8 @@ class PublishedImporter:
                     while common < min(len(mine), len(published)) and same(mine[common], model["revisions"][common]):
                         common += 1
                     plan, start = list(range(common, len(published))) or [len(published) - 1], "taken"
+                    if local_verdict(versions[-1]):
+                        replaced.append(path)  # taking the published side replaces the verdict given here too
                 else:
                     diverged.append(path)
                     continue

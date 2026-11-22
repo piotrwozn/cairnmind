@@ -42,6 +42,14 @@ def test_the_workspace_sets_its_key_through_standard_input(settings, tmp_path):
     assert (tmp_path / "fake_key").read_text() != key
 
 
+def test_a_workspace_without_a_usable_key_does_not_open_quietly(settings, tmp_path, monkeypatch):
+    binary, _ = fake_tmux(tmp_path)
+    manager = WorkspaceManager(settings, tmux_binary=binary)
+    monkeypatch.setattr(person_proof, "read_key", lambda *args: ("unavailable", None))
+    with pytest.raises(ValueError, match="workspace stop"):
+        manager._ensure_person_key()
+
+
 def test_workspace_status_reports_the_key_without_its_value(settings, tmp_path, monkeypatch):
     binary, _ = fake_tmux(tmp_path, KEY)
     manager = WorkspaceManager(settings, tmux_binary=binary)

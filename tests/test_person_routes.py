@@ -184,6 +184,20 @@ def test_the_proof_reaches_the_store_thread_and_no_other_request(fixture):  # no
                                    {"c": "Asked after a proven request"})
 
 
+@pytest.mark.unproven  # the door of the tests is shut: only `require` can give the store the proof
+def test_the_route_alone_gives_the_store_the_proof(fixture):  # noqa: F811
+    with person_proven():
+        requests = person_requests(fixture)
+    path, body = requests["review confirm"]
+    assert fixture.client.post(path, json=body).status_code == 403
+    response = fixture.client.post(path, json=body, headers=fixture.person)
+    assert response.status_code == 200, response.text
+    assert confirmation_of(response.json()["record"])["by"] == "person"
+    path, body = requests["finding confirmed"]
+    form = fixture.client.post(path, json=body, headers=fixture.person)
+    assert form.status_code == 200 and confirmation_of(form.json()["record"])["route"] == "workspace_form"
+
+
 def test_a_session_still_cannot_use_a_persons_proof_for_a_finding(fixture):  # noqa: F811
     # A request that names a session is a session's finding: the proof does not turn it into the person's form.
     bound = fixture.session("codex")

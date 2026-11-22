@@ -1772,8 +1772,8 @@ def memory_import(ctx: typer.Context, path: SnapshotArg,
                   root: Annotated[Path, typer.Option("--root")], name: str | None = None,
                   dry_run: bool = False,
                   replace_confirmed: Annotated[bool, typer.Option(
-                      "--replace-confirmed", help="Let the package replace records that were confirmed or disputed "
-                      "on this machine; the dry run lists them.")] = False):
+                      "--replace-confirmed", help="Ask to replace records that were confirmed or disputed on this "
+                      "machine; the service applies it only from the workspace, the dry run lists them.")] = False):
     """Import the memory of this project only; --dry-run needs a running service and writes nothing."""
     from cairnmind.memory import inspect_snapshot
     selected = str(path.expanduser().absolute())

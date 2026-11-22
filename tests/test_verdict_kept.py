@@ -513,7 +513,7 @@ def test_plan_save_and_adopt_in_a_person_terminal_cannot_change_a_confirmed_step
     # Nothing the command line wrote names a person.
     assert not [row for row in Store(data).query("SELECT uri FROM sources WHERE project_id=:p", {"p": pid})
                 if row["uri"].startswith("person://")]
-    # The person disputes the step in the inspector; then the save that changes it goes through, as proposed.
+    # The person disputes the step in the inspector; then the save that changes it goes through, and the dispute stays.
     current = PlanManager(Store(data)).get(pid, plan_id)
     write = next(task for task in current["tasks"] if task["metadata"]["step_key"] == "write")
     Inspector(Store(data)).review(pid, write["id"], "dispute", write["version"],
@@ -521,7 +521,8 @@ def test_plan_save_and_adopt_in_a_person_terminal_cannot_change_a_confirmed_step
     stored = save(changed, "three", plan_id)
     assert stored.exit_code == 0, stored.output
     by_key = {task["metadata"]["step_key"]: task for task in json.loads(stored.output)["tasks"]}
-    assert by_key["write"]["content"].endswith("delete the old ones") and by_key["write"]["status"] != "confirmed"
+    assert by_key["write"]["content"].endswith("delete the old ones") and by_key["write"]["status"] == "disputed"
+    assert "confirmation" not in by_key["write"]["metadata"]
     assert by_key["read"]["status"] == "confirmed"
 
 
@@ -550,7 +551,7 @@ def test_adopting_tasks_a_person_confirmed_into_a_plan_is_refused_until_the_pers
     adopted = run("plan", "adopt", "demo", "old-group", "--idempotency-key", "adopt-2")
     assert adopted.exit_code == 0, adopted.output + str(adopted.exception or "")
     [step] = json.loads(adopted.output)["tasks"]
-    assert step["id"] == task["id"] and step["status"] != "confirmed" and confirmation_of(step) is None
+    assert step["id"] == task["id"] and step["status"] == "disputed" and confirmation_of(step) is None
 
 
 # Checkpoints: the one record that is a slot, not a statement.

@@ -168,6 +168,17 @@ def person_proven():
             person_proof._PROVEN.set(False)
 
 
+@contextlib.contextmanager
+def person_unproven():
+    """A token holder's request inside a test that is otherwise a person's: the door shut for the block."""
+    from cairnmind import person_proof
+    token = person_proof._PROVEN.set(False)
+    try:
+        yield
+    finally:
+        person_proof._PROVEN.reset(token)
+
+
 @pytest.fixture(autouse=True)
 def person_door(request):
     """Every test is a person's own process unless it is marked `unproven`: the tests of the store's gate."""

@@ -75,9 +75,11 @@ An import is run only by a person. `POST /memory/import`, `/memory/import-publis
 and `/memory/import-commit` refuse a request that names a session, except its dry
 run, which writes nothing. An import that would put another text or status in
 the place of a record that was confirmed or disputed on this machine is refused
-and lists those records (`replaces_confirmed_here` in the dry run); the person
-applies it with `--replace-confirmed`. In the workspace and the inspector the
-import dialog states the number before the person applies the import.
+and lists those records (`replaces_confirmed_here` in the dry run); a person
+applies it in the memory view of the workspace (an archive; a published
+directory or a commit cannot replace such records yet, `--take-published`
+included, since 0.13.0). The import dialog states the number before the person
+applies the import.
 
 ## How an extracted record was made
 
@@ -283,9 +285,11 @@ in no file, log, environment variable, command line or pane. The inspector and
 the finding form read it from their own tmux server for each request that is a
 person's act and send it, with the socket, in the headers `X-Cairnmind-Person`
 and `X-Cairnmind-Workspace`. The broker passes the two headers on and keeps
-nothing. The service accepts the socket only when it is this installation's
-workspace socket (a private directory of the user, not a link, and a socket of
-the user), reads the key from that tmux server and compares it in constant
+nothing. The service accepts the socket only when it has the workspace's shape (a
+directory named like the workspace's socket directory, private and the user's,
+not a link, and a socket of the user; on Linux and WSL the directory's location
+is not checked, because TMPDIR can differ between processes, on macOS it is),
+reads the key from that tmux server and compares it in constant
 time; only then does the request count as a person's, for that request alone.
 
 The service keeps no state about the key. A service started by `cairnmind
@@ -319,16 +323,22 @@ around Cairnmind:
   key from it, run a program inside it, or type into the inspector (`tmux
   send-keys`); or start a workspace of its own in a pseudo-terminal and type
   into that;
+- run a tmux server of its own in a directory named like the workspace's socket
+  directory and put a key of its choosing into it (the service cannot tell that
+  directory from the workspace's on Linux and WSL);
 - use Cairnmind's library code, or the database engine with the password the
   user can read, and write any row, marks and audit notes included;
-- restore a backup: `cairnmind restore` still writes the rows of a backup as
-  they are, marks included (#214 continues with this);
+- restore a backup: `cairnmind restore` is the one documented command that
+  still writes the rows of a backup as they are, marks included. With `cairnmind
+  stop` and `cairnmind backup` it can bring back a confirmation a person has
+  since disputed, by restoring an older genuine backup, and accepted record
+  kinds with it (#214 continues with this);
 - replace or change the installed program;
 - read the memory of a Cairnmind process where the system lets a process read
   another process of the same user (Linux with `kernel.yama.ptrace_scope` 0, or
   as root).
 
-None of these is a documented command, route or tool, and a record confirmed
+Except restore, none of these is a documented command, route or tool, and a record confirmed
 this way carries the confirmation line of the route it imitated; nothing in the
 store tells it from the person's own act. What limits it is the client's
 approval of commands: the built-in agent asks the person to approve each command
@@ -421,10 +431,12 @@ and where, and it never becomes this machine's own confirmation:
   was not a person's) and any dispute. When a package moves such a record on and
   leaves it confirmed and saying the same (progress on a task), the confirmation
   given here is kept. When it brings another text or status, the import is
-  refused with the list, and `--replace-confirmed` applies it; the record is
-  then confirmed elsewhere, like anything else the package brings. A record that
-  diverged from a published file refuses the import as before, and
-  `--take-published` names it.
+  refused with the list, and a person applies it in the memory view of the
+  workspace; the record is then confirmed elsewhere, like anything else the
+  package brings. A record that diverged from a published file refuses the
+  import as before, and `--take-published` names it; when that record was
+  confirmed or disputed here, taking the published side replaces that verdict
+  and is refused like any other replacement.
 - Only a person runs an import, `--replace-confirmed` and `--take-published`. A
   request that names a session is refused, because an import brings records that
   count as confirmed, and a session can prepare the files it imports.
@@ -750,8 +762,9 @@ tree as above, then applies it in one transaction, all or nothing:
   confirmed, and the names its files give for who confirmed them;
 - a record that was confirmed or disputed on this machine (and whose head no import wrote) is not
   fast-forwarded to another text or status without the person's choice: the import is refused with
-  the paths, the dry run lists them as `replaces_confirmed_here`, and `--replace-confirmed` applies
-  it. A fast-forward that leaves the record confirmed and saying the same keeps the confirmation
+  the paths, the dry run lists them as `replaces_confirmed_here`, and only a person in the workspace
+  applies it (not the command line, since 0.13.0; `--take-published` on such a record counts the same).
+  A fast-forward that leaves the record confirmed and saying the same keeps the confirmation
   given here (#177);
 - the import itself, `--replace-confirmed` and `--take-published` are refused inside a coding
   session; only the dry run is open to one. `memory import-commit` follows the same rules;

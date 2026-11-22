@@ -208,13 +208,12 @@ def test_the_command_line_key_clash_names_what_a_person_can_do(tmp_path, monkeyp
     held = json.loads(first.output)
     store = Store(data)
     Inspector(store).review(store.resolve_project("demo")["id"], held["id"], "confirm", held["version"])
-    for extra in ([], ["--confirmed"]):
+    for extra, said in (([], "another key"), (["--confirmed"], "no longer confirms")):
         again = run("remember", "demo", "Queue in Redis", "--kind", "decision", "--key", "queue", *extra)
         words = plain_words(again.output)
         assert again.exit_code != 0
         assert "expected_version" not in words and "--id" not in words
-        assert "another key" in words or "no longer confirms" in words
-        assert "inspector" in words
+        assert said in words and "inspector" in words
     assert [row["content"] for row in json.loads(run("records", "demo").output)] == ["Queue in the database"]
 
 

@@ -281,8 +281,13 @@ class WorkspaceManager:
     def _ensure_person_key(self):
         """Give this server the key a person's act needs, once: through standard input, so that it is in no
         command line, file or environment (#214). A server that has one keeps it for its whole life."""
-        if person_proof.read_key(self.settings, self.socket, self.binary)[0] == "no_key":
+        kind = person_proof.read_key(self.settings, self.socket, self.binary)[0]
+        if kind == "no_key":
             self.tmux("source-file", "-", input=person_proof.set_key_input(person_proof.new_key()))
+            kind = person_proof.read_key(self.settings, self.socket, self.binary)[0]
+        if kind != "key":
+            raise ValueError("The workspace's tmux server did not give a usable key for a person's acts, so every "
+                             "act in it would be refused. Close it with `cairnmind workspace stop` and open it again.")
 
     def exists(self):
         if not self.binary or not self.socket.exists():
