@@ -90,7 +90,7 @@ def test_an_empty_connect_variable_does_not_make_a_connect_only_installation_man
 
 def test_the_database_name_of_an_existing_store_does_not_change(monkeypatch, tmp_path):
     before = Settings.load(tmp_path / "data").arcade_database
-    assert before.startswith("devbrain_")  # the default prefix is part of every existing database name
+    assert before.startswith("cairnmind_")  # a new installation (#369); existing ones: the tests below
     monkeypatch.setenv("DEVBRAIN_ARCADE_DB_PREFIX", "earlier")
     assert Settings.load(tmp_path / "data").arcade_database.startswith("earlier_")
     monkeypatch.setenv("CAIRNMIND_ARCADE_DB_PREFIX", "current")
@@ -98,6 +98,40 @@ def test_the_database_name_of_an_existing_store_does_not_change(monkeypatch, tmp
     monkeypatch.setenv("CAIRNMIND_ARCADE_DB_PREFIX", "not valid")
     with pytest.raises(ValueError, match="Invalid ArcadeDB database prefix"):
         Settings.load(tmp_path / "data")
+
+
+def test_a_new_installation_saves_the_current_prefix_and_keeps_it(tmp_path):
+    saved = Settings.load(tmp_path / "data", create=True).arcade_database
+    assert saved.startswith("cairnmind_")
+    assert json.loads((tmp_path / "data" / "config.json").read_text())["arcade_database"] == saved
+    assert Settings.load(tmp_path / "data").arcade_database == saved
+    assert Settings.load(tmp_path / "data")._origin["database"] == "derived"
+
+
+def test_an_installation_that_has_the_earlier_name_keeps_it(tmp_path):
+    from cairnmind.config import derived_database
+    root = (tmp_path / "data").resolve()
+    new = derived_database(root)
+    earlier = "devbrain_" + new.split("_", 1)[1]
+    root.mkdir()
+    # (a) config.json holds a name: it is used, whatever it is
+    (root / "config.json").write_text(json.dumps({"arcade_database": "devbrain_x"}))
+    assert Settings.load(root).arcade_database == "devbrain_x"
+    # (b) config.json written before the name was saved: the name derived before
+    (root / "config.json").write_text(json.dumps({"token": "t"}))
+    settings = Settings.load(root)
+    assert settings.arcade_database == earlier and settings._origin["database"] == "derived"
+    assert Settings.load(root, create=True).arcade_database == earlier
+    assert Settings.load(root).arcade_database == earlier
+    # config.json lost, database files left; or the earlier derived name saved
+    (root / "config.json").unlink()
+    (root / "arcade" / "databases" / earlier).mkdir(parents=True)
+    assert Settings.load(root).arcade_database == earlier
+    (root / "arcade" / "databases" / earlier).rmdir()
+    (root / "config.json").write_text(json.dumps({"arcade_database": earlier}))
+    assert derived_database(root) == earlier and Settings.load(root)._origin["database"] == "derived"
+    (root / "config.json").write_text("{not json")  # unreadable: never a new name over an existing store
+    assert derived_database(root) == earlier
 
 
 def test_the_derived_database_is_the_name_a_fresh_directory_gets(tmp_path):

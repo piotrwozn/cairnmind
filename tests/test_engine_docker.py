@@ -763,10 +763,16 @@ def test_init_chooses_and_says_the_engine_mode(init_run, tmp_path):
     other = settings_with(tmp_path, "java")
     java.update(path="/opt/jdk-21/bin/java", major=21)
     native = run(other)
-    assert engine_docker.CHOSE_NATIVE.format(java="/opt/jdk-21/bin/java", config=other.data_dir / "config.json") \
-        in native.stderr
+    assert engine_docker.CHOSE_NATIVE.format(major=21, java="/opt/jdk-21/bin/java",
+                                             config=other.data_dir / "config.json") in native.stderr
+    assert "Java 21 was found (/opt/jdk-21/bin/java)" in native.stderr
     assert stored(other)["engine_mode"] == "native" and json.loads(native.stdout)["engine_mode"] == "native"
     assert order[-2:] == ["java", "store"]  # no container
+    # Java 22 is named as 22 (#368): 21 is only the minimum
+    newer = settings_with(tmp_path, "newer")
+    java.update(path="/opt/openjdk-22.0.1/bin/java", major=22)
+    said = run(newer).stderr
+    assert "Java 22 was found (/opt/openjdk-22.0.1/bin/java)" in said and "Java 21 was found" not in said
     # Java 17 is older than 21: Docker is chosen, as when there is no Java
     old = settings_with(tmp_path, "old")
     java.update(path="/usr/bin/java", major=17)
@@ -791,7 +797,7 @@ def test_init_with_neither_java_nor_docker_says_so_and_stores_nothing(init_run):
     failed = run()
     assert isinstance(failed.exception, ArcadeError)
     text = str(failed.exception)
-    assert text.startswith("Neither Java 21 nor Docker can run the database engine here. Java: not found. Docker: ")
+    assert text.startswith("Neither Java 21 or newer nor Docker can run the database engine here. Java: not found. Docker: ")
     assert text.endswith("Install one of them, then run `cairnmind init` again.")
     assert stored(docker.settings)["engine_mode"] == "" and "store" not in order
 

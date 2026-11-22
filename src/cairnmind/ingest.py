@@ -23,6 +23,7 @@ import pathspec
 
 from cairnmind.parsing import analyze_code, parser_identity
 from cairnmind.arcade import ArcadeError
+from cairnmind.embed_jobs import queue_embed_jobs
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
 from cairnmind.journal import MAX_TRANSACTION_EVENTS
@@ -320,10 +321,9 @@ def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: d
                     ids.append(chunk_id)
             else:
                 ids = [row["id"] for row in existing]
-    for chunk_id in ids:
-        # Replaying this is intentional: a crash after chunk commit but before
-        # enqueue must not leave permanently unindexed evidence.
-        store.enqueue("embed", project_id, {"chunk_id": chunk_id}, f"embed:{chunk_id}")
+    # Replaying this is intentional: a crash after chunk commit but before
+    # enqueue must not leave permanently unindexed evidence.
+    queue_embed_jobs(store, project_id, ids)
     return 0 if existing else len(ids)
 
 
@@ -1474,7 +1474,8 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
         project_id = store.resolve_project(project_id)["id"]
     if client not in {"auto", "codex", "claude"}:
         raise ValueError("client must be auto, codex, or claude")
-    counts: dict[str, Any] = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "errors": []}
+    counts: dict[str, Any] = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "repaired": 0,
+                              "errors": []}
     if path.is_dir():
         for candidate in sorted(path.rglob("*.jsonl")):
             if candidate.is_symlink():
@@ -1498,6 +1499,7 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
     # known metadata compatibility gap independently of append ingestion.
     reparsed = _reparse_history_sources_locked(store, path, project_id, client)
     counts["errors"].extend(reparsed["errors"])
+    counts["repaired"] = reparsed["repaired"]
     cursors = store.query("SELECT FROM import_cursors WHERE path=:path", {"path": str(path)})
     row = cursors[0] if cursors else None
     offset = int(row["offset"]) if row else 0
@@ -1613,23 +1615,54 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
     return counts
 
 
+# Per store and path, the transcript files whose last import in this process read no line, repaired no record
+# and reported no error (#363). While the cursor in the database stands at the end of the file and the file is
+# the one the cursor describes, importing it again would do nothing, so the poll skips it. A file that read,
+# repaired or reported anything is imported again by every poll, as before.
+_POLLED: set[tuple[str, str]] = set()
+
+
+def _at_end(path: Path, cursor: dict) -> bool:
+    """Whether the cursor stands at the end of this very file: nothing new can be read from it."""
+    try:
+        offset = int(cursor.get("offset") or 0)
+        return path.is_file() and path.stat().st_size == offset and _fingerprint(path, offset) == cursor.get("fingerprint")
+    except (OSError, ValueError, TypeError):
+        return False  # an identity that cannot be established is imported in full
+
+
 def poll_imports(store) -> dict:
     from .project_removal import removed_ids
-    rows = store.query("SELECT path,project_id,client FROM import_cursors")
+    rows = store.query("SELECT path,project_id,client,`offset`,fingerprint FROM import_cursors")
     result = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "errors": []}
     removed = removed_ids(store)  # a removed project's conversations are not archived until it is back (#327)
+    try:  # local files only; when the secrets cannot be read no file is skipped, so each import refuses and says so
+        ingest_masker(store.settings)
+        secrets_readable = True
+    except (OSError, ValueError):  # an OSError too: each import then raises it and the loop reports it per file, as on main
+        secrets_readable = False
     for row in rows:
         if row["project_id"] in removed:
             continue
+        key = (str(store.data_dir), row["path"])
+        if secrets_readable and key in _POLLED and _at_end(Path(row["path"]), row):
+            continue
         try:
             item = import_history(store, Path(row["path"]), row["project_id"], row["client"])
-            for key, value in item.items():
-                if key == "errors":
-                    result[key].extend(value)
-                else:
-                    result[key] += value
+            for name, value in item.items():
+                if name == "errors":
+                    result[name].extend(value)
+                elif name in result:
+                    result[name] += value
+            # Remembered only when the import changed and reported nothing; a line appended after the look
+            # makes _at_end false at the next skip check.
+            if not (item["archived"] or item["inbox"] or item["repaired"] or item["errors"]):
+                _POLLED.add(key)
+            else:
+                _POLLED.discard(key)
         except (OSError, ValueError) as exc:
             result["errors"].append(f"{row['path']}: {exc}")
+            _POLLED.discard(key)
     return result
 
 

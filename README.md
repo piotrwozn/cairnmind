@@ -29,14 +29,16 @@ bash scripts/install-wsl.sh                    # 1. installs all of the above an
 cairnmind project add my-app ~/src/my-app      # 2. registers your project's folder and indexes its files
 cairnmind remember my-app "Accounts lock after five failed logins."   # 3. stores a first finding, as proposed
 cairnmind brief my-app                         # 4. where work stands: your finding is listed, marked as unconfirmed
-cairnmind ask my-app "When do accounts lock?"  # 5. finds it again, with the matching passages of your files
+cairnmind ask my-app "When do accounts lock?"  # 5. finds it again; passages of your files that use the question's words are searched too
 ```
 
 These commands say in a terminal what they did and what comes next, and a command that stops says what is missing and what to do. With `--json`, or in a pipe, a file or a script, `doctor`, `project add`, `project list`, `remember`, `ask`, `install`, `init`, `stop` and `engine stop` print the full JSON, as scripts expect; `context` and the record commands print JSON always. `cairnmind doctor` repeats the installer's check at any time; it exits 1 when something required is missing.
 
 - If the installer prints `Add this directory to PATH`, do what that line says and open a new terminal.
 - `my-app` is any name you choose; `~/src/my-app` stands for the folder of a project you already have. A Git repository with at least one commit is best: `impact`, coding sessions and the commit list of `brief` need Git, and `project add` says when the folder has no repository or no commit.
+- `project add` indexes the files in its own process and starts no service. The extraction and embedding jobs it queues are run by the knowledge service: when it is stopped, `project add` says how many jobs wait (its JSON has `jobs`: `queued`, `service_running`, `waiting_because`), and `cairnmind index my-app` starts it and they run. Without models, or while an upgrade is in progress, it says why they wait. `waiting_because: null` means not known to wait: a running service can still hold them, for example one the workspace started or one that started before models were turned on.
 - What you and your assistants store is *proposed*, and nothing more is needed to go on: `brief`, `ask` and the assistants already use it, marked as unconfirmed. You can confirm or dispute it later in the memory inspector of the terminal workspace (below; it needs tmux 3.4+).
+- `ask` finds passages of your files by the words of the question (`accounts lock` does not find `locked`), and, once models are on, by meaning too, which needs vectors; right after `project add` they are still being built and `ask` says so. An answer cites only what it relies on, so the first one may cite your note alone.
 - Without models, `ask` makes no answer: in a terminal it says so and lists the passages that match words of the question as search results, not as evidence; its JSON reports `status: unavailable`. `cairnmind models pull` turns answers on (below).
 
 ### Connect Codex or Claude Code
