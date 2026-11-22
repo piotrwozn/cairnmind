@@ -11,12 +11,12 @@ from __future__ import annotations
 from .terminal_safe import safe_text
 
 TEXT = 200  # a record's text in a dialog, on one line, escaped and cut
-RECORD = "Record: {text}"
+RECORD = "Record: {record}"  # not {text}: the translator's first parameter is named text
 NOT_GIVEN = "{label}: none given."
 CONFIRMING = "Confirming makes this record confirmed by you on this computer, with an audit note."
 DISPUTING = "Disputing marks this record as disputed by you on this computer, with an audit note."
 MESSAGES = {
-    RECORD: "Ustalenie: {text}",
+    RECORD: "Ustalenie: {record}",
     NOT_GIVEN: "{label}: nie podano.",
     "Confirm this record?": "Potwierdzić to ustalenie?",
     "Dispute this record?": "Zakwestionować to ustalenie?",
@@ -43,7 +43,7 @@ def typed(t, label, value) -> str:
 def review_text(record, action, plan_version, reason, t) -> str:
     """What a review does (inspector, Confirm or Dispute): the record, its versions, the effect, the reason."""
     versions = f"v{record['version']}" + (f" · plan v{plan_version}" if plan_version else "")
-    return "\n".join([t(RECORD, text=record_line(record)),
+    return "\n".join([t(RECORD, record=record_line(record)),
                       versions + " · " + t("Review changes confidence; it does not complete a task."), "",
                       t(CONFIRMING if action == "confirm" else DISPUTING), typed(t, "Reason", reason)])
 
