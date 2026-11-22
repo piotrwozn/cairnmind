@@ -49,12 +49,12 @@ def server(tmp_path, monkeypatch, arcade_test_engine):
                     pass
 
 
-def dry_run(server, admin_secret=None, password=USER_SECRET):
+def dry_run(server, admin_secret=None, password=USER_SECRET, *more):
     root, root_secret, names, tmp_path = server
     admin = private(tmp_path / "admin", admin_secret or root_secret)
     arguments = ["--data-dir", str(tmp_path / "data"), "setup", "remote-db", "--url", root.arcade_url,
                  "--user", names["user"], "--database", names["database"],
-                 "--password-file", private(tmp_path / "db-password", password), "--admin-password-file", admin]
+                 "--password-file", private(tmp_path / "db-password", password), "--admin-password-file", admin, *more]
     return CliRunner().invoke(cli.app, arguments, env={"COLUMNS": "500", "TERMINAL_WIDTH": "500"})
 
 
@@ -112,6 +112,24 @@ def test_an_existing_user_and_a_missing_database_are_planned_as_a_database_only(
     assert "creates the database; the user is used only if it has rights on it" in words
     assert (tmp_path / "data" / "config.json").read_bytes() == before
     assert database_exists(server) is False
+
+
+def test_a_user_with_rights_on_a_database_that_is_not_there_yet_is_planned_and_then_gets_only_the_database(server):
+    root, root_secret, names, tmp_path = server
+    make_user(server)  # rights on the named database, which does not exist: the server answers the user 404
+    before = (tmp_path / "data" / "config.json").read_bytes()
+    result = dry_run(server)
+    words = plain_words(result.output)
+    assert result.exit_code == 1, result.output
+    assert f"the user {names['user']} exists, but the database {names['database']} does not" in words
+    assert (tmp_path / "data" / "config.json").read_bytes() == before
+    assert database_exists(server) is False
+    done = dry_run(server, None, USER_SECRET, "--yes")
+    said = plain_words(done.output)
+    assert done.exit_code == 0, done.output
+    assert f"Created on ArcadeDB at {root.arcade_url}: the database {names['database']}." in said
+    assert "the user " + names["user"] + ", with rights" not in said  # the user was not created by this run
+    assert database_exists(server) is True
 
 
 def test_both_existing_with_the_right_password_are_tested_as_they_are(server):

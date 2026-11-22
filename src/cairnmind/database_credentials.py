@@ -368,7 +368,8 @@ def plan_user(settings, admin_secret: str) -> dict[str, Any]:
         user.query("SELECT 1 AS ok")
         sign_in = None
     except ArcadeError as exc:
-        if exc.status_code not in (401, 403):
+        # 404 with no database is the answer of a user that has rights on a database that is not there yet
+        if exc.status_code not in (401, 403) and not (exc.status_code == 404 and not exists):
             raise  # no answer about the user (a timeout, invalid JSON): not "the user signs in"
         sign_in = exc.status_code
     finally:
