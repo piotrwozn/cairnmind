@@ -266,14 +266,17 @@ audit note included:
 | Conflict decision (`POST /inspector/conflicts/resolve`) | Superseding by a person; the finding chosen to stand becomes confirmed. |
 | Plan confirmation (`POST /inspector/plans/{id}/confirm`) | A confirmed plan and its steps. The person confirms a plan in the inspector (Plans, then Confirm). |
 | Record kind (`POST /inspector/record-kinds/accept` and `/withdraw`) | An accepted or withdrawn transcript record kind. |
+| Impact verdict (`POST /inspector/impact/verdict`) | A person's verdict on one entry of `impact`, an audit note (`review://impact/...`) that changes no record. The person gives it in the inspector (Impact, then Verdict); `record_verdict` itself refuses without the proof. |
+| Release (`POST /inspector/records/{id}/release`) | A release of one record's current hits of the secrets scan (`release://`), published with its reason. The person releases a record in the inspector (open it, then Release); `release` itself refuses without the proof. |
 | Workspace form (`POST /findings` without `session_id`) | The person's own finding, proposed or confirmed. With a `session_id` it is a session's finding, and asking for `confirmed` is refused before anything is stored. |
 | An import that replaces a verdict given here (`POST /memory/import`, `/memory/import-published`, `/memory/import-commit` with `replace_confirmed`, not a dry run) | Records confirmed or disputed here replaced by a package. The refusal is `Replacing what a person confirmed or disputed on this machine needs the person's workspace ...`; the importer itself refuses too when the proof is missing. |
 
-The command line confirms nothing (since 0.13.0, #214). A program that runs as
-the user can open a pseudo-terminal and unset the session variables, so no test
-of the terminal tells it from a person. `remember --confirmed`, `memory
-confirm-plan`, `record-kind accept` and `record-kind withdraw` are refused with
-exit code 2 and say that the person does it in the inspector of the workspace;
+The command line confirms nothing and makes no person's act (since 0.13.0, #214,
+#306). A program that runs as the user can open a pseudo-terminal and unset the
+session variables, so no test of the terminal tells it from a person. `remember
+--confirmed`, `memory confirm-plan`, `record-kind accept`, `record-kind
+withdraw`, `impact-verdict` and `memory release` are refused with exit code 2 and
+say that the person does it in the inspector of the workspace;
 `remember --confirmed` stores nothing, not even a proposed record. `task add`
 stores a proposed task and says so on standard error. `plan save` and `plan
 adopt` are never a person's act: they are refused when they would change or
@@ -282,13 +285,13 @@ remove a step a person confirmed, and any other save is stored. `memory import`,
 are refused by the service. Records that 0.12.0 or earlier confirmed on the
 command line keep their mark and say `on the command line`.
 
-Not a person's route, and unchanged: `POST /inspector/impact/verdict` and `POST
-/inspector/records/{id}/release` write a person's note but confirm nothing and
-change no record's status, so they stay reachable with the token (the release
-decides what the secrets gate lets into published memory; #214 does not change
-it). An import that only brings a package's confirmations (`by: import`) is
-reachable with the token too: such a record is "confirmed elsewhere ... not
-verified here" and is never a person's confirmation here.
+Not a person's route, and unchanged: an import that only brings a package's
+claims is reachable with the token. A record it brings as confirmed (`by:
+import`) is "confirmed elsewhere ... not verified here" and is never a person's
+confirmation here; an impact verdict or a release it brings is the package's
+claim too, and counts as written (see below). Reading the impact list, publishing
+and its preview, `memory check-published` and `memory diff` need no key: they
+decide nothing about the gate.
 
 ### What the person's key is
 
@@ -346,12 +349,18 @@ around Cairnmind:
   stop` and `cairnmind backup` it can bring back a confirmation a person has
   since disputed, by restoring an older genuine backup, and accepted record
   kinds with it (#214 continues with this);
+- import memory that carries a release or an impact verdict: `memory import`,
+  `memory import-published` and `memory import-commit` are reachable with the
+  token, and what the package carries counts as written. An imported release
+  lets its exact values through when this computer publishes the record, and an
+  imported verdict marks the entry checked where its fingerprint matches. `memory
+  check-published` and the pull request's diff list every release in a tree;
 - replace or change the installed program;
 - read the memory of a Cairnmind process where the system lets a process read
   another process of the same user (Linux with `kernel.yama.ptrace_scope` 0, or
   as root).
 
-Except restore, none of these is a documented command, route or tool, and a record confirmed
+Except restore and an import, none of these is a documented command, route or tool, and a record confirmed
 this way carries the confirmation line of the route it imitated; nothing in the
 store tells it from the person's own act. What limits it is the client's
 approval of commands: the built-in agent asks the person to approve each command
@@ -1003,8 +1012,9 @@ Git authorship of a review (`actor_name`) is published by design. The scan reduc
 does not promise that nothing private can.
 
 A person can release one record after reading it, when a hit is a false alarm (an example key from
-a provider's documentation, a test value): `cairnmind memory release PROJECT RECORD --reason TEXT`,
-refused inside a coding session, or `POST /inspector/records/{id}/release`. The release covers the
+a provider's documentation, a test value): in the inspector of the workspace, open the record, then
+Release, and give the reason (`POST /inspector/records/{id}/release`, a person's route: it needs the
+open workspace's key). `cairnmind memory release` is refused since 0.13.0 and says so. The release covers the
 record's current hits only: it is a source of its own, `release://` with origin
 `local_user_release`, holding `{"action":"release","actor","actor_name","at","branch","commit",
 "hits":[{"field","kind","value_sha256"}],"reason","record_id"}`. It is published in the record's
