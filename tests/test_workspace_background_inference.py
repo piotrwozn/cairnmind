@@ -362,7 +362,9 @@ async def test_queue_button_is_explicit_scoped_localized_and_never_starts_an_ass
 @pytest.mark.asyncio
 @pytest.mark.parametrize("which", ["PROCESS_OFF", "PROCESS_RESTART"])
 async def test_process_memory_without_models_shows_the_way_on_the_real_24_column_sidebar(tmp_path, monkeypatch, which):
-    """The notice sits on a line of at most 5 rows in a 24-column pane: all of it, the command too, must be visible (#294)."""
+    """The notice sits on a line of at most 5 rows in a 24-column pane: all of it, the command too, must be visible (#294).
+
+    Covers a service restarted between the status read and the enable request; the usual no-models path is the test below."""
     import textwrap
     from textual.widgets import Static
     from cairnmind import first_start
@@ -421,6 +423,7 @@ async def test_process_memory_without_models_asks_no_consent_and_shows_the_notic
         return result
 
     monkeypatch.setattr(broker, "request", request)
+    workspace.update({"launch_errors": [{"code": "background_inference_deferred"}]})
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=size) as pilot:
         await settle(app, pilot)
@@ -430,6 +433,8 @@ async def test_process_memory_without_models_asks_no_consent_and_shows_the_notic
         await asyncio.wait_for(settle(app, pilot), 5)  # a consent dialog would wait for an answer forever
         assert not isinstance(app.screen, ConfirmModal)
         assert not [row for row in broker.calls if row[1] == "/api/background-inference/enable"]
+        assert [row for row in broker.calls if row[1] == "/api/status"][-1][2] == {"project": "project-a"}  # not the whole store
+        assert workspace.read()["launch_errors"] == []  # the hint to this very action is gone
         line = app.query_one("#panel-notice", Static)
         shown = str(line.render())
         command = "cairnmind models pull" if which == "PROCESS_OFF" else "cairnmind stop"

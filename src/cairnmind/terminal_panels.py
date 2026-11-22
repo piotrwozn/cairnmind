@@ -1152,9 +1152,10 @@ class SidebarApp(BasePanel):
                 raise ValueError(self.t("Select a visible project first."))
             scope = (selected["project_id"], selected.get("worktree"))
             subject = notice_about(scope[0], selected.get("project_name"), scope[1])
-            status = await self.request("GET", "/api/status")
+            status = await self.request("GET", "/api/status", params={"project": scope[0]})
             if "models" in status:  # deterministic-only (#309): nothing to consent to, say what to do instead
                 from .first_start import PROCESS_OFF, PROCESS_RESTART, RESTART_FOR_MODELS
+                await self.clear_deferred_launch_error(scope)
                 self.notice_for(subject, PROCESS_RESTART if status.get("get_models") == RESTART_FOR_MODELS else PROCESS_OFF)
                 return
             approved = await self.push_screen_wait(ConfirmModal("Queue",
@@ -1169,15 +1170,20 @@ class SidebarApp(BasePanel):
                                         json={"project": scope[0], "worktree": scope[1]})
             if result.get("accepted") is not True or result.get("project_id") != scope[0]:
                 raise ValueError(self.t("Memory processing could not be enabled."))
-            current = await asyncio.to_thread(self.workspace.read)
-            if (current.get("project_id"), current.get("worktree")) == scope:
-                await asyncio.to_thread(self.workspace.update, {"launch_errors": [
-                    row for row in current.get("launch_errors", []) if row.get("code") != "background_inference_deferred"]},
-                    expected_revision=current["revision"])
+            if await self.clear_deferred_launch_error(scope):
                 self.notice_for(subject, "Memory processing enabled for this project." if result.get("worker_running") else
                                 result.get("notice") or "Background memory processing is disabled in this service.")
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice_for(subject, exc)
+
+    async def clear_deferred_launch_error(self, scope):
+        current = await asyncio.to_thread(self.workspace.read)
+        if (current.get("project_id"), current.get("worktree")) != scope:
+            return False
+        await asyncio.to_thread(self.workspace.update, {"launch_errors": [
+            row for row in current.get("launch_errors", []) if row.get("code") != "background_inference_deferred"]},
+            expected_revision=current["revision"])
+        return True
 
     @work(group="sidebar-settings", exclusive=True, exit_on_error=False)
     async def action_settings(self):
