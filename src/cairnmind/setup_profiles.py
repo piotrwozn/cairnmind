@@ -486,7 +486,7 @@ def local_storage(settings) -> dict:
     kept, or Settings.load(create=True) generates one after the switch. The database is the name derived from the
     data directory, so a --database given to remote-db cannot lose the local store. The prefix of that name is checked
     here as Settings.load checks it, because derived_database does not."""
-    if not env_value("ARCADE_DB_PREFIX", "devbrain").replace("_", "").isalnum():
+    if not env_value("ARCADE_DB_PREFIX", "cairnmind").replace("_", "").isalnum():
         raise SetupRefused(BAD_PREFIX, variable=next(key for key in env_names("ARCADE_DB_PREFIX") if key in os.environ))
     stored = (settings._origin or {}).get("kept", {}).get("arcade_url", (settings.arcade_url,))[0]
     default = Settings.__dataclass_fields__["arcade_url"].default
