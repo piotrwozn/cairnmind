@@ -117,7 +117,7 @@ cd ~/src/cairnmind
 
 ## 4. Run the installer
 
-**Upgrading from DevBrain.** The installer removes the earlier `devbrain` uv tool and keeps your memory in `~/.local/share/devbrain`. Projects set up by DevBrain still point their hooks and MCP entries at the removed Python, so the installer then lists one `cairnmind install <project>` command per registered project; run them before starting Codex or Claude Code in those projects. The new package also installs `devbrain` as an alias for `cairnmind`.
+**Upgrading from DevBrain.** The installer removes the earlier `devbrain` uv tool and keeps your memory in `~/.local/share/devbrain`. Projects set up by DevBrain still point their hooks and MCP entries at the removed Python, so the installer then lists one `cairnmind install <project>` command per registered project; run them before starting Codex or Claude Code in those projects. Since 0.13.0 the package installs only the `cairnmind` command; the `devbrain` alias is gone.
 
 From the directory that contains `pyproject.toml`:
 
