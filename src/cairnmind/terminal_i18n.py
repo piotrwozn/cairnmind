@@ -453,8 +453,8 @@ CATALOG.update({
     "Start requested. Review the workspace.": "Zlecono rozpoczęcie pracy. Sprawdź przestrzeń pracy.",
     # Plan stages (#10)
     "Run next stage": "Uruchom następny etap",
-    "Show the project, then start what is mapped to the next plan step":
-        "Pokaż projekt, potem uruchom to, co przypisano do następnego kroku planu",
+    "Show the project and move to its Run next stage button":
+        "Pokaż projekt i przejdź do jego przycisku Uruchom następny etap",
     "Plan stages": "Etapy planu", "implement": "implementacja", "review": "przegląd", "test": "test",
     "Plan": "Plan", "Step": "Krok", "Stage": "Etap", "Check profile": "Profil testu",
     "Required checks": "Wymagane testy", "Not set": "Nieustawione", "Unknown assistant": "Nieznany asystent",
@@ -640,6 +640,17 @@ CATALOG.update({
     "session continuity broken": "przerwana ciągłość sesji",
     # Pane and control words on the pane's border (workspace_border, #208); the others are shared.
     "Client 1": "Klient 1", "Client 2": "Klient 2", "Inspector": "Inspektor", "In control": "Steruje",
+    "The workspace was stopped with cairnmind workspace stop; run cairnmind to open it again.":
+        "Przestrzeń pracy zatrzymano poleceniem cairnmind workspace stop; uruchom cairnmind, aby otworzyć ją ponownie.",
+    "Session ended (#{?pane_dead_signal,signal #{pane_dead_signal},exit status #{pane_dead_status}}). "
+    "Resume it from Sessions.":
+        "Sesja zakończona (#{?pane_dead_signal,sygnał #{pane_dead_signal},kod wyjścia #{pane_dead_status}}). "
+        "Wznów ją z listy Sesje.",
+    "Session ended (#{?pane_dead_signal,signal #{pane_dead_signal},exit status #{pane_dead_status}}).":
+        "Sesja zakończona (#{?pane_dead_signal,sygnał #{pane_dead_signal},kod wyjścia #{pane_dead_status}}).",
+    "This session has ended.": "Ta sesja się zakończyła.",
+    "This session has ended. Resume it or start a new one.":
+        "Ta sesja się zakończyła. Wznów ją albo rozpocznij nową.",
 })
 CATALOG.update(MESSAGES)  # fixed backend messages (#153)
 CATALOG.update(MCP_FAILURE_MESSAGES)  # a third-party MCP server that did not start (#209)

@@ -1121,8 +1121,9 @@ class SidebarApp(BasePanel):
     async def login(self):
         try:
             await self.load_state()
+            from .stages import assistant_name
             choice = await self.push_screen_wait(ChoiceModal("Connections",
-                [(p["label"] + " · " + (p.get("model") or p.get("provider") or p["client"]), p["id"])
+                [(assistant_name(p, self.t), p["id"])
                  for p in self.data.get("profiles", [])] + [("Add connection", "+")]))
             if choice == "+":
                 self.edit_profiles("+")
@@ -1368,16 +1369,21 @@ class SidebarApp(BasePanel):
             if not choices:
                 self.notice(self.t("No sessions yet."))
                 return
-            identifier = await self.push_screen_wait(ChoiceModal(self.t("Sessions on this computer"), choices))
-            if not identifier:
-                return
-            run = next(r for r in runs if r["id"] == identifier)
-            # An ended run has no process: stopping, interrupting or taking control of it is not offered.
-            live = [(self.t("Take control"), "takeover"), (self.t("Interrupt current operation"), "interrupt"), (self.t("Stop process"), "stop")] if run_is_live(run) else []
-            action = await self.push_screen_wait(ChoiceModal(self.t("Session actions"), [(self.t("Show / attach without a new process"), "show"), *live] + ([(self.t("Resume saved session"), "resume"), (self.t("New session with project memory"), "new")] if run.get("project_id") else [])))
+            while True:
+                identifier = await self.push_screen_wait(ChoiceModal(self.t("Sessions on this computer"), choices))
+                if not identifier:
+                    return
+                run = next(r for r in runs if r["id"] == identifier)
+                # An ended run has no process: stopping, interrupting or taking control of it is not offered.
+                live = [(self.t("Take control"), "takeover"), (self.t("Interrupt current operation"), "interrupt"), (self.t("Stop process"), "stop")] if run_is_live(run) else []
+                action = await self.push_screen_wait(ChoiceModal(self.t("Session actions"), [(self.t("Show / attach without a new process"), "show"), *live] + ([(self.t("Resume saved session"), "resume"), (self.t("New session with project memory"), "new")] if run.get("project_id") else [])))
+                if action is not None:
+                    break  # Esc in the actions goes back to this list, as its hint says
             from . import workspace as manager
             if action == "show":
                 await asyncio.to_thread(manager.select_run, self.settings, identifier, self.workspace_id)
+                if not run_is_live(run):
+                    self.notice(self.t("This session has ended. Resume it or start a new one.") if run.get("project_id") else self.t("This session has ended."))
             elif action == "takeover":
                 await asyncio.to_thread(manager.take_control, self.settings, identifier, self.workspace_id)
             elif action == "stop":

@@ -251,6 +251,28 @@ live_terminals() {
     done
 }
 
+# $1: a terminal server's socket. Prints the data directory it belongs to, read from its first pane's start
+# command: --data-dir for the workspace, the --spec file under <data directory>/runtime for a coding session.
+# Prints nothing when it cannot be told (no tmux client here, no answer, another command). Only bash builtins.
+terminal_data_dir() {
+    local command found="" quote="[\"']" word="[ ]+(\"[^\"]*\"|'[^']*'|[^ ]+)"
+    command -v tmux >/dev/null 2>&1 || return 0
+    command="$(tmux -S "$1" list-panes -a -F '#{pane_start_command}' 2>/dev/null)" || return 0
+    command="${command%%$'\n'*}"
+    if [[ "$command" =~ --data-dir$word ]]; then
+        found="${BASH_REMATCH[1]}"
+        found="${found#$quote}"
+        found="${found%$quote}"
+    elif [[ "$command" =~ --spec$word ]]; then
+        found="${BASH_REMATCH[1]}"
+        found="${found#$quote}"
+        found="${found%$quote}"
+        found="${found%/*}"  # the launch file's folder, <data directory>/runtime
+        found="${found%/*}"
+    fi
+    printf '%s' "${found//[^[:print:]]/?}"  # the text is a process's argument: shown with no control characters
+}
+
 # External MCP servers (cairnmind mcp --client external) running the installed version's Python: an editor keeps
 # one open, and its next tool call would start the service again, from the version being replaced (#298).
 # $1: that Python, "<uv tool dir>/<tool>/bin/python". Prints their process ids, one per line; fails when ps does.
@@ -398,7 +420,7 @@ end_upgrade() {
 # The workspace and coding sessions hold interactive work: the installer stops here unless it is
 # told to close them. The interface broker and the knowledge service hold none and are stopped.
 stop_installed() {
-    local installed="$1" name="$2" python="${3:-}" terminals status socket total shown bridges="" runs=""
+    local installed="$1" name="$2" python="${3:-}" terminals status socket total shown dir bridges="" runs=""
     # First, and also when the installed command is broken: nothing has been stopped yet. Before the terminals:
     # it is a cheap read that ends the run with nothing asked of the installed command, and a refusal about
     # terminals (#290) then never hides an open MCP server that would restart the service.
@@ -446,6 +468,12 @@ stop_installed() {
             fi
             if ((total <= 5)); then
                 shown="$shown$socket"
+                # A person tells a real session from a leftover by the folder it belongs to (#169).
+                dir=""
+                [[ "$socket" == /* ]] && dir="$(terminal_data_dir "$socket")"
+                if [[ -n "$dir" ]]; then
+                    shown="$shown (data directory: $dir)"
+                fi
             fi
         done <<< "$terminals"
         if ((total > 5)); then
