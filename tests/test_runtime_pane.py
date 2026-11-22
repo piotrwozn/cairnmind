@@ -35,8 +35,11 @@ def pane_runtime(tmp_path, monkeypatch, request):
 
     def tmux(*args, check=True):
         calls.append(args)
-        assert args[0] in {'display-message', 'kill-session', 'list-sessions', 'kill-server'}, \
+        # run-shell true: the one job that makes tmux 3.4 notice an exit it missed (#349); it captures nothing.
+        assert args[0] in {'display-message', 'kill-session', 'list-sessions', 'kill-server'} or args == ('run-shell', 'true'), \
             'No terminal output capture is permitted'
+        if args[0] == 'run-shell':
+            return subprocess.CompletedProcess(args, 0, '', '')
         if args[0] == 'list-sessions':
             assert args[1:] == ('-F', '#{session_name}')
             return subprocess.CompletedProcess(args, 0, '', '')  # its only session was just killed
@@ -71,7 +74,8 @@ def test_dead_pane_without_pid_preserves_history_and_observed_exit(pane_runtime,
     assert result['lifecycle'] == lifecycle and result['exit_code'] == code
     assert result['pid'] == 4242 and result['pgid'] == 4242 and result['process_start'] == 'original-birth'
     assert result['session_id'] == 'memory-session' and result['generation'] == 3
-    assert all(call[0] == 'display-message' for call in calls)
+    assert all(call[0] == 'display-message' or call == ('run-shell', 'true') for call in calls)
+    assert (('run-shell', 'true') in calls) is (exit_status == '')  # only a dead pane without a status is nudged
 
 
 def test_dead_auth_pane_without_pid_discards_volatile_terminal(pane_runtime):
