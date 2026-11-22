@@ -485,13 +485,13 @@ def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
               "tmux": {"code": "too_old", "minimum_version": "3.4"},
               "ollama": {"available": True, "chat_model_installed": False, "embedding_model_installed": True},
               "clients": {"codex": {"installed": True, "verified_resume": False}},
-              "store_writer": {"role": "reader", "reason": "This installation only reads this store.\x1b[31m"}}
+              "store_writer": {"role": "lost", "reason": "Installation abc took over this store.\x1b[31m"}}
     lines = doctor_attention.attention(broken)
     # #287: environment notes and the optional workspace are in the summary's own groups, not among the faults.
     assert not any("CAIRNMIND_X" in line or "cockpit" in line for line in lines)
     assert any("chat model is not downloaded" in line for line in lines)
     assert any("codex is installed but its contract checks fail" in line for line in lines)
-    assert any(line.startswith("Store writer: reader.") and "\x1b" not in line for line in lines)
+    assert any(line.startswith("Store writer: lost.") and "\x1b" not in line for line in lines)
     unreadable = "The doctor report could not be read."
     for report, first, last in ((healthy, "Memory is kept in /home/me/.local/share/cairnmind.", "Next: cairnmind project add"),
                                 (broken, "Memory is kept in /home/me/.local/share/cairnmind.", "Next: fix what is listed"),

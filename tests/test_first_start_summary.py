@@ -87,13 +87,16 @@ def test_environment_notes_are_notes_not_missing():
         environment_notes=["CAIRNMIND_PORT is used by this process."]))
 
 
-def test_a_reader_installation_is_missing_with_the_writers_own_next_step():
+def test_a_reader_installation_is_present_and_names_who_writes_and_the_takeover():
+    # #373: a reader is how a second installation is meant to be, so it is not under Required and missing.
     reader = healthy(store_writer={"role": "reader", "reason": "This installation only reads this store.",
-                                   "next": "cairnmind store takeover --yes"})
+                                   "next": "cairnmind store takeover --yes",
+                                   "writer": {"installation": "abc12345", "host": "mac", "since": "2026-11-22T10:00:00Z"}})
     lines = SUMMARY(reader)
-    assert any(line.startswith("  - Store writer: reader.") and "cairnmind store takeover --yes" in line
-               for line in lines)
-    assert lines[-1] == first_start.NEXT_FIX
+    assert first_start.NOTHING_MISSING in lines and lines[-1] == first_start.NEXT_START
+    assert "  - " + first_start.READER_ROLE in lines
+    mixed = healthy(store_writer={"role": "reader", "problem": "The writer row and the journal head differ."})
+    assert lines[-1] != SUMMARY(mixed)[-1] and any("Store writer: reader." in line for line in SUMMARY(mixed))
 
 
 def test_where_things_run_is_the_topology_lines_and_a_server_that_is_down_names_the_server():

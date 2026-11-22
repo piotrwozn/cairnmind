@@ -351,7 +351,7 @@ def test_doctor_starts_with_the_topology_of_what_it_found(monkeypatch, tmp_path)
     monkeypatch.setattr(cli, "store_for_read", unreadable)
     monkeypatch.setattr(cli, "service_alive", lambda settings: False)
     result = invoke(tmp_path, "doctor")
-    assert result.exit_code == 1, result.output  # a reader is required and missing (#287), so doctor exits 1 (#313)
+    assert result.exit_code == 0, result.output  # a designed reader misses nothing (#373; #287 counted it as missing)
     report = json.loads(result.output)
     assert list(report)[0] == "topology" and report["store_writer"]["role"] == "reader"
     shown = report["topology"]["lines"]

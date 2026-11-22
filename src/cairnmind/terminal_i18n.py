@@ -424,6 +424,10 @@ LEGACY = {
     "Wczytanie zachowuje tożsamość projektu. Testy z drugiego komputera pozostają historyczne.": "Import preserves project identity. Checks from another computer remain historical.",
     "Wczytać tę pamięć projektu?": "Import this project memory?", "Snapshot lub manifest.json": "Snapshot or manifest.json",
     "Pamięć wczytana do podglądu; bez uruchamiania klientów.": "Memory imported for viewing. No clients started.",
+    "Pamięć wczytana, ale widoku nie udało się odświeżyć.": "Memory imported, but the view could not be refreshed.",
+    "Pamięć nie została wczytana.": "Memory was not imported.",
+    "Usługa nie potwierdziła wczytania, więc pamięć mogła zostać wczytana.":
+        "The service did not confirm the import, so the memory may have been imported.",
     "Klucz ustawiony. Jego treść nie jest ponownie wyświetlana.": "Key saved. Its value will not be displayed again.",
     "Usunąć klucz?": "Remove saved key?", "Dotyczy tylko lokalnego klucza tego profilu.": "Only the local key for this connection will be removed.",
     "Usuń klucz": "Remove saved key", "Klucz usunięty.": "Key removed.", "Wykonać test modelu?": "Test this model?",
