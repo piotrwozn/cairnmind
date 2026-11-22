@@ -3,6 +3,8 @@
 The store holds the backup, or what it held before; between those two, while a process runs or after it was
 killed, it carries a mark, and nothing uses it until a restore finishes.
 """
+import fcntl
+import gzip
 import json
 import os
 import signal
@@ -14,7 +16,7 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import api_runtime, arcade, cli, integrations, restore_staged, store_writer
-from cairnmind.journal import Journal
+from cairnmind.journal import Journal, JournalTransaction
 from cairnmind.memory import MemoryManager
 from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
 from cairnmind.restore_staged import RestoreFailed, RestoreUnfinished
@@ -56,7 +58,7 @@ def test_a_store_with_the_mark_is_refused_by_every_opening_but_a_restore(tmp_pat
         Store(store.data_dir)
     text = str(refused.value)
     assert refused.value.mark == mark and mark["backup"] in text and mark["before"] in text
-    assert text.count("cairnmind restore") == 2 and "putting the store back did not finish" in text
+    assert text.count("cairnmind restore") == 3 and "putting the store back did not finish" in text
     with pytest.raises(RestoreUnfinished, match="did not finish"):
         Store.open_readonly(store.settings)
     # A restore opens it, and nothing else runs over it.
@@ -244,8 +246,8 @@ def test_a_failed_restore_over_an_unreadable_mark_does_not_put_back_a_store_of_u
     assert restore_staged.unfinished(store.client) is None and not Store(store.data_dir).read_only
 
 
-def test_a_failure_before_the_first_delete_leaves_the_store_untouched_and_is_not_undone(tmp_path, monkeypatch):
-    store, path, before, known = _world(tmp_path, monkeypatch)
+def _failing_before_the_first_delete(monkeypatch, store):
+    """The engine goes away after the mark is written and before the first row is deleted; nothing is put back."""
     armed, query, mark = [], store.query, restore_staged.write_mark
 
     def marked(target, row):
@@ -263,11 +265,145 @@ def test_a_failure_before_the_first_delete_leaves_the_store_untouched_and_is_not
     monkeypatch.setattr(restore_staged, "write_mark", marked)
     monkeypatch.setattr(restore_staged, "_undo", never)
     monkeypatch.setattr(store, "query", failing)
+
+
+def test_a_failure_before_the_first_delete_leaves_the_store_untouched_and_is_not_undone(tmp_path, monkeypatch):
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    _failing_before_the_first_delete(monkeypatch, store)
     with pytest.raises(RestoreFailed, match="before it changed any row: the store is as it was"):
         store.restore(path)
     monkeypatch.undo()
     assert comparable(store.export()) == before and restore_staged.unfinished(store.client) is None
     assert len(_copies(store, known)) == 1 and not Store(store.data_dir).read_only
+
+
+def test_a_failure_before_the_first_delete_that_cannot_remove_the_mark_says_both_and_keeps_the_store_refused(
+        tmp_path, monkeypatch):
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    _failing_before_the_first_delete(monkeypatch, store)
+
+    def gone(target):
+        raise OSError("the engine is still gone")
+
+    monkeypatch.setattr(restore_staged, "clear_mark", gone)
+    with pytest.raises(RestoreFailed) as failed:  # not the bare OSError: the person needs the first error too
+        store.restore(path)
+    monkeypatch.undo()
+    text = " ".join(str(failed.value).split())
+    assert "the engine went away" in text and "mark could not be removed (the engine is still gone)" in text
+    assert f"cairnmind restore {path}" in text
+    # What was said is what holds: the store carries the mark and is refused, and a restore that finishes clears it.
+    with pytest.raises(RestoreUnfinished):
+        Store(store.data_dir)
+    Store(store.data_dir, for_restore=True).restore(path)
+    assert restore_staged.unfinished(store.client) is None and not Store(store.data_dir).read_only
+
+
+def test_a_restore_whose_vertex_lookup_misses_fails_cleanly_and_is_put_back(tmp_path, monkeypatch):
+    """#377: at about 160,000 vertices the unique index lookup on nodes.id missed vertices that exist, so a group of
+    edges came back short. That is the failure injected here; this branch's own size test stays far below that size."""
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    script, missed = JournalTransaction.script, []
+
+    def missing(self, statements, params, project_id):
+        found = script(self, statements, params, project_id)
+        if not missed and any(str(sql).startswith("CREATE EDGE edges") for sql in statements):
+            missed.append(True)  # once: the undo then writes its edges where the lookup answers
+            return [{"n": found[0]["n"] - 1}]
+        return found
+
+    monkeypatch.setattr(JournalTransaction, "script", missing)
+    with pytest.raises(RestoreFailed, match="did not create every graph edge of a group.*put back as it was before"):
+        store.restore(path)
+    monkeypatch.undo()
+    assert missed and comparable(store.export()) == before
+    assert restore_staged.unfinished(store.client) is None and not Store(store.data_dir).read_only
+
+
+def test_a_transaction_open_for_the_time_bound_is_committed_and_a_slow_delete_halves_the_next(tmp_path, monkeypatch):
+    path = _large(Store(tmp_path / "memory"), tmp_path)
+    target = Store(tmp_path / "target")
+    target.restore(path)  # rows to delete
+    commits, _ = _watching(monkeypatch)
+    limits, inner = [], arcade.ArcadeClient._request
+
+    def spying(self, method, request_path, **kwargs):
+        command = str((kwargs.get("json") or {}).get("command", ""))
+        if command.startswith("DELETE FROM") and " LIMIT " in command:
+            limits.append(int(command.rsplit(" LIMIT ", 1)[1]))
+        return inner(self, method, request_path, **kwargs)
+
+    monkeypatch.setattr(arcade.ArcadeClient, "_request", spying)
+    target.restore(path)
+    quick, quick_limits = len(commits), set(limits)
+    del commits[:], limits[:]
+    monkeypatch.setattr(restore_staged, "TIME_PER_TRANSACTION", 0.0)  # every transaction has been open long enough
+    target.restore(path)
+    monkeypatch.undo()
+    # In time, a delete asks for what is left of the 5,000 rows of its transaction; slow ones ask for less and less.
+    assert max(quick_limits) == restore_staged.ROWS_PER_TRANSACTION
+    assert len(commits) > quick + 5 and max(commits) <= restore_staged.ROWS_PER_TRANSACTION, (quick, commits)
+    assert limits[0] == restore_staged.ROWS_PER_TRANSACTION and max(limits[1:]) <= restore_staged.ROWS_PER_TRANSACTION // 2
+    assert limits[-1] <= restore_staged.MIN_ROWS_PER_DELETE, limits
+    assert comparable(target.export()) == comparable(Store(tmp_path / "memory").export())
+
+
+def test_the_writer_lock_is_held_between_the_transactions_of_a_restore(tmp_path, monkeypatch):
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    lock, free = store.data_dir / "database-writer.lock", []
+    commit = restore_staged.Batches.commit
+
+    def watching(self):
+        commit(self)  # the transaction is over: another command of this installation could commit now, if it could lock
+        with lock.open("a") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                free.append(False)
+            else:
+                free.append(True)
+                fcntl.flock(handle, fcntl.LOCK_UN)
+
+    monkeypatch.setattr(restore_staged.Batches, "commit", watching)
+    store.restore(path)
+    monkeypatch.undo()
+    assert len(free) > 3 and not any(free), free
+    with lock.open("a") as handle:  # and it is released at the end
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    assert not Store(store.data_dir).read_only
+
+
+def test_a_marked_store_gives_no_backup_and_no_export_and_a_takeover_does_not_hide_the_mark(tmp_path, monkeypatch):
+    first = Store(tmp_path / "first")
+    second_dir = second_installation(tmp_path, first)
+    mark = _mark(first)
+    marked = Store(first.data_dir, for_restore=True)  # the opening a restore uses: it may write, so it must not copy
+    for call in (lambda: marked.backup(tmp_path / "half.cairnmind.json.gz"), marked.export):
+        with pytest.raises(RestoreUnfinished, match="did not finish"):
+            call()
+    assert not (tmp_path / "half.cairnmind.json.gz").exists()
+    # Every other command opens the store through Store or Store.open_readonly: `store size` is one of them.
+    shown = runner.invoke(cli.app, ["--data-dir", str(first.data_dir), "store", "size"])
+    # (the entry point prints a ValueError's message and exits 1; the test runner hands it over as the exception)
+    assert shown.exit_code != 0 and isinstance(shown.exception, RestoreUnfinished), (shown.output, shown.exception)
+    # The other installation sees the sentence too, with the way out that needs nothing of the first one's machine.
+    with pytest.raises(StoreNotReady) as refused:
+        Store(second_dir)
+    assert "store takeover --yes" in str(refused.value) and "any valid backup" in str(refused.value)
+    # Taking the writer role is a person's act on a marked store, and it leaves the mark where it is.
+    taken = store_writer.take_over_at(second_dir)
+    assert taken["taken_over"] is True and "did not finish" in taken["next"]
+    assert restore_staged.unfinished(first.client) == mark
+    for opening in (lambda: Store(second_dir), lambda: Store(first.data_dir)):
+        with pytest.raises(StoreNotReady, match="did not finish"):
+            opening()
+    # A restore of any backup from that installation clears it: the first installation's copy is not needed.
+    other = tmp_path / "other.cairnmind.json.gz"
+    Store(tmp_path / "elsewhere").backup(other)
+    Store(second_dir, for_restore=True).restore(other)
+    assert restore_staged.unfinished(first.client) is None and not Store(second_dir).read_only
+    assert Store(first.data_dir).read_only  # the first installation is now a reader of a consistent store
+    assert b"restore_unfinished" not in gzip.decompress(Store(second_dir).backup(tmp_path / "whole.cairnmind.json.gz").read_bytes())
 
 
 @pytest.mark.parametrize("agent", ["disabled", "enabled", ""])

@@ -69,10 +69,18 @@ def test_an_error_that_is_not_the_engines_failing_gets_no_hint(tmp_path):
     assert restore_staged._described(HEAP, settings, None).startswith("ArcadeDB HTTP 500: Java heap space. The database engine")
 
 
+@pytest.mark.parametrize("sentence", [restore_staged.UNFINISHED, restore_staged.UNDO_UNFINISHED, restore_staged.UNREADABLE])
+def test_every_refusal_names_the_way_out_from_another_installation(sentence):
+    """When the installation that started the restore is gone, any other one finishes it with any valid backup."""
+    for text in (sentence, MESSAGES[sentence]):
+        assert "cairnmind store takeover --yes" in text and "cairnmind restore " in text
+    assert "any valid backup" in sentence and "dowolną poprawną kopią" in MESSAGES[sentence]
+
+
 def test_every_sentence_of_the_restore_has_its_polish():
     english = [value for name, value in vars(restore_staged).items()
                if name.isupper() and not name.startswith("_") and isinstance(value, str) and " " in value]
-    assert len(english) == 14
+    assert len(english) == 15  # MARK_KEPT is the one added after the recheck; TIME_PER_TRANSACTION and the like are numbers
 
     def placeholders(sentence):
         return sorted(field for _, field, _, _ in string.Formatter().parse(sentence) if field)

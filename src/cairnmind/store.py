@@ -351,7 +351,21 @@ class Store:
         self.init()
 
     @contextmanager
+    def held(self):
+        """Keep the writer lock across the transactions this thread runs inside, as a restore does (#362): their
+        own ``_lock`` is then this one, and every other process and thread waits."""
+        with self._lock():
+            self._local.lock_held = True
+            try:
+                yield
+            finally:
+                self._local.lock_held = False
+
+    @contextmanager
     def _lock(self):
+        if getattr(self._local, "lock_held", False):
+            yield  # this thread holds it already; a second flock on a new handle would wait for itself
+            return
         with (self.data_dir / "database-writer.lock").open("a") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
             try:
@@ -1843,6 +1857,8 @@ class Store:
             tx.command("DELETE FROM embeddings WHERE project_id=:project", {"project": project_id})
 
     def export(self, project_id=None):
+        from .restore_staged import refuse_if_unfinished
+        refuse_if_unfinished(self.client)  # part of a backup is not an export of the store (#362)
         with self.transaction() as tx:
             return self._export_snapshot(tx, project_id, EXPORT_TYPES, 5)
 
@@ -1857,6 +1873,8 @@ class Store:
         return result
 
     def backup(self, destination):
+        from .restore_staged import refuse_if_unfinished
+        refuse_if_unfinished(self.client)  # a backup of part of a restore would pass for a whole one (#362)
         destination = Path(destination).expanduser().resolve()
         if destination.is_dir():
             destination /= f"cairnmind-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid4().hex[:8]}{BACKUP_SUFFIXES[0]}"
