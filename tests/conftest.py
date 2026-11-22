@@ -73,6 +73,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_inspector_release", "test_inspector_published_import",
     "test_command_line_confirms_nothing",
     "test_doc_links", "test_stall_watch", "test_restore_claims_units",
+    "test_measure_service_spend", "test_compare_model_paths_script",
     "test_upgrade_mark", "test_upgrade_start", "test_service_version", "test_other_version",
     "test_sessions_dialog", "test_command_menu_popup", "test_mcp_unknown_argument", "test_stop_broker_line",
     "test_ended_pane_text",
