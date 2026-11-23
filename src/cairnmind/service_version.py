@@ -18,7 +18,7 @@ import time
 import httpx
 
 from . import __version__
-from .config import SERVICE_NAMES
+from .config import SERVICE_NAMES, tls_verify
 
 _VERSION = re.compile(r"[0-9A-Za-z.+-]{1,40}")
 
@@ -84,7 +84,7 @@ def refusal(settings) -> Sentence | None:
         health = seen[1]
     else:
         try:
-            with httpx.Client(trust_env=False, timeout=5) as client:
+            with httpx.Client(trust_env=False, timeout=5, verify=tls_verify(settings.url)) as client:
                 response = client.request("GET", settings.url + "/health")
         except httpx.ConnectError:
             return None  # nothing listens: the request that follows fails, or starts the service, on its own

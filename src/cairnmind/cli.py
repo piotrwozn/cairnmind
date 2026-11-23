@@ -24,7 +24,7 @@ from cairnmind.cli_arguments import (
     ProfileArg, ProjectArg, ProjectNameArg, ProjectRootArg, QuestionArg, ReadbackArg, RecordIdArg, RepositoryArg,
     SessionClientArg, SessionIdArg, SnapshotArg, SourceIdArg, StateArg, StateFileArg, TaskIdArg, TitleArg,
     TranscriptArg)
-from cairnmind.config import SERVICE_NAMES, Settings, drop_env, session_value
+from cairnmind.config import SERVICE_NAMES, Settings, drop_env, session_value, tls_verify
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.arcade import ArcadeError
 
@@ -272,7 +272,7 @@ def actor_write(store, settings: Settings, project_id: str, worktree: Path | str
 def service_alive(settings: Settings) -> bool:
     from cairnmind import service_version  # not cairnmind.service: that imports the web framework (#405)
     try:
-        with httpx.Client(trust_env=False, timeout=0.7) as client:
+        with httpx.Client(trust_env=False, timeout=0.7, verify=tls_verify(settings.url)) as client:
             result = client.get(settings.url + "/health")
             data = result.json()
             alive = (result.is_success and data.get("service") in SERVICE_NAMES
@@ -604,7 +604,7 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
         session_id = session_value("SESSION_ID")
         if session_id:
             kwargs["params"] = {**dict(kwargs.get("params") or {}), "session_id": session_id}
-    with httpx.Client(trust_env=False, timeout=settings.ask_timeout + 90,
+    with httpx.Client(trust_env=False, timeout=settings.ask_timeout + 90, verify=tls_verify(settings.url),
                       headers={"Authorization": f"Bearer {settings.token}"}) as client:
         listed: list = []
 

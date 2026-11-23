@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 
 from . import structured_output
-from .config import Settings
+from .config import Settings, tls_verify
 
 # What a model list may give as a model's digest; anything else counts as no digest (#192).
 MODEL_DIGEST = re.compile(r"(?:sha256:)?[0-9a-f]{12,128}")
@@ -135,7 +135,8 @@ class Ollama:
 
     def _new_client(self) -> httpx.AsyncClient:
         # Local requests must not be routed through a configured cloud proxy. Redirects are not followed (httpx's default).
-        return httpx.AsyncClient(base_url=self.base_url, timeout=max(5, self.settings.ask_timeout), trust_env=False)
+        return httpx.AsyncClient(base_url=self.base_url, timeout=max(5, self.settings.ask_timeout), trust_env=False,
+                                 verify=tls_verify(self.base_url))
 
     async def open(self) -> None:
         """Keep one client for the life of a long-running process, on the event loop that will use it, until

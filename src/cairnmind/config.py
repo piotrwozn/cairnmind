@@ -31,6 +31,16 @@ BACKUP_SUFFIXES = (".cairnmind.json.gz", ".devbrain.json.gz")
 BACKUP_FORMATS = ("cairnmind-arcadedb-backup", "devbrain-arcadedb-backup")
 
 
+def tls_verify(url: str) -> bool:
+    """The `verify` of an HTTP client for this address: False only for plain http (#415).
+
+    httpx builds a TLS context with the whole certificate store for every client, about 20 ms, whether or not the
+    address is https. A plain http connection has no TLS and nothing to verify, so skipping the store weakens
+    nothing; an https address, such as a model server on another computer, is verified as before.
+    """
+    return not url.lower().startswith("http://")
+
+
 def env_names(name: str) -> tuple[str, ...]:
     """Both spellings of one variable, the current one first."""
     return tuple(prefix + name for prefix in ENV_PREFIXES)
