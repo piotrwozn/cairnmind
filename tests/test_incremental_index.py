@@ -210,7 +210,7 @@ def test_a_source_replaced_behind_the_process_is_read_again(workspace):
     ("UPDATE projects SET graph_fingerprint='written-by-another-process' WHERE id=:project", 0),
     ("UPDATE projects SET graph_edges=1 WHERE id=:project", 0),
 ])
-def test_a_graph_changed_behind_the_process_is_replaced_in_full(workspace, damage, missing):
+def test_a_graph_changed_behind_the_process_is_written_again_where_it_differs(workspace, damage, missing):
     store, pid, root = workspace
     first = index_project(store, pid)
     store.command(damage, {"project": pid})
@@ -218,8 +218,8 @@ def test_a_graph_changed_behind_the_process_is_replaced_in_full(workspace, damag
     repaired = index_project_if_changed(store, pid)
     assert repaired["read"] == 1  # the files are still trusted; the graph is not
     assert repaired["graph_written"]["nodes"] == first["nodes"]  # every vertex is written again
-    # An edge that is stored as it would be written stays (#385): the edges of the changed file and the one the damage took are new.
-    assert missing < repaired["graph_written"]["edges"] < first["edges"]
+    # An edge that is stored as it would be written stays (#385): the 2 edges of the changed file and the one the damage took are new.
+    assert repaired["graph_written"]["edges"] == 2 + missing
     assert_same_as_a_full_run(store, pid)
 
 
@@ -295,6 +295,9 @@ def test_a_stored_graph_is_remembered_only_after_it_was_compared(workspace):
     ("UPDATE edges SET status='proposed' WHERE project_id=:project AND kind='defines' LIMIT 1", 1),
     ("UPDATE edges SET is_current=false WHERE project_id=:project AND kind='imports' LIMIT 1", 1),
     ("DELETE FROM edges WHERE project_id=:project AND kind='calls' LIMIT 1", 1),
+    ("UPDATE edges SET to_id=from_id WHERE project_id=:project AND kind='calls' LIMIT 1", 1),
+    ("UPDATE edges SET kind='references' WHERE project_id=:project AND kind='calls' LIMIT 1", 1),
+    ("UPDATE edges SET source_id='elsewhere' WHERE project_id=:project AND kind='defines' LIMIT 1", 1),
 ])
 def test_a_stored_graph_that_differs_from_its_fingerprint_is_replaced(workspace, damage, edges):
     store, pid, root = workspace
