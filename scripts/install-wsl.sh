@@ -65,11 +65,20 @@ if [[ -z "$connect_url" ]]; then
     # (Homebrew's own advice); then every process finds it, also one that a desktop app starts without ~/.zprofile.
     # What the Java check says is collected in $java_said and printed once Docker has been asked (#399): when Docker
     # runs the engine, "Java not found" is no failure.
+    # $java_act is the part that tells the person what to do (the JAVA_HOME note, the link command); it is printed
+    # even when Docker answers.
     java_said=""
+    java_act=""
     say_java() {
         local line
         printf -v line "$@"
         java_said+="$line"
+    }
+    say_java_act() {
+        local line
+        printf -v line "$@"
+        java_said+="$line"
+        java_act+="$line"
     }
 
     refuse_java() {
@@ -78,8 +87,8 @@ if [[ -z "$connect_url" ]]; then
         if [[ "${system:-}" == Darwin ]] && command -v brew >/dev/null 2>&1 \
             && brew_jdk="$(brew --prefix openjdk@21 2>/dev/null)/libexec/openjdk.jdk" \
             && [[ -x "$brew_jdk/Contents/Home/bin/java" ]]; then
-            say_java "Homebrew's openjdk@21 is installed, but macOS does not find it. Link it, then run the installer again:\n"
-            say_java '  sudo ln -sfn "%s" /Library/Java/JavaVirtualMachines/openjdk-21.jdk\n' "$brew_jdk"
+            say_java_act "Homebrew's openjdk@21 is installed, but macOS does not find it. Link it, then run the installer again:\n"
+            say_java_act '  sudo ln -sfn "%s" /Library/Java/JavaVirtualMachines/openjdk-21.jdk\n' "$brew_jdk"
         fi
         return 1
     }
@@ -95,7 +104,7 @@ if [[ -z "$connect_url" ]]; then
                 java_bin="$JAVA_HOME/bin/java"
                 java_source=" (JAVA_HOME=$JAVA_HOME)"
             else
-                say_java 'JAVA_HOME is set to %s, which has no bin/java; it is ignored.\n' "$JAVA_HOME"
+                say_java_act 'JAVA_HOME is set to %s, which has no bin/java; it is ignored.\n' "$JAVA_HOME"
             fi
         fi
         if [[ -z "$java_bin" && "${system:-}" == Darwin ]] \
@@ -168,7 +177,8 @@ if [[ -z "$connect_url" ]]; then
             exit 1
         fi
         if docker_asked; then
-            printf 'Java 21 or newer was not found, but Docker answers, so cairnmind init can run the engine in Docker instead; it says which mode it chose.\n'
+            printf 'Docker answers, so cairnmind init can run the engine in Docker (Java 21 or newer was not found); it says which mode it chose.\n'
+            printf '%s' "$java_act" >&2
             engine_in_docker=true
         else
             printf '%s' "$java_said" >&2
