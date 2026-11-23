@@ -6,7 +6,9 @@ compared, part by part, with a computation of every file from nothing. No databa
 """
 from __future__ import annotations
 
+import ast
 import hashlib
+import random
 from pathlib import Path
 
 import pytest
@@ -122,11 +124,109 @@ def test_a_file_whose_symbols_keep_their_ids_but_not_their_number_is_computed_fo
 
 def files_of_any(root: Path) -> dict[Path, dict]:
     indexed = {}
-    for path in sorted(p for p in root.iterdir() if p.suffix in {".py", ".js"}):
+    for path in sorted(p for p in root.iterdir() if p.suffix in {".py", ".js"} and not p.is_symlink()):  # as the walk
         text = path.read_text()
         source = {"id": hashlib.sha256(f"{path}{text}".encode()).hexdigest()[:16], "uri": str(path), "kind": "code"}
         indexed[path] = {"source": source, "analysis": analyze_code(path, text), "root": root}
     return indexed
+
+
+def seeded_project(root: Path) -> None:
+    """Twelve modules: each defines a constant and two functions, and imports and calls those of the two before it."""
+    for number in range(12):
+        lines = []
+        for back in (1, 2):
+            if number >= back:
+                other = number - back
+                lines.append(f"from m{other} import V{other}, f{other}")
+        lines += ["", "", f"V{number} = {number}", "", "", f"def f{number}(x):", "    return x", "", "",
+                  f"def g{number}():", f"    return f{number}(1)"]
+        for back in (1, 2):
+            if number >= back:
+                lines += ["", "", f"def use{back}():", f"    return f{number - back}(2) + V{number - back}()"]
+        write(root, f"m{number}.py", "\n".join(lines) + "\n")
+
+
+def random_edit(root: Path, rng: random.Random, counter: int) -> str:
+    """One of: delete, duplicate or swap functions, add or remove an import, rename a symbol at its definition only,
+    put a second constant of the same name on a line (two symbols of one id) or take it away."""
+    paths = sorted(root.glob("m*.py"))
+    while True:
+        path, kind = rng.choice(paths), rng.choice(["delete", "duplicate", "swap", "add import", "remove import",
+                                                    "rename", "twin", "untwin"])
+        text = path.read_text()
+        lines = text.split("\n")
+        tree = ast.parse(text)
+        found = [(n.name, n.lineno, n.end_lineno) for n in tree.body if isinstance(n, ast.FunctionDef)]
+        if kind in ("delete", "duplicate", "rename") and found:
+            name, start, end = rng.choice(found)
+            if kind == "delete":
+                lines = lines[:start - 1] + lines[end:]
+            elif kind == "duplicate":
+                lines = lines[:end] + ["", ""] + lines[start - 1:end] + lines[end:]
+            else:
+                lines[start - 1] = lines[start - 1].replace(f"def {name}(", f"def {name}_r(")
+        elif kind == "swap" and len(found) >= 2:
+            (_, s1, e1), (_, s2, e2) = sorted(rng.sample(found, 2), key=lambda item: item[1])
+            lines = lines[:s1 - 1] + lines[s2 - 1:e2] + lines[e1:s2 - 1] + lines[s1 - 1:e1] + lines[e2:]
+        elif kind == "add import":
+            other = rng.choice([p for p in paths if p != path]).stem
+            number = other[1:]
+            lines += ["", f"from {other} import f{number}", "", "", f"def added{counter}():", f"    return f{number}(3)", ""]
+        elif kind == "remove import":
+            imports = [n.lineno for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+            if not imports:
+                continue
+            at = rng.choice(imports)
+            lines = lines[:at - 1] + lines[at:]
+        elif kind == "twin" and any(line.startswith("V") and ";" not in line for line in lines):
+            lines = [f"{line}; {line}" if line.startswith("V") and ";" not in line else line for line in lines]
+        elif kind == "untwin" and "; V" in text:
+            lines = [line.split("; ")[0] for line in lines]
+        else:
+            continue
+        path.write_text("\n".join(lines))
+        return f"{kind} in {path.name}"
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_forty_seeded_edits_leave_the_parts_of_a_computation_of_every_file(tmp_path, seed):
+    root, rng = tmp_path.resolve(), random.Random(seed)
+    seeded_project(root)
+    indexed = files_of(root)
+    parts, *_ = ingest._graph_parts("p", indexed, {})
+    twins = reused = 0
+    for step in range(40):
+        done = random_edit(root, rng, step)
+        twins += done.startswith(("twin", "untwin"))
+        indexed = files_of(root)
+        reuse = parts if parts.keys() == indexed.keys() else {}  # the condition of `_build_graph`
+        reused += bool(reuse)
+        parts, nodes, edges = ingest._graph_parts("p", indexed, reuse)
+        every_part, every_node, every_edge = ingest._graph_parts("p", indexed, {})
+        assert parts == every_part, (step, done)
+        digests, edge_ids = ingest._union(parts)
+        # The ids as a multiset, counted part by part, and the rows that were computed against those of every file.
+        assert sorted(i for p in parts.values() for d in (p["first"][0], p["second"][0]) for i in d) == sorted(
+            i for p in every_part.values() for d in (p["first"][0], p["second"][0]) for i in d), (step, done)
+        assert (digests, edge_ids) == ingest._union(every_part), (step, done)
+        assert all(every_node[i] == n for i, n in nodes.items()) and all(every_edge[i] == e for i, e in edges.items())
+    assert reused == 40 and twins >= 1
+
+
+def test_an_import_through_a_symlink_that_now_leads_elsewhere_is_resolved_again(tmp_path):
+    # The walk leaves a symlink out, but resolving an import follows it: the importer's file did not change.
+    root = tmp_path.resolve()
+    write(root, "one.py", "def helper():\n    return 1\n")
+    write(root, "two.py", "def helper():\n    return 2\n")
+    (root / "link.py").symlink_to("one.py")
+    write(root, "user.py", "from link import helper\n\n\ndef go():\n    helper()\n")
+    parts, *_ = ingest._graph_parts("p", files_of_any(root), {})
+    (root / "link.py").unlink()
+    (root / "link.py").symlink_to("two.py")
+    indexed = files_of_any(root)
+    again, *_ = ingest._graph_parts("p", indexed, parts)
+    assert again == ingest._graph_parts("p", indexed, {})[0]
 
 
 def test_other_files_or_another_root_are_computed_again_in_full(project):

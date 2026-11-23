@@ -1090,6 +1090,20 @@ def _graph_parts(project_id: str, indexed: dict[Path, dict], reuse: dict) -> tup
             firsts[path] = nodes, edges
         return firsts[path]
 
+    resolved: dict[tuple, Path | None] = {}
+
+    def lead(path: Path, root: Path, module: str) -> Path | None:
+        # What an import leads to depends on the kind of file, the folder it starts from and the module only; a
+        # standard module is looked for by many files.
+        key = path.suffix in {".py", ".pyi"}, path.parent if module.startswith(".") else root, module
+        if key not in resolved:
+            resolved[key] = _resolve_import(path, root, module, indexed)
+        return resolved[key]
+
+    def leads_to(path: Path) -> tuple:
+        entry = indexed[path]
+        return tuple(lead(path, entry["root"], item["module"]) for item in entry["analysis"]["imports"])
+
     def second(path: Path) -> tuple[dict, dict, set[Path]]:
         entry = indexed[path]
         source_id = entry["source"]["id"]
@@ -1102,7 +1116,7 @@ def _graph_parts(project_id: str, indexed: dict[Path, dict], reuse: dict) -> tup
         is_test = path.name.startswith("test_") or bool(re.search(r"[._](test|spec)\.", path.name))
         for item in entry["analysis"]["imports"]:
             module = item["module"]
-            target = _resolve_import(path, entry["root"], module, indexed)
+            target = lead(path, entry["root"], module)
             if target is None:
                 target_id = node("external_module", module, None, {"unresolved": True})
             else:
@@ -1165,9 +1179,11 @@ def _graph_parts(project_id: str, indexed: dict[Path, dict], reuse: dict) -> tup
         parts[path] = {"key": keys[path], "symbols": symbols, "first": part(rows)}
         nodes.update(rows[0])
         edges.update(rows[1])
-    for path in set(changed) | {path for path, old in reuse.items() if old["deps"] & moved}:
+    # Resolving an import follows a symlink, which the walk leaves out: where every import leads is asked again, and
+    # a file whose imports lead elsewhere is computed again though no file changed.
+    for path in set(changed) | {path for path, old in reuse.items() if old["deps"] & moved or old["leads"] != leads_to(path)}:
         *rows, targets = second(path)
-        parts[path] = {**parts[path], "deps": frozenset(targets), "second": part(rows)}
+        parts[path] = {**parts[path], "deps": frozenset(targets), "leads": leads_to(path), "second": part(rows)}
         nodes.update(rows[0])
         edges.update(rows[1])
     return parts, nodes, edges
