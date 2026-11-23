@@ -31,6 +31,10 @@ the row naming one installation and the head another. So every stamp also writes
 a value that is new each time: a claim or a takeover always changes the head, and of two that overlap
 the second commit fails whole (the person runs the command again and takes over from the first).
 
+The times. ``since`` and each history entry's ``at`` are the database server's time (server_now), read in the
+transaction that writes them, so they do not go backwards in the order of commits whatever the clients' clocks say (#372);
+an entry of a release before 0.13.0 carries its installation's clock.
+
 A takeover (``cairnmind store takeover --yes``) is a person's act. It rewrites both rows, records
 who took over from whom, when, from which host and with which note, and puts the jobs the previous
 writer was running back to pending, so that only the new writer's worker runs them. The previous
@@ -51,6 +55,7 @@ writer at all.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import json
@@ -61,6 +66,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from uuid import UUID, uuid4
 
 from .sql import clean_row, insert_document, update_document, utc_now
@@ -81,6 +87,8 @@ IOREG = ("/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
 IOREG_TIMEOUT = 5.0
 _IOREG_UUID = re.compile(r'^[ \t|]*"IOPlatformUUID" = "([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-'
                          r'[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})"[ \t]*$', re.MULTILINE)
+_ioreg_failed_at = float("-inf")
+IOREG_RETRY_SECONDS = 60
 _known_platform_uuid: str | None = None  # read once per process: a later failed run does not change it
 
 
@@ -110,14 +118,19 @@ def platform_uuid(output: str) -> str | None:
 
 def _darwin_identity() -> str | None:
     """IOPlatformUUID of this Mac: unlike its host name, it does not change with the network (#234)."""
-    global _known_platform_uuid
+    global _known_platform_uuid, _ioreg_failed_at
     if _known_platform_uuid is None:
+        if time.monotonic() - _ioreg_failed_at < IOREG_RETRY_SECONDS:
+            return None  # folder checks ask often; a failing ioreg is asked again only after a while
         try:
             done = subprocess.run(IOREG, capture_output=True, text=True, encoding="utf-8", errors="replace",
                                   stdin=subprocess.DEVNULL, timeout=IOREG_TIMEOUT, check=False)
         except (OSError, subprocess.SubprocessError):
+            _ioreg_failed_at = time.monotonic()
             return None
         _known_platform_uuid = platform_uuid(done.stdout) if done.returncode == 0 else None
+        if _known_platform_uuid is None:
+            _ioreg_failed_at = time.monotonic()
     return _known_platform_uuid
 
 
@@ -242,6 +255,16 @@ def lost_reason(row: dict | None) -> str:
             "here to take it back.")
 
 
+def server_now(tx) -> str:
+    """The database server's time, in the format ``utc_now`` gives, read in the transaction that writes the writer
+    row (#372): clocks of installations differ, the server's is one, so the history's times do not go backwards in
+    the order of commits (two takeovers that overlap cannot both commit: the head fences them)."""
+    milliseconds = tx.query("SELECT sysdate().asLong() AS milliseconds")[0]["milliseconds"]
+    if not isinstance(milliseconds, int) or isinstance(milliseconds, bool):
+        raise ValueError("The database server gave no time; the writer row was not changed.")
+    return (datetime.fromtimestamp(0, timezone.utc) + timedelta(milliseconds=milliseconds)).isoformat(timespec="microseconds")
+
+
 def stamp(tx, installation_id: str) -> None:
     """Name the writer in the journal head, always as a change of that record (see the module text)."""
     tx.command("UPDATE journal_state SET writer=:writer,writer_change=:change WHERE id='current'",
@@ -319,7 +342,7 @@ def settle(client, me: Installation) -> dict | None:
             # moves the fence away from an installation: writes are refused until a person runs the takeover.
             return None
         if row is None:
-            now = utc_now()
+            now = server_now(tx)
             insert_document(tx, "devbrain_meta", {
                 "name": "writer", "installation_id": me.id, "host": label(socket.gethostname()), "since": now,
                 "history": [{"installation_id": me.id, "host": label(socket.gethostname()), "at": now, "how": "first"}]})
@@ -429,13 +452,14 @@ def take_over(store, note: str | None = None) -> dict:
             return {"taken_over": False, "reason": "This installation is already the writer.", "writer": describe(row)}
         if repair:
             previous = named
-        now, host = utc_now(), label(socket.gethostname())
-        entry = {"installation_id": me, "previous": previous, "host": host, "at": now,
+        now, host = utc_now(), label(socket.gethostname())  # now: the jobs' updated_at, as everywhere else
+        at = server_now(native)  # the writer row and its history: one clock for every installation (#372)
+        entry = {"installation_id": me, "previous": previous, "host": host, "at": at,
                  "how": "repair" if repair else "takeover"}
         if note:
             entry["note"] = note
         history = [*(row.get("history") or []), entry][-HISTORY_LIMIT:] if row else [entry]
-        values = {"installation_id": me, "host": host, "since": now, "history": history}
+        values = {"installation_id": me, "host": host, "since": at, "history": history}
         if row:
             update_document(native, "devbrain_meta", values, "name='writer'", {})
         else:

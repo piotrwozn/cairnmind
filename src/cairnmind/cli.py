@@ -279,6 +279,10 @@ def service_alive(settings: Settings) -> bool:
 @contextmanager
 def _service_stopped(settings: Settings, held: str, running: str):
     """Hold service.lock, so no service of this data directory starts meanwhile; refuse while one runs."""
+    from cairnmind import setup_mark
+    reason = setup_mark.refusal(settings.data_dir)
+    if reason:
+        refuse(str(reason))  # a change of setup holds this data directory (#339)
     with (settings.data_dir / "service.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -330,6 +334,11 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
         # The installer is replacing this code: a start now would run the version being replaced (#298).
         # Raised before anything starts, so the caller announces no start.
         raise UpgradeInProgress(reason)
+    from cairnmind import setup_mark
+    reason = setup_mark.refusal(settings.data_dir)
+    if reason:
+        # A change of setup stopped this service on purpose (#339); raised before anything starts, as above.
+        raise SetupInProgress(reason)
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     log = settings.data_dir / "service.log"
     with log.open("ab") as handle:
@@ -342,6 +351,20 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
             command.append("--defer-background-inference")
         process = subprocess.Popen(command,
                                    stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True, env=env)
+    try:
+        return _wait_for_start(settings, process, log, started_at)
+    except KeyboardInterrupt:
+        # An interrupted start does not leave behind the service it spawned: nobody would know it runs (#339).
+        try:
+            process.terminate()
+        except OSError:
+            pass
+        raise
+
+
+def _wait_for_start(settings: Settings, process, log: Path, started_at: int) -> bool:
+    """ensure_service's wait for the process it spawned: True when the service answers, else it raises."""
+    from cairnmind import setup_mark, upgrade_mark
     seen = None  # an installer that began at any moment of this start, even one that has ended by the time it answers
     for _ in range(300):
         seen = seen or upgrade_mark.refusal()
@@ -371,6 +394,9 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
             except OSError:
                 pass
         raise UpgradeInProgress(upgrade_mark.refusal() or upgrade_mark.UPGRADE_ENDED)
+    reason = setup_mark.refusal(settings.data_dir)
+    if reason:
+        raise SetupInProgress(reason)  # a start that met the change's lock ends with the change's sentence
     raise ServiceDidNotStart(f"The service did not start. Check {log}; port {settings.port} may be in use.")
 
 
@@ -398,6 +424,11 @@ class ServiceDidNotStart(ValueError):
 
 class UpgradeInProgress(ServiceDidNotStart):
     """An installer is replacing Cairnmind (upgrade_mark.py): nothing starts the service until it has finished (#298)."""
+
+
+class SetupInProgress(ServiceDidNotStart):
+    """A change of where storage and models run stopped this service on purpose (setup_mark.py): nothing starts it
+    until the change has finished (#339)."""
 
 
 class ServiceOfOtherVersion(ServiceDidNotStart):
@@ -484,6 +515,10 @@ def _service_unavailable(settings: Settings) -> str:
     reason = upgrade_mark.refusal()
     if reason:
         return reason  # stopped for an upgrade: `cairnmind serve` would start the version being replaced (#298)
+    from cairnmind import setup_mark
+    reason = setup_mark.refusal(settings.data_dir)
+    if reason:
+        return str(reason)  # stopped for a change of setup (#339)
     from cairnmind.first_start import STATUS_NOT_RUNNING
     return STATUS_NOT_RUNNING
 
@@ -864,6 +899,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["service_url"] = ctx.obj.url  # the address every command here talks to, so a collision is visible
     from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, env_names, session_conflicts
     from cairnmind.service_version import refusal as other_version
+    from cairnmind.setup_mark import note as setup_note, unchecked as setup_unchecked
     from cairnmind.upgrade_mark import note as upgrade_note
     # Shown here and nowhere else: a hook or an MCP server must not print notes of its own.
     # The notes of a shell whose commands are refused are also listed as blockers: the summary counts them as missing.
@@ -874,9 +910,14 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     # A service of another version answers, but every command that needs it is refused: required and not working,
     # so it is a blocker too, not only a note (#319). Asked only of this data directory's service.
     blockers += [note for note in [other_version(ctx.obj) if result["service_running"] else None] if note]
+    # A change of setup that ended with settings nobody checked: nothing starts the service until they are (#339).
+    unchecked = setup_unchecked(ctx.obj.data_dir)
+    blockers += [str(unchecked)] if unchecked else []
     result["environment_notes"] = [
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} are both set and differ; {ENV_PREFIXES[0]}{name} is used."
-        for name in env_conflicts()] + blockers + [note for note in [data_dir_note(), upgrade_note()] if note]
+        for name in env_conflicts()] + blockers + [
+            str(note) for note in [data_dir_note(), upgrade_note(),
+                                   None if unchecked else setup_note(ctx.obj.data_dir)] if note]  # not twice
     result["environment_blockers"] = blockers
     for name, variable in (("port", "PORT"), ("cockpit_port", "COCKPIT_PORT"), ("ollama_url", "OLLAMA_URL")):
         if name in ctx.obj._origin.get("kept", {}):
@@ -895,11 +936,14 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["coding_profiles"] = coding_profiles_status(ctx.obj)
     from cairnmind.record_kinds import doctor_view
     result["projects"] = None  # how many are registered; None when the store cannot be read
+    result["project_folders"] = None  # the folders this machine cannot read, by project (#371); None likewise
     try:
         # What a person accepted as technical, per project, and how to withdraw it (#210).
         store = store_for_read(ctx.obj)
         result["accepted_record_kinds"] = doctor_view(store)
         result["projects"] = len(store.list_projects())
+        from cairnmind.project_folders import unavailable
+        result["project_folders"] = unavailable(store)
     except Exception as exc:  # noqa: BLE001 - doctor reports a store it cannot read, it does not stop
         result.setdefault("accepted_record_kinds", {"unavailable": type(exc).__name__})
     from cairnmind.topology import topology
@@ -1054,6 +1098,7 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
         shown = safe_text(str(root))
         existed = project["id"] in known
         lines = (removal.restored_lines(project, restored, result.get("files", 0)) if restored else
+                 [folder["message"] for folder in result["unavailable"]] if result.get("unavailable") else
                  [(first_start.PROJECT_EXISTED if existed else first_start.PROJECT_ADDED).format(
                      project=quoted, root=shown, files=result.get("files", 0))])
         if _git_out(root, "rev-parse", "--is-inside-work-tree") is None:
@@ -1068,13 +1113,15 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
         return lines
     _human_or_json({"project": project, "indexed": result, "history": discovery, "jobs": jobs, **details},
                    as_json, sentences)
+    if result.get("unavailable"):  # a folder of another machine was not indexed: said above, and the exit code says so
+        raise typer.Exit(1)
 
 
 def _jobs_after_add(settings: Settings, store, project_id: str, quoted: str) -> tuple[dict, str | None]:
     """The extraction and embedding jobs of a project add are run by the service. project add indexes in its own
     process, as remember does, and starts nothing: only `index` goes through the service (#366). So it says how many
     jobs are queued, whether the service runs, and why they wait: no models (#274), an upgrade mark that refuses a
-    start (#298), or a service that was stopped. waiting_because None means not known to wait: a running service
+    start (#298, #339), or a service that was stopped. waiting_because None means not known to wait: a running service
     started by the workspace, or before models were turned on, can still hold them."""
     from cairnmind import first_start, knowledge_mode, upgrade_mark
     summary = store.job_summary(project_id)
@@ -1093,9 +1140,12 @@ def _jobs_after_add(settings: Settings, store, project_id: str, quoted: str) -> 
         return jobs, first_start.JOBS_HELD_NO_MODELS.format(count=count)
     if running:
         return jobs, None
-    reason = upgrade_mark.refusal()
+    from cairnmind import setup_mark
+    reason, cause = upgrade_mark.refusal(), "upgrade_in_progress"
+    if not reason:  # a change of setup from the workspace holds the data directory's start the same way (#339)
+        reason, cause = setup_mark.refusal(settings.data_dir), "setup_in_progress"
     if reason:
-        jobs["waiting_because"] = "upgrade_in_progress"
+        jobs["waiting_because"] = cause
         return jobs, first_start.JOBS_HELD_UPGRADE.format(count=count, reason=reason)
     jobs["waiting_because"] = "service_stopped"
     return jobs, first_start.JOBS_HELD_STOPPED.format(count=count, project=quoted)
@@ -1165,15 +1215,21 @@ def project_root(ctx: typer.Context, project: ProjectArg, path: FolderArg):
     root = path.expanduser().resolve(strict=True)
     if not root.is_dir():
         raise typer.BadParameter("The path must be a folder, not a file")
-    store.add_project_root(pid, root)
-    output({"project": pid, "root": str(root)})
+    moved = store.add_project_root(pid, root)  # a folder another machine had is now this machine's (#371)
+    output({"project": pid, "root": str(root), **moved})
 
 
 @app.command()
 @initialized
 def index(ctx: typer.Context, project: ProjectArg):
     """Index the project's files again through the service, which it starts when needed."""
-    output(request(ctx.obj, "POST", "/ingest", json={"project": project}))
+    result = request(ctx.obj, "POST", "/ingest", json={"project": project})
+    output(result)
+    # A folder that is not on this machine is not an index that worked: named, and the exit code says so (#371).
+    if isinstance(result, dict) and result.get("unavailable"):
+        for folder in result["unavailable"]:
+            typer.echo(f"Cairnmind: {folder['message']}", err=True)
+        raise typer.Exit(1)
 
 
 @app.command("import")
@@ -2288,12 +2344,18 @@ _register_record_kinds(app, initialized)
 
 @app.command()
 @initialized
-def install(ctx: typer.Context, project: ProjectArg, as_json: JSON_FLAG = False):
+def install(ctx: typer.Context, project: ProjectArg, as_json: JSON_FLAG = False,
+            recorder: Annotated[bool, typer.Option("--recorder", help="Turn the Claude Code cairnmind-recorder "
+                                                   "subagent on again for the project and write it.")] = False,
+            no_recorder: Annotated[bool, typer.Option("--no-recorder", help="Remove the cairnmind-recorder subagent "
+                                                      "file Cairnmind wrote and keep it off for the project.")] = False):
     """Add the project's MCP server, hooks and instructions, keeping the existing configuration."""
     from cairnmind.integrations import install_integrations
+    if recorder and no_recorder:
+        raise typer.BadParameter("Choose one of --recorder and --no-recorder.")
     store = store_for(ctx.obj)
     selected = store.resolve_project(project)
-    result = install_integrations(ctx.obj, selected)
+    result = install_integrations(ctx.obj, selected, recorder=True if recorder else False if no_recorder else None)
     import shlex
     from cairnmind import first_start
     from cairnmind.terminal_safe import safe_text
@@ -2595,7 +2657,13 @@ def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
         notice = outcome.pop(key, None)
         if notice:
             typer.echo(f"Cairnmind: {notice[0].format(**notice[1])}", err=True)
-    output({"restored": True, **outcome})
+    # A restored folder keeps the machine that registered it: on another machine each is named, with its command.
+    from cairnmind import project_folders
+    away = project_folders.unavailable(store_for(ctx.obj, notice=False))
+    for item in away:
+        if item["state"] == "elsewhere":
+            typer.echo(f"Cairnmind: {item['message']}", err=True)
+    output({"restored": True, **outcome, **({"unavailable_folders": away} if away else {})})
 
 
 @app.command()

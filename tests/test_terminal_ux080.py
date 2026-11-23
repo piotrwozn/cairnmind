@@ -1154,6 +1154,25 @@ async def test_keyboard_start_feedback_tracks_fresh_selected_slot_without_overwr
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_a_folder_this_machine_cannot_read_is_named_in_the_project_panel(tmp_path, monkeypatch, language):
+    from cairnmind.project_folders import folder_notice
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)
+    entry = {"project": "Keyboard project", "root": "/Users/me/proj", "state": "missing", "host": None, "error": None,
+             "message": "unused here: the panel words it itself"}
+    broker.projects[0]["unavailable"] = [entry]
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await settle(app, pilot)
+        await pilot.press("enter")
+        await settle(app, pilot)
+        state = app.query_one("#project-state", Static)
+        assert str(state.render()) == folder_notice([entry], language) and state.has_class("-warn")
+        assert "/Users/me/proj" in str(state.render()) and "Keyboard project" in str(state.render())
+    assert ("nie istnieje tutaj" in folder_notice([entry], "pl")) and ("does not exist here" in folder_notice([entry]))
+
+
+@pytest.mark.asyncio
 async def test_brief_from_sidebar_shows_marked_lines_for_the_open_worktree(tmp_path, monkeypatch):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     asked = []

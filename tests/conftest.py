@@ -56,7 +56,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_api_runtime", "test_api_worker", "test_arcade_transport", "test_client_auth", "test_repository_evaluation",
     "test_client_runtime", "test_cockpit_cli", "test_cockpit_server", "test_cockpit_state",
     "test_copilot_adapter", "test_database_credentials", "test_deployment", "test_environment_names", "test_graph_raster", "test_graph_widget_rendering", "test_memory_models", "test_memory_view", "test_module_alias",
-    "test_project_remove_cli", "test_hook_spool_unassigned", "test_published_memory_format",
+    "test_project_remove_cli", "test_recorder_install", "test_hook_spool_unassigned", "test_published_memory_format",
     "test_published_memory_secrets",
     "test_published_memory_diff", "test_setup_profiles",
     "test_native_evaluation", "test_native_session_environment", "test_ollama", "test_parallel_isolation", "test_parsing", "test_readonly_cli",
@@ -77,7 +77,8 @@ NO_ARCADE_MODULES = frozenset({
     "test_upgrade_mark", "test_upgrade_start", "test_service_version", "test_other_version",
     "test_sessions_dialog", "test_command_menu_popup", "test_mcp_unknown_argument", "test_stop_broker_line",
     "test_ended_pane_text",
-    "test_short_answers", "test_person_acts_consent", "test_project_forget_workspace",
+    "test_short_answers", "test_person_acts_consent", "test_workspace_setup_screen",
+    "test_setup_mark", "test_setup_change", "test_terminal_setup_change", "test_project_forget_workspace",
     "test_server_mode",
 })
 
@@ -124,6 +125,8 @@ LEFT_OUT_ON_A_SERVER = {
         "`cairnmind eval run` is refused on a connect-only installation",
     "test_memory_cli_service::test_memory_evaluation_cli_preserves_exit_contract":
         "`cairnmind eval memory` is refused on a connect-only installation",
+    "test_graph_size":
+        "starts an engine of its own with the default heap, which a run against a server does not own",
 }
 
 

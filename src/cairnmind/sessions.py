@@ -21,6 +21,7 @@ from .confirmation import confirmed_by
 from .integrations import DATA_NOT_INSTRUCTIONS
 from .memory_egress import HOSTED_PACKET_NOTE, Gate, ordered
 from .packet_origin import omitted_by_origin, preview_key, record_origins
+from .recorder_agent import RECORDER_PATH, agent_file
 from .store import EXTRACTION_MARK, ORIGIN_METADATA
 from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
 
@@ -118,6 +119,8 @@ def _managed_empty_file(relative: str, raw: bytes, settings, project: dict) -> b
 
     try:
         text = raw.decode("utf-8")
+        if relative == RECORDER_PATH:
+            return text == agent_file(settings, project)
         if relative in {"AGENTS.md", "CLAUDE.md"}:
             # Existing user instructions surrounding our block are real prior state.
             return (text.strip() == _instructions(project, settings).strip()
@@ -174,13 +177,17 @@ def _managed_command_file(relative: str, text: str, settings, _command) -> bool:
 def _empty_scope(root: str, settings, project: dict) -> tuple[bool, str, set[str]]:
     """Only a new empty directory and identifiable managed integration files."""
     allowed = {"AGENTS.md", "CLAUDE.md", ".mcp.json", ".codex/config.toml", ".codex/hooks.json",
-               ".claude/settings.json", ".claude/settings.local.json"}
+               ".claude/settings.json", ".claude/settings.local.json", RECORDER_PATH}
     paths, inventory, eligible = set(), [], True
     try:
         for child in sorted(Path(root).iterdir()):
             if child.name == ".git":
                 continue
             candidates = list(child.iterdir()) if child.is_dir() and child.name in {".codex", ".claude"} else [child]
+            # The recorder subagent's folder (#376): only its own file in it is allowed.
+            agents = child / "agents"
+            if child.name == ".claude" and agents.is_dir() and not agents.is_symlink():
+                candidates = [path for path in candidates if path != agents] + list(agents.iterdir())
             for path in sorted(candidates):
                 relative = path.relative_to(root).as_posix()
                 if path.is_symlink() or not path.is_file() or relative not in allowed or path.stat().st_size > 1048576:

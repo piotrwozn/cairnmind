@@ -318,14 +318,9 @@ def schedule_embeddings(store, namespace: str, *, project_ids=None, settings=Non
         rows = [row for row in rows if row["id"] not in held]
         if report is not None:
             report["embedding_held_back"] = len(held)
-    for row in rows:
-        # The key ingest uses: a job embeds for the namespace current when it runs, so one job per chunk
-        # serves a new chunk, a changed namespace and a rebuild. Jobs of the earlier key become no-ops.
-        job_id = store.enqueue("embed", row["project_id"], {"chunk_id": row["id"]}, f"embed:{row['id']}")
-        if store.query("SELECT state FROM jobs WHERE id=:id", {"id": job_id})[0]["state"] == "failed":
-            # A failed job stays failed until retry-jobs; the chunk still gets a fresh job per namespace.
-            job_id = store.enqueue("embed", row["project_id"], {"chunk_id": row["id"]}, f"embedding-namespace:{namespace}:{row['id']}")
-        store.reset_missing_embedding_job(job_id, row["id"], namespace)
+    from .embed_jobs import repair_embed_jobs
+    # One job per chunk under the key ingest uses serves a new chunk, a changed namespace and a rebuild.
+    repair_embed_jobs(store, rows, namespace)
     return len(rows)
 
 
@@ -468,8 +463,20 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 scan_errors.extend(f"history: {err}" for err in polled.get("errors", []))
                 projects = await asyncio.to_thread(store.list_projects)
                 forget_missing_projects(store, [project["id"] for project in projects])
+                from cairnmind.arcade import ArcadeError
                 for project in projects:
-                    indexed = await asyncio.to_thread(index_project_if_changed, store, project["id"])
+                    # One project that fails does not stop the round for the projects after it (#371); the store
+                    # itself being down is one error of the round, not one traceback per project.
+                    try:
+                        indexed = await asyncio.to_thread(index_project_if_changed, store, project["id"])
+                    except (asyncio.CancelledError, StoreNotWriter):
+                        raise
+                    except Exception as exc:
+                        if isinstance(exc, ArcadeError) and exc.status_code is None:
+                            raise  # no answer at all: the store is down for every project, not for this one
+                        scan_errors.append(f"{project['name']}: {exc}")
+                        log.exception("Indexing project %s failed", project["name"])
+                        continue
                     scan_errors.extend(f"{project['name']}: {err}" for err in indexed.get("errors", []))
                 pending = await asyncio.to_thread(index_pending_sources, store)
                 scan_errors.extend(f"memory index: {err}" for err in pending.get("errors", []))
@@ -729,10 +736,15 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     @app.get("/project-roots", dependencies=auth)
     async def project_roots(project: str):
-        pid = store.resolve_project(project)["id"]
+        found = store.resolve_project(project)
         rows = await asyncio.to_thread(store.query,
-            "SELECT path FROM project_roots WHERE project_id=:project ORDER BY path", {"project": pid})
-        return {"roots": [row["path"] for row in rows]}
+            "SELECT id,path,machine,host FROM project_roots WHERE project_id=:project ORDER BY path",
+            {"project": found["id"]})
+        from cairnmind.project_folders import entry, folder_states
+        # From the rows read above, so the answer costs no second query on a workspace that polls it.
+        away = await asyncio.to_thread(lambda: [entry(found, folder) for folder in folder_states(store, found, rows)
+                                                if folder["state"] != "available"])
+        return {"roots": [row["path"] for row in rows], "unavailable": sorted(away, key=lambda i: i["root"])}
 
     @app.get("/status", dependencies=auth)
     async def status(project: str | None = None):
@@ -742,6 +754,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pipeline = await asyncio.to_thread(store.job_summary, pid)
         writer = await asyncio.to_thread(store.writer_state)
         from cairnmind.database_mode import address, describe
+        from cairnmind.project_folders import unavailable
         from cairnmind.topology import topology
         # The service's own settings, loaded when it started; its model servers are not asked here, so the
         # evaluation reads "not checked" (cairnmind doctor checks it).
@@ -749,7 +762,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                   "topology": topology(settings, writer=writer),
                   "background": {**background_status, "inference": inference_status()}, "pipeline_jobs": pipeline,
                   "inference_queue": inference.queue.qsize(), "cached_answers": len(cache),
-                  "recent_job_errors": error_rows}
+                  "recent_job_errors": error_rows,
+                  "unavailable_folders": await asyncio.to_thread(unavailable, store, pid)}
         if not pid:  # what is left of a deleted project's memory (#347)
             from cairnmind.project_forget import history
             report["deleted_projects"] = await asyncio.to_thread(history, store)

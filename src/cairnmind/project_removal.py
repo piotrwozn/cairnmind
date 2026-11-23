@@ -20,7 +20,7 @@ from uuid import uuid4
 
 ENDED = frozenset({"exited", "failed", "interrupted"})
 INSTALLED_FILES = ("AGENTS.md", "CLAUDE.md", ".mcp.json", ".codex/config.toml", ".codex/hooks.json",
-                   ".claude/settings.local.json")
+                   ".claude/settings.local.json", ".claude/agents/cairnmind-recorder.md")
 REMOVED_FIELDS = ("removed_at", "removed_name", "removed_root", "removed_roots")
 
 IN_SESSION = ("A coding session cannot remove a project from the registry; only a person can, outside the session. "
@@ -284,7 +284,8 @@ def restore_in(tx, name: str, path: str, allow: bool = True) -> dict | None:
         raise ValueError(ROOT_OF_ANOTHER.format(root=_q(path), other=_q(other.get("name") or taken[0]["project_id"])))
     update_document(tx, "projects", {"name": name, "root": path}, "id=:id", {"id": pid})
     tx.command(f"UPDATE projects REMOVE {', '.join(REMOVED_FIELDS)} WHERE id=:id", {"id": pid})
-    insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": pid, "path": path})
+    from .project_folders import stamp
+    insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": pid, "path": path, **stamp()})
     return one_row(tx, "SELECT FROM projects WHERE id=:id", {"id": pid})
 
 
@@ -296,24 +297,31 @@ def _jobs_in_work(reader, project: dict) -> None:
                                           kinds=", ".join(sorted({str(j.get("kind")) for j in jobs}))))
 
 
+def live_runs(settings, project_id: str | None = None) -> list[dict]:
+    """The runs of the workspace (of one project, or of every project) that are not known to have ended. Read only.
+    Raises OSError, ValueError, KeyError, TypeError or subprocess.SubprocessError when that cannot be told: a
+    registry that cannot be read, or live rows and no tmux to judge them by."""
+    from .client_runtime import NativeRuntime
+    runtime = NativeRuntime(settings)
+    # Read only, even for a dry run: the registry is never rewritten here (list_runs would mark rows).
+    rows = runtime._read() if runtime.registry.exists() else []
+    mine = [run for run in rows if (project_id is None or run.get("project_id") == project_id)
+            and str(run.get("lifecycle") or run.get("state")) not in ENDED]  # unknown counts as live
+    if mine and runtime.binary is None:
+        # Without tmux a live session cannot be ruled out: refused, not assumed ended.
+        raise ValueError(runtime._binary_error or "tmux cannot be found")
+    # Only a running or stopping row is judged by its pane, as list_runs does: a row still starting (its pane may
+    # not exist yet, the registry is read without the spawn's lock) or of an unknown lifecycle counts as live.
+    return [run for run in mine if str(run.get("lifecycle") or run.get("state")) not in ("running", "stopping")
+            or ((pane := runtime._pane(run)) is not None and not pane["dead"])]
+
+
 def require_idle(settings, store, project: dict) -> None:
     """A run of the workspace that is not known to have ended, or a job in work, refuses; so does a registry that
     cannot be read. A client outside the workspace leaves no sign that it runs and cannot be seen here."""
-    from .client_runtime import NativeRuntime
     name = _q(project["name"])
-    runtime = NativeRuntime(settings)
     try:
-        # Read only, even for a dry run: the registry is never rewritten here (list_runs would mark rows).
-        rows = runtime._read() if runtime.registry.exists() else []
-        mine = [run for run in rows if run.get("project_id") == project["id"]
-                and str(run.get("lifecycle") or run.get("state")) not in ENDED]  # unknown counts as live
-        if mine and runtime.binary is None:
-            # Without tmux a live session cannot be ruled out: refused, not assumed ended.
-            raise ValueError(runtime._binary_error or "tmux cannot be found")
-        # Only a running or stopping row is judged by its pane, as list_runs does: a row still starting (its pane may
-        # not exist yet, the registry is read without the spawn's lock) or of an unknown lifecycle counts as live.
-        live = [run for run in mine if str(run.get("lifecycle") or run.get("state")) not in ("running", "stopping")
-                or ((pane := runtime._pane(run)) is not None and not pane["dead"])]
+        live = live_runs(settings, project["id"])
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         raise Refused(RUNS_UNKNOWN.format(project=name, reason=safe_text(str(exc))[:200])) from None
     if live:

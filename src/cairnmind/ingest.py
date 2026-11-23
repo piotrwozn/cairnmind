@@ -23,14 +23,19 @@ import pathspec
 
 from cairnmind.parsing import analyze_code, parser_identity
 from cairnmind.arcade import ArcadeError
+from cairnmind.embed_jobs import queue_embed_jobs
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
+from cairnmind import graph_transactions
+from cairnmind.graph_transactions import GraphTransactions, await_vertices
 from cairnmind.journal import MAX_TRANSACTION_EVENTS
 from cairnmind.memory_paths import (bound_metadata, imported_source_ids, is_memory_path, is_reserved_below,
                                     memory_bindings, nested_reserved)
 from cairnmind.path_spelling import has_alias, lies_in, path_identity, same_or_below
 from cairnmind.secret_mask import ingest_masker, masked_metadata
+from cairnmind import project_folders
 from cairnmind.sql import json_text as _json_text
+from cairnmind.terminal_safe import safe_text
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 EXCLUDED_DIRS = {
@@ -241,11 +246,11 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
             yield path
 
 
-MANAGED_FILES = frozenset({"AGENTS.md", "CLAUDE.md"})  # where `cairnmind install` writes its block
+MANAGED_FILES = frozenset({"AGENTS.md", "CLAUDE.md", "cairnmind-recorder.md"})  # where `cairnmind install` writes its block; the recorder subagent's body (#376)
 
 
 def _indexed_spans(lines: list[str], uri: str) -> list[tuple[int, int]]:
-    """The [first, end) line ranges that are indexed: all of a file, except, in AGENTS.md and CLAUDE.md, the lines of
+    """The [first, end) line ranges that are indexed: all of a file, except, in the managed files (AGENTS.md, CLAUDE.md and the recorder subagent's file), the lines of
     Cairnmind's own block (#313), found as extraction finds it. An unclosed block is indexed as it is."""
     if PurePosixPath(uri).name not in MANAGED_FILES:
         return [(0, len(lines))]
@@ -318,10 +323,9 @@ def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: d
                     ids.append(chunk_id)
             else:
                 ids = [row["id"] for row in existing]
-    for chunk_id in ids:
-        # Replaying this is intentional: a crash after chunk commit but before
-        # enqueue must not leave permanently unindexed evidence.
-        store.enqueue("embed", project_id, {"chunk_id": chunk_id}, f"embed:{chunk_id}")
+    # Replaying this is intentional: a crash after chunk commit but before
+    # enqueue must not leave permanently unindexed evidence.
+    queue_embed_jobs(store, project_id, ids)
     return 0 if existing else len(ids)
 
 
@@ -567,14 +571,17 @@ def _file_identity(status: os.stat_result) -> tuple:
     return (status.st_dev, status.st_ino, status.st_mode, status.st_size, status.st_mtime_ns, status.st_ctime_ns)
 
 
-def _tree_state(store, project_id: str) -> tuple[str, int, bool]:
-    """The signature, the newest file time seen, and whether every directory could be listed."""
+def _tree_state(store, project_id: str) -> tuple[str, int, bool, list[dict]]:
+    """The signature, the newest file time seen, whether every directory could be listed, and the folders
+    that are not available on this machine (#371): those are named in the signature and never walked."""
     project = store.resolve_project(project_id)
     entries: list[Any] = [parser_identity()]
-    newest, errors = 0, []
-    for root in _roots(store, project):
-        if not root.is_dir():
-            entries.append([str(root), None])
+    newest, errors, away = 0, [], []
+    for folder in project_folders.folder_states(store, project):
+        root = Path(folder["root"])
+        if folder["state"] != "available":
+            entries.append([folder["root"], folder["state"]])
+            away.append(folder)
             continue
         for path in _files(root, *_walk_args(store, root, errors)):
             try:
@@ -584,7 +591,7 @@ def _tree_state(store, project_id: str) -> tuple[str, int, bool]:
                 continue
             entries.append([str(path), status.st_size, status.st_mtime_ns, status.st_ctime_ns])
             newest = max(newest, status.st_mtime_ns, status.st_ctime_ns)
-    return hashlib.sha256(_json(entries).encode()).hexdigest(), newest, not errors
+    return hashlib.sha256(_json(entries).encode()).hexdigest(), newest, not errors, away
 
 
 def tree_signature(store, project_id: str) -> str:
@@ -639,12 +646,14 @@ def index_project(store, project_id: str) -> dict:
         invalidations = _INVALIDATIONS.get(key[0], 0)
         # Taken before any file is read: a file edited during indexing then differs next time.
         started = time.time_ns()
-        signature, newest, complete = _tree_state(store, project_id)
+        signature, newest, complete, _ = _tree_state(store, project_id)
         state: dict = {}
         result = _index_project_locked(store, project_id, previous, state, started)
         if _INVALIDATIONS.get(key[0], 0) == invalidations:
             _REMEMBERED[key] = state
-            if not result.get("errors") and complete and newest < started - RACY_WINDOW_NS:
+            # A folder that is not here is no reason to index again: its sentence is only repeated (#371).
+            if (len(result.get("errors", [])) == len(result.get("unavailable", [])) + bool(state.get("graph_kept")) and complete
+                    and newest < started - RACY_WINDOW_NS):
                 _INDEXED[key] = signature
         return result
 
@@ -660,9 +669,17 @@ def index_project_if_changed(store, project_id: str) -> dict:
     project_id = store.resolve_project(project_id)["id"]
     recorded = _INDEXED.get((str(store.data_dir), project_id))
     if recorded is not None:
-        signature, _, complete = _tree_state(store, project_id)
+        signature, _, complete, away = _tree_state(store, project_id)
         if complete and signature == recorded:
-            return {"files": 0, "changed": 0, "unchanged": 0, "deleted": 0, "chunks": 0, "errors": [], "skipped": True}
+            skipped = {"files": 0, "changed": 0, "unchanged": 0, "deleted": 0, "chunks": 0, "errors": [], "skipped": True}
+            if away:
+                project = store.resolve_project(project_id)
+                skipped["errors"] = [project_folders.message(project, folder) for folder in away]
+                skipped["unavailable"] = [project_folders.entry(project, folder) for folder in away]
+                kept = (_REMEMBERED.get((str(store.data_dir), project_id)) or {}).get("graph_kept")
+                if kept:
+                    skipped["errors"].append(kept)
+            return skipped
     return index_project(store, project_id)
 
 
@@ -675,7 +692,10 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                               "read": 0}
     indexed: dict[Path, dict] = {}
     walk_errors: list[OSError] = []
-    registered_roots = _roots(store, project)
+    folders = project_folders.folder_states(store, project)
+    registered_roots = [Path(folder["root"]) for folder in folders]
+    away = {folder["root"] for folder in folders if folder["state"] != "available"}
+    walked: list[str] = []  # rows of folders without a machine that this run reads, stamped when it was complete
     started = time.time_ns() if started is None else started
     known = previous["files"] if previous and previous.get("parser") == parser_identity() else {}
     files: dict[str, dict] = {}
@@ -741,15 +761,15 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                     else:
                         finish(*item["place"], source, item["analysis"], len(item["chunks"]), False)
                 group = group[len(written):]  # what a group too large to commit left over
-    for root in registered_roots:
-        if not root.is_dir():
-            counts["errors"].append(f"Project root unavailable: {root}")
+    for folder in folders:
+        root = Path(folder["root"])
+        if folder["state"] != "available":
+            counts["errors"].append(project_folders.message(project, folder))
             continue
         if lies_in(root, store.data_dir):
             # Registered by 0.12.0, before #295 refused it: the walk leaves the data directory out, so it
             # would report 0 files. Named, not removed.
             import shlex
-            from .terminal_safe import safe_text
             quoted = shlex.quote(safe_text(project["name"]))
             head = (f"Project {project['name']!r} has a folder inside the data directory, which Cairnmind never "
                     f"indexes: {root}; this registration is left as it is. Move the files to a folder outside it, ")
@@ -761,6 +781,8 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                 f"`cairnmind project remove {quoted} --root {shlex.quote(safe_text(str(root)))} --yes`"))
             continue
         commit = _git(root, "rev-parse", "HEAD") or None
+        if folder["adopt"]:
+            walked.append(folder["row_id"])
         for path in _files(root, *_walk_args(store, root, walk_errors)):
             name = str(path)
             try:
@@ -871,16 +893,64 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
         path = row.get("path")
         if path and path not in seen:
             # Do not call a temporarily unavailable root a project-wide deletion.
+            # Roots are compared as folder_states resolves them: a path through a symlink spells differently.
             root = Path(row.get("root") or project["root"])
-            if root.is_dir():
+            if str(root.resolve()) not in away and root.is_dir():
                 deleted.append(row["id"])
     _deactivate_sources(store, deleted)
     counts["deleted"] += len(deleted)
+    # The graph follows every current file source of the registered folders, not only the files this run read:
+    # a folder that is away or a subfolder that could not be listed keeps its files in the graph, from the
+    # analysis stored with their source (#371). A file whose read failed is deactivated above, as before.
+    registered = {str(root) for root in registered_roots}
+    gone = set(deleted)
+    kept = [row for row in rows if row.get("path") and row["path"] not in seen and row["id"] not in gone
+            and str(Path(row.get("root") or project["root"]).resolve()) in registered]
+    analyses = _stored_analyses(store, [row["id"] for row in kept])
     graph: dict = {}
-    counts.update(_build_graph(store, project_id, indexed, previous.get("graph") if previous else None, graph))
+    if any(analyses[row["id"]] is None for row in kept):
+        # A file that was not read here and whose stored analysis is of another parser version cannot be
+        # analysed again: rebuilding would drop it, so the graph stays as it is and the result says so.
+        stuck = [row for row in kept if analyses[row["id"]] is None]
+        counts["errors"].append(project_folders.GRAPH_KEPT.format(project=safe_text(project["name"]), count=len(stuck)))
+        if state is not None and all(str(Path(row.get("root") or project["root"]).resolve()) in away for row in stuck):
+            # Only folders that are away hold them: nothing changes until the signature does (a folder comes
+            # back or this machine's parser changes), so the next idle round may skip and repeat the sentence.
+            state["graph_kept"] = counts["errors"][-1]
+        counts.update(_graph_markers(store, project_id))
+    else:
+        for row in kept:
+            indexed[Path(row["path"])] = {
+                "source": {"id": row["id"], "uri": row["uri"], "kind": row["kind"]}, "analysis": analyses[row["id"]],
+                "root": Path(row.get("root") or project["root"])}
+        counts.update(_build_graph(store, project_id, indexed, previous.get("graph") if previous else None, graph))
+    if away:
+        counts["unavailable"] = [project_folders.entry(project, folder) for folder in folders
+                                 if folder["root"] in away]
+    if not walk_errors and not away:
+        project_folders.adopt(store, walked)
     if state is not None:
         state.update(parser=parser_identity(), files=files, graph=graph)
     return counts
+
+
+def _stored_analyses(store, source_ids: list[str]) -> dict[str, dict | None]:
+    """The analysis stored with each source, or None where it is of another parser version or missing."""
+    found: dict[str, dict | None] = {identifier: None for identifier in source_ids}
+    for offset in range(0, len(source_ids), 500):
+        for row in store.query(
+                "SELECT id,metadata.analysis AS analysis,metadata.analysis_version AS version FROM sources "
+                "WHERE id IN :ids", {"ids": source_ids[offset:offset + 500]}):
+            if row.get("version") == parser_identity() and isinstance(row.get("analysis"), dict):
+                found[row["id"]] = row["analysis"]
+    return found
+
+
+def _graph_markers(store, project_id: str) -> dict:
+    """What the graph markers of the project say, for a run that left the graph as it was."""
+    markers = store.query("SELECT graph_nodes,graph_edges FROM projects WHERE id=:project", {"project": project_id})
+    return {"nodes": int((markers[0].get("graph_nodes") if markers else 0) or 0),
+            "edges": int((markers[0].get("graph_edges") if markers else 0) or 0), "graph_unchanged": True}
 
 
 def _resolve_import(path: Path, root: Path, module: str, indexed: dict[Path, dict]) -> Path | None:
@@ -1071,29 +1141,54 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         return {"nodes": int(markers[0].get("graph_nodes") or 0),
                 "edges": int(markers[0].get("graph_edges") or 0), "graph_unchanged": True}
 
-    with store.transaction() as tx:
+    # One transaction for a graph that fits in one; else bounded ones, the fingerprint cleared first (graph_transactions.py).
+    batches = GraphTransactions(store, project_id)
+    try:
+        tx = batches.tx
         if not tx.query("SELECT id FROM projects WHERE id=:project", {"project": project_id}):
             raise ValueError("Project no longer exists; graph was not rebuilt")
-        from .journal import Journal
-        Journal.touch(tx, project_id, "graph", op="reset")
-        if _graph_as_remembered(tx, project_id, remembered):
+        as_remembered = _graph_as_remembered(tx, project_id, remembered)  # reads the fingerprint: before it is cleared
+        tx.command("UPDATE projects SET graph_fingerprint=null WHERE id=:project", {"project": project_id})
+        if as_remembered:
             removed = sorted(remembered["edges"] - edges.keys())
             for offset in range(0, len(removed), 500):
-                tx.command("DELETE FROM edges WHERE project_id=:project AND kind IN :kinds AND id IN :ids",
-                           {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS), "ids": removed[offset:offset + 500]})
+                batches.tx.command("DELETE FROM edges WHERE project_id=:project AND kind IN :kinds AND id IN :ids",
+                                   {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS), "ids": removed[offset:offset + 500]})
+                batches.wrote(len(removed[offset:offset + 500]))
             changed_nodes = [item for identifier, item in nodes.items()
                              if remembered["nodes"].get(identifier) != digests[identifier]]
             new_edges = [item for identifier, item in edges.items() if identifier not in remembered["edges"]]
         else:
-            tx.command(
-                "DELETE FROM edges WHERE project_id=:project AND kind IN :kinds",
-                {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)},
-            )
+            while True:
+                deleted = batches.tx.command(
+                    f"DELETE FROM edges WHERE project_id=:project AND kind IN :kinds LIMIT {graph_transactions.ROWS_PER_TRANSACTION}",
+                    {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)},
+                )
+                count = deleted[0].get("count") if deleted and isinstance(deleted[0], dict) else None
+                if type(count) is not int:
+                    raise RuntimeError("The database did not say how many graph edges it deleted")
+                batches.wrote(count)
+                if count < graph_transactions.ROWS_PER_TRANSACTION:
+                    break
             changed_nodes, new_edges = list(nodes.values()), list(edges.values())
-        # What the upserts look up row by row is read here in a few requests; the checks stay theirs.
-        store.prefetch_graph(tx, changed_nodes, new_edges)
         # The transaction reports the graph as reset, so its rows are written in groups (issue #167).
-        store.write_graph(tx, project_id, changed_nodes, new_edges)
+        # What the upserts look up row by row is read in a few requests per group; the checks stay theirs.
+        step = min(1000, graph_transactions.ROWS_PER_TRANSACTION)
+        for offset in range(0, len(changed_nodes), step):
+            part = changed_nodes[offset:offset + step]
+            store.prefetch_graph(batches.tx, part, [])
+            store.write_graph(batches.tx, project_id, part, [])
+            batches.wrote(len(part))
+        if batches.commits and new_edges:  # the edges look their vertices up by the index of nodes.id
+            batches.commit()
+            await_vertices(store, [item["id"] for item in changed_nodes])
+            batches.open()
+        for offset in range(0, len(new_edges), step):
+            part = new_edges[offset:offset + step]
+            store.prefetch_graph(batches.tx, [], part)
+            store.write_graph(batches.tx, project_id, [], part)
+            batches.wrote(len(part))
+        tx = batches.tx
         if hasattr(tx, "known"):
             tx.known = None
         previous_nodes = tx.query(
@@ -1102,13 +1197,20 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         )
         # Knowledge-record relationships referencing a removed code node must not silently
         # become dangling: such a node is retained. The rest go in groups (issue #167).
-        store.remove_graph_nodes(tx, project_id, [row["id"] for row in previous_nodes if row["id"] not in nodes])
-        # This marker commits atomically with the native vertex/edge replacement.
-        # An interrupted/failed graph transaction can never claim completion.
-        tx.command(
+        doomed = [row["id"] for row in previous_nodes if row["id"] not in nodes]
+        for offset in range(0, len(doomed), graph_transactions.ROWS_PER_TRANSACTION):
+            store.remove_graph_nodes(batches.tx, project_id, doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION])
+            batches.wrote(len(doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION]))
+        # This marker commits with the last of the vertex/edge replacement, and until it does the graph is not built.
+        # An interrupted/failed graph write can never claim completion.
+        batches.tx.command(
             "UPDATE projects SET graph_fingerprint=:fingerprint,graph_nodes=:nodes,graph_edges=:edges WHERE id=:project",
             {"fingerprint": fingerprint, "nodes": len(nodes), "edges": len(edges), "project": project_id},
         )
+        batches.commit()
+    except BaseException:
+        batches.abandon()
+        raise
     if state is not None:
         state.update(written)
     return {"nodes": len(nodes), "edges": len(edges), "graph_unchanged": False,
@@ -1413,7 +1515,8 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
         project_id = store.resolve_project(project_id)["id"]
     if client not in {"auto", "codex", "claude"}:
         raise ValueError("client must be auto, codex, or claude")
-    counts: dict[str, Any] = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "errors": []}
+    counts: dict[str, Any] = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "repaired": 0,
+                              "errors": []}
     if path.is_dir():
         for candidate in sorted(path.rglob("*.jsonl")):
             if candidate.is_symlink():
@@ -1437,6 +1540,7 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
     # known metadata compatibility gap independently of append ingestion.
     reparsed = _reparse_history_sources_locked(store, path, project_id, client)
     counts["errors"].extend(reparsed["errors"])
+    counts["repaired"] = reparsed["repaired"]
     cursors = store.query("SELECT FROM import_cursors WHERE path=:path", {"path": str(path)})
     row = cursors[0] if cursors else None
     offset = int(row["offset"]) if row else 0
@@ -1552,23 +1656,54 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
     return counts
 
 
+# Per store and path, the transcript files whose last import in this process read no line, repaired no record
+# and reported no error (#363). While the cursor in the database stands at the end of the file and the file is
+# the one the cursor describes, importing it again would do nothing, so the poll skips it. A file that read,
+# repaired or reported anything is imported again by every poll, as before.
+_POLLED: set[tuple[str, str]] = set()
+
+
+def _at_end(path: Path, cursor: dict) -> bool:
+    """Whether the cursor stands at the end of this very file: nothing new can be read from it."""
+    try:
+        offset = int(cursor.get("offset") or 0)
+        return path.is_file() and path.stat().st_size == offset and _fingerprint(path, offset) == cursor.get("fingerprint")
+    except (OSError, ValueError, TypeError):
+        return False  # an identity that cannot be established is imported in full
+
+
 def poll_imports(store) -> dict:
     from .project_removal import removed_ids
-    rows = store.query("SELECT path,project_id,client FROM import_cursors")
+    rows = store.query("SELECT path,project_id,client,`offset`,fingerprint FROM import_cursors")
     result = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "errors": []}
     removed = removed_ids(store)  # a removed project's conversations are not archived until it is back (#327)
+    try:  # local files only; when the secrets cannot be read no file is skipped, so each import refuses and says so
+        ingest_masker(store.settings)
+        secrets_readable = True
+    except (OSError, ValueError):  # an OSError too: each import then raises it and the loop reports it per file, as on main
+        secrets_readable = False
     for row in rows:
         if row["project_id"] in removed:
             continue
+        key = (str(store.data_dir), row["path"])
+        if secrets_readable and key in _POLLED and _at_end(Path(row["path"]), row):
+            continue
         try:
             item = import_history(store, Path(row["path"]), row["project_id"], row["client"])
-            for key, value in item.items():
-                if key == "errors":
-                    result[key].extend(value)
-                else:
-                    result[key] += value
+            for name, value in item.items():
+                if name == "errors":
+                    result[name].extend(value)
+                elif name in result:
+                    result[name] += value
+            # Remembered only when the import changed and reported nothing; a line appended after the look
+            # makes _at_end false at the next skip check.
+            if not (item["archived"] or item["inbox"] or item["repaired"] or item["errors"]):
+                _POLLED.add(key)
+            else:
+                _POLLED.discard(key)
         except (OSError, ValueError) as exc:
             result["errors"].append(f"{row['path']}: {exc}")
+            _POLLED.discard(key)
     return result
 
 
@@ -1628,7 +1763,8 @@ def current_source(store, source_id: str) -> dict:
     if source["kind"] not in {"code", "document"} or not metadata.get("path"):
         return source
     project = store.resolve_project(source["project_id"])
-    roots = _roots(store, project)
+    folders = project_folders.folder_states(store, project)  # the registered folders, as _roots lists them
+    roots = [Path(folder["root"]) for folder in folders]
     path = Path(os.path.normpath(metadata["path"]))
     bindings = memory_bindings(store, project["id"])
     local = bound_metadata(store, project["id"], metadata, bindings=bindings)
@@ -1643,6 +1779,11 @@ def current_source(store, source_id: str) -> dict:
             return current_source(store, latest["id"])
         return {**source, "is_current": False,
                 "freshness_warning": "Imported file snapshot is historical until the local checkout is indexed"}
+    # A cited file under a folder this machine cannot read, or that belongs to another machine, is neither
+    # deactivated nor indexed from a same-named path here (#371); the same sentence as a missing root.
+    if (any(f["state"] != "available" and path.is_relative_to(f["root"]) for f in folders)
+            and not any(f["state"] == "available" and path.is_relative_to(f["root"]) for f in folders)):
+        return {**source, "freshness_warning": "Project root is unavailable; the current file cannot be checked"}
     allowed_roots = [root for root in roots if path.is_absolute() and path.is_relative_to(root)
                      and path.resolve().is_relative_to(root)]
     in_excluded = any(excluded_directory(part) for root in allowed_roots for part in path.relative_to(root).parts[:-1])

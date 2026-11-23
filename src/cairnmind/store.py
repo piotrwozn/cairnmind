@@ -769,10 +769,15 @@ class Store:
                 return restored
             project = {"id": str(uuid4()), "name": name, "root": path, "created_at": utc_now()}
             insert_document(tx, "projects", project)
-            insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project["id"], "path": path})
+            from .project_folders import stamp
+            insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project["id"], "path": path, **stamp()})
             return project
 
-    def add_project_root(self, project_id, path):
+    def add_project_root(self, project_id, path) -> dict:
+        """Register a folder of the project, recording this machine as the one that has it (#371). A folder that
+        another machine registered is moved to this one, and `moved_from` says from which host."""
+        from .project_folders import stamp, this_machine
+        from .store_writer import label
         root = self.require_safe_project_root(path)
         with self.transaction() as tx:
             self._require_project(tx, project_id)
@@ -780,7 +785,12 @@ class Store:
             if existing and existing["project_id"] != project_id:
                 raise ValueError("Directory already belongs to another project")
             if not existing:
-                insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": root})
+                insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": root, **stamp()})
+            elif (here := this_machine()) and existing.get("machine") != here:
+                update_document(tx, "project_roots", stamp(), "id=:id", {"id": existing["id"]})
+                if existing.get("machine"):
+                    return {"moved_from": label(existing.get("host"))}
+        return {}
 
     def list_projects(self):
         return [clean_row(row) for row in self.query("SELECT FROM projects WHERE removed_at IS NULL ORDER BY name")]
@@ -1816,11 +1826,6 @@ class Store:
         chunks = self.query("SELECT id,project_id FROM chunks WHERE is_current=true" + (" AND project_id=:project" if project_id else ""), {"project": project_id})
         existing = {r["chunk_id"] for r in self.query("SELECT chunk_id FROM embeddings WHERE namespace=:namespace", {"namespace": namespace})}
         return [{"id": row["id"], "project_id": row.get("project_id")} for row in chunks if row["id"] not in existing]
-
-    def reset_missing_embedding_job(self, job_id, chunk_id, namespace):
-        with self.transaction() as tx:
-            if not tx.query("SELECT id FROM embeddings WHERE chunk_id=:chunk AND namespace=:namespace", {"chunk": chunk_id, "namespace": namespace}):
-                update_document(tx, "jobs", {"state": "pending", "error": None, "lease_until": None, "updated_at": utc_now()}, "id=:id AND state='completed'", {"id": job_id})
 
     def delete_embeddings(self, project_id):
         with self.transaction() as tx:

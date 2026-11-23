@@ -13,6 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .agent import source_text
+from .code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
 from .memory_paths import bound_metadata, memory_bindings
 from .retrieval import Retriever, public_record, public_source_metadata
 from .sensitivity import record_classes, source_sensitivity
@@ -426,6 +427,7 @@ class Inspector:
                         "truncated": len(nodes) > limit, "cursor": watermark, "node_budget": limit, "edge_budget": EDGE_LIMIT}
             scope, rows = self._graph_rows(project, worktree)
             pid = scope[0]["id"]
+            warnings = [CODE_GRAPH_NOT_BUILT] if code_graph_pending(scope[0]) else []  # a graph being written is partial (#377)
             nodes, edges, buckets = {}, {}, {}
 
             def node(identifier, kind, label, bucket, **extra):
@@ -472,7 +474,7 @@ class Inspector:
                            "to_id": identifier, "kind": "contains", "structural": True} for identifier in nodes]
             if _full:
                 return {"nodes": [*groups, *nodes.values()], "edges": [*edges.values(), *structural],
-                        "groups": groups, "counts": counts, "cursor": watermark}
+                        "groups": groups, "counts": counts, "warnings": warnings, "cursor": watermark}
             selected = sorted(identifier for identifier in nodes if group is None or buckets[identifier] == group.removeprefix("group:"))
             query_key = hashlib.sha256(json_text([pid, str(scope[1]), group]).encode()).hexdigest()
             if page_cursor:
@@ -491,7 +493,7 @@ class Inspector:
             return {"nodes": [*visible_groups[:limit], *[nodes[identifier] for identifier in selected]],
                 "edges": [item for item in visible_edges if not item.get("structural") or
                           item["from_id"] in {row["id"] for row in visible_groups}][:EDGE_LIMIT],
-                "groups": groups[:500], "groups_total": len(groups), "counts": counts,
+                "groups": groups[:500], "groups_total": len(groups), "counts": counts, "warnings": warnings,
                 "truncated": len(selected_ids) < remaining
                              or len(visible_edges) > EDGE_LIMIT or len(visible_groups) > limit,
                 "next_cursor": _encode_cursor({"query": query_key, "after": selected[-1]}) if selected and remaining > len(selected) else None,
@@ -509,7 +511,8 @@ class Inspector:
                 raise ValueError("Group cursor belongs to another scope")
             rows = [row for row in rows if row["id"] > decoded["after"]]
         return {"items": rows[:limit], "total": total, "next_cursor": _encode_cursor({"query": query_key,
-                "after": rows[limit - 1]["id"]}) if len(rows) > limit else None, "cursor": projection["cursor"]}
+                "after": rows[limit - 1]["id"]}) if len(rows) > limit else None, "warnings": projection["warnings"],
+                "cursor": projection["cursor"]}
 
     def neighbors(self, project, node_id, *, worktree=None, limit=100, cursor=None):
         _limit(limit, 500)
@@ -529,4 +532,4 @@ class Inspector:
         ids = {node_id, *[row[key] for row in selected for key in ("from_id", "to_id")]}
         return {"nodes": [nodes[identifier] for identifier in sorted(ids)], "edges": selected, "total": total,
             "truncated": len(rows) > limit, "next_cursor": _encode_cursor({"query": query_key, "after": selected[-1]["id"]})
-            if len(rows) > limit else None, "cursor": projection["cursor"]}
+            if len(rows) > limit else None, "warnings": projection["warnings"], "cursor": projection["cursor"]}

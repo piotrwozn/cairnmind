@@ -21,9 +21,11 @@ from .config import Settings
 from .service_token import FOREIGN_SERVICE, foreign_service
 from .mcp_failure_notice import announce as announce_mcp_failures
 from .terminal_safe import plain
+from .project_folders import folder_notice
 from .terminal_connection_hints import NOT_STARTED, connection_hint
 from .terminal_i18n import native_failure_notice
 from .terminal_notices import about as notice_about
+from .terminal_person_act import refused
 from .terminal_published_import import archive_replaced, archive_text
 from .terminal_i18n_messages import broker_error_text
 from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal,
@@ -401,6 +403,8 @@ class SidebarApp(BasePanel):
         self.show_page("projects")
         self.set_interval(.3, self._poll_workspace)
         self.set_interval(3, self.refresh_sidebar)
+        from .terminal_setup_change import show_last_outcome  # the end of a change nobody watched, once (#339)
+        show_last_outcome(self)
         self.start_panel()
 
     def on_resize(self, event: Resize):
@@ -570,9 +574,11 @@ class SidebarApp(BasePanel):
             labels[key] = (label, original[1], original[2])
         self.refresh_bindings()
         failure = native_failure_notice(fresh or {}, self.language)
-        self.query_one("#project-state", Static).set_class(bool(failure) and not live, "-warn")
+        # A folder this machine cannot read is named in the person's language, by project (#371).
+        folder = folder_notice((self.projects.get(project_id) or {}).get("unavailable") or [], self.language)
+        self.query_one("#project-state", Static).set_class(bool(failure or folder) and not live, "-warn")
         self.query_one("#project-state", Static).update(self.t("Resume returns to the running process. Model changes apply to its next launch.") if live else
-            failure or self.t("Browsing memory does not start an assistant."))
+            failure or folder or self.t("Browsing memory does not start an assistant."))
 
     def reusable_run(self, slot=None, profile=None):
         """Mirror NativeRuntime.start's live-slot identity, not profile/model edits."""
@@ -858,14 +864,24 @@ class SidebarApp(BasePanel):
         if not approve:
             return
         # The preview the person just approved listed what the import replaces of this machine's own verdicts.
-        result = await self.request("POST", "/api/memory/import", json={
-            **payload, "dry_run": False, "replace_confirmed": replaces_here(preview),
-            "expected_replaced": archive_replaced(preview)})
-        project = result.get("project")
-        if project:
-            await asyncio.to_thread(self.workspace.select_project, project, payload["root"], intent="inspect")
-        await self.load_state()
-        await self.reconcile()
+        try:
+            result = await self.request("POST", "/api/memory/import", json={
+                **payload, "dry_run": False, "replace_confirmed": replaces_here(preview),
+                "expected_replaced": archive_replaced(preview)})
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice(self.t("Memory was not imported." if refused(exc) else
+                               "The service did not confirm the import, so the memory may have been imported.")
+                        + " " + broker_error_text(exc, self.t), "error")
+            return
+        try:  # the memory is saved from here on (#359): a failed refresh never says it was not
+            project = result.get("project")
+            if project:
+                await asyncio.to_thread(self.workspace.select_project, project, payload["root"], intent="inspect")
+            await self.load_state()
+            await self.reconcile()
+        except (OSError, ValueError, RuntimeError):
+            self.notice(self.t("Memory imported, but the view could not be refreshed."), "warn")
+            return
         self.notice(self.t("Memory imported for viewing. No clients started."))
 
     @work(group="sidebar-import", exclusive=True, exit_on_error=False)
@@ -1246,8 +1262,15 @@ class SidebarApp(BasePanel):
         values = await asyncio.to_thread(store.load)
         choice = await self.push_screen_wait(ChoiceModal("Settings", [
             ("Language", "language"), ("Layout", "view"), ("Reduce motion", "reduced_motion"),
-            ("Activity column", "activity_column")]))
+            ("Activity column", "activity_column"), ("Storage and models", "topology")]))
         if not choice:
+            return
+        if choice == "topology":  # a read of the running service: where storage and models run (#74)
+            from .terminal_setup import open_view
+            try:
+                await open_view(self)
+            except (OSError, ValueError, RuntimeError) as exc:
+                self.notice(exc)
             return
         options = [("English", "en"), ("Polski", "pl")] if choice == "language" else (
             [("Focus", "focus"), ("Cockpit", "cockpit")] if choice == "view" else [("On", "on"), ("Off", "off")])

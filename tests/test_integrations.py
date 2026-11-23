@@ -79,7 +79,7 @@ def test_install_preserves_native_config_and_is_idempotent(settings, project, in
         "permissions": {"allow": ["Read"]}, "hooks": {"SessionStart": [original_hook]}}))
     (root / "AGENTS.md").write_text("# Existing instructions\nKeep this.\n")
     result = integrations.install_integrations(settings, project)
-    assert len(result["changed"]) == 6
+    assert len(result["changed"]) == 7  # the recorder subagent is the seventh file (#376)
     config = tomllib.loads((root / ".codex/config.toml").read_text())
     assert config["model"] == "custom"
     assert config["mcp_servers"]["other"]["command"] == "other"
