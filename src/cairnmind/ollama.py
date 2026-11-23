@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 
 from . import structured_output
-from .config import Settings
+from .config import Settings, tls_verify
 
 # What a model list may give as a model's digest; anything else counts as no digest (#192).
 MODEL_DIGEST = re.compile(r"(?:sha256:)?[0-9a-f]{12,128}")
@@ -133,6 +133,18 @@ class Ollama:
                                     endpoint=endpoint, error_code="credential_missing")
         return {"Authorization": "Bearer " + key}
 
+    def _new_client(self) -> httpx.AsyncClient:
+        # Local requests must not be routed through a configured cloud proxy. Redirects are not followed (httpx's default).
+        return httpx.AsyncClient(base_url=self.base_url, timeout=max(5, self.settings.ask_timeout), trust_env=False,
+                                 verify=tls_verify(self.base_url))
+
+    async def open(self) -> None:
+        """Keep one client for the life of a long-running process, on the event loop that will use it, until
+        aclose(): a new client per request cost about 29 ms of each one (#407). Without it every request opens
+        and closes its own, which is right for a command that makes a few."""
+        if self._client is None:
+            self._client = self._new_client()
+
     async def _request(self, method: str, path: str, **kwargs: Any) -> dict:
         # Diagnostic paths must not expose query parameters, credentials or arbitrary URLs.
         endpoint = path if path in self.ENDPOINTS else self.UNKNOWN_ENDPOINT
@@ -146,13 +158,8 @@ class Ollama:
         try:
             if self._client is not None:
                 response = await self._client.request(method, path, **kwargs)
-            else:
-                # Local requests must not be routed through a configured cloud proxy.
-                async with httpx.AsyncClient(
-                    base_url=self.base_url,
-                    timeout=max(5, self.settings.ask_timeout),
-                    trust_env=False,
-                ) as client:
+            else:  # a short process: one client for one request, closed with it
+                async with self._new_client() as client:
                     response = await client.request(method, path, **kwargs)
         except httpx.HTTPError as exc:
             if isinstance(exc, httpx.ReadTimeout):
@@ -271,5 +278,6 @@ class Ollama:
         return None
 
     async def aclose(self) -> None:
-        if self._client:
-            await self._client.aclose()
+        client, self._client = self._client, None  # a request after this opens its own, as without open()
+        if client:
+            await client.aclose()

@@ -15,7 +15,7 @@ from uuid import uuid4
 import httpx
 
 from .client_runtime import LIVE, NativeRuntime, _ID, _atomic
-from .config import ENV_PREFIXES, Settings
+from .config import ENV_PREFIXES, Settings, tls_verify
 from .mcp_servers import MAX_SERVERS
 from .path_spelling import lies_in
 
@@ -76,6 +76,7 @@ class RuntimeSupervisor(NativeRuntime):
         try:
             with httpx.Client(base_url=self.settings.url, transport=self.session_transport,
                               trust_env=False, timeout=40,
+                              verify=tls_verify(self.settings.url),
                               headers={"Authorization": f"Bearer {self.settings.token}"}) as client_http:
                 response = client_http.post("/sessions/prepare", json={
                     "project": project["id"], "client": client, "worktree": root,
@@ -284,7 +285,7 @@ def api_worker_config(settings: Settings, run_id: str, generation: int) -> dict:
     from .terminal_client import BrokerClient
     url = BrokerClient._validated(cockpit_status(settings))
     try:
-        with httpx.Client(base_url=url, trust_env=False, timeout=20,
+        with httpx.Client(base_url=url, trust_env=False, timeout=20, verify=tls_verify(url),
                           headers={"Authorization": f"Bearer {settings.token}"}) as client:
             body = {"run_id": run_id, "generation": generation}
             response = client.post("/_control/agent/config", json=body)
@@ -311,7 +312,7 @@ def report_mcp_failure(settings: Settings, run: dict, server_id, code) -> bool:
         return False
     try:
         url = BrokerClient._validated(cockpit_status(settings))
-        with httpx.Client(base_url=url, trust_env=False, timeout=5,
+        with httpx.Client(base_url=url, trust_env=False, timeout=5, verify=tls_verify(url),
                           headers={"Authorization": f"Bearer {settings.token}"}) as client:
             response = client.post("/_control/agent/mcp_failure", json={
                 "run_id": run["id"], "generation": run["generation"], "project_id": run["project_id"],

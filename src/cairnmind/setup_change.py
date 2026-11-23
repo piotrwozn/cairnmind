@@ -30,7 +30,7 @@ import httpx
 
 from . import (database_mode, engine_docker, memory_models, project_removal, service_version, setup_mark,
                setup_profiles, store_writer, topology, upgrade_mark)
-from .config import SESSION_NAMES, Settings, drop_env, session_value
+from .config import SESSION_NAMES, Settings, drop_env, session_value, tls_verify
 from .setup_profiles import SetupFailed, SetupRefused, render_one
 
 PROGRESS, LOG = "setup-change.json", "setup-change.log"
@@ -487,7 +487,7 @@ def _stop(settings) -> tuple[str, dict] | None:
         alive = cli.service_alive(settings)
         if alive and not asked:  # also one that began to answer while this waited for its lock
             try:
-                with httpx.Client(trust_env=False, timeout=5) as client:
+                with httpx.Client(trust_env=False, timeout=5, verify=tls_verify(settings.url)) as client:
                     response = client.post(settings.url + "/shutdown",
                                            headers={"Authorization": f"Bearer {settings.token}"})
                     response.raise_for_status()
