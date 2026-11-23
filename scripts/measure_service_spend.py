@@ -9,7 +9,10 @@ before the run and pass its pid (`python -m cairnmind --data-dir DIR serve`; any
 refused). The row then holds: the CPU seconds the service spent while the command ran, and the service's
 peak memory (VmHWM, since its start, so start-up is in it) when the command ended; then the same for
 --queue-seconds after the command returned, when the service works off what is left in its queue (the
-peak is again since its start). It starts nothing and sends nothing anywhere. To keep it away from a real
+peak is again since its start). The command must be the one that indexes: the service's own scan indexes a
+registered folder within poll_seconds (10 s) and then the command finds it unchanged, but the row still holds
+the CPU of the scan. Register the folder after the service has settled and set a large poll_seconds in the
+throwaway config.json. It starts nothing and sends nothing anywhere. To keep it away from a real
 installation it refuses to run unless CAIRNMIND_HOME, CAIRNMIND_PORT and CAIRNMIND_ARCADE_URL are set,
 none of them points at the installation's data directory or at port 8765 (the service) or 2480 (the
 engine), and the command has no --data-dir. The engine address must be a throwaway engine: a database name exported
