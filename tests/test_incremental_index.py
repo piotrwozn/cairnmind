@@ -280,6 +280,17 @@ def test_what_is_remembered_belongs_to_one_store_and_to_existing_projects(worksp
     assert key not in ingest._REMEMBERED and key not in ingest._INDEXED
 
 
+def test_a_pass_that_indexed_gives_its_freed_memory_back_and_a_skipped_one_does_not(workspace, monkeypatch):
+    store, pid, root = workspace
+    from cairnmind import memory_release
+    released = []
+    monkeypatch.setattr(memory_release, "release_freed", lambda: released.append(1))
+    index_project_if_changed(store, pid)
+    assert len(released) == 1
+    index_project_if_changed(store, pid)  # nothing changed: no pass, so nothing built to give back
+    assert len(released) == 1
+
+
 def test_a_stored_graph_is_remembered_only_after_it_was_compared(workspace):
     store, pid, root = workspace
     first = index_project(store, pid)

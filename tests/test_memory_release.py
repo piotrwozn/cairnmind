@@ -1,0 +1,44 @@
+"""Freed memory goes back to the system after a heavy pass, and the service keeps two malloc arenas (#410)."""
+from __future__ import annotations
+
+import os
+import sys
+
+import pytest
+
+from cairnmind import memory_release
+
+GLIBC = sys.platform.startswith("linux") and os.confstr("CS_GNU_LIBC_VERSION").startswith("glibc") if hasattr(os, "confstr") else False
+
+
+@pytest.mark.skipif(not GLIBC, reason="glibc only")
+def test_glibc_accepts_the_arena_limit_and_trims():
+    assert memory_release.limit_arenas(2) is True
+    assert memory_release.release_freed() is True
+
+
+def test_without_glibc_both_say_false_and_do_nothing(monkeypatch):
+    monkeypatch.setattr(memory_release, "_libc", lambda: None)
+    assert memory_release.limit_arenas() is False and memory_release.release_freed() is False
+
+
+def test_a_library_without_the_functions_is_not_called_as_if_it_had_them(monkeypatch):
+    monkeypatch.setattr(memory_release, "_libc", lambda: object())  # a libc of another kind: no mallopt, no malloc_trim
+    assert memory_release.limit_arenas() is False and memory_release.release_freed() is False
+
+
+def test_serve_limits_the_arenas_before_the_service_is_made(monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+    from cairnmind import cli, service
+    from cairnmind.config import Settings
+    order = []
+
+    def create_app(*args, **kwargs):
+        order.append("app")
+        raise RuntimeError("the service is not started by this test")
+
+    monkeypatch.setattr(memory_release, "limit_arenas", lambda *args: order.append("limit"))
+    monkeypatch.setattr(service, "create_app", create_app)
+    settings = Settings.load(tmp_path / "memory", create=True)
+    CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), "serve"])
+    assert order == ["limit", "app"]

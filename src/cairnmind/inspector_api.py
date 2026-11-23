@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
-from . import conflicts, impact_verdicts, person_proof, project_forget
+from . import conflicts, impact_verdicts, memory_release, person_proof, project_forget
 from . import stale_proposed as proposed
 from .arcade import ArcadeError
 from .findings import MAX_FINDING_CHARS
@@ -154,6 +154,13 @@ def create_inspector_router(store, settings):
         except ArcadeError:
             raise HTTPException(status_code=503, detail="Memory storage is unavailable") from None
 
+    async def whole_graph(method, *args, **kwargs):
+        # These read every row of a project's graph to answer with a page: what that took goes back (#410).
+        try:
+            return await call(method, *args, **kwargs)
+        finally:
+            await asyncio.to_thread(memory_release.release_freed)
+
     @router.get("/inspector/summary")
     async def summary(project: str | None = None):
         return await call(inspector.summary, project)
@@ -232,15 +239,15 @@ def create_inspector_router(store, settings):
     @router.get("/inspector/graph")
     async def graph(project: str | None = None, worktree: str | None = None, group: str | None = None,
                     limit: int = 2000, page_cursor: str | None = None):
-        return await call(inspector.graph, project, worktree=worktree, group=group, limit=limit, page_cursor=page_cursor)
+        return await whole_graph(inspector.graph, project, worktree=worktree, group=group, limit=limit, page_cursor=page_cursor)
 
     @router.get("/inspector/graph/groups")
     async def groups(project: str, worktree: str | None = None, cursor: str | None = None, limit: int = 100):
-        return await call(inspector.groups, project, worktree=worktree, cursor=cursor, limit=limit)
+        return await whole_graph(inspector.groups, project, worktree=worktree, cursor=cursor, limit=limit)
 
     @router.get("/inspector/graph/{node_id:path}/neighbors")
     async def neighbors(node_id: str, project: str, worktree: str | None = None, cursor: str | None = None, limit: int = 100):
-        return await call(inspector.neighbors, project, node_id, worktree=worktree, cursor=cursor, limit=limit)
+        return await whole_graph(inspector.neighbors, project, node_id, worktree=worktree, cursor=cursor, limit=limit)
 
     @router.get("/inspector/conflicts")
     async def conflict_inbox(project: str, worktree: str | None = None):
