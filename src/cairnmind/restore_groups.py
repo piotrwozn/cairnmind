@@ -16,6 +16,7 @@ database stores only in part, fails the transaction, which leaves the store as i
 """
 from __future__ import annotations
 
+from .arcade import ArcadeError
 from .graph_transactions import await_vertices
 from .sql import insert_documents, json_text
 from .store import GRAPH_ROWS_PER_REQUEST
@@ -88,9 +89,10 @@ class GraphGroups:
         nodes, edges = (rows, []) if self.kind == "node" else ([], rows)
         try:
             self._store(project, nodes, edges)
-        except (ValueError, RuntimeError):
+        except (ValueError, RuntimeError) as exc:
             ends = {row[key] for row in edges for key in ("from_id", "to_id") if isinstance(row.get(key), str)}
-            if not ends:
+            # An engine error (out of memory, timeout, syntax) has already rolled the transaction back: it goes up as it is.
+            if isinstance(exc, ArcadeError) or not ends:
                 raise
             # The index of nodes.id may still miss a vertex that write_restored waited for (#377), and a transaction
             # that has missed one keeps missing it: commit (the retry finds what the failed try wrote and keeps it),

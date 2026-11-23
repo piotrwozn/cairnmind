@@ -343,6 +343,24 @@ def test_a_group_of_edges_that_came_back_short_is_written_again_and_loses_no_edg
     assert restore_staged.unfinished(store.client) is None and not Store(store.data_dir).read_only
 
 
+def test_an_engine_error_inside_a_group_of_edges_is_named_as_it_is_and_not_retried(tmp_path, monkeypatch):
+    """The engine rolled its transaction back: a commit and a retry would only replace its error with a 404."""
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    script, tried = JournalTransaction.script, []
+
+    def heap(self, statements, params, project_id):
+        if not tried and any(str(sql).startswith("CREATE EDGE edges") for sql in statements):  # the undo writes edges too
+            tried.append(True)
+            raise arcade.ArcadeError("ArcadeDB HTTP 500: Java heap space", status_code=500)
+        return script(self, statements, params, project_id)
+
+    monkeypatch.setattr(JournalTransaction, "script", heap)
+    with pytest.raises(RestoreFailed, match=r"Java heap space\. The database engine ran out of memory.*put back as it was"):
+        store.restore(path)
+    monkeypatch.undo()
+    assert len(tried) == 1 and comparable(store.export()) == before
+
+
 def _hiding_the_index(monkeypatch, hidden, at="wait"):
     """The engine, compacting its unique index on nodes.id, finds no vertex for a while after a commit (#377). From the
     wait for the vertices (`at="wait"`: the index misses during the vertex phase) or from the first edge group
