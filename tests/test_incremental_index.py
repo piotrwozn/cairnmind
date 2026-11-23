@@ -11,6 +11,7 @@ import subprocess
 import pytest
 
 from cairnmind import ingest
+from cairnmind.arcade import ArcadeClient
 from cairnmind.config import Settings
 from cairnmind.ingest import forget_index_signature, index_project, index_project_if_changed
 from cairnmind.journal import JournalTransaction
@@ -310,6 +311,45 @@ def test_a_stored_graph_that_differs_from_its_fingerprint_is_replaced(workspace,
     assert repaired["graph_written"] == {"nodes": first["nodes"], "edges": edges}
     (root / "pkg" / "module_04.py").write_text("VALUE_4 = 44\n")
     assert index_project(store, pid)["graph_written"] == {"nodes": 3, "edges": 2}
+    assert_same_as_a_full_run(store, pid)
+
+
+def test_a_pass_after_an_edit_walks_the_tree_once(workspace, monkeypatch):
+    store, pid, root = workspace
+    index_project(store, pid)
+    (root / "pkg" / "limits.py").write_text("LIMIT = 4\n\n\ndef allowed(token):\n    return token == 'valid'\n")
+    walks, original = [], ingest._files
+    monkeypatch.setattr(ingest, "_files", lambda *a, **k: walks.append(a[0]) or original(*a, **k))
+    edited = index_project_if_changed(store, pid)
+    monkeypatch.undo()
+    assert edited["changed"] == 1 and len(walks) == 1  # it was three: the check, the signature, the indexing (#409)
+    assert_same_as_a_full_run(store, pid)
+
+
+def test_a_pass_after_one_edit_asks_the_database_and_computes_graph_rows_in_proportion_to_the_edit(workspace, monkeypatch):
+    store, pid, root = workspace
+    first = index_project(store, pid)
+    (root / "pkg" / "limits.py").write_text("LIMIT = 4\n\n\ndef allowed(token):\n    return token == 'valid'\n")
+    asked, digested = [], []
+    original, digest = ArcadeClient._request, ingest._node_digest
+    monkeypatch.setattr(ArcadeClient, "_request", lambda self, method, path, **kw: asked.append(path) or original(self, method, path, **kw))
+    monkeypatch.setattr(ingest, "_node_digest", lambda item: digested.append(item["id"]) or digest(item))
+    index_project_if_changed(store, pid)
+    monkeypatch.undo()
+    # 62 requests for 19 files; a pass that walked and looked the project up three times asked 64 (#409), and none of
+    # them grows with the project. Digests are made of the nodes that were computed, not of every node.
+    assert len(asked) <= 63, len(asked)
+    assert 0 < len(digested) <= 8 < first["nodes"] / 4, (len(digested), first["nodes"])
+
+
+def test_an_edit_after_an_edge_was_deleted_behind_the_process_replaces_what_differs(workspace):
+    store, pid, root = workspace
+    index_project(store, pid)
+    # This process still remembers the graph it wrote: the count of the stored edges says that it is not stored.
+    store.command("DELETE FROM edges WHERE project_id=:project AND kind='calls' LIMIT 1", {"project": pid})
+    (root / "pkg" / "limits.py").write_text("LIMIT = 4\n\n\ndef allowed(token):\n    return token == 'valid'\n")
+    edited = index_project_if_changed(store, pid)
+    assert edited["changed"] == 1
     assert_same_as_a_full_run(store, pid)
 
 
