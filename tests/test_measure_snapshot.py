@@ -4,6 +4,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from cairnmind.memory import _summary
+
 SPEC = importlib.util.spec_from_file_location(
     "measure_snapshot", Path(__file__).resolve().parents[1] / "scripts" / "measure_snapshot.py")
 script = importlib.util.module_from_spec(SPEC)
@@ -15,5 +17,6 @@ def test_the_package_line_names_rows_chunks_and_bytes(tmp_path):
     (package / "objects").mkdir(parents=True)
     (package / "manifest.json").write_text("{}" * 5)
     (package / "objects" / "a.json").write_text("x" * 90)
-    result = {"path": str(package / "manifest.json"), "counts": {"sources": 1, "records": 3}}
+    # the summary a real MemoryManager.snapshot returns, built by the code that builds it
+    result = _summary(package / "manifest.json", {"counts": {"sources": 1, "records": 3}})
     assert script.describe_package(result, 7) == "package: sources 1, records 3; store chunks 7; 100 bytes in 2 files"
