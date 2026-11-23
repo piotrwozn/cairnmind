@@ -402,6 +402,37 @@ Between two machines these figures exist only from before this change: the trial
 The "Now" column above is the test engine on one machine, and its 20 ms relay is the nearest thing to a
 network that this change was measured on; it is a relay on the same machine, not a network.
 
+### What a command, the bridge and a search cost in their own process
+
+Measured on 23 November 2026 on one machine (WSL 2 on an Intel Core i9-14900K, 32 threads; Python 3.12.3), against a
+running throwaway service of this version in deterministic-only mode (models off) on a store of 29 files and 1,080
+embedded passages, and the owner's Ollama (`qwen3-embedding:0.6b`) for the embedding rows. Before is `main` at `316e1ad`,
+after is the branch of #405 and #407 (`77f119b`). Every pair was run **interleaved** (a before run, then an after run,
+alternating who goes first), 3 warm-ups and 20 runs each, in milliseconds as minimum / median / p95 / maximum. **The
+machine was shared with other work (load average 12 to 15 while these ran), so read the differences, not the absolute
+figures.** A command's figure is the wall time of its whole process, start to exit; the service's own work is in it.
+
+| What | Before | After | Requests of the command |
+| --- | --- | --- | --- |
+| `cairnmind ask` | 1014 / 1072 / 1149 / 1159 | 626 / 679 / 761 / 769 | 3 `GET /health` and the `POST`, then 1 and the `POST` |
+| `cairnmind context` | 761 / 795 / 842 / 877 | 418 / 442 / 456 / 457 | 2 `GET /health`, then 1 |
+| `cairnmind status` | 456 / 504 / 530 / 540 | 450 / 496 / 545 / 565 | 1 `GET /health`, unchanged: it never imported the service |
+| `cairnmind mcp`: start and initialize | 663 / 706 / 745 / 748 | 676 / 715 / 799 / 864 | unchanged |
+| `ask` tool call in an open bridge session | 269 / 284 / 312 / 313 | 277 / 289 / 311 / 311 | unchanged: 1 `GET /health` and the `POST` |
+| Query embedding through the service's client (median of 5 calls per run) | 88 / 94 / 118 / 126 | 35 / 40 / 44 / 44 | |
+| `asearch` with vectors, 10 hits (median of 5 calls per run) | 365 / 376 / 388 / 437 | 315 / 330 / 350 / 361 | |
+
+Where it went. A command that talks to the service used to import the service module, and with it the web framework,
+only to compute the service's instance id: `ask` loaded 607 modules and now loads 420. A command's own imports are
+now the HTTP client, the command-line framework and what they load (`rich`, `anyio`). The bridge imports neither the
+service nor the web framework; its 0.7 s is the MCP library's own imports (`mcp`, `pydantic`, `starlette`,
+`uvicorn`), which the bridge needs. The remaining `GET /health` of a command is the check that the program on the port
+is this data directory's service (the instance id) and runs this version, so nothing is sent to a service of another
+version; the marks of an upgrade and of a change of setup are files, read only when no service answers, so they cost no
+request. The bridge asks before every request because a service can be replaced while the bridge runs. The
+embedding rows are the service's path: the service keeps one HTTP client per model server for its life; a
+command-line process still opens one for each request.
+
 ### The engine tests against this server
 
 The engine tests of Cairnmind (the tests marked `arcade`) can run against a server instead of an engine they start themselves, through connect-only mode: set `CAIRNMIND_TEST_ARCADE_SERVER_URL` to its address (plain http on this machine) and `CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE` to a private file (mode 0600) holding its root password, then run `uv run pytest -m arcade -rs`. The tests install, start and stop no engine; each creates its databases as root and drops them. The job has not yet run against the image, so whether every test passes there, and how long it takes, is not known. The non-required `server-tests` CI job does this on pushes to main and by hand, against the published image at the digest pinned in `src/cairnmind/config.py`, in production mode. Tests that cannot run against a server (they start an engine, read its files, or run a command a connect-only installation refuses) are skipped, each with its reason; the table is `LEFT_OUT_ON_A_SERVER` in `tests/conftest.py`, and the job summary prints it.
