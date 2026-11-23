@@ -462,6 +462,44 @@ The index is in both columns of an interleaved comparison from the moment the ne
 column of the table above was measured on its own, on the store without the index, with 3 warm-ups and 20 runs; the same
 code on the store with the index took `_definitions` 631 ms and a total of 2,229 to 2,333 ms in the interleaved runs.
 
+#### The check of a hit's file on disk (#416)
+
+One check of one file took 12 database requests: the source (twice: once to check its project and worktree, once to
+refresh it), the project (twice), the registered roots (four times), the memory bindings (twice), the sources an import
+brought, and the current source of the file's address. Nine of the twelve are the same for every
+file of a question; three belong to the file. Now the scope (project, roots, bindings, folders, imported sources) is read
+once when a question starts (5 requests), the rows of the hits' sources are read together (one request for a group of
+hits), and a check of a file takes the one request that belongs to it, the current source of its address; a file of a
+definition takes two (its row, that one). The scope is made for one question and dropped with it, so a root added or
+removed meanwhile is seen by the next question; a check decides exactly as before (the same hits, in the same order,
+with the same warnings: 15 questions compared, 0 differences, and the awkward cases below). The scope is held for the
+whole question, also across the wait for the embedding model and the model's own search and read calls; a root removed
+in that time still counts as registered until the question ends (each file is still read and hashed at its check). The
+deterministic-only `/ask` (no model) does not take a scope yet: its checks cost what they did.
+
+Measured on 23 November 2026, code at `2614d8e` against `ebe58bc`, on a clone of this repository (588 indexed files, 3,286
+chunks, no vectors, a stub in place of the model server, so the part of `ask` before its first chat call is the whole
+measurement), one machine (WSL 2) **shared with other work** (load average 12 to 19 during the runs), a throwaway store
+with its own engine; the two versions alternate run by run, 3 warm-ups and 20 runs for each of the five questions of
+the table above. Medians of the five questions' medians (milliseconds, database requests):
+
+| stage | before | after |
+| --- | --- | --- |
+| checks of the hits on disk (`_hits`, both passes) | 218 ms (36 to 96) | 97 ms (4 to 9) |
+| the citation catalog of the evidence | 47 ms (28 to 32) | 1 ms (0) |
+| `_definitions` | 479 ms (59 to 60) | 418 ms (19 to 20) |
+| search (both passes), context | 93 + 20 ms (19 + 13) | 96 + 20 ms (19 + 13) |
+| the whole of `ask` before its first chat call | 886 ms (157 to 221) | 656 ms (62 to 67) |
+
+The totals of the five questions, before and after: 899 / 680, 720 / 583, 861 / 639, 1,117 / 931 and 886 / 656 ms
+(medians; minimum to maximum before 699 to 1,155, after 561 to 997), requests 208, 157, 209, 185 and 221 against 65, 62,
+66, 64 and 67. What remains in `_definitions` is the reads of the code graph (about 400 ms), which this change does not
+touch. The hits, definitions, citation catalog, warnings and the system and project state sent to the model were
+compared for these five and ten more questions (a fixed hash seed: without it, two hits with an equal score swap places
+from one process to another, in the old code too), and for the awkward cases made by hand after indexing (a file edited on
+disk, a deleted one, a replaced source, a file outside the root, another worktree with another version of a file, a
+path that differs only in case, a symlink, in a worktree and out of it): identical.
+
 Whole answers with the chat model (one of each, old then new alternating, the model of the machine's Ollama; the model's
 own time varies from run to run and is not a claim): 13.7 / 7.0 s, 6.1 / 6.3 s, 22.3 / 18.8 s, 8.1 / 8.7 s, 25.0 / 21.9 s
 (before / after); status and cited sources were the same in all five. The differences are mostly the model's: the stages

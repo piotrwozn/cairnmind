@@ -297,11 +297,16 @@ class Retriever:
                 return False
         return True
 
-    def source_in_scope(self, source, project_id, worktree=None):
-        project_id, root, roots = self._scope(project_id, worktree)
+    def source_in_scope(self, source, project_id, worktree=None, scope=None):
+        """``scope``: a ``CheckScope`` made for this question (it names the project and the worktree), instead of
+        reading them again."""
+        if scope is None:
+            project_id, root, roots = self._scope(project_id, worktree)
+        else:
+            project_id, root, roots = scope.project["id"], scope.root, scope.roots
         metadata = json_value(source.get("metadata"), {})
         return source.get("project_id") == project_id and isinstance(metadata, dict) and self._matches_scope(
-            bound_metadata(self.store, project_id, metadata), root, roots,
+            bound_metadata(self.store, project_id, metadata, bindings=None if scope is None else scope.bindings), root, roots,
             file_path=source.get("kind") in {"code", "document", "file"})
 
     def _source_ids(self, project_id, root, roots, *, include_history=False):
