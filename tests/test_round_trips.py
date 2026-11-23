@@ -116,7 +116,7 @@ def test_the_rule_for_one_source_is_the_rule_of_the_list_of_every_current_source
         # the chunks of the query that the list of sources used to filter, in its order, are the hits of the search
         old = store.query(
             "SELECT id FROM chunks WHERE SEARCH_INDEX('chunks[text]', :query)=true AND project_id=:project "
-            "AND is_current=true AND source_id IN :eligible ORDER BY $score DESC LIMIT 24",
+            "AND is_current=true AND source_id IN :eligible ORDER BY $score DESC, id LIMIT 24",  # a tie: by id (#424)
             {"query": "limit OR changed OR other OR retry", "project": pid, "eligible": sorted(listed)})
         found = retriever.search(pid, "limit changed other retry", 8, worktree=str(worktree))
         assert [row["id"] for row in old][:8] == [hit["id"] for hit in found] and found
