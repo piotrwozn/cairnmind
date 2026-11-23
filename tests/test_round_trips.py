@@ -109,6 +109,13 @@ def test_the_rule_for_one_source_is_the_rule_of_the_list_of_every_current_source
         decided = {identifier for identifier, row in sources.items()
                    if retriever._in_scope(row, pid, scope_root, roots, [])}
         assert decided == listed and decided
+        # the chunks of the query that the list of sources used to filter, in its order, are the hits of the search
+        old = store.query(
+            "SELECT id FROM chunks WHERE SEARCH_INDEX('chunks[text]', :query)=true AND project_id=:project "
+            "AND is_current=true AND source_id IN :eligible ORDER BY $score DESC LIMIT 24",
+            {"query": "limit OR changed OR other OR retry", "project": pid, "eligible": sorted(listed)})
+        found = retriever.search(pid, "limit changed other retry", 8, worktree=str(worktree))
+        assert [row["id"] for row in old][:8] == [hit["id"] for hit in found] and found
 
 
 def test_sources_read_together_are_the_rows_read_one_by_one(workspace):  # noqa: F811
