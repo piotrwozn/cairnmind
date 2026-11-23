@@ -1032,6 +1032,36 @@ def test_a_refusal_after_the_generic_rule_saved_the_address_does_not_say_nothing
     assert config(tmp_path)["arcade_connect_url"] == "https://db.example:2490" and world.log == []
 
 
+def test_a_caller_can_refuse_between_the_tests_and_the_change(tmp_path, world):
+    """The hook of the workspace (#339): called with the plan once everything is tested, before config.json changes."""
+    make(tmp_path)
+    before = config_bytes(tmp_path)
+    request = Request("remote-db", url=DB, user="cairnmind", database="cairnmind", password_file=db_options(tmp_path)[7])
+    seen = []
+
+    def refuse(plan):
+        seen.append((config_bytes(tmp_path), [item[0] for item in plan["changes"]], bool(plan["tests"])))
+        raise SetupRefused("not this one {why}", why="now")
+    with pytest.raises(SetupRefused, match="not this one now"):
+        run(Settings.load(tmp_path / "data"), request, yes=True, say=lambda text: None, before_change=refuse)
+    assert len(seen) == 1 and seen[0][0] == before and seen[0][2] and seen[0][1]
+    assert config_bytes(tmp_path) == before
+    run(Settings.load(tmp_path / "data"), request, yes=False, say=lambda text: None,
+        before_change=lambda plan: pytest.fail("a dry run changes nothing and asks nobody"))
+
+
+def test_an_applied_change_can_be_put_back_with_what_it_left(tmp_path, world):
+    make(tmp_path)
+    before = config_bytes(tmp_path)
+    request = Request("remote-db", url=DB, user="cairnmind", database="cairnmind", password_file=db_options(tmp_path)[7])
+    result = run(Settings.load(tmp_path / "data"), request, yes=True, say=lambda text: None)
+    assert result["applied"] and config_bytes(tmp_path) != before
+    assert result["applied_state"] == {"engine": False, "engine_tried": False, "arcade_is_new": False}
+    assert "applied_state" not in setup_profiles.as_json(result)
+    assert setup_profiles.put_back(tmp_path / "data" / "config.json", before, result["applied_state"]) == []
+    assert config_bytes(tmp_path) == before
+
+
 def test_every_setup_sentence_has_polish_with_the_same_placeholders():
     from cairnmind.terminal_i18n import tr
     names = {name for name, value in vars(setup_profiles).items()

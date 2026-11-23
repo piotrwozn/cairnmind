@@ -110,7 +110,7 @@ def cockpit(tmp_path, monkeypatch):
         if request.url.path == "/projects":
             return httpx.Response(200, json=[project] if request.method == "GET" else {"project": project})
         if request.url.path == "/project-roots":
-            return httpx.Response(200, json={"roots": [str(root)]})
+            return httpx.Response(200, json={"roots": [str(root)], **outage.get("roots", {})})
         if request.url.path == "/background-inference/enable":
             return httpx.Response(200, json={"accepted": True, "project_id": project["id"], "worker_running": True})
         if request.url.path.startswith("/sessions/"):
@@ -249,6 +249,17 @@ def test_memory_outage_keeps_live_terminals_and_cached_projects_available(cockpi
     assert listed.status_code == 200 and listed.json()["runs"][0]["memory"]["status"] == "unavailable"
     scoped = client.get("/api/client-runs", params={"project": project["id"]})
     assert scoped.status_code == 200 and len(scoped.json()["runs"]) == 2
+
+
+def test_the_state_names_the_folders_of_a_project_this_machine_cannot_read(cockpit):
+    # #371: the service says which folders it cannot read; the workspace panel words them.
+    settings, app, client, runtime, project, requests, outage = cockpit
+    login(app, client)
+    assert client.get("/api/state").json()["projects"][0]["unavailable"] == []
+    entry = {"project": "Example", "root": "/Users/me/proj", "state": "missing", "host": None, "error": None,
+             "message": "The folder is unavailable"}
+    outage["roots"] = {"unavailable": [entry]}
+    assert client.get("/api/state").json()["projects"][0]["unavailable"] == [entry]
 
 
 def test_the_state_of_a_foreign_service_stays_whole_and_carries_the_refusal(cockpit):

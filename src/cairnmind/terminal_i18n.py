@@ -8,8 +8,12 @@ from .first_start import MESSAGES as FIRST_START_MESSAGES
 from .memory_models import MESSAGES as MEMORY_MODELS_MESSAGES
 from .platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
 from .project_forget import MESSAGES as PROJECT_FORGET_MESSAGES
+from .project_folders import MESSAGES as PROJECT_FOLDER_MESSAGES
 from .project_removal import MESSAGES as PROJECT_REMOVAL_MESSAGES
+from .recorder_agent import MESSAGES as RECORDER_MESSAGES
 from .restore_claims import MESSAGES as RESTORE_CLAIM_MESSAGES
+from .restore_staged import MESSAGES as RESTORE_STAGED_MESSAGES
+from .store_prune import MESSAGES as PRUNE_MESSAGES
 from .service_version import MESSAGES as SERVICE_VERSION_MESSAGES
 from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from .terminal_legacy_groups import MESSAGES as LEGACY_GROUP_MESSAGES
@@ -20,7 +24,11 @@ from .terminal_release import MESSAGES as RELEASE_MESSAGES
 from .terminal_replace import MESSAGES as REPLACE_MESSAGES
 from .terminal_published_import import MESSAGES as PUBLISHED_IMPORT_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
+from .setup_change import MESSAGES as SETUP_CHANGE_MESSAGES
+from .setup_mark import MESSAGES as SETUP_MARK_MESSAGES
+from .terminal_setup import MESSAGES as SETUP_SCREEN_MESSAGES
 from .setup_profiles import MESSAGES as SETUP_PROFILE_MESSAGES
+from .terminal_setup_change import MESSAGES as SETUP_CHANGE_UI_MESSAGES
 from .topology import MESSAGES as TOPOLOGY_MESSAGES
 from .upgrade_mark import MESSAGES as UPGRADE_MARK_MESSAGES
 from .terminal_i18n_messages import MESSAGES
@@ -423,6 +431,10 @@ LEGACY = {
     "Wczytanie zachowuje tożsamość projektu. Testy z drugiego komputera pozostają historyczne.": "Import preserves project identity. Checks from another computer remain historical.",
     "Wczytać tę pamięć projektu?": "Import this project memory?", "Snapshot lub manifest.json": "Snapshot or manifest.json",
     "Pamięć wczytana do podglądu; bez uruchamiania klientów.": "Memory imported for viewing. No clients started.",
+    "Pamięć wczytana, ale widoku nie udało się odświeżyć.": "Memory imported, but the view could not be refreshed.",
+    "Pamięć nie została wczytana.": "Memory was not imported.",
+    "Usługa nie potwierdziła wczytania, więc pamięć mogła zostać wczytana.":
+        "The service did not confirm the import, so the memory may have been imported.",
     "Klucz ustawiony. Jego treść nie jest ponownie wyświetlana.": "Key saved. Its value will not be displayed again.",
     "Usunąć klucz?": "Remove saved key?", "Dotyczy tylko lokalnego klucza tego profilu.": "Only the local key for this connection will be removed.",
     "Usuń klucz": "Remove saved key", "Klucz usunięty.": "Key removed.", "Wykonać test modelu?": "Test this model?",
@@ -685,12 +697,20 @@ CATALOG.update(FIRST_START_MESSAGES)  # tmux only for the workspace; the service
 CATALOG.update(MEMORY_MODELS_MESSAGES)  # an ollama_url on another computer (#288)
 CATALOG.update(TOPOLOGY_MESSAGES)  # where storage and models run (#74)
 CATALOG.update(SETUP_PROFILE_MESSAGES)  # where storage and models run: the profiles (#74)
+CATALOG.update(SETUP_SCREEN_MESSAGES)  # the workspace screen of where storage and models run (#74)
 CATALOG.update(UPGRADE_MARK_MESSAGES)  # an upgrade in progress; an MCP server older than the installation (#298)
 CATALOG.update(RESTORE_CLAIM_MESSAGES)  # a restore without the person's workspace (#214)
+CATALOG.update(RESTORE_STAGED_MESSAGES)  # a restore in bounded transactions, and one that did not finish (#362)
+CATALOG.update(PRUNE_MESSAGES)  # a safety copy that an unfinished restore needs is kept (#362)
 CATALOG.update(SERVICE_VERSION_MESSAGES)  # a service of another version is not used (#319)
 CATALOG.update(PROJECT_REMOVAL_MESSAGES)  # removing a project from the registry (#327)
+CATALOG.update(SETUP_MARK_MESSAGES)  # a change of where storage and models run is in progress (#339)
+CATALOG.update(SETUP_CHANGE_MESSAGES)  # the workspace carries that change out (#339)
+CATALOG.update(SETUP_CHANGE_UI_MESSAGES)  # and its dialogs (#339)
 CATALOG.update(PROJECT_FORGET_MESSAGES)  # deleting a project's memory: the command line refuses (#347)
 CATALOG.update(PROJECT_FORGET_VIEW_MESSAGES)  # deleting a project's memory in the workspace (#347)
+CATALOG.update(RECORDER_MESSAGES)  # the recorder subagent install writes for Claude Code (#376)
+CATALOG.update(PROJECT_FOLDER_MESSAGES)  # a project's folder this machine cannot read (#371)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 

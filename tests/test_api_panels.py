@@ -165,7 +165,7 @@ async def test_the_activity_column_switch_is_saved_as_a_preference(tmp_path, mon
         await settle(app, pilot)
         app.action_settings()
         await settle(app, pilot)
-    assert seen[0][-1] == "activity_column" and seen[1] == ["on", "off"]  # the new setting is the last one
+    assert seen[0][:4] == ["language", "view", "reduced_motion", "activity_column"] and seen[1] == ["on", "off"]  # the earlier settings keep their positions; Storage and models comes after them (#74)
     assert CockpitState(settings).load()["activity_column"] is saved
 
 

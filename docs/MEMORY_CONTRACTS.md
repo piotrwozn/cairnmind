@@ -435,8 +435,9 @@ Only an answer with the key keeps a person's acts: with the workspace open,
 `cairnmind stop`, then `cairnmind restore FILE`, then `cairnmind` to start the
 service again. Anything else (no workspace, a closed one, one an earlier version
 started, tmux that cannot be run, a server, CI) takes the other way, and exit
-code 0 in both. Every row is still restored, in the one transaction, so disaster
-recovery works with no workspace. In the other way, as each row is inserted:
+code 0 in both. Every row is still restored, in transactions of bounded size with one
+outcome (the whole backup, or the store as it was, except its vectors, which are rebuilt as after any restore; the mark of an unfinished restore stays when neither could be reached; see "How a restore writes" in
+STORAGE_AND_MAINTENANCE.md), so disaster recovery works with no workspace. In the other way, as each row is inserted:
 
 - a confirmed record, and each confirmed revision of it, that carries a person's
   mark or none (confirmed before the rule) gets an `import` mark with package
@@ -468,6 +469,11 @@ what still holds in the inspector: a record with Confirm, a plan under Plans wit
 Confirm, a record kind under More, then Transcript record kinds. To undo a
 restore made without the workspace, restore the `before-restore-*` copy it wrote
 (in `backups/` of the data directory) with the workspace open.
+The automatic undo of a restore that failed is not that: it writes the store's own
+`before-restore-*` copy back as it was, without turning confirmations into claims,
+because the copy is this store's own state, written by that restore and checked by
+its SHA-256 before it is used, not a foreign backup. A person who later restores a
+`before-restore-*` copy by hand follows the rule above.
 
 ### Removing a project from the registry
 
@@ -586,6 +592,18 @@ and where, and it never becomes this machine's own confirmation:
 - Only a person runs an import, `--replace-confirmed` and `--take-published`. A
   request that names a session is refused, because an import brings records that
   count as confirmed, and a session can prepare the files it imports.
+
+## Folders this machine cannot read
+
+An installation never deactivates, replaces or drops from the code graph the indexed content of a folder it cannot
+read or that belongs to another machine: its sources stay current, its passages, vectors, jobs and records stay,
+and a citation into it stays anchored. A cited file under such a folder is not refreshed; the answer says the
+project root is unavailable. The code graph follows the project's current file sources, not only the files one
+run read. A folder is available, missing, unreadable or elsewhere; only the folder itself is tested, so a folder
+that opens and is empty is a deletion of its files. A folder belongs to the machine that registered it (a hash and
+a host name in its `project_roots` row) and moves to another by `cairnmind project root PROJECT FOLDER`. That
+machine is not part of a snapshot, its state hash, published memory or a record. See
+[DEPLOYMENT.md](DEPLOYMENT.md#a-projects-folders-belong-to-the-machine-that-added-them).
 
 ## Sensitivity classes
 

@@ -147,6 +147,27 @@ def test_only_a_read_outside_a_transaction_is_sent_again_when_a_kept_connection_
     assert seen == ["skip", "begin", "query", "rollback"]
 
 
+def test_a_commit_waits_as_long_as_any_request_unless_the_transaction_asks_for_longer(tmp_path, monkeypatch):
+    """#362: only the transactions of a restore wait 120 s for their commit; every other command keeps 30 s."""
+    from cairnmind import arcade
+    waits, request = [], ArcadeClient._request
+
+    def noting(self, method, path, **kwargs):
+        waits.append((path.split("/")[3], kwargs.get("timeout", arcade.REQUEST_TIMEOUT)))
+        return request(self, method, path, **kwargs)
+
+    monkeypatch.setattr(ArcadeClient, "_request", noting)
+    client = ArcadeClient(settings(tmp_path), transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"result": []}, headers={"arcadedb-session-id": "tx"})))
+    with client.transaction():
+        pass
+    with client.transaction(commit_timeout=arcade.RESTORE_COMMIT_TIMEOUT):
+        pass
+    assert [wait for wait in waits if wait[0] == "commit"] == [("commit", arcade.REQUEST_TIMEOUT),
+                                                               ("commit", arcade.RESTORE_COMMIT_TIMEOUT)]
+    assert (arcade.REQUEST_TIMEOUT, arcade.RESTORE_COMMIT_TIMEOUT) == (30, 120)
+
+
 def test_a_forked_process_does_not_use_the_connections_of_its_parent(tmp_path, monkeypatch):
     import cairnmind.arcade as arcade
 

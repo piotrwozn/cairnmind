@@ -10,6 +10,7 @@ import pytest
 
 from cairnmind import backup_reader
 from cairnmind.backup_reader import opened_backup
+from cairnmind.restore_staged import RestoreFailed
 from cairnmind.sql import json_text
 from cairnmind.store import EXPORT_TYPES, RESTORE_TYPES, Store
 
@@ -275,13 +276,14 @@ def test_restore_that_fails_midway_changes_nothing(store, tmp_path, monkeypatch)
 
     def failing(self, tx, project_id, nodes, edges_of_group):
         # Edges are written after every document and vertex (in groups since #219).
-        if edges_of_group:
+        if edges_of_group and not edges:  # once: the undo writes its edges, as an engine that recovered would
             edges.extend(edges_of_group)
             raise OSError("the engine went away")
         return write_graph(self, tx, project_id, nodes, edges_of_group)
 
     monkeypatch.setattr(Store, "write_graph", failing)
-    with pytest.raises(OSError, match="went away"):
+    # The store is put back from the safety copy, and the error says so (#362).
+    with pytest.raises(RestoreFailed, match="went away.*put back as it was before"):
         store.restore(path)
     assert edges and comparable(store.export()) == before
 

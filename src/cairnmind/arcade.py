@@ -21,6 +21,13 @@ from .database_credentials import problem, tls_context
 from .database_mode import connect_only, missing_database, sign_in_refused, unavailable
 
 
+REQUEST_TIMEOUT = 30  # seconds the client waits for the answer to one request
+# A commit is the one request whose work grows with what the transaction changed. The transactions of a restore and
+# its undo (restore_staged) are bounded to 5 seconds of work as well as to rows and bytes, and a commit given up on
+# is the case in which nobody knows whether it was applied, so they alone wait four times as long (#362).
+RESTORE_COMMIT_TIMEOUT = 120
+
+
 class ArcadeError(RuntimeError):
     """The local ArcadeDB engine rejected or could not execute an operation."""
 
@@ -109,7 +116,7 @@ class ArcadeClient:
         """Close the kept connections. The client stays usable: the next request opens a new one."""
         self._connections.close()
 
-    def _request(self, method: str, path: str, *, timeout: float = 30, **kwargs) -> httpx.Response:
+    def _request(self, method: str, path: str, *, timeout: float = REQUEST_TIMEOUT, **kwargs) -> httpx.Response:
         if (not isinstance(path, str) or not path.startswith("/") or path.startswith("//")
                 or "\\" in path or any(ord(char) < 32 for char in path)):
             raise ValueError("ArcadeDB requests require a relative endpoint path")
@@ -232,7 +239,7 @@ class ArcadeClient:
                 raise
 
     @contextmanager
-    def transaction(self, *, commit: bool = True) -> Iterator[ArcadeClient]:
+    def transaction(self, *, commit: bool = True, commit_timeout: float = REQUEST_TIMEOUT) -> Iterator[ArcadeClient]:
         """A server transaction, committed at the end; with ``commit=False`` it is always rolled back."""
         if self.session_id:
             yield self
@@ -246,7 +253,8 @@ class ArcadeClient:
                              _connections=self._connections)
         try:
             yield child
-            child._request("POST", f"/api/v1/{'commit' if commit else 'rollback'}/{quote(self.database)}")
+            child._request("POST", f"/api/v1/{'commit' if commit else 'rollback'}/{quote(self.database)}",
+                           timeout=commit_timeout if commit else REQUEST_TIMEOUT)
         except BaseException:
             try:
                 child._request("POST", f"/api/v1/rollback/{quote(self.database)}")

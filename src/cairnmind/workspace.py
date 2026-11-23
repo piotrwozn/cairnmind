@@ -470,6 +470,9 @@ class WorkspaceManager:
                       "#{?client_readonly, READ ONLY · C-b d: detach , C-b Space: commands · C-b ?: help · C-b Tab: next · C-b d: detach }")
             self.tmux("set-option", "-g", "status", "2")
             self.tmux("set-option", "-g", "status-interval", "1")
+            # Every binding blocks in run-shell, so typed keys queue and arrive in one burst; with the default
+            # paste detection (1 ms) a prefix that is the third fast key would reach the pane as text (#356).
+            self.tmux("set-option", "-g", "assume-paste-time", "0")
             self._update_status(self.state.read())
             if start_supervisor:
                 self._start_supervisor()
@@ -665,14 +668,29 @@ class WorkspaceManager:
             # The key hint in the border follows a language switch like the status rows do (#161).
             self.tmux("set-option", "-gq", "pane-border-format", dict(tmux_chrome(language))["pane-border-format"])
             self._border_language = language
-        from .topology import topology
-        # What this workspace's processes loaded at start: a change made since shows after the next restart.
         formats = workspace_status_lines(selected, self._broker_state or {}, slot, control, language,
-                                         place=topology(self.settings))
+                                         place=self._place())
         if formats != self._last_status:
             for index, value in enumerate(formats):
                 self.tmux("set-option", "-g", f"status-format[{index}]", value)
             self._last_status = formats
+
+    def _place(self):
+        """Where storage and models run, from config.json as it is now: reread when the file changes, so a change made
+        from the workspace shows at once (#339). A file that cannot be read keeps the last answer."""
+        from .topology import topology
+        try:
+            stamp = (self.settings.data_dir / "config.json").stat().st_mtime_ns
+        except OSError:
+            stamp = None
+        cached = getattr(self, "_place_cache", None)
+        if cached is None or (stamp is not None and cached[0] != stamp):
+            try:
+                found = topology(Settings.load(self.settings.data_dir) if stamp is not None else self.settings)
+            except (OSError, ValueError):  # a configuration half edited: the last answer stands, asked again next time
+                found, stamp = (cached[1], cached[0]) if cached is not None else (topology(self.settings), stamp)
+            cached = self._place_cache = (stamp, found)
+        return cached[1]
 
     def _bridge_command(self, run_id, generation):
         return shlex.join([sys.executable, "-I", "-m", "cairnmind.terminal_bridge", "--data-dir", str(self.settings.data_dir),

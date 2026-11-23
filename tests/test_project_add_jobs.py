@@ -4,7 +4,7 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, first_start, ingest, knowledge_mode, project_removal, upgrade_mark
+from cairnmind import cli, first_start, ingest, knowledge_mode, project_removal, setup_mark, upgrade_mark
 from cairnmind.store_writer import StoreNotWriter
 
 
@@ -76,6 +76,15 @@ def test_an_upgrade_mark_is_named_as_the_reason_the_jobs_wait(monkeypatch, world
     said = world().stdout.splitlines()
     assert said[-2] == first_start.JOBS_HELD_UPGRADE.format(count=3, reason="An upgrade of Cairnmind is in progress.")
     assert json.loads(world(terminal=False).stdout)["jobs"]["waiting_because"] == "upgrade_in_progress"
+
+
+def test_a_change_of_setup_is_named_as_the_reason_the_jobs_wait_and_index_is_not_advised(monkeypatch, world):
+    monkeypatch.setattr(setup_mark, "refusal", lambda data_dir: "A change of where storage and models run is in progress.")
+    said = world().stdout.splitlines()
+    assert said[-2] == first_start.JOBS_HELD_UPGRADE.format(
+        count=3, reason="A change of where storage and models run is in progress.")
+    assert "cairnmind index" not in said[-2]
+    assert json.loads(world(terminal=False).stdout)["jobs"]["waiting_because"] == "setup_in_progress"
 
 
 def test_an_invalid_knowledge_agent_does_not_fail_an_add_that_is_done(monkeypatch, world):

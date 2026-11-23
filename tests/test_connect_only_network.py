@@ -16,6 +16,7 @@ from cairnmind import ingest
 from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
 from cairnmind.sql import clean_row
+from cairnmind.restore_staged import RestoreFailed, RestoreUnfinished
 from cairnmind.store import SCHEMA_VERSION, Store
 from cairnmind.store_readonly import StoreNotReady
 from database_relay import Relay
@@ -107,20 +108,27 @@ def contents(client) -> dict:
             for table in ("projects", "sources", "chunks", "records", "nodes")}
 
 
-@pytest.mark.parametrize("cut, lands", [
-    ({"number": 3, "matching": b"DELETE FROM"}, "before"),
+MARK_ROW = "SELECT FROM devbrain_meta WHERE name='restore_unfinished'"
+
+
+@pytest.mark.parametrize("cut, marked, lands", [
+    # The restore writes its mark first (commit 2, after the safety copy), then deletes and writes in transactions.
+    ({"number": 2, "matching": b"/api/v1/commit/"}, False, "later"),
+    ({"number": 2, "matching": b"/api/v1/commit/", "after_server": True}, True, "later"),
+    ({"number": 3, "matching": b"DELETE FROM"}, True, "later"),
     # Rows go in groups since #219: one request is one group of rows of one type.
-    ({"number": 3, "matching": b"INSERT INTO"}, "before"),
-    ({"number": 2, "matching": b"INSERT INTO", "after_server": True}, "before"),
-    ({"number": 1, "matching": b"CREATE VERTEX nodes CONTENT :rows"}, "before"),
-    ({"number": 1, "matching": b"CREATE VERTEX nodes CONTENT :rows", "after_server": True}, "before"),
-    ({"number": 1, "matching": b"CREATE EDGE edges", "after_server": True}, "before"),
-    ({"number": 2, "matching": b"/api/v1/commit/"}, "before"),
-    ({"number": 2, "matching": b"/api/v1/commit/", "after_server": True}, "after"),
-], ids=["while deleting", "while inserting", "a group of documents applied, answer lost", "a group of vertices",
-        "a group of vertices applied, answer lost", "a group of edges applied, answer lost", "commit never arrives",
-        "commit applied, answer lost"])
-def test_a_restore_cut_anywhere_leaves_the_old_data_or_the_backup_never_a_mixture(tmp_path, relay, cut, lands):
+    ({"number": 3, "matching": b"INSERT INTO"}, True, None),
+    ({"number": 2, "matching": b"INSERT INTO", "after_server": True}, True, None),
+    ({"number": 1, "matching": b"CREATE VERTEX nodes CONTENT :rows"}, True, None),
+    ({"number": 1, "matching": b"CREATE VERTEX nodes CONTENT :rows", "after_server": True}, True, None),
+    ({"number": 1, "matching": b"CREATE EDGE edges", "after_server": True}, True, None),
+    # Every row is written; the mark is not yet removed.
+    ({"number": 1, "matching": b"DELETE FROM devbrain_meta WHERE", "after_server": True}, True, "saved"),
+], ids=["mark never arrives", "mark applied, answer lost", "while deleting", "while inserting",
+        "a group of documents applied, answer lost", "a group of vertices", "a group of vertices applied, answer lost",
+        "a group of edges applied, answer lost", "the last commit never arrives"])
+def test_a_restore_cut_anywhere_leaves_the_old_data_or_a_refused_store_the_next_restore_finishes(
+        tmp_path, relay, cut, marked, lands):
     root = tmp_path / "repo"
     tree(root, files=6)
     data = data_directory(tmp_path)
@@ -137,12 +145,19 @@ def test_a_restore_cut_anywhere_leaves_the_old_data_or_the_backup_never_a_mixtur
         later = contents(client)
     assert later != saved
 
-    # The restore's own safety copy is the first commit; the cut comes after it.
+    # The restore's own safety copy is the first commit; the cut comes after it. The undo meets the same cut.
     relay.cut_at(**cut)
-    with pytest.raises(ArcadeError, match="is unavailable"):
+    with pytest.raises((ArcadeError, RestoreFailed), match="is unavailable"):
         store.restore(backup)
     with closing(direct(relay, store)) as client:
-        assert contents(client) == (saved if lands == "after" else later)
+        found = contents(client)
+        if not marked:
+            assert found == later and not client.query(MARK_ROW)
+        else:
+            # Part of the backup may be there: the store carries the mark, and no command opens it (#362).
+            assert client.query(MARK_ROW)
+            expected = {"later": later, "saved": saved}.get(lands)
+            assert expected is None or found == expected
         head = client.query("SELECT FROM journal_state WHERE id='current'")[0]
         assert head["writer"] == store.installation.id
     # The safety copy of what the restore was about to replace is a whole file on this machine.
@@ -151,9 +166,13 @@ def test_a_restore_cut_anywhere_leaves_the_old_data_or_the_backup_never_a_mixtur
     assert not list((data / "backups").glob(".*"))  # and no partial one
 
     relay.heal()
-    Store(data).restore(backup)
+    if marked:
+        with pytest.raises(RestoreUnfinished, match="did not finish"):
+            Store(data)
+    Store(data, for_restore=True).restore(backup)
     with closing(direct(relay, store)) as client:
-        assert contents(client) == saved
+        assert contents(client) == saved and not client.query(MARK_ROW)
+    assert len(list((data / "backups").glob("before-restore-*"))) == (1 if marked else 2)
 
 
 def test_a_schema_upgrade_cut_between_statements_keeps_the_old_version_and_restarts(tmp_path, relay):

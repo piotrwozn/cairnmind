@@ -194,9 +194,10 @@ def start_service(settings: Settings) -> None:
     external client, which no launcher started it for (#258). Stdout belongs to MCP; a start it makes is said on
     standard error (#287)."""
     import shlex
-    from .cli import (ServiceOfOtherVersion, UpgradeInProgress, _data_dir_arguments, _os_error_text,
+    from .cli import (ServiceOfOtherVersion, SetupInProgress, UpgradeInProgress, _data_dir_arguments, _os_error_text,
                       _service_unavailable, ensure_service, say_service_started)
     from .first_start import SERVICE_NOT_STARTED
+    from .setup_mark import BRIDGE_SETUP
     from .store_writer import inspect
     try:
         role = inspect(settings).get("role")
@@ -213,6 +214,8 @@ def start_service(settings: Settings) -> None:
     except UpgradeInProgress as exc:
         # Not SERVICE_NOT_STARTED, whose "start it with `cairnmind serve`" would be wrong advice now (#298).
         raise RuntimeError(BRIDGE_UPGRADE.format(reason=str(exc))) from None
+    except SetupInProgress as exc:
+        raise RuntimeError(BRIDGE_SETUP.format(reason=str(exc))) from None  # a change of setup, not an upgrade (#339)
     except (ValueError, OSError) as exc:  # ServiceDidNotStart is a ValueError
         command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "serve"])
         reason = (_os_error_text(exc) if isinstance(exc, OSError) else str(exc)).strip().rstrip(".") + "."
@@ -233,7 +236,9 @@ class ServiceClient:
         # {"project": id, name or path, "worktree": path or None} for an external client; None for a native one.
         self.external = external
         if external is not None:
-            # A process the launcher started must never take a degraded session in place of its verified one.
+            # A process the launcher started must never take a degraded session in place of its verified one. An empty
+            # value counts as not set, which is how the cairnmind-recorder subagent that install writes (#376) starts
+            # its own external, degraded session inside a launched one.
             if any(os.environ.get(key) for name in ("SESSION_ID", "PACKET_ID") for key in env_names(name)):
                 raise ValueError("An external MCP session cannot start where the Cairnmind launcher set "
                                  "CAIRNMIND_SESSION_ID or CAIRNMIND_PACKET_ID; use `cairnmind mcp` without --client")
@@ -278,6 +283,11 @@ class ServiceClient:
                 "project": project, "client": "external", "worktree": worktree, "reason": "startup"}, {}, adopt=True)
             if not self.session_id:
                 raise RuntimeError("Cairnmind service returned no session for this external client")
+            if result.get("unchanged") or result.get("acknowledged"):
+                # A session this process just prepared cannot hold an acknowledgement it did not make: it is not its own.
+                self.session_id = self.packet_id = None
+                raise RuntimeError("The session this external client was given already holds an acknowledgement; "
+                                   "nothing is written on it")
             return result
 
     async def _project_for_service(self, project: str) -> str:
@@ -382,6 +392,10 @@ class ServiceClient:
                 reason = upgrade_mark.refusal() if self.external is None else None
                 if reason:  # `cairnmind serve` is not what to do now: it would start the version being replaced
                     raise RuntimeError(BRIDGE_UPGRADE.format(reason=reason)) from None
+                from .setup_mark import BRIDGE_SETUP, refusal as setup_refusal
+                reason = setup_refusal(self.settings.data_dir) if self.external is None else None
+                if reason:  # a change of setup stopped the service on purpose (#339): `cairnmind serve` is not the answer
+                    raise RuntimeError(BRIDGE_SETUP.format(reason=str(reason))) from None
                 raise RuntimeError(UNAVAILABLE.format(error="ConnectError")) from None
         except (httpx.HTTPError, ValueError) as exc:
             raise RuntimeError(UNAVAILABLE.format(error=type(exc).__name__)) from None

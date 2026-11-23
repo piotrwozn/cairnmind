@@ -661,11 +661,18 @@ def _merge_instructions(path: Path, project: dict[str, Any], settings: Settings)
 
 
 def install_integrations(settings: Settings, project: dict[str, Any],
-                         clients: tuple[str, ...] = CLIENTS) -> dict[str, Any]:
-    """Merge only project-local files; report unsupported capabilities explicitly."""
+                         clients: tuple[str, ...] = CLIENTS, recorder: bool | None = None) -> dict[str, Any]:
+    """Merge only project-local files; report unsupported capabilities explicitly.
+
+    `recorder` False or True turns the Claude Code recorder subagent off or on for the project and is remembered;
+    None keeps the remembered choice (#389)."""
     root = Path(project["root"]).resolve()
     if not root.is_dir():
         raise ValueError(f"Project directory does not exist: {root}")
+    from .recorder_agent import RECORDER_OFF, RECORDER_ON, RECORDER_PATH, is_off as recorder_is_off, merge_recorder, remember
+    if recorder is not None:
+        remember(settings, project, recorder)
+    told = False  # a changed choice is always answered by one recorder sentence
     results: dict[str, Any] = {"project": project["id"], "clients": {}, "changed": [], "warnings": []}
     for client in clients:
         if client not in CLIENTS:
@@ -674,6 +681,7 @@ def install_integrations(settings: Settings, project: dict[str, Any],
         info["mcp_configured"] = False
         info["hooks_configured"] = False
         info["instructions_configured"] = False
+        info["recorder_configured"] = info["recorder_off"] = False
         results["clients"][client] = info
         if not info["installed"]:  # nothing is written for a client that is not here, not even its instruction block (#313)
             results["warnings"].append(CLIENT_SKIPPED.format(client=client))
@@ -691,6 +699,10 @@ def install_integrations(settings: Settings, project: dict[str, Any],
                                root / ".codex" / "config.toml" if client == "codex" else root / ".mcp.json"))
         else:
             results["warnings"].append(f"{client}: MCP capability could not be verified; MCP config left unchanged.")
+            if client == "claude" and not recorder_is_off(settings, project):  # off removes the file below: not "left in place"
+                from .recorder_agent import left_note
+                if note := left_note(root):
+                    results["warnings"].append(note)
         for operation, path in operations:
             try:
                 if operation(path, settings):
@@ -708,6 +720,23 @@ def install_integrations(settings: Settings, project: dict[str, Any],
                 results["warnings"].append(str(exc))
         else:
             results["warnings"].append(f"{client}: hooks unavailable/unverified; verified native launch is not supported.")
+        info["recorder_off"] = client == "claude" and recorder_is_off(settings, project)  # the person's choice (#389)
+        # A subagent with its own session; Codex subagents share the parent's (#376). Off removes the file even where MCP is unverified.
+        if client == "claude" and (info["mcp"] or info["recorder_off"]):
+            told = True
+            try:
+                changed, note = merge_recorder(root, settings, project, info.get("version"))
+                if changed and note is None:  # a removal is named by its own sentence, not as written
+                    results["changed"].append(str(root / RECORDER_PATH))
+                if note:
+                    results["warnings"].append(note)
+                elif recorder is True:
+                    results["warnings"].append(RECORDER_ON.format(path=RECORDER_PATH))
+                info["recorder_configured"] = note is None
+            except (ValueError, OSError) as exc:
+                results["warnings"].append(str(exc))
+    if recorder is not None and "claude" in clients and not told:  # Claude Code absent or its MCP unverified: the choice is still saved
+        results["warnings"].append(RECORDER_ON.format(path=RECORDER_PATH) if recorder else RECORDER_OFF)
     for client in clients:
         info = results["clients"][client]
         for path, entry in bare_devbrain_entries(root, client):
@@ -811,8 +840,10 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
     # New projects must acquire their managed integration before the first
     # native session. Capability alone does not imply config was installed.
     installation = installation or install_integrations(settings, project, clients=(client,))
+    from .recorder_agent import RECORDER_OFF
     for warning in installation["warnings"]:
-        print(f"Cairnmind: {warning}", file=sys.stderr)
+        if warning != RECORDER_OFF:  # a person's own choice: `cairnmind install` says it, a launch does not repeat it
+            print(f"Cairnmind: {warning}", file=sys.stderr)
     info = installation["clients"][client]
     parts = missing_parts(info)
     if parts:

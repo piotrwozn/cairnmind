@@ -217,7 +217,10 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
                                        headers={"Authorization": f"Bearer {settings.token}"}) as client:
                 return await client.request(method, path, params=params, json=data, headers=person)
         except httpx.HTTPError:
-            raise HTTPException(503, "The memory service is unavailable. Restart cairnmind.") from None
+            from .setup_mark import refusal as setup_refusal
+            # A change of setup stopped the service on purpose: the panels say that, not "restart" (#339).
+            raise HTTPException(503, str(setup_refusal(settings.data_dir)
+                                         or "The memory service is unavailable. Restart cairnmind.")) from None
 
     def forward(response):
         try:
@@ -366,6 +369,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
             except HTTPException:
                 response = None
             row["roots"] = response.json().get("roots", [row["root"]]) if response is not None and response.is_success else [row["root"]]
+            row["unavailable"] = response.json().get("unavailable", []) if response is not None and response.is_success else []
             row["memory_snapshot"] = _snapshot(Path(row["root"]))
         from .client_auth import clear_probe_cache, probe_client
         runs = await asyncio.to_thread(runtime.list_runs)

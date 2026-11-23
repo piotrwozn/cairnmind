@@ -166,7 +166,7 @@ Additional root-facing methods needed:
 - `recent_job_errors(project_id=None,limit=10)->list`
 - `retry_jobs()->None`
 - `missing_embeddings(namespace,project_id=None)->list[{id:chunk_id,project_id}]`
-- `reset_missing_embedding_job(job_id,chunk_id,namespace)->None` reset completed only if vector missing
+- `embed_jobs.repair_embed_jobs(store,rows,namespace)->None` resets a completed job only while its chunk has no vector
 - `delete_embeddings(project_id)->None`
 - export/backup restore: portable JSON/zip artifact includes sources/revisions/cursors/jobs,
   native graph reconstructed via helpers on restore, credentials excluded, transactional
@@ -177,7 +177,7 @@ Additional root-facing methods needed:
   (daily, `cairnmind backup`, `before-schema-*`, `before-restore-*`) and in `Store.export`, with the format
   number 5 kept. That is a legal format 5 file (a store with no embeddings wrote it before), so every earlier
   restore reads it and rebuilds by itself. Restore still loads the vectors of a file that carries them.
-  When the restored store holds no `embeddings` row, `Store.restore` sets, in its one transaction, each
+  When the restored store holds no `embeddings` row, `Store.restore` sets, in its last transactions, each
   completed `embed` job of a current chunk back to pending and sets `Store.embed_jobs_requeued` to their number
   (None when the backup brought vectors); `restore_claims.checked_restore` adds the number
   (`embed_jobs_requeued`) and one sentence in English and Polish to the output of `cairnmind restore` and
@@ -202,27 +202,37 @@ Additional root-facing methods needed:
   first pass walks the document one row at a time with the standard library decoder, recomputes the checksum
   over the rows serialized with `json_text`, and keeps only a bounded index (project ids; for sources, nodes
   and records the id and the fields the cross references use, and whether the source hash was right). A
-  second pass checks every cross reference against it. Only then is the before-restore copy made and the
-  store changed; the inserts read the file three more times (documents, then vertices, then edges and
-  the vectors a file carries, none in a file of 0.13.0) inside the one restore transaction, and, without the person's workspace (#214,
+  second pass checks every cross reference against it. Only then is the before-restore copy made, the mark
+  of an unfinished restore written (`restore_staged.py`, #362: a row `restore_unfinished` of `devbrain_meta`, which
+  no backup carries and no restore deletes) and the store changed; the old rows are deleted and the backup's written in
+  transactions of at most 5,000 rows, 8 MiB of text or 5 seconds open (the engine holds a transaction's pages in its
+  heap until the commit), with the writer lock held from the mark to its removal. The inserts read the file three
+  more times (documents, then vertices, then edges and
+  the vectors a file carries, none in a file of 0.13.0) in those transactions, and, without the person's workspace (#214,
   `restore_claims.py`), rewrite each confirmed record's and revision's confirmation mark into the backup's
   claim and a project's accepted record kinds into withdrawn ones as the rows are inserted, and write the rows in groups (`restore_groups.py`, #219): a
   document or vector group is one `INSERT ... CONTENT :rows` of one type, at most 250 rows or about 1 MiB of
   JSON text; vertices and edges go per project through `prefetch_graph` and `write_graph` (#167), with the
   checks of `upsert_node` and `upsert_edge`, in groups with the same two limits, and at most 1,000 graph rows
   or about 4 MiB of their JSON text held across projects; a second copy of a vertex or edge id starts a new group, so it
-  updates the first as row by row did. A group the engine stores only in part fails the transaction. Every
+  updates the first as row by row did. A group the engine stores only in part fails the restore. Every
   check, its order and its message are those of
   `Store._validated_backup`, which still loads the rare file that is valid JSON in a layout no writer
   produced (keys out of sorted order or repeated, a document that is not an object). Each later pass compares
   a digest of the bytes it read with the first pass, so a file changed during a restore is refused and the
-  transaction rolled back. Some structural checks still run only inside that transaction, after its deletes,
+  restore fails. Some structural checks still run only while the rows are written, after the deletes,
   as in 0.10.0: those of `upsert_node` and `upsert_edge`, a vector entry that is not a list or a vector row
-  that is not an object, and repeated ids that hit a unique index; their refusal is undone by the rollback.
-  A failure at any point before the commit leaves the store as it was. Python memory
+  that is not an object, and repeated ids that hit a unique index. A failure at any of those points is no longer undone by one
+  rollback, as the one transaction of 0.12.0 was: the store is put back from the `before-restore-*` copy (checked
+  by its SHA-256, written back without claims) and the mark removed, and the error says so. A restore that is
+  cut off (a killed process, a cut connection) or whose undo failed too leaves the mark, and every opening of the
+  store but a restore is refused until a restore finishes; when the mark cannot be read, nothing is put back. Python memory
   is bounded by the largest row (or the groups held: one of documents, about 4 MiB of graph rows) plus the
-  index; the engine still holds the restore transaction
-  itself.
+  index; the engine holds one bounded transaction, never the whole restore. Requests: every one waits at
+  most `REQUEST_TIMEOUT` (30 s), and so does a commit, except those of the restore and of its undo: the transactions
+  of `restore_staged` (the mark, the deletes, the staged writes, the removal of the mark) pass
+  `RESTORE_COMMIT_TIMEOUT` (120 s, `arcade.py`) to `Store.transaction(commit_timeout=...)`. `store prune-backups`
+  keeps the copy the mark names (`store_prune.named_by_a_restore`, read with `restore_staged.unfinished`).
 
 ## Ingestion (ingestion agent owns)
 
