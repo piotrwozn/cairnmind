@@ -27,6 +27,6 @@ def test_a_file_that_never_completes_fails_with_what_it_held(tmp_path, held):
     if held is not None:
         path.write_text(held)
     with pytest.raises(AssertionError) as raised:
-        read_json_when_complete(path, .2, lambda: " PANES")
-    assert "never held a complete JSON document" in str(raised.value) and str(raised.value).endswith(" PANES")
+        read_json_when_complete(path, .2)
+    assert "never held a complete JSON document" in str(raised.value)
     assert ("missing" if held is None else repr(held)) in str(raised.value)

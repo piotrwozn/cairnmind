@@ -10,8 +10,8 @@ import json
 import time
 
 
-def read_json_when_complete(path, seconds=5.0, context=lambda: ""):
-    """The document in `path` once it parses; after `seconds`, an AssertionError with the file's text and context()."""
+def read_json_when_complete(path, seconds=5.0):
+    """The document in `path` once it parses; after `seconds`, an AssertionError with the file's text."""
     deadline = time.monotonic() + seconds
     while True:
         text = path.read_text() if path.exists() else None
@@ -22,5 +22,5 @@ def read_json_when_complete(path, seconds=5.0, context=lambda: ""):
                 pass
         if time.monotonic() >= deadline:
             raise AssertionError(f"{path} never held a complete JSON document; it is "
-                                 + ("missing" if text is None else repr(text)) + context())
+                                 + ("missing" if text is None else repr(text)))
         time.sleep(.01)

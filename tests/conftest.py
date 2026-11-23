@@ -54,7 +54,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_agent_journal", "test_agent_tools", "test_answer_contract", "test_api_broker",
     "test_api_credentials", "test_api_panels", "test_api_profiles", "test_api_providers",
     "test_api_runtime", "test_api_worker", "test_arcade_transport", "test_client_auth", "test_repository_evaluation",
-    "test_client_runtime", "test_cockpit_cli", "test_cockpit_server", "test_cockpit_state",
+    "test_client_runtime", "test_json_wait", "test_pty_drain", "test_cockpit_cli", "test_cockpit_server", "test_cockpit_state",
     "test_copilot_adapter", "test_database_credentials", "test_deployment", "test_environment_names", "test_graph_raster", "test_graph_widget_rendering", "test_memory_models", "test_memory_view", "test_module_alias",
     "test_project_remove_cli", "test_recorder_install", "test_hook_spool_unassigned", "test_published_memory_format",
     "test_published_memory_secrets",
