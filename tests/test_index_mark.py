@@ -16,7 +16,7 @@ import pytest
 from textual.widgets import Static
 from typer.testing import CliRunner
 
-from cairnmind import cli, index_mark, store as store_module, upgrade_mark
+from cairnmind import cli, index_mark, process_identity, store as store_module, upgrade_mark
 from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
 from cairnmind.store import Store
@@ -160,6 +160,8 @@ def test_the_sentence_has_polish_with_the_same_placeholders():
     polish = index_mark.MESSAGES[index_mark.NOTE_RUNNING]
     assert names(polish) == names(index_mark.NOTE_RUNNING) == {"pid"}
     assert CATALOG[index_mark.NOTE_RUNNING] == polish and "indeksu" in polish
+    bridge = index_mark.MESSAGES[index_mark.BRIDGE_INDEX]  # what the MCP bridge adds to it (#425)
+    assert names(bridge) == names(index_mark.BRIDGE_INDEX) == {"reason"} and CATALOG[index_mark.BRIDGE_INDEX] == bridge
 
 
 def test_a_mark_is_held_only_by_a_process_that_is_cairnmind_itself(settings, children):
@@ -168,6 +170,27 @@ def test_a_mark_is_held_only_by_a_process_that_is_cairnmind_itself(settings, chi
     for child, kind in ((mine, "running"), (other, "stale")):
         index_mark.mark_path(settings.data_dir).write_text(f"{child.pid}\n")
         assert index_mark.state(settings.data_dir) == (kind, child.pid)
+
+
+def test_a_mark_names_the_start_of_its_holder_and_a_reused_process_id_is_not_the_holder(settings, children):
+    child = children(*BUILDER)
+    mark = index_mark.mark_path(settings.data_dir)
+    birth = process_identity.start(child.pid)
+    mark.write_text(f"{child.pid}\n{birth}\n")  # the same id and the same start: the holder
+    assert index_mark.state(settings.data_dir) == ("running", child.pid)
+    assert index_mark.note(settings.data_dir) == index_mark.NOTE_RUNNING.format(pid=child.pid)
+    mark.write_text(f"{child.pid}\n{birth}9\n")  # a living cairnmind process with that id, started at another time
+    assert index_mark.state(settings.data_dir) == ("stale", child.pid)
+    assert index_mark.note(settings.data_dir) is None and not mark.exists()
+    mark.write_text(f"{child.pid}\n")  # a mark of an older version has no identity: the rule it had
+    assert index_mark.state(settings.data_dir) == ("running", child.pid)
+
+
+def test_the_builder_writes_the_start_of_its_process_beside_its_id(tmp_path):
+    with index_mark.building(tmp_path):
+        assert index_mark.mark_path(tmp_path).read_text().split() == [str(os.getpid()),
+                                                                      process_identity.start(os.getpid())]
+    assert not index_mark.mark_path(tmp_path).exists()
 
 
 def test_a_real_build_held_back_is_said_and_waited_for_and_a_second_open_builds_nothing(

@@ -17,9 +17,11 @@ MARK = "index-build-in-progress"
 
 NOTE_RUNNING = ("The store is being prepared for this version: a lookup index is being built (process {pid}). It is "
                 "usually the first start after an upgrade, can take minutes on a large store, and nothing is to be done.")
+BRIDGE_INDEX = "{reason} Call the tool again shortly."  # what the MCP bridge answers during the build (#425)
 MESSAGES = {
     NOTE_RUNNING: ("Baza jest przygotowywana do tej wersji: trwa budowa indeksu wyszukiwania (proces {pid}). To "
                    "zwykle pierwszy start po aktualizacji, na dużej bazie może potrwać kilka minut i nic nie trzeba robić."),
+    BRIDGE_INDEX: "{reason} Wywołaj narzędzie ponownie za chwilę.",
 }
 
 
@@ -49,10 +51,14 @@ def state(data_dir) -> tuple[str, int | None]:
 def note(data_dir) -> str | None:
     """The sentence while a living process builds an index; a stale mark is removed and says nothing, and one that
     cannot be read is ignored (the command then waits as it always did)."""
+    try:
+        read = mark_path(data_dir).read_bytes()
+    except OSError:
+        read = None
     kind, pid = state(data_dir)
     if kind == "stale":
-        try:
-            if mark_path(data_dir).read_bytes() == f"{pid}\n".encode():
+        try:  # only the mark that was judged: a builder that wrote a new one meanwhile keeps it
+            if read is not None and mark_path(data_dir).read_bytes() == read:
                 mark_path(data_dir).unlink()
         except OSError:
             pass
