@@ -522,18 +522,33 @@ class KnowledgeAgent:
         evidence[source["id"]] = source
         return source
 
+    def _checked_source(self, source_id: str, project_id: str, evidence: dict, worktree, checked: dict | None) -> dict:
+        """``_source``, but once per source for one ``checked`` memo: a later call gets what the first found, the
+        source or its error, without reading the file again. Without a memo, every call checks."""
+        if checked is None:
+            return self._source(source_id, project_id, evidence, worktree=worktree)
+        if source_id not in checked:
+            try:
+                checked[source_id] = self._source(source_id, project_id, evidence, worktree=worktree)
+            except (ValueError, OSError) as exc:
+                checked[source_id] = exc
+        if isinstance(checked[source_id], Exception):
+            raise checked[source_id]
+        return checked[source_id]
+
     def _hits(self, hits: list[dict], project_id: str, evidence: dict, worktree=None, query: str = "",
-              register: bool = True, size: int = EXCERPT_CHARS) -> list[dict]:
+              register: bool = True, size: int = EXCERPT_CHARS, checked: dict | None = None) -> list[dict]:
         """Model-visible hits: each text is the excerpt of its chunk that matches ``query``.
 
         ``line_start`` and ``line_end`` describe the excerpt, not the whole chunk. With
         ``register`` each excerpt is registered as shown now (a search the model asked for); the
         initial evidence is registered by ``ask`` once it is known which hits the model gets.
+        The initial passes share ``checked``, so that a file both searches return is checked on disk once.
         """
         result = []
         for hit in hits:
             try:
-                source = self._source(hit["source_id"], project_id, evidence, worktree=worktree)
+                source = self._checked_source(hit["source_id"], project_id, evidence, worktree, checked)
             except (ValueError, OSError):
                 self.retriever.warnings.append("An indexed file is missing or cannot be checked on disk")
                 continue
@@ -559,7 +574,7 @@ class KnowledgeAgent:
         return result
 
     def _definitions(self, project_id: str, question: str, hits: list[dict], evidence: dict,
-                     worktree=None) -> list[dict]:
+                     worktree=None, checked: dict | None = None) -> list[dict]:
         """Up to MAX_DEFINITIONS model-visible definitions of names the question or the hits use.
 
         Each is shown and made citable like a hit: kind "definition", the defined name, its path
@@ -588,7 +603,7 @@ class KnowledgeAgent:
                 continue
             attempts += 1  # each costs a freshness check, accepted or not
             try:
-                source = self._source(row["source_id"], project_id, evidence, worktree=worktree)
+                source = self._checked_source(row["source_id"], project_id, evidence, worktree, checked)
             except (ValueError, OSError):
                 continue
             lines = source_text(source).split("\n")
@@ -1179,6 +1194,7 @@ class KnowledgeAgent:
         if not isinstance(question, str) or not question.strip() or len(question) > 16000:
             raise ValueError("Question must contain 1–16000 characters")
         evidence: dict = {}
+        checked: dict = {}  # the sources of the first passes, checked on disk once (see _hits)
         repair_fallback = None
         judged = None  # a validated complete answer whose support check is running
         started = time.monotonic()
@@ -1189,12 +1205,12 @@ class KnowledgeAgent:
                 chosen = await asyncio.to_thread(self.retriever.search, project_id, question, INITIAL_HITS,
                                                  worktree=worktree)
                 initial = await asyncio.to_thread(self._hits, chosen, project_id, evidence, worktree, question,
-                                                  False)
+                                                  False, checked=checked)
                 hybrid = await self.retriever.asearch(project_id, question, INITIAL_HITS, worktree=worktree)
                 if hybrid:
                     chosen = hybrid
                     initial = await asyncio.to_thread(self._hits, chosen, project_id, evidence, worktree, question,
-                                                      False)
+                                                      False, checked=checked)
                 # Chunks longer than their excerpt, each stretch of a file once (chunks overlap):
                 # what a second look can still show.
                 in_part, taken = [], []
@@ -1232,7 +1248,7 @@ class KnowledgeAgent:
                     # They are shown first: the line that states a value, before the passages that
                     # use or mention it, and so also first in the short catalog of this call.
                     definitions = await asyncio.to_thread(self._definitions, project_id, question, initial,
-                                                          evidence, worktree)
+                                                          evidence, worktree, checked=checked)
                     if definitions:
                         initial = [*definitions, *initial[:INITIAL_HITS - len(definitions)]]
                 # Only now is it known which hits the model gets: register those, in their order.
