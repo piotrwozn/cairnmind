@@ -10,9 +10,11 @@ refused). The row then holds: the CPU seconds the service spent while the comman
 peak memory (VmHWM, since its start, so start-up is in it) when the command ended; then the same for
 --queue-seconds after the command returned, when the service works off what is left in its queue (the
 peak is again since its start). The command must be the one that indexes: the service's own scan indexes a
-registered folder within poll_seconds (10 s) and then the command finds it unchanged, but the row still holds
-the CPU of the scan. Register the folder after the service has settled and set a large poll_seconds in the
-throwaway config.json. It starts nothing and sends nothing anywhere. To keep it away from a real
+registered folder within poll_seconds (10 s) and then the command finds it unchanged, but the row would still hold
+the CPU of the scan. So when the command prints an index result that read and changed no file, no row is
+printed: the exit code is 3 and the message says to set a large poll_seconds in the throwaway config.json and to
+register the folder after the service has settled. --allow-unchanged prints the row anyway, for when measuring an
+unchanged tree is the point. Any other output keeps the row. It starts nothing and sends nothing anywhere. To keep it away from a real
 installation it refuses to run unless CAIRNMIND_HOME, CAIRNMIND_PORT and CAIRNMIND_ARCADE_URL are set,
 none of them points at the installation's data directory or at port 8765 (the service) or 2480 (the
 engine), and the command has no --data-dir. The engine address must be a throwaway engine: a database name exported
@@ -23,6 +25,7 @@ service's figures and says so.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -72,6 +75,15 @@ def row(command: list[str], wall: float, index, queue) -> str:
     return f"| `{' '.join(command)}` ({wall:.1f} s) | {cell(index)} | {cell(queue)} |"
 
 
+def indexed_nothing(output: str) -> bool:
+    """True when the output is the JSON of `cairnmind index` and says no file was read or changed."""
+    try:
+        result = json.loads(output)
+    except ValueError:
+        return False
+    return isinstance(result, dict) and result.get("read") == 0 and result.get("changed") == 0
+
+
 def port_of(url: str) -> int | None:
     try:
         return urlsplit(url).port
@@ -110,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--service-pid", type=int, help="process id of the running knowledge service")
     parser.add_argument("--queue-seconds", type=float, default=0, help="seconds to keep watching the service after the command")
+    parser.add_argument("--allow-unchanged", action="store_true", help="print the row even when the index changed nothing")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="-- COMMAND...")
     args = parser.parse_args(argv)
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -132,12 +145,19 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     before = figures(pid) if pid else None
     started = time.monotonic()
-    code = subprocess.run(command).returncode
-    wall = time.monotonic() - started
+    done = subprocess.run(command, stdout=subprocess.PIPE, text=True, errors="replace")
+    code, wall = done.returncode, time.monotonic() - started
+    sys.stdout.write(done.stdout)
+    sys.stdout.flush()
     ended = figures(pid) if before else None
     if ended and args.queue_seconds > 0:
         time.sleep(args.queue_seconds)
     settled = figures(pid) if ended else None
+    if indexed_nothing(done.stdout) and not args.allow_unchanged:
+        print("no row: the command indexed nothing (no file read or changed), so the service's own scan came first and "
+              "the CPU would be the scan's. Set a large poll_seconds in the throwaway config.json, register the folder "
+              "after the service has settled, and run it again; --allow-unchanged prints the row anyway.", file=sys.stderr)
+        return 3
     index = (ended[0] - before[0], ended[1]) if before and ended else None
     queue = (settled[0] - ended[0], settled[1]) if ended and settled else None
     print(row(command, wall, index, queue))
