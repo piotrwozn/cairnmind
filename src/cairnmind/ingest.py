@@ -1150,27 +1150,29 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         as_remembered = _graph_as_remembered(tx, project_id, remembered)  # reads the fingerprint: before it is cleared
         tx.command("UPDATE projects SET graph_fingerprint=null WHERE id=:project", {"project": project_id})
         if as_remembered:
-            removed = sorted(remembered["edges"] - edges.keys())
-            for offset in range(0, len(removed), 500):
-                batches.tx.command("DELETE FROM edges WHERE project_id=:project AND kind IN :kinds AND id IN :ids",
-                                   {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS), "ids": removed[offset:offset + 500]})
-                batches.wrote(len(removed[offset:offset + 500]))
+            kept = remembered["edges"]
+            removed = sorted(kept - edges.keys())
             changed_nodes = [item for identifier, item in nodes.items()
                              if remembered["nodes"].get(identifier) != digests[identifier]]
-            new_edges = [item for identifier, item in edges.items() if identifier not in remembered["edges"]]
         else:
-            while True:
-                deleted = batches.tx.command(
-                    f"DELETE FROM edges WHERE project_id=:project AND kind IN :kinds LIMIT {graph_transactions.ROWS_PER_TRANSACTION}",
-                    {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)},
-                )
-                count = deleted[0].get("count") if deleted and isinstance(deleted[0], dict) else None
-                if type(count) is not int:
-                    raise RuntimeError("The database did not say how many graph edges it deleted")
-                batches.wrote(count)
-                if count < graph_transactions.ROWS_PER_TRANSACTION:
-                    break
-            changed_nodes, new_edges = list(nodes.values()), list(edges.values())
+            # An edge's id names its ends, kind, source and line: a stored edge with a computed id and the marks a
+            # full replace gives it is that edge, and it stays. Deleting every edge and writing the same ids again
+            # left the engine's unique index holding entries of the deleted ones from about 40,000 edges on, and
+            # the write failed (#385). Only the stored edges that are not in the computed graph are deleted.
+            stored = tx.query("SELECT id,status,is_current FROM edges WHERE project_id=:project AND kind IN :kinds",
+                              {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)})
+            kept = {row["id"] for row in stored
+                    if row["id"] in edges and row.get("status") == "observed" and row.get("is_current") is True}
+            removed = sorted(row["id"] for row in stored if row["id"] not in kept)
+            changed_nodes = list(nodes.values())
+        # A whole transaction's rows in one request: with the project in the condition the engine scans the project's
+        # index once per request, so groups of 500 made the removal grow with the square of the graph (#385).
+        group = graph_transactions.ROWS_PER_TRANSACTION
+        for offset in range(0, len(removed), group):
+            batches.tx.command("DELETE FROM edges WHERE project_id=:project AND kind IN :kinds AND id IN :ids",
+                               {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS), "ids": removed[offset:offset + group]})
+            batches.wrote(len(removed[offset:offset + group]))
+        new_edges = [item for identifier, item in edges.items() if identifier not in kept]
         # The transaction reports the graph as reset, so its rows are written in groups (issue #167).
         # What the upserts look up row by row is read in a few requests per group; the checks stay theirs.
         step = min(1000, graph_transactions.ROWS_PER_TRANSACTION)
