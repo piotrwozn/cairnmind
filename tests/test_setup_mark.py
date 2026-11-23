@@ -185,7 +185,7 @@ def test_held_replaces_a_stale_mark(data_dir, children):
     child.wait()
     setup_mark.mark_path(data_dir).write_text(f"{child.pid}\n")
     with setup_mark.held(data_dir):
-        assert setup_mark.mark_path(data_dir).read_text().split()[0] == str(os.getpid())
+        assert setup_mark.mark_path(data_dir).read_text().split() == [str(os.getpid()), process_identity.start(os.getpid())]
 
 
 def test_a_second_change_is_refused_while_the_first_holds_the_lock(data_dir):

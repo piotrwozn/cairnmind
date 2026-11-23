@@ -1,8 +1,10 @@
 """Hits with an equal score come in an order that does not depend on the process (issue #424).
 
-Their order came from whatever the engine or a set gave, which depends on the hash seed of the process: the same
-question could cite its sources in another order after a restart. The rule now: after the score, by the id of the
-chunk (of a definition, the id of its node), applied where the ranking is made, so that the cut to the limit is stable too.
+Their order was the engine's (it promises none at a tie, also at its own LIMIT) and the order was not a stated rule.
+The rule now: in each ranking, after the score, by the id of the chunk (of a definition, the id of its node), applied
+where the ranking is made, so that the cut to the limit is stable too. The fusion keeps its old rule: a hit of the
+full-text ranking beats a vector hit of the same score, and that one a record. The vector stand-in below is ordered
+by a set to show that the code sorts whatever order the index gives; the parent was not shown to differ between seeds.
 """
 from __future__ import annotations
 
@@ -68,6 +70,20 @@ def test_chunks_with_an_equal_score_are_cut_and_ordered_by_id(workspace):  # noq
     store, project, settings, ids = _project(workspace)
     found = Retriever(store, settings, FakeOllama()).search(project["id"], QUESTION, 5)
     assert [hit["id"] for hit in found] == ids[:5]
+
+
+def test_a_fused_tie_goes_to_the_full_text_hit_not_to_the_smaller_id(workspace):  # noqa: F811
+    store, project, settings, ids = _project(workspace)
+    source_id = store.query("SELECT source_id FROM chunks WHERE id=:id", {"id": ids[0]})[0]["source_id"]
+    smaller = "00000000-0000-4000-8000-000000000000"  # sorts before every chunk id of the full-text ranking
+    store.command("INSERT INTO chunks CONTENT :doc", {"doc": {
+        "id": smaller, "project_id": project["id"], "source_id": source_id, "text": "unrelated words",
+        "line_start": 1, "line_end": 1, "metadata": {}, "is_current": True}})
+    real = store.query
+    store.query = lambda sql, params=None, *a, **k: (
+        [{"chunk_id": smaller, "distance": 0.1}] if "vector.neighbors" in sql else real(sql, params, *a, **k))
+    found = Retriever(store, settings, FakeOllama()).search(project["id"], QUESTION, 1, [1.0, 0.0, 0.0], "ns")
+    assert [hit["id"] for hit in found] == [ids[0]]  # both score 1/61; the full-text ranking came first
 
 
 def test_definitions_with_every_key_equal_are_ordered_by_node_id():

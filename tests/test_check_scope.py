@@ -171,11 +171,14 @@ def test_a_folder_removed_between_two_tool_steps_is_not_read_from_by_the_second(
     agent = KnowledgeAgent(store, settings, model)
     made, make = [], agent._check_scope
     agent._check_scope = lambda *args: made.append(make(*args)) or made[-1]
+    catalogs, catalog = [], agent._citation_catalog
+    agent._citation_catalog = lambda *args, **kwargs: catalogs.append(kwargs.get("scope")) or catalog(*args, **kwargs)
     asyncio.run(agent.ask(project["id"], "other budget", worktree=str(second)))
     tools = [json.loads(message["content"]) for message in model.calls[2]["messages"] if message.get("role") == "tool"]
     assert "LIMIT_OTHER" in tools[0]["content"]  # accepted while the folder was registered
     assert "error" in tools[1] and "content" not in tools[1]  # refused once it was removed
     assert len(made) == 2 and made[0] is not made[1]  # the first checks share one scope, each tool step has its own
+    assert catalogs == [made[0]]  # the repair builds no catalog from the scope of before the removal
 
 
 def test_every_check_of_a_file_gives_the_verdict_it_gave_without_the_scope(workspace, tmp_path):  # noqa: F811

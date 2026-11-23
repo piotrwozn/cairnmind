@@ -1283,6 +1283,7 @@ class KnowledgeAgent:
                 if answer_schema is not None:
                     prompt["answer_schema"] = answer_schema
                 messages = [system, {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}]
+                gone = None  # set when the last refresh of the scope failed: the repair then has no catalog
                 for _step in range(self.settings.max_steps):
                     if sum(len(json.dumps(m, ensure_ascii=False)) for m in messages) > context_chars:
                         return self._result("partial", "The analysis reached the context budget; narrow the question.",
@@ -1311,7 +1312,8 @@ class KnowledgeAgent:
                             diagnostics["repair_outcome"] = "budget_exhausted"
                             return self._repair_fallback(validated, started,
                                 "No steps were left to correct the answer's format or citations.")
-                        catalog = self._citation_catalog(project_id, evidence, candidate, worktree=worktree, scope=scope)
+                        catalog = [] if gone is not None else self._citation_catalog(
+                            project_id, evidence, candidate, worktree=worktree, scope=scope)
                         if not catalog:
                             diagnostics["repair_outcome"] = "missing_evidence"
                             return validated

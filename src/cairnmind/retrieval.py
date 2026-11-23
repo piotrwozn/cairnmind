@@ -643,8 +643,9 @@ class Retriever:
             for rank, hit in enumerate(ranking):
                 key = str(hit["id"])
                 fused.setdefault(key, {**hit, "score": 0.0})["score"] += 1.0 / (60 + rank + 1)
-        # Equal scores: by the id of the chunk or record, then of the source; the cut to the limit follows the same rule.
-        result = sorted(fused.values(), key=lambda hit: (-hit["score"], str(hit["id"]), str(hit.get("source_id"))))[:limit]
+        # Equal scores keep the order the hits came in: full-text chunks, vector chunks, records (the sort is stable),
+        # each ranking being ordered by id at its own ties; the cut to the limit follows the same rule.
+        result = sorted(fused.values(), key=lambda hit: hit["score"], reverse=True)[:limit]
         for hit in result:
             hit.pop("_path", None)
             if hit.get("record_id") and _confirmed_by(hit):
