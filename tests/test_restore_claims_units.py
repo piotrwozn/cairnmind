@@ -167,3 +167,19 @@ def test_the_restore_sentences_have_polish():
     assert "cairnmind workspace stop" in old and "2 confirmed" in old and "1 accepted" in old
     for proof in ("unavailable", "key"):
         assert "cairnmind workspace stop" not in restore_claims.restore_notice(proof, claims)
+    assert "tmux 3.4" in restore_claims.restore_notice("unavailable", claims)
+    # With nothing to keep, no redo is advised (it could change nothing), in both languages.
+    empty = BackupClaims(FILE, AT)
+    for proof in ("unavailable", "no_key"):
+        template, values = restore_claims.notice_item(proof, empty)
+        assert template == restore_claims.RESTORED_NOTHING_TO_KEEP and "run the same restore again" not in template
+        assert CATALOG[template] == restore_claims.MESSAGES[template] and "ponownie" not in tr(template, "pl", **values)
+    # Not "nothing to keep": a person's confirmation only in a revision's snapshot (a redo with the workspace keeps it).
+    revised = BackupClaims(FILE, AT)
+    revised.turn("record_revisions", {"snapshot": record(mark=PERSON)})
+    assert revised.revisions == 1 and revised.confirmations == revised.record_kinds == 0
+    assert restore_claims.notice_item("unavailable", revised)[0] == restore_claims.RESTORED_WITHOUT_WORKSPACE
+    # Confirmed records that already carry an import mark are no person's act: nothing to keep, and the sentence says so.
+    imported = BackupClaims(FILE, AT)
+    imported.turn("records", record(mark=import_mark("memory", "pkg", [], AT, 3)))
+    assert restore_claims.notice_item("unavailable", imported)[0] == restore_claims.RESTORED_NOTHING_TO_KEEP

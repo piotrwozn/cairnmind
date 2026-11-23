@@ -112,3 +112,36 @@ def test_a_pid_that_is_not_the_service_of_this_directory_is_refused(monkeypatch)
     for key, value in SAFE.items():
         monkeypatch.setenv(key, value)
     assert script.main(["--service-pid", str(os.getpid()), "--", "true"]) == 2
+
+
+NOTHING = '{"files": 586, "changed": 0, "unchanged": 586, "read": 0, "graph_unchanged": true}'
+CHANGED = '{"files": 586, "changed": 3, "unchanged": 583, "read": 3, "graph_unchanged": false}'
+
+
+def run_printing(text, capsys, monkeypatch, *flags):
+    for key, value in SAFE.items():
+        monkeypatch.setenv(key, value)
+    code = script.main([*flags, "--", sys.executable, "-c", f"print({text!r})"])
+    return code, capsys.readouterr()
+
+
+def test_an_index_that_changed_nothing_prints_no_row(capsys, monkeypatch):
+    code, captured = run_printing(NOTHING, capsys, monkeypatch)
+    assert code == 3 and "| `" not in captured.out and '"read": 0' in captured.out  # its output is still shown
+    assert "poll_seconds" in captured.err and "settled" in captured.err
+
+
+def test_an_index_that_changed_files_gets_its_row(capsys, monkeypatch):
+    code, captured = run_printing(CHANGED, capsys, monkeypatch)
+    assert code == 0 and captured.out.strip().endswith("| not read | not read |")
+
+
+def test_a_command_that_is_not_an_index_gets_its_row(capsys, monkeypatch):
+    for text in ("hello", "[]", '{"status": "ok"}'):
+        code, captured = run_printing(text, capsys, monkeypatch)
+        assert code == 0 and captured.out.strip().endswith("| not read | not read |")
+
+
+def test_allow_unchanged_prints_the_row_anyway(capsys, monkeypatch):
+    code, captured = run_printing(NOTHING, capsys, monkeypatch, "--allow-unchanged")
+    assert code == 0 and captured.out.strip().endswith("| not read | not read |") and captured.err == ""

@@ -856,6 +856,7 @@ def engine_inspect(ctx: typer.Context):
 @engine_app.command("stop")
 @initialized
 def engine_stop(ctx: typer.Context, as_json: JSON_FLAG = False):
+    """Stop the database engine; a Docker engine's container is removed, the data stays, and `engine start` runs it again."""
     from cairnmind.engine import local_process_recorded, stop_engine
     from cairnmind.engine_docker import container_recorded
     from cairnmind.database_mode import connect_only
