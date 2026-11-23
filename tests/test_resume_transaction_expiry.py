@@ -31,8 +31,8 @@ def transactions(monkeypatch):
     capture = verification.capture_code_state
 
     @contextmanager
-    def counted(self, *, commit=True):
-        with begin(self, commit=commit) as tx:
+    def counted(self, *, commit=True, **more):
+        with begin(self, commit=commit, **more) as tx:
             before = getattr(depth, "value", 0)
             depth.value = before + 1
             try:

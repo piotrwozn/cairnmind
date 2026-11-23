@@ -496,6 +496,7 @@ def release_running_jobs(tx, now: str) -> int:
 def take_over_at(data_dir: Path, note: str | None = None) -> dict:
     """`cairnmind store takeover --yes`: also for a store this release cannot read as a reader."""
     from .arcade import ArcadeError
+    from .restore_staged import RestoreUnfinished
     from .store import Store
     note = valid_note(note)
     store = Store(data_dir, for_takeover=True)
@@ -513,6 +514,8 @@ def take_over_at(data_dir: Path, note: str | None = None) -> dict:
         writer = Store(data_dir)
         with writer.transaction() as tx:
             result["released_jobs"] = release_running_jobs(tx, utc_now())
+    except RestoreUnfinished as exc:  # no takeover again: the way on is the restore the sentence names
+        result["next"] = f"This installation now writes the store, and the store is refused until a restore finishes. {exc}"
     except (ValueError, ArcadeError) as exc:
         result["next"] = f"This installation now writes the store, but this release cannot prepare it: {exc}"[:600]
     return result
@@ -551,11 +554,14 @@ def inspect(settings) -> dict:
     """The writer block of `doctor`: read without starting the engine or preparing the store."""
     from .arcade import ArcadeError
     from .store import Store
+    from .restore_staged import RestoreUnfinished
     from .store_readonly import StoreNotReady
     try:
         store = Store.open_readonly(settings)
         store.installation = installation(settings.data_dir)
         store._writer_lost, store.not_writer = None, None
         return state(store)
+    except RestoreUnfinished as exc:  # the whole sentence: it names the way out, and a switch to this store is refused
+        return {"role": "unknown", "reason": str(exc), "restore_unfinished": True}
     except (StoreNotReady, ArcadeError, ValueError, OSError) as exc:
         return {"role": "unknown", "reason": str(exc)[:300]}

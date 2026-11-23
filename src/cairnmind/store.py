@@ -22,6 +22,7 @@ from .terminal_safe import safe_text
 from .sensitivity import record_sensitivity, source_sensitivity  # noqa: F401
 from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
                   quote_name, update_document, utc_now)
+from .arcade import REQUEST_TIMEOUT
 from .backup_reader import opened_backup
 from .path_spelling import lies_in
 from .store_backup import VECTOR_COLLECTIONS, payload_digest, streamed_backup, streamed_export, write_backup
@@ -300,12 +301,16 @@ class Store:
     # Store(path, for_takeover=True) of a reader whose store this release cannot read: why (see take_over_at).
     not_ready = None
     _for_takeover = False
+    # Store(path, for_restore=True): the only opening that passes the mark of an unfinished restore (restore_staged).
+    _for_restore = False
+    _unfinished_restore = False
     # What the one-time step that marks records confirmed before 0.11.0 did when it ran on this open or the
     # last restore ({"marked", "before_rule", "at"}, confirmation_upgrade, #215); None when it did not run.
     confirmations_before_rule = None
     # After a restore: how many completed embed jobs it set back to pending because the backup brought no vectors
     # (#187); None when the backup brought them or nothing was restored.
     embed_jobs_requeued = None
+    restore_changed = False  # restore_staged: a delete of the restore may have been committed
 
     @classmethod
     def open_readonly(cls, settings: Settings) -> Store:
@@ -325,10 +330,12 @@ class Store:
         from .store_readonly import read_consistently
         return read_consistently(self, read, kinds)
 
-    def __init__(self, data_dir: Path, *, settings: Settings | None = None, for_takeover: bool = False):
+    def __init__(self, data_dir: Path, *, settings: Settings | None = None, for_takeover: bool = False,
+                 for_restore: bool = False):
         from .arcade import ArcadeClient
         from .engine import ensure_engine
         self._for_takeover = bool(for_takeover)
+        self._for_restore = bool(for_restore)
         self.data_dir = Path(data_dir).expanduser().resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         if settings is not None and settings.data_dir.expanduser().resolve() != self.data_dir:
@@ -345,7 +352,21 @@ class Store:
         self.init()
 
     @contextmanager
+    def held(self):
+        """Keep the writer lock across the transactions this thread runs inside, as a restore does (#362): their
+        own ``_lock`` is then this one, and every other process and thread waits."""
+        with self._lock():
+            self._local.lock_held = True
+            try:
+                yield
+            finally:
+                self._local.lock_held = False
+
+    @contextmanager
     def _lock(self):
+        if getattr(self._local, "lock_held", False):
+            yield  # this thread holds it already; a second flock on a new handle would wait for itself
+            return
         with (self.data_dir / "database-writer.lock").open("a") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
             try:
@@ -377,7 +398,8 @@ class Store:
             return self.client.command(sql, params)
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, commit_timeout=REQUEST_TIMEOUT):
+        """``commit_timeout``: seconds the client waits for the commit (a restore's transactions ask for longer)."""
         active = getattr(self._local, "transaction", None)
         if active:
             yield active
@@ -397,7 +419,7 @@ class Store:
         recheck(self)  # one read, only while the role is lost: a person may have taken it back
         if self._writer_lost:
             raise StoreWriterLost(self._writer_lost)
-        with self._lock(), self.client.transaction() as native:
+        with self._lock(), self.client.transaction(commit_timeout=commit_timeout) as native:
             tx = JournalTransaction(native, writer=self.installation.id,
                                     check=lambda head, reader: check_head(self, head, reader))
             self._local.transaction = tx
@@ -547,6 +569,13 @@ class Store:
                 # Another installation writes this database: no schema statement, no upgrade and no write here.
                 self._open_as_reader(writer)
                 return
+            if "devbrain_meta" in types:
+                # A restore that did not finish (#362): no command uses a half-restored store, and nothing runs over it.
+                from .restore_staged import RestoreUnfinished, refusal, unfinished
+                mark = unfinished(self.client)
+                if mark is not None and not (self._for_restore or self._for_takeover):
+                    raise RestoreUnfinished(refusal(mark), mark)
+                self._unfinished_restore = mark is not None
             if writer and named not in (None, self.installation.id):
                 # The row names this installation and the journal head another one: no schema statement and no
                 # write here either, until a person runs the takeover (store_writer.mixed_reason).
@@ -570,6 +599,8 @@ class Store:
             if other:
                 self._open_as_reader(other)
                 return
+        if self._unfinished_restore:
+            return  # the one-time step would write into a store that holds only part of a backup
         # As the writer, once the schema is current: the writer lock is taken again by the transaction.
         from .confirmation_upgrade import mark_confirmed_before_rule
         self.confirmations_before_rule = mark_confirmed_before_rule(self)
@@ -1833,6 +1864,8 @@ class Store:
             tx.command("DELETE FROM embeddings WHERE project_id=:project", {"project": project_id})
 
     def export(self, project_id=None):
+        from .restore_staged import refuse_if_unfinished
+        refuse_if_unfinished(self.client)  # part of a backup is not an export of the store (#362)
         with self.transaction() as tx:
             return self._export_snapshot(tx, project_id, EXPORT_TYPES, 5)
 
@@ -1847,6 +1880,8 @@ class Store:
         return result
 
     def backup(self, destination):
+        from .restore_staged import refuse_if_unfinished
+        refuse_if_unfinished(self.client)  # a backup of part of a restore would pass for a whole one (#362)
         destination = Path(destination).expanduser().resolve()
         if destination.is_dir():
             destination /= f"cairnmind-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid4().hex[:8]}{BACKUP_SUFFIXES[0]}"
@@ -1933,18 +1968,22 @@ class Store:
             raise ValueError("Invalid or corrupt Cairnmind backup") from exc
 
     def restore(self, backup, *, claims=None):
-        """Restore validated data atomically. Stop Cairnmind workers before calling.
+        """Restore validated data as one outcome: the whole backup, or the store as it was. Stop Cairnmind workers
+        before calling. The rows are written in transactions of bounded size, so a failure is undone from the safety
+        copy, and a restore that was cut off leaves a mark that refuses the store until a restore finishes (#362).
 
         With `claims` (restore_claims.BackupClaims) the restore keeps no person's act of the backup: each
         confirmation becomes the backup's claim and accepted record kinds are withdrawn (#214). Without it the
         rows are written as they are; `cairnmind restore` decides by the open workspace's key."""
         # The file is validated in two passes over it before anything changes, and read a third time for
         # the inserts; it is never held in memory whole (#196, backup_reader).
+        from .restore_staged import staged_restore
         from .store_writer import require_writer
-        with opened_backup(Path(backup).expanduser().resolve(), self._validated_backup, RESTORE_TYPES) as source:
+        path = Path(backup).expanduser().resolve()
+        with opened_backup(path, self._validated_backup, RESTORE_TYPES) as source:
             require_writer(self)  # only the writer restores, and the restored data keeps naming it (#70)
-            self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}")
-            self._restore_from(source, claims)
+            # The safety copy, the mark, the bounded transactions and, when one fails, the way back (#362).
+            staged_restore(self, source, path, claims)
         if claims is not None:
             self.confirmations_before_rule = None  # nothing restored is a person's, so nothing is marked as one
             return
@@ -1963,26 +2002,15 @@ class Store:
             self.command(f"CREATE INDEX IF NOT EXISTS ON {quote_name(name)}(id) UNIQUE")
             self.command(f"CREATE PROPERTY {quote_name(name)}.vector IF NOT EXISTS ARRAY_OF_FLOATS")
             self.command(f"CREATE INDEX IF NOT EXISTS ON {quote_name(name)}(vector) LSM_VECTOR METADATA {{dimensions:{dimension},similarity:'COSINE',idPropertyName:'id'}}")
-        with self.transaction() as tx:
-            from .journal import Journal
-            Journal.reset(tx, reason="restore")
-            old_vectors = tx.query("SELECT FROM vector_indexes")
-            for row in old_vectors:
-                if row.get("type_name", "").startswith("vector_"):
-                    tx.command(f"DELETE FROM {quote_name(row['type_name'])}")
-            tx.command("DELETE FROM edges")
-            tx.command("DELETE FROM nodes")
-            for collection in reversed(DOCUMENT_TYPES):
-                tx.command(f"DELETE FROM {quote_name(collection)}")
-            # The rows go in groups of a few hundred per request, with the checks of row by row (#219).
-            from .restore_groups import write_restored
-            write_restored(self, tx, source, claims)
-            self.embed_jobs_requeued = self._requeue_embed_jobs(tx)
+        # Rows are deleted and written in transactions of bounded size, the engine's heap holding a transaction (#362).
+        from .restore_staged import replace
+        self.embed_jobs_requeued = replace(self, source, claims)
 
     @staticmethod
-    def _requeue_embed_jobs(tx):
+    def _requeue_embed_jobs(batches):
         """A backup holds no vectors (#187): set each completed embed job of a current chunk back to pending, in the
-        restore's transaction, and return how many. None when the backup brought vectors, which stay as they are."""
+        restore's transactions, and return how many. None when the backup brought vectors, which stay as they are."""
+        tx = batches.tx
         if tx.query("SELECT id FROM embeddings LIMIT 1"):
             return None
         from .retrieval import json_value  # retrieval imports this module
@@ -1994,8 +2022,9 @@ class Store:
                 first.setdefault(chunk, row["id"])
         ids = list(first.values())
         for start in range(0, len(ids), 500):
-            update_document(tx, "jobs", {"state": "pending", "error": None, "worker": None, "lease_until": None,
-                                         "updated_at": utc_now()}, "id IN :ids", {"ids": ids[start:start + 500]})
+            update_document(batches.tx, "jobs", {"state": "pending", "error": None, "worker": None, "lease_until": None,
+                                                 "updated_at": utc_now()}, "id IN :ids", {"ids": ids[start:start + 500]})
+            batches.wrote(len(ids[start:start + 500]))
         return len(ids)
 
     def forget_project(self, project_id):
