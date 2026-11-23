@@ -6,9 +6,9 @@ import threading
 import pytest
 from test_index_batching import code_tree, counted, dump, graph_row_by_row, rewrite
 
-import cairnmind.store as store_module
-from cairnmind import ingest
+from cairnmind import graph_transactions, ingest
 from cairnmind.arcade import ArcadeError
+from cairnmind.code_graph import code_graph_pending
 from cairnmind.journal import Journal, JournalTransaction
 from cairnmind.store import GRAPH_ROWS_PER_REQUEST, Store
 
@@ -53,9 +53,16 @@ def misdirected(store, pid):
                        "AND (out.id <> from_id OR in.id <> to_id OR out IS NULL OR in IS NULL)", {"p": pid})
 
 
-def assert_same(grouped, first, single, second, step):
+def assert_same(grouped, first, single, second, step, transactions=False):
+    """``transactions``: the grouped graph was written in several transactions. Each reports one graph reset, and the
+    project's fingerprint is cleared in the first and set in the last, so those two events are counted by transaction."""
     one, other = dump(grouped, first), dump(single, second)
     for part in one:
+        if part == "events" and transactions:
+            def without(events):
+                return [item for item in events if item[0] not in (("graph", "reset"), ("project", "upsert"))]
+            assert without(one[part]) == without(other[part]) and ("graph", "reset") in dict(one[part]), (step, part)
+            continue
         assert one[part] == other[part], (step, part)
     assert one["edges"], step
     assert misdirected(grouped, first) == [], step
@@ -214,7 +221,7 @@ def test_removed_graph_nodes_are_deleted_a_group_per_request(tmp_path, monkeypat
     (root / "module_big.py").unlink()
     (root / "module_04.py").unlink()
     with monkeypatch.context() as patch:
-        patch.setattr(store_module, "GRAPH_ROWS_PER_REQUEST", 40)  # several groups from a small tree
+        patch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 40)  # several groups from a small tree
         seen = counted(patch)
         ingest.index_project(store, pid)
     removed = before - len(store.query("SELECT id FROM nodes WHERE project_id=:p", {"p": pid}))
@@ -282,13 +289,13 @@ def test_grouped_removal_stores_the_row_by_row_graph_and_keeps_linked_vertices(t
         count = lambda pid, store: len(store.query("SELECT id FROM nodes WHERE project_id=:p", {"p": pid}))  # noqa: E731
         before = count(first, grouped)
         with monkeypatch.context() as patch:
-            patch.setattr(store_module, "GRAPH_ROWS_PER_REQUEST", 7)  # many groups, the kept vertices among them
+            patch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 7)  # many groups, the kept vertices among them
             seen = counted(patch)
             ingest.index_project(grouped, first)
         with monkeypatch.context() as patch:
             all_row_by_row(patch)
             ingest.index_project(single, second)
-        assert_same(grouped, first, single, second, step)
+        assert_same(grouped, first, single, second, step, transactions=True)
         assert not [text for text in seen if text.startswith(ROW_BY_ROW_REMOVAL)], step
         if not forget:
             assert before - count(first, grouped) > 3 * 7, step
@@ -327,21 +334,24 @@ def test_a_failure_in_the_middle_of_the_removal_leaves_the_previous_graph_intact
                 raise RuntimeError("the connection dropped")
         return result
     with monkeypatch.context() as patch:
-        patch.setattr(store_module, "GRAPH_ROWS_PER_REQUEST", 20)
+        patch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 20)
         patch.setattr(JournalTransaction, "command", failing)
         patch.setattr(ingest, "_build_graph", building)
         with pytest.raises(RuntimeError, match="connection dropped"):
             ingest.index_project(grouped, first)
     assert len(deletes) == 2 and all(deletes)
-    assert before["graph"]["nodes"] and graph(grouped, first) == before["graph"]
+    # A group is a transaction's rows now (#402), so the write is in several transactions (#377): what an earlier one
+    # committed stays, and the graph is reported as not built until the next run completes it.
+    assert before["graph"]["nodes"]
+    assert code_graph_pending(grouped.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": first})[0])
     again = grouped.query("SELECT out.id AS o, in.id AS i FROM edges WHERE project_id=:p", {"p": first})
-    assert sorted((row["o"], row["i"]) for row in again) == sorted((row["o"], row["i"]) for row in before["traversed"])
+    assert all(row["o"] and row["i"] for row in again)
 
     ingest.index_project(grouped, first)  # the next run completes it
     with monkeypatch.context() as patch:
         all_row_by_row(patch)
         ingest.index_project(single, second)
-    assert_same(grouped, first, single, second, "after the failed run")
+    assert_same(grouped, first, single, second, "after the failed run", transactions=True)
 
 
 def test_a_removal_group_the_database_did_not_delete_in_full_fails_its_transaction(tmp_path, monkeypatch):

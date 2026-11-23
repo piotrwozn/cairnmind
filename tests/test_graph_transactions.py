@@ -112,8 +112,8 @@ def test_the_wait_for_the_vertices_runs_inside_indexing_before_the_edges_and_the
     assert graph(split, second) == graph(whole, first)
 
 
-def synthetic(store, tmp_path, shift=0):
-    """The graph step's input for 3 files of 150 symbols; ``shift`` moves every line, so every symbol and call is new."""
+def synthetic(store, tmp_path, shift=0, per_file=150):
+    """The graph step's input for 3 files of ``per_file`` symbols; ``shift`` moves every line, so every symbol and call is new."""
     folder = tmp_path / "folder"
     folder.mkdir(exist_ok=True)
     project = store.add_project("synthetic", folder)["id"]
@@ -125,8 +125,8 @@ def synthetic(store, tmp_path, shift=0):
     for number in range(3):
         path = folder / f"m{number}.py"
         symbols = [{"name": f"f{i}", "kind": "function", "line_start": 2 * i + 1 + shift, "line_end": 2 * i + 2 + shift}
-                   for i in range(150)]
-        calls = [{"name": f"f{(i * 7 + 1) % 150}", "line": 2 * i + 1 + shift} for i in range(0, 150, 4)]
+                   for i in range(per_file)]
+        calls = [{"name": f"f{(i * 7 + 1) % per_file}", "line": 2 * i + 1 + shift} for i in range(0, per_file, 4)]
         indexed[path] = {"source": {"id": f"source-{number}", "uri": f"file://{path}", "kind": "file"}, "root": folder,
                          "analysis": {"symbols": symbols, "imports": [], "calls": calls}}
     return project, indexed
@@ -168,6 +168,38 @@ def test_a_full_write_over_a_graph_that_changed_deletes_only_the_edges_that_went
     assert 0 < kept < 10  # the edge of each source to its file does not name a line
     assert store.query("SELECT count(*) AS n FROM edges WHERE project_id=:p", {"p": project})[0]["n"] == second["edges"]
     assert store.query("SELECT count(*) AS n FROM edges WHERE out IS NULL OR in IS NULL")[0]["n"] == 0
+
+
+def test_a_full_write_over_a_graph_whose_vertices_all_went_removes_them_in_few_requests(tmp_path, monkeypatch):
+    # The old vertices went 250 to a request, each request scanning the project's index (#402): 1,800 of them took
+    # 7 requests of their own. In groups of a transaction's rows they take one.
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path, per_file=600)
+    ingest._build_graph(store, project, indexed)
+    monkeypatch.setattr(ingest, "parser_identity", lambda: "another-parser")
+    _, moved = synthetic(store, tmp_path, shift=10000, per_file=600)
+    requests = counted_requests(monkeypatch)
+    second = ingest._build_graph(store, project, moved)
+    assert second["graph_written"]["nodes"] > 1800
+    # 60 requests now, 74 with the vertices going 250 to a request; the rest is the writes of the new rows.
+    assert len(requests) <= 66, len(requests)
+    assert store.query("SELECT count(*) AS n FROM nodes WHERE project_id=:p AND kind='symbol'", {"p": project})[0]["n"] == 1800
+
+
+def test_a_vertex_delete_that_removes_fewer_rows_than_asked_fails_the_write_and_leaves_the_graph_not_built(tmp_path, monkeypatch):
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path)
+    ingest._build_graph(store, project, indexed)
+    monkeypatch.setattr(ingest, "parser_identity", lambda: "another-parser")
+    monkeypatch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 100)  # the fingerprint is cleared in a transaction that commits
+    _, moved = synthetic(store, tmp_path, shift=1000)
+    real = JournalTransaction.command
+    monkeypatch.setattr(JournalTransaction, "command", lambda self, sql, params=None: real(
+        self, sql, {**params, "ids": params["ids"][:-1]}) if sql.startswith("DELETE FROM nodes") else real(self, sql, params))
+    with pytest.raises(RuntimeError, match="every graph vertex"):
+        ingest._build_graph(store, project, moved)
+    row = store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0]
+    assert code_graph_pending(row)
 
 
 def test_the_inspector_graph_says_that_the_code_graph_is_not_built_while_it_is_being_written(tmp_path):

@@ -15,6 +15,7 @@ import threading
 import time
 from uuid import uuid4
 
+from . import graph_transactions
 from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
 from .first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN, UNKNOWN_PROJECT_NEXT
 from .terminal_safe import safe_text
@@ -1137,10 +1138,14 @@ class Store:
         The same rows go as when each one was checked and deleted on its own: a vertex that an edge
         still names (a knowledge record's relationship, say) is kept, so that edge never dangles.
         A group the database did not delete in full fails the transaction, which then leaves the graph as it was.
+        The engine counts the vertices a DELETE removes, not the edges that go with them (measured, #402).
         """
         identifiers = sorted({identifier for identifier in identifiers if isinstance(identifier, str)})
-        for offset in range(0, len(identifiers), GRAPH_ROWS_PER_REQUEST):
-            part = identifiers[offset:offset + GRAPH_ROWS_PER_REQUEST]
+        # A transaction's rows in one request: the engine scans the project's index once per DELETE, so groups of 250
+        # made the removal of a replaced graph grow with the square of its size (#402). The count is vertices only.
+        group = graph_transactions.ROWS_PER_TRANSACTION
+        for offset in range(0, len(identifiers), group):
+            part = identifiers[offset:offset + group]
             named = set()
             for row in tx.query("SELECT from_id,to_id FROM edges WHERE from_id IN :ids OR to_id IN :ids", {"ids": part}):
                 named.update((row.get("from_id"), row.get("to_id")))
