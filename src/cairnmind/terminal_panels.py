@@ -403,6 +403,8 @@ class SidebarApp(BasePanel):
         self.show_page("projects")
         self.set_interval(.3, self._poll_workspace)
         self.set_interval(3, self.refresh_sidebar)
+        from .terminal_setup_change import show_last_outcome  # the end of a change nobody watched, once (#339)
+        show_last_outcome(self)
         self.start_panel()
 
     def on_resize(self, event: Resize):
@@ -1260,8 +1262,15 @@ class SidebarApp(BasePanel):
         values = await asyncio.to_thread(store.load)
         choice = await self.push_screen_wait(ChoiceModal("Settings", [
             ("Language", "language"), ("Layout", "view"), ("Reduce motion", "reduced_motion"),
-            ("Activity column", "activity_column")]))
+            ("Activity column", "activity_column"), ("Storage and models", "topology")]))
         if not choice:
+            return
+        if choice == "topology":  # a read of the running service: where storage and models run (#74)
+            from .terminal_setup import open_view
+            try:
+                await open_view(self)
+            except (OSError, ValueError, RuntimeError) as exc:
+                self.notice(exc)
             return
         options = [("English", "en"), ("Polski", "pl")] if choice == "language" else (
             [("Focus", "focus"), ("Cockpit", "cockpit")] if choice == "view" else [("On", "on"), ("Off", "off")])

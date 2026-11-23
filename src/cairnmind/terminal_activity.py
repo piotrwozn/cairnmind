@@ -105,6 +105,7 @@ class ActivityApp(BasePanel):
         self._last_fetch = 0.0
         self._refresh_timer = self._journal_timer = None
         self._stream_down = False
+        self.down_reason = None  # the sentence of a change of setup, while the service is stopped for it (#339)
         self._payloads = {"activity-main": {}, "activity-notices": {}}
         self._signatures = {}
 
@@ -202,6 +203,10 @@ class ActivityApp(BasePanel):
                 return  # an answer for the project shown before
             down = isinstance(got.get("tasks"), BaseException) or isinstance(got.get("stage"), (BrokerUnreachable, OSError))
             self.status = "unavailable" if down else "ok"
+            # A change of setup that stopped the service on purpose is said, not "unavailable" (#339).
+            from .terminal_i18n_messages import setup_mark_text
+            self.down_reason = (setup_mark_text(getattr(got.get("tasks"), "detail", None), self.t)
+                                if down else None)
             if isinstance(got.get("tasks"), dict):
                 self.tasks = items_of(got["tasks"])
                 total = got["tasks"].get("total")
@@ -302,6 +307,9 @@ class ActivityApp(BasePanel):
     def _plan_rows(self, width, small):
         rows = [self._title("Plan")]
         if self.status in {"loading", "unavailable"}:  # said once here; Tasks shows a dash
+            if self.down_reason:
+                lines = textwrap.wrap(self.down_reason, max(8, width - 2), break_on_hyphens=False) or [""]
+                return rows + [(styled("\n".join("  " + line for line in lines), "muted"), None)]
             return rows + [self._sentence("Loading…" if self.status == "loading" else "Memory service unavailable; retrying.", width)]
         stage = self.stage or {}
         plan = stage.get("plan") if isinstance(stage.get("plan"), dict) else None
