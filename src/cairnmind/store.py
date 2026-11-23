@@ -33,8 +33,8 @@ SCHEMA_VERSION = 4
 LOOKUP_INDEXES = (("chunks", "source_id"), ("nodes", "source_id"), ("edges", "source_id"), ("edges", "from_id"),
                   ("edges", "to_id"), ("embeddings", "source_id"), ("embeddings", "chunk_id"), ("sources", "uri"),
                   ("record_revisions", "record_id"), ("check_runs", "task_id"), ("session_events", "session_id"),
-                  ("resume_packets", "session_id"))
-LOOKUP_INDEX_SET = 1
+                  ("resume_packets", "session_id"), ("nodes", "kind"))  # kind: the definitions of an answer read 17 % of the nodes (#408)
+LOOKUP_INDEX_SET = 2
 # Graph rows written by one request of Store.write_graph (issue #167).
 GRAPH_ROWS_PER_REQUEST = 250
 KINDS = {"decision", "task", "fact", "constraint", "question", "preference", "checkpoint"}

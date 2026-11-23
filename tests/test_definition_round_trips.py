@@ -1,8 +1,8 @@
 """The definitions of an answer and the files it checks (issue #408).
 
-The definitions listed every current source of the project again and read the symbol nodes once per kind of match; a
-file that both searches returned was checked on disk twice. Now one read serves every kind, and the first check of a
-file serves the later ones of the same answer.
+The definitions listed every current source of the project and sent the list with each read of the symbol nodes; a
+file that both searches returned was checked on disk twice. Now the sources of the rows are read together, and the
+first check of a file serves the later ones of the same answer.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def test_the_definitions_of_an_answer_take_a_few_requests_of_which_none_lists_th
     found = agent._definitions(project["id"], question, hits, {})
     assert found and any("5102" in item["text"] for item in found)
     node_reads = [sql for sql in requests_made if "FROM nodes" in sql]
-    assert len(node_reads) == 1, node_reads  # one read for every kind of match
+    assert len(node_reads) <= 4 and not any("source_id IN" in sql for sql in node_reads), node_reads  # one per kind
     assert not any("FROM sources" in sql and "metadata.root AS root" in sql
                    for sql in requests_made), requests_made  # the list of sources
     print(f"definitions: {len(requests_made)} requests for {len(found)} definitions")
@@ -62,3 +62,13 @@ def test_a_file_that_failed_its_check_fails_the_same_way_the_second_time(workspa
     assert agent._hits([hit], project["id"], {}, None, "cockpit", False, checked=checked) == []
     assert agent._hits([hit], project["id"], {}, None, "cockpit", False, checked=checked) == []
     assert len(checks) == 1
+
+
+def test_a_kind_with_more_rows_than_the_read_takes_gives_the_same_definitions(workspace, monkeypatch):  # noqa: F811
+    store, project, settings, _root = _project(workspace)
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    question = "On which port does the cockpit listen by default?"
+    hits = [{"source_id": "none", "text": 'getattr(settings, "cockpit_port", 1)'}]
+    narrow = [item["text"] for item in agent._definitions(project["id"], question, hits, {})]
+    monkeypatch.setattr("cairnmind.definitions.SCAN_ROWS", 1)  # every kind is read again, in the worktree's sources
+    assert narrow and [item["text"] for item in agent._definitions(project["id"], question, hits, {})] == narrow

@@ -57,7 +57,7 @@ MAX_DEFINITIONS = 4
 MAX_DEFINITION_ATTEMPTS = 8
 MAX_NAMES = 64
 MAX_ROWS = 200  # candidate definitions read per question, after the worktree filter
-SCAN_ROWS = 1000  # rows of the one read for all the kinds of match; a wider read is made kind by kind
+SCAN_ROWS = 1000  # rows of the read of one kind of match before the worktree filter; a wider read is made in the sources
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?")
 _KIND_ORDER = {"constant": 0, "field": 0, "parameter": 1, "function": 2, "method": 2, "class": 3}
 # Words a setting's name carries without naming what it is about (MAX_REPORTED, num_ctx).
@@ -251,30 +251,27 @@ def _symbol_rows(store, retriever, project_id: str, root, roots, kinds: list) ->
     """For each kind of match ``(condition, parameters)``, its first MAX_ROWS symbol rows of the worktree, ordered by
     label, path and line.
 
-    Every condition reads each symbol's metadata, which costs most of the time of a read: one read matches all the kinds
-    at once, each row saying which it matches (``k0``, ``k1``...), and the rows are sorted out here, in the same order.
-    The sources of the rows are read together and the worktree filter is applied here, before the bound. A read of
-    more than SCAN_ROWS rows is too wide to sort out here: then each kind is read alone, in the worktree's sources.
+    A kind is read without the list of the worktree's sources, in at most SCAN_ROWS rows; their sources are read
+    together and the worktree filter is applied here, before the bound, which gives the rows the list gave. A kind
+    with more rows than that is read again in the worktree's sources, as the list is then the cheaper way.
     """
-    if not kinds:
-        return []
-    params = {"project": project_id}
-    for _, own in kinds:
-        params.update(own)
-    flags = "".join(f", ({where}) AS k{index}" for index, (where, _) in enumerate(kinds))
-    select = "SELECT id,label,source_id,metadata{} FROM nodes WHERE project_id=:project AND is_current=true AND kind='symbol' AND "
-    order = "ORDER BY label, metadata.path, metadata.line_start, id"
-    rows = store.query(select.format(flags) + "(" + " OR ".join(f"({where})" for where, _ in kinds) + f") {order} LIMIT {SCAN_ROWS}",
-                       params)
-    if len(rows) >= SCAN_ROWS:
-        eligible = sorted(retriever._source_ids(project_id, root, roots))
-        return [store.query(select.format("") + f"source_id IN :eligible AND ({where}) {order} LIMIT {MAX_ROWS}",
-                            {**own, "project": project_id, "eligible": eligible}) for where, own in kinds]
-    sources = store.get_sources({row["source_id"] for row in rows if isinstance(row.get("source_id"), str)})
-    bindings = memory_bindings(store, project_id)
-    scoped = [row for row in rows if row.get("source_id") in sources
-              and retriever._in_scope(sources[row["source_id"]], project_id, root, roots, bindings)]
-    return [[row for row in scoped if row.get(f"k{index}")][:MAX_ROWS] for index in range(len(kinds))]
+    out, sources, bindings, eligible = [], {}, None, None
+    for where, own in kinds:
+        select = ("SELECT id,label,source_id,metadata FROM nodes WHERE project_id=:project AND is_current=true "
+                  "AND kind='symbol' AND ")
+        order = "ORDER BY label, metadata.path, metadata.line_start, id"
+        rows = store.query(select + f"({where}) {order} LIMIT {SCAN_ROWS}", {**own, "project": project_id})
+        if len(rows) >= SCAN_ROWS:
+            eligible = sorted(retriever._source_ids(project_id, root, roots)) if eligible is None else eligible
+            out.append(store.query(select + f"source_id IN :eligible AND ({where}) {order} LIMIT {MAX_ROWS}",
+                                   {**own, "project": project_id, "eligible": eligible}))
+            continue
+        sources.update(store.get_sources({row["source_id"] for row in rows if isinstance(row.get("source_id"), str)}
+                                         - sources.keys()))
+        bindings = memory_bindings(store, project_id) if bindings is None else bindings
+        out.append([row for row in rows if row.get("source_id") in sources and retriever._in_scope(
+            sources[row["source_id"]], project_id, root, roots, bindings)][:MAX_ROWS])
+    return out
 
 
 def find_definitions(store, retriever, project_id: str, question: str, texts: list[str], worktree=None) -> list[dict]:
@@ -286,7 +283,7 @@ def find_definitions(store, retriever, project_id: str, question: str, texts: li
     of question words (``name_word_pattern``), and of names with one question word in a file or
     class with one (``context_patterns``). Every bound applies after the worktree filter and
     to one kind of match, so one kind cannot crowd out another, and the same index gives the same
-    rows; one read for all the kinds (see ``_symbol_rows``). A row is
+    rows; one read for each kind (see ``_symbol_rows``). A row is
     ``{"node_id", "source_id", "symbol", "path", "named", "relevance", ...}`` with ``path``
     relative to the worktree root.
     """
