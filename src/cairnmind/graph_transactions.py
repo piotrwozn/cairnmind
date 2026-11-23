@@ -12,10 +12,9 @@ next indexing replaces the whole graph.
 
 The engine's unique index on ``nodes.id`` does not find vertices that were committed a moment ago while the engine
 compacts the index (seen on ArcadeDB 26.11.1; seconds, and not with compaction switched off). ``await_vertices``
-reads the vertices back by that index before the edges that name them are written.
-
-This is the small local counterpart of ``Batches`` in restore_staged.py (#362): when both are on main they are to be
-one helper.
+reads the vertices back by that index before the edges that name them are written; the restore (#362) commits, waits with no
+transaction open and opens a new one before it writes the edges of each group (a transaction that has missed a vertex
+keeps missing it, whatever is committed after), and shares ``BoundedTransactions`` with the indexer.
 """
 from __future__ import annotations
 
@@ -27,23 +26,33 @@ ROWS_PER_TRANSACTION = 20000
 VERTEX_WAIT = 60.0  # seconds the engine's index may take to find the vertices that were committed
 
 
-class GraphTransactions:
-    """The open transaction of a graph write; ``wrote`` counts rows into it and, at the bound, commits it."""
+class BoundedTransactions:
+    """The open transaction of a write; ``wrote`` counts what went into it and, at the bound, commits it.
 
-    def __init__(self, store, project_id):
-        self.store, self.project_id, self.commits, self._stack = store, project_id, 0, None
+    The one helper of the indexer's graph write (``GraphTransactions``) and of the restore's (``restore_staged.Batches``,
+    #362): each says in ``begin`` how the journal is reset, in ``full`` when to commit, and in ``timeout`` what the
+    commit waits (the restore's 5,000 rows, 8 MiB or 5 s against 20,000 rows here: the client's wait is the reason)."""
+    timeout = ()  # arguments of Store.transaction
+
+    def __init__(self, store):
+        self.store, self.commits, self._stack = store, 0, None
         self.open()
 
+    def begin(self, tx):
+        raise NotImplementedError
+
+    def full(self):
+        raise NotImplementedError
+
     def open(self):
-        from .journal import Journal
         stack = ExitStack()
         try:
-            self.tx = stack.enter_context(self.store.transaction())
-            Journal.touch(self.tx, self.project_id, "graph", op="reset")
+            self.tx = stack.enter_context(self.store.transaction(*self.timeout))
+            self.begin(self.tx)
         except BaseException:
             stack.close()
             raise
-        self._stack, self.rows = stack, 0
+        self._stack, self.rows, self.size, self.opened = stack, 0, 0, time.monotonic()
 
     def commit(self):
         """Commit the open transaction; none is open afterwards."""
@@ -52,9 +61,10 @@ class GraphTransactions:
             stack.close()
             self.commits += 1
 
-    def wrote(self, rows):
+    def wrote(self, rows, size=0):
         self.rows += rows
-        if self.rows >= ROWS_PER_TRANSACTION:
+        self.size += size
+        if self.full():
             self.commit()
             self.open()
 
@@ -68,12 +78,30 @@ class GraphTransactions:
                 pass
 
 
-def await_vertices(store, identifiers):
-    """Return when a new transaction finds every vertex of ``identifiers`` by id; fail after ``VERTEX_WAIT`` seconds."""
+class GraphTransactions(BoundedTransactions):
+    """The graph write of one project's indexing: its journal reset is the project's graph, its bound the rows."""
+
+    def __init__(self, store, project_id):
+        self.project_id = project_id
+        super().__init__(store)
+
+    def begin(self, tx):
+        from .journal import Journal
+        Journal.touch(tx, self.project_id, "graph", op="reset")
+
+    def full(self):
+        return self.rows >= ROWS_PER_TRANSACTION
+
+
+def await_vertices(store, identifiers, *timeout):
+    """Return when a new transaction finds every vertex of ``identifiers`` by id; fail after ``VERTEX_WAIT`` seconds.
+
+    Call it with no transaction open: inside one, the transaction is reused and keeps missing what it missed.
+    ``timeout`` is what the commit of each read waits (arguments of Store.transaction)."""
     missing, deadline = sorted(identifiers), time.monotonic() + VERTEX_WAIT
     while missing:
         still = []
-        with store.transaction() as tx:
+        with store.transaction(*timeout) as tx:
             for offset in range(0, len(missing), 1000):
                 part = missing[offset:offset + 1000]
                 found = {row["id"] for row in tx.query("SELECT id FROM nodes WHERE id IN :ids", {"ids": part})}

@@ -152,11 +152,15 @@ def _pasteable(message: str) -> str:
     writes to the store, so pasting it bare would register the folder in another installation. Other commands a
     refusal names (`cairnmind init`, `cairnmind serve`) are printed as they are."""
     arguments = _data_dir_arguments(_INVOCATION.get("data_dir"))
-    if not arguments or "`cairnmind project root " not in message:
+    if not arguments:
         return message
     import shlex
     from cairnmind.terminal_safe import safe_text
-    return message.replace("`cairnmind project root ", f"`cairnmind {safe_text(shlex.join(arguments))} project root ")
+    # `cairnmind restore` (the refusal of an unfinished restore, #362) and `cairnmind store takeover` replace or take
+    # over a whole store: pasted bare they would act on the default installation.
+    for command in ("project root ", "restore ", "store takeover "):
+        message = message.replace(f"`cairnmind {command}", f"`cairnmind {safe_text(shlex.join(arguments))} {command}")
+    return message
 
 
 def _json_file(path: Path):
@@ -191,10 +195,11 @@ def _os_error_text(exc: OSError) -> str:
 _NOTICES_SHOWN: set[str] = set()
 
 
-def store_for(settings: Settings, *, notice: bool = True):
-    """The full store. notice=False for a command that only reads it on a reader, as backup and export do."""
+def store_for(settings: Settings, *, notice: bool = True, for_restore: bool = False):
+    """The full store. notice=False for a command that only reads it on a reader, as backup and export do.
+    for_restore=True opens a store that carries the mark of an unfinished restore, as only `restore` does (#362)."""
     from cairnmind.store import Store
-    store = Store(settings.data_dir)
+    store = Store(settings.data_dir, for_restore=for_restore)
     if store.not_writer and notice:
         # Another installation writes this database (#70): reads work, every write is refused with this reason.
         typer.echo(f"Cairnmind: {store.not_writer}", err=True)
@@ -297,12 +302,13 @@ def last_log_line(path: Path) -> str:
     """The last line of a log, bounded and with control characters replaced: what a stopped process said."""
     try:
         with path.open("rb") as handle:
-            handle.seek(max(0, path.stat().st_size - 4096))
+            handle.seek(max(0, path.stat().st_size - 8192))
             lines = [line for line in handle.read().decode("utf-8", "replace").splitlines() if line.strip()]
     except OSError:
         return f"see {path}"
     text = lines[-1] if lines else f"see {path}"
-    return "".join(char if char.isprintable() else "?" for char in text)[:500]
+    # Long enough for the refusal of an unfinished restore (#362), whose last words are the way out.
+    return "".join(char if char.isprintable() else "?" for char in text)[:2000]
 
 
 from cairnmind.service_token import PORT_ADVICE as _PORT_ADVICE, foreign_service_text, refused_token  # noqa: E402
@@ -937,6 +943,8 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["coding_profiles"] = coding_profiles_status(ctx.obj)
     from cairnmind.record_kinds import doctor_view
     result["projects"] = None  # how many are registered; None when the store cannot be read
+    result["restore_unfinished"] = None  # the mark of a restore that did not finish (#362); never None when unknown
+    from cairnmind.restore_staged import RestoreUnfinished
     result["project_folders"] = None  # the folders this machine cannot read, by project (#371); None likewise
     try:
         # What a person accepted as technical, per project, and how to withdraw it (#210).
@@ -945,7 +953,13 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         result["projects"] = len(store.list_projects())
         from cairnmind.project_folders import unavailable
         result["project_folders"] = unavailable(store)
+    except RestoreUnfinished as exc:
+        # A required thing is missing: the store holds part of a backup. The sentence names the way out.
+        result["restore_unfinished"] = exc.mark or {"unreadable": True}
+        blockers.append(str(exc))
+        result.setdefault("accepted_record_kinds", {"unavailable": "RestoreUnfinished"})
     except Exception as exc:  # noqa: BLE001 - doctor reports a store it cannot read, it does not stop
+        result["restore_unfinished"] = {"unavailable": type(exc).__name__}
         result.setdefault("accepted_record_kinds", {"unavailable": type(exc).__name__})
     from cairnmind.topology import topology
     # From what doctor found above, so it asks nothing more (#74): first, so the JSON reads top-down.
@@ -1468,7 +1482,7 @@ def store_prune_backups(
         yes: Annotated[bool, typer.Option("--yes", help="Delete without asking again.")] = False):
     """Delete old safety backups (before-schema-*, before-restore-*), keeping the newest K of each kind.
 
-    Shows what it would delete and asks first. Only a person in their own terminal can run it; scheduled backups and backups you named are never touched. Starts no engine (#190).
+    Shows what it would delete and asks first. Only a person in their own terminal can run it; scheduled backups and backups you named are never touched. Starts no engine (#190): a before-restore-* copy is deleted only while the engine answers (`cairnmind engine start`), because the mark of an unfinished restore is read from it (#362).
     """
     from cairnmind.confirmation import person_at_terminal
     from cairnmind.store_prune import delete_backups, prune_plan
@@ -1477,9 +1491,25 @@ def store_prune_backups(
     if not person_at_terminal():
         refuse("Only a person can delete safety backups: run this command in your own terminal, outside a "
                "coding session, with input and output not piped or redirected. Nothing was deleted.")
+    said = {}
+    if any(entry["kind"] == "before_restore" for entry in plan["delete"]):
+        # A copy that the mark of an unfinished restore names is the only way back, however old it is (#362).
+        # shortcut: no writer lock, so with --keep 0 a restore that has just written its copy but not yet its mark can
+        # lose it here (it then fails closed as NO_UNDO); take database-writer.lock here if that ever matters.
+        from cairnmind.store_prune import (KEPT_FOR_A_RESTORE, KEPT_FOR_AN_UNKNOWN_MARK, keep_what_a_restore_names,
+                                           named_by_a_restore)
+        from cairnmind.terminal_i18n import tr
+        from cairnmind.terminal_safe import safe_text
+        named = named_by_a_restore(ctx.obj)
+        plan, held = keep_what_a_restore_names(plan, named)
+        if held:
+            text = KEPT_FOR_AN_UNKNOWN_MARK if isinstance(named, str) else KEPT_FOR_A_RESTORE
+            values = {"names": ", ".join(safe_text(name) for name in held), "reason": safe_text(str(named))}
+            said = {"kept_for_an_unfinished_restore": held, "note": tr(text, "en", **values),
+                    "note_pl": tr(text, "pl", **values)}
     shown = {"directory": plan["directory"], "keep": keep, "delete_bytes": plan["delete_bytes"],
              "delete": [{key: entry[key] for key in ("name", "kind", "bytes", "modified")} for entry in plan["delete"]],
-             "kept": [entry["name"] for entry in plan["kept"]]}
+             "kept": [entry["name"] for entry in plan["kept"]], **said}
     if not plan["delete"]:
         output({**shown, "deleted": []})
         return
@@ -2653,7 +2683,7 @@ def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
                           "Run cairnmind stop first; restoring requires a stopped service"):
         from cairnmind.restore_claims import checked_restore
         # The proof is read once, before anything changes; only "key" keeps a person's acts (#214).
-        outcome = checked_restore(ctx.obj, source, lambda: store_for(ctx.obj))
+        outcome = checked_restore(ctx.obj, source, lambda: store_for(ctx.obj, for_restore=True))
     for key in ("notice", "vectors_notice"):
         notice = outcome.pop(key, None)
         if notice:

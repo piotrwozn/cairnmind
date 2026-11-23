@@ -79,7 +79,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_ended_pane_text",
     "test_short_answers", "test_person_acts_consent", "test_workspace_setup_screen",
     "test_setup_mark", "test_setup_change", "test_terminal_setup_change", "test_project_forget_workspace",
-    "test_server_mode",
+    "test_server_mode", "test_restore_messages",
 })
 
 TMUX_MODULES = frozenset({
@@ -115,6 +115,8 @@ LEFT_OUT_ON_A_SERVER = {
         "its evaluation runs create databases of their own name, which a connect-only installation never creates",
     "test_injection_evaluation":
         "its evaluation runs create and drop databases of their own name, which a connect-only installation never does",
+    "test_restore_size":
+        "starts an engine of its own with the default heap, which a run against a server does not own",
     "test_arcade::test_a_request_the_test_engine_does_not_answer_says_what_it_waited_for":
         "expects the unavailable message of a managed engine, which a connect-only installation words otherwise",
     "test_integrations::test_doctor_reports_arcadedb_without_lifecycle_work_or_credentials":
@@ -335,6 +337,7 @@ def pytest_configure(config):
     global MCP_FIXTURE
     config.addinivalue_line("markers", "arcade: needs the real pinned ArcadeDB engine (Java 21)")
     config.addinivalue_line("markers", "tmux: drives a real tmux server")
+    config.addinivalue_line("markers", "slow_size: minutes on an engine of its own; run only by `-m slow_size` (#362)")
     config.addinivalue_line("markers", "unproven: a person's act is not proven, as a token holder's request is (#214)")
     config.addinivalue_line("markers", "no_schema_template: every database of the test is built from nothing")
     config.addinivalue_line("markers", "exclusive: under xdist, runs while no other test of the run runs")
@@ -368,6 +371,11 @@ def in_shard(nodeid: str, index: int, count: int) -> bool:
 
 def pytest_collection_modifyitems(config, items):
     server = server_under_test()
+    if "slow_size" not in (config.getoption("markexpr") or ""):  # only `-m slow_size` runs these
+        dropped = [item for item in items if item.get_closest_marker("slow_size")]
+        if dropped:
+            items[:] = [item for item in items if item not in dropped]
+            config.hook.pytest_deselected(items=dropped)
     for item in items:
         module = Path(str(item.fspath)).stem
         reason = server and left_out_reason(module, getattr(item, "originalname", item.name))

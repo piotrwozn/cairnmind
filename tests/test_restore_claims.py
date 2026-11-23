@@ -17,6 +17,7 @@ from cairnmind.inspector import Inspector
 from cairnmind.memory_acts import confirm_plan
 from cairnmind.plans import PlanManager
 from cairnmind.restore_claims import BackupClaims
+from cairnmind.restore_staged import RestoreFailed
 from cairnmind.sql import update_document
 from cairnmind.store import Store
 
@@ -185,7 +186,7 @@ def test_a_failure_in_the_middle_leaves_the_store_as_it_was(world, monkeypatch):
         return turn(self, collection, row)
 
     monkeypatch.setattr(BackupClaims, "turn", failing)
-    with pytest.raises(RuntimeError, match="second record"):
+    with pytest.raises(RestoreFailed, match="second record.*put back as it was before"):
         world.store.restore(world.backup, claims=BackupClaims(world.backup.name))
     assert comparable(world.store.export()) == before
     assert confirmation_of(world.row(world.reviewed))["by"] == "person"

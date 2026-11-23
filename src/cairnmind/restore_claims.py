@@ -147,6 +147,11 @@ def restore_notice(proof: str, claims: BackupClaims) -> str:
     return template.format(**values)
 
 
+def vectors_template(settings) -> str:
+    """What happens to the pending embedding jobs, by the knowledge agent's setting (the undo of a failed restore says it too)."""
+    return {"disabled": VECTORS_WAIT, "enabled": VECTORS_REBUILT}.get(getattr(settings, "knowledge_agent", ""), VECTORS_UNDECIDED)
+
+
 def checked_restore(settings, source, open_store) -> dict:
     """Every restore a command makes: `cairnmind restore` and the restore step of `cairnmind setup local --backup`.
 
@@ -163,8 +168,7 @@ def checked_restore(settings, source, open_store) -> dict:
     jobs = getattr(store, "embed_jobs_requeued", None)
     rebuilt = {} if not jobs else {
         "embed_jobs_requeued": jobs,
-        "vectors_notice": ({"disabled": VECTORS_WAIT, "enabled": VECTORS_REBUILT}.get(
-            getattr(settings, "knowledge_agent", ""), VECTORS_UNDECIDED), {"jobs": jobs})}
+        "vectors_notice": (vectors_template(settings), {"jobs": jobs})}
     if claims is not None:
         return {"person_confirmations": "claims_of_the_backup", "confirmations_turned_into_claims": claims.confirmations,
                 "record_kinds_withdrawn": claims.record_kinds, "notice": notice_item(proof, claims), **rebuilt}

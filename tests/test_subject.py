@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from pathlib import Path
 
@@ -18,8 +19,8 @@ from cairnmind.agent import NAMES_TIMEOUT, KnowledgeAgent
 from cairnmind.repository_evaluation import load_questions
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.support import NAMES_SYSTEM
-from cairnmind.subject import (NAMES_GAP, SUBJECT_GAP, _matcher, inflecting, mentions, missing_subject, names_directory,
-                               subject_terms, unnamed_answer_names, unnamed_subject)
+from cairnmind.subject import (NAMES_GAP, SUBJECT_GAP, _matcher, found_names, inflecting, mentions, missing_subject,
+                               name_in, names_directory, subject_terms, unnamed_answer_names, unnamed_subject)
 
 from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401 - workspace is a fixture
 
@@ -464,3 +465,122 @@ async def test_a_name_of_the_question_the_project_or_a_quote_or_path_has_is_not_
     assert ask("On which port?", "It is set in config.py") == []                            # the path has config.py
     assert ask("On which port?", "listens on 8765, as the quote says: port") == []          # no name at all
     assert ask("Na jakim porcie?", "Na porcie 8765 słucha Zookeeper.") == ["Zookeeper"]
+
+
+# The names call (#245) reports a name as unstated that a cited source has (not the question): such a name does not withhold.
+def _repository_source(path, quote_pattern):
+    text = (REPOSITORY / path).read_text(encoding="utf-8")
+    quote = next(line.strip() for line in text.splitlines() if re.search(quote_pattern, line))
+    source = {"id": "s-" + path, "kind": "file", "content": text, "uri": path, "metadata": {}, "quote": quote}
+    return source, {"k-" + path: source}
+
+
+@pytest.mark.parametrize("question, path, pattern, name", [
+    # The right answers the names call withheld in the measurement, the real question, the real file, the name as listed.
+    ("Which ArcadeDB version does Cairnmind use by default?", "src/cairnmind/config.py", r"arcade_version: str", "ArcadeDB"),
+    ("Which ArcadeDB version does Cairnmind use by default?", "src/cairnmind/config.py", r"arcade_version: str", "ArcadeDB 26.11.1"),
+    ("Which ArcadeDB version does Cairnmind use by default?", "src/cairnmind/config.py", r"arcade_version: str", "arcadedb"),
+    ("What is the default context size num_ctx of the chat model?", "src/cairnmind/config.py", r"num_ctx: int", "num_ctx"),
+    ("What is the default context size num_ctx of the chat model?", "src/cairnmind/config.py", r"num_ctx: int", "qwen3.5:9b"),
+    ("What is the default chat model in the settings?", "src/cairnmind/config.py", r"chat_model: str", "Settings.chat_model"),
+    ("What is the default chat model in the settings?", "src/cairnmind/config.py", r"chat_model: str", "chat_model"),
+    ("Which Java version does Cairnmind need?", "docs/INSTALL.md", r"^\| Java \|", "Java"),
+    ("Which Java version does Cairnmind need?", "docs/INSTALL.md", r"^\| Java \|", "Java 21"),
+    ("Which Python version does this project require?", "pyproject.toml", r"^requires-python", "Python 3.12"),
+    ("Which Python version does this project require?", "pyproject.toml", r"^requires-python", "python"),
+    ("How much Java heap does the database engine get?", "src/cairnmind/engine.py", r"-Xmx", "-Xmx"),
+    ("How much Java heap does the database engine get?", "src/cairnmind/engine.py", r"-Xmx", "Xmx1024m"),
+    ("How much Java heap does the database engine get?", "src/cairnmind/engine.py", r"-Xmx", "engine.py"),
+])
+def test_a_name_the_question_or_a_cited_source_has_is_found_as_the_model_wrote_it(question, path, pattern, name):
+    source, evidence = _repository_source(path, pattern)
+    assert found_names([name], question, [source], evidence) == [name]
+
+
+@pytest.mark.parametrize("name, text, found", [
+    ("Java", "uses JavaScript only", False),            # a part of a longer word
+    ("Java", "needs java 21 or newer", True),           # any case
+    ("Java", "java.util.List", True),                   # the dot after a name is not a letter
+    ("Python 3.12", "requires python 3.12.1", False),   # another version
+    ("Python 3.12", "python 3.12 or newer", True),
+    ("Python 3.12", "requires-python = \">=3.12\"", True),  # the name and the version stand apart
+    ("3.12", "version 13.12 and 2.3.12", False),
+    ("Redis", "predis and redis-py", True),             # redis-py has Redis as a word; predis alone does not count
+    ("Redis", "predis only", False),
+    ("Java 21", "java-21 or java_21", True),
+    ("-Xmx", "\"-Xmx1024m\"", True),                    # a flag takes its value
+    ("Xmx", "-Xmx512m", True),
+    ("Xmx", "Xmx512m", False),
+    ("Settings.chat_model", "class Settings:\n chat_model: str", True),
+    ("nginx 1.25", "nginx is not here", False),         # the name, not only the version, is needed
+    ("", "anything", False),
+])
+def test_how_a_name_is_looked_for_in_a_text(name, text, found):
+    assert name_in(name, text) is found
+
+
+def test_a_name_in_neither_the_question_nor_a_cited_source_is_still_unstated():
+    source, evidence = _repository_source("src/cairnmind/config.py", r"arcade_version: str")
+    names = ["nginx", "HAProxy", "ArcadeDB", "Zookeeper"]
+    assert found_names(names, "Which ArcadeDB version does Cairnmind use?", [source], evidence) == ["ArcadeDB"]
+    # The question names it: that is not a place where it stands, so an absent name is still withheld.
+    assert found_names(names, "What is the HAProxy port?", [source], evidence) == ["ArcadeDB"]  # the source has ArcadeDB
+    assert found_names(["nginx", "ELASTICSEARCH"], "What is the default nginx port in the settings? ELASTICSEARCH?",
+                       [source], evidence) == []
+
+
+def test_a_name_only_in_an_uncited_source_or_a_source_whose_citation_failed_is_not_found():
+    cited, evidence = _repository_source("src/cairnmind/config.py", r"arcade_version: str")
+    other = {"id": "other", "kind": "file", "content": "We deploy behind nginx and HAProxy.", "uri": "docs/x.md",
+             "metadata": {}}
+    # Read by the agent, never cited (or cited and failed: then it is not among the verified sources either).
+    evidence["k-other"] = other
+    assert found_names(["nginx", "HAProxy"], "On which port?", [cited], evidence) == []
+    # The same source cited and verified is read.
+    assert found_names(["nginx"], "On which port?", [{**other, "quote": "behind nginx"}], evidence) == ["nginx"]
+
+
+async def test_a_listed_name_the_cited_source_has_does_not_withhold_and_the_answer_says_which(workspace):  # noqa: F811
+    store, project, settings = workspace
+    reply = {"content": json.dumps({"names": [{"name": "Settings.port", "stated": False},
+                                              {"name": "Cairnmind", "stated": True}]})}
+    uri = str(Path(project["root"]) / "src/example/config.py")
+    source, _ = document(store, project, CONFIG, uri=uri, metadata={"relative_path": "src/example/config.py"})
+    model = FakeOllama([final(source["id"], "port: int = 8765", "Settings.port is 8765.")], names=reply)
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "On which port does the service listen?")
+    assert result["status"] == "complete" and result["diagnostics"]["support_check"] == "supported"
+    assert result["diagnostics"]["names_reported"] == ["Settings.port"]
+    assert result["diagnostics"]["names_found"] == ["Settings.port"]
+
+
+async def test_a_name_that_is_left_after_the_search_still_withholds_and_both_lists_are_kept(workspace):  # noqa: F811
+    store, project, settings = workspace
+    reply = {"content": json.dumps({"names": [{"name": "nginx", "stated": False}, {"name": "Settings", "stated": False}]})}
+    uri = str(Path(project["root"]) / "src/example/config.py")
+    source, _ = document(store, project, CONFIG, uri=uri, metadata={"relative_path": "src/example/config.py"})
+    model = FakeOllama([final(source["id"], "port: int = 8765", "Settings listens on 8765 behind nginx.")], names=reply)
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "On which port does the service listen?")
+    assert result["status"] == "partial" and result["diagnostics"]["support_check"] == "names_unstated"
+    assert result["unknowns"][-1] == NAMES_GAP + "nginx"  # only the name that was not found
+    assert result["diagnostics"]["names_reported"] == ["nginx", "Settings"]
+    assert result["diagnostics"]["names_found"] == ["Settings"]
+
+
+async def test_the_headline_case_zookeeper_question_is_still_refused_where_the_judge_refuses_it(workspace):  # noqa: F811
+    # The kept reports: after #340 this question was answered complete with the service's own port in all three
+    # runs. The order of the checks did not change (the judge first, the names call only after its yes), so
+    # the refusal of the earlier trees (the judge said no to the fixture quote) holds whenever the judge says no.
+    # The question has no readable name (headline case), and the answer names none: neither the subject check
+    # nor the names call can object when the judge accepts the quote of the service's port.
+    store, project, settings = workspace
+    question = "What Is The Default Zookeeper Port Of The Local Service?"
+    assert subject_terms(question, ["example"]) == []
+    uri = str(Path(project["root"]) / "src/example/config.py")
+    source, _ = document(store, project, CONFIG, uri=uri, metadata={"relative_path": "src/example/config.py"})
+    no = {"content": json.dumps({"supported": False, "reason": "The quote is about another port."})}
+    model = FakeOllama([final(source["id"], "port: int = 8765", "The default port for the local service is 8765.")],
+                       support=no)
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], question)
+    assert result["status"] == "partial" and result["diagnostics"]["support_check"] == "unsupported"
+    assert len(model.support_calls) == 1 and model.names_calls == []
+    assert json.loads(model.support_calls[0]["messages"][1]["content"])["question"] == question  # the judge sees it

@@ -289,6 +289,41 @@ jobs:
         if: ${{ always() }}
         run: docker rm -f -v cairnmind-server-tests
 
+  restore-size:
+    # The one test of tests/test_restore_size.py (#362): a store of this repository's size restored on an engine of its
+    # own with the default heap of 1 GB, and again through a delayed link, about 6 to 7 minutes. Marked `slow_size`,
+    # which no other job and no plain `pytest` run selects. Not a required check and nothing waits for it, like
+    # server-tests; on main and by hand (`gh workflow run ci.yml --ref BRANCH`), not on pull requests. The seconds
+    # and the engine's largest resident memory go to the job summary.
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked --extra dev
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/devbrain-arcade
+          key: arcadedb-${{ hashFiles('src/cairnmind/config.py') }}
+      - name: Prepare pinned ArcadeDB
+        run: |
+          uv run python - <<'PY'
+          import os
+          from pathlib import Path
+          from cairnmind.config import Settings
+          from cairnmind.engine import install_engine
+          settings = Settings.load(Path.home() / ".cache/devbrain-arcade", create=True)
+          path = install_engine(settings)
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"CAIRNMIND_ARCADE_DIST={path}\n")
+          PY
+      - run: uv run pytest -q -s -m slow_size tests/test_restore_size.py
+
   coverage-badge:
     # Publishes the total line coverage for the README badge, after a push to main only: never for a
     # pull request, so no pull request (from a fork or not) can write here. Not a required check.
