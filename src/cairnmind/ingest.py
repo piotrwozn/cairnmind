@@ -108,7 +108,8 @@ def _identifier(*parts: Any) -> str:
 
 
 @contextmanager
-def _ingestion_lock(store, category: str, identity: str, *, deadline: float | None = None):
+def _ingestion_lock(store, category: str, identity: str, *, deadline: float | None = None,
+                    waited: list | None = None):
     """Serialize whole ingest operations across workers and CLI processes.
 
     Native database transactions protect writes, but cannot prevent an older
@@ -121,7 +122,12 @@ def _ingestion_lock(store, category: str, identity: str, *, deadline: float | No
     descriptor = os.open(filename, os.O_CREAT | os.O_RDWR, 0o600)
     try:
         if deadline is None:
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                if waited is not None:
+                    waited.append(True)  # whoever held it may have changed what was read before
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
         else:
             while True:
                 if time.monotonic() >= deadline:
@@ -641,11 +647,15 @@ def index_project(store, project_id: str, walk: tuple | None = None) -> dict:
     opened again, and only graph rows that differ are written. The result is the index a
     run that reads every file would produce; the first run of a process is such a run.
     `walk` is the walk that `index_project_if_changed` made just before: the invalidations and the time
-    taken before it, and what it found. An older walk only makes the next run index again (#409).
+    taken before it, and what it found. It is used only when the lock was free: after waiting for another
+    indexing, the sources it read are newer than the walk, and a file created meanwhile would be seen as deleted (#409).
     """
     project_id = store.resolve_project(project_id)["id"]
     key = (str(store.data_dir), project_id)
-    with _ingestion_lock(store, "project", project_id):
+    waited: list[bool] = []
+    with _ingestion_lock(store, "project", project_id, waited=waited):
+        if waited:
+            walk = None
         # No signature while indexing runs or after it raises: a concurrent or later caller
         # then waits for the lock and indexes, instead of trusting a half-written index.
         _INDEXED.pop(key, None)
@@ -1148,7 +1158,8 @@ def _graph_parts(project_id: str, indexed: dict[Path, dict], reuse: dict) -> tup
     moved: set[Path] = set()
     for path in changed:
         rows = first(path)
-        symbols = frozenset(item["id"] for group in tables[path].values() for item in group)
+        # With multiplicity: two symbols of one id make a call ambiguous, and one does not.
+        symbols = tuple(sorted(item["id"] for group in tables[path].values() for item in group))
         if not reuse or reuse[path]["symbols"] != symbols:
             moved.add(path)
         parts[path] = {"key": keys[path], "symbols": symbols, "first": part(rows)}
@@ -1239,7 +1250,8 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             # Only the rows of the files that changed were computed, and the stored graph is not the remembered
             # one: the rows of every file are needed to compare with it.
             parts, nodes, edges = _graph_parts(project_id, indexed, {})
-            written["parts"] = parts
+            digests, edge_ids = _union(parts)
+            written.update(parts=parts, counts=(len(digests), len(edge_ids)))
         tx.command("UPDATE projects SET graph_fingerprint=null WHERE id=:project", {"project": project_id})
         if as_remembered:
             before, kept = _union(remembered["parts"])

@@ -105,6 +105,30 @@ def test_a_change_computes_the_files_that_it_changes_and_those_that_import_chang
     assert files == {"test_b.py"}
 
 
+@pytest.mark.parametrize("before, after", [("x = 1; x = 2\n", "x = 1\n"), ("x = 1\n", "x = 1; x = 2\n"),
+                                           ("export function f(){} export function f(){}\n", "export function f(){}\n")])
+def test_a_file_whose_symbols_keep_their_ids_but_not_their_number_is_computed_for_its_importers(tmp_path, before, after):
+    # Two symbols of one name on one line have one id, and make a call to the name ambiguous; one does not.
+    root, suffix = tmp_path.resolve(), "js" if "function" in before else "py"
+    write(root, f"dup.{suffix}", before)
+    write(root, f"user.{suffix}", "from dup import x\n\n\ndef run():\n    return x()\n" if suffix == "py"
+          else "import { f } from './dup';\nexport function run() { return f(); }\n")
+    parts, *_ = ingest._graph_parts("p", files_of_any(root), {})
+    write(root, f"dup.{suffix}", after)
+    indexed = files_of_any(root)
+    again, *_ = ingest._graph_parts("p", indexed, parts)
+    assert again == ingest._graph_parts("p", indexed, {})[0]
+
+
+def files_of_any(root: Path) -> dict[Path, dict]:
+    indexed = {}
+    for path in sorted(p for p in root.iterdir() if p.suffix in {".py", ".js"}):
+        text = path.read_text()
+        source = {"id": hashlib.sha256(f"{path}{text}".encode()).hexdigest()[:16], "uri": str(path), "kind": "code"}
+        indexed[path] = {"source": source, "analysis": analyze_code(path, text), "root": root}
+    return indexed
+
+
 def test_other_files_or_another_root_are_computed_again_in_full(project):
     indexed = files_of(project)
     parts, *_ = ingest._graph_parts("p", indexed, {})

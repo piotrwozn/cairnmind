@@ -59,7 +59,7 @@ The second write of the same graph now costs 0.4 to 0.5 of the first and grows w
 | Second pass 2.2 s later (a file touched less than 2 s before is looked at once more) | 347 / 370 / 408 / 416, 16 requests | 241 / 264 / 292 / 341, 15 requests |
 | Pass with nothing changed | 107 / 112 / 120 / 121, 4 requests | 107 / 113 / 125 / 183, 4 requests |
 
-By part (10 runs each, with timers inside the code, which cost the old code more): the graph step was 5,185 ms (4,389 of Python: 1,646 building the rows and sets, 881 resolving imports, 862 digests of nodes, 736 ids; 791 of database) and is 1,440 ms (638 of Python, 794 of database). The three walks of the tree, 313 ms, are one, 107 ms (#409). The rest of the pass, about 0.4 s, is the database work of the changed file's source and chunks, which a replaced source with 1,900 graph rows hanging on it writes one by one.
+By part (10 runs each, with timers inside the code, which cost the old code more): the graph step was 5,185 ms (4,389 of Python: 1,646 building the rows and sets, 881 resolving imports, 862 digests of nodes, 736 ids; 791 of database) and is 1,440 ms (638 of Python, 794 of database). The three walks of the tree, 313 ms, are one, 107 ms (#409); that walk is used only when no other indexing of the project had to be waited for, else the tree is walked again under the lock. The rest of the pass, about 0.4 s, is the database work of the changed file's source and chunks, which a replaced source with 1,900 graph rows hanging on it writes one by one.
 
 ## Store size
 

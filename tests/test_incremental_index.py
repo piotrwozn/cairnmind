@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import threading
+import time
 
 import pytest
 
@@ -340,6 +342,43 @@ def test_a_pass_after_one_edit_asks_the_database_and_computes_graph_rows_in_prop
     # them grows with the project. Digests are made of the nodes that were computed, not of every node.
     assert len(asked) <= 63, len(asked)
     assert 0 < len(digested) <= 8 < first["nodes"] / 4, (len(digested), first["nodes"])
+
+
+def test_a_definition_that_stops_being_doubled_changes_the_calls_of_its_importers(workspace):
+    store, pid, root = workspace
+    (root / "dup.py").write_text("x = 1; x = 2\n")
+    (root / "user.py").write_text("from dup import x\n\n\ndef run():\n    return x()\n")
+    index_project(store, pid)
+    for text in ("x = 1\n", "x = 1; x = 2\n"):
+        (root / "dup.py").write_text(text)
+        assert index_project_if_changed(store, pid)["changed"] == 1
+        assert_same_as_a_full_run(store, pid)  # it leaves a graph remembered for the next edit
+
+
+def test_a_walk_made_before_waiting_for_another_indexing_is_not_used(workspace, monkeypatch):
+    store, pid, root = workspace
+    index_project(store, pid)
+    listing = {}
+    walk = (0, time.time_ns(), ingest._tree_state(store, pid, listing), listing)
+    (root / "pkg" / "fresh.py").write_text("FRESH = 1\n")
+    blocked, real, results = threading.Event(), ingest.fcntl.flock, []
+
+    def flock(descriptor, operation):
+        try:
+            return real(descriptor, operation)
+        except BlockingIOError:
+            blocked.set()
+            raise
+    monkeypatch.setattr(ingest.fcntl, "flock", flock)
+    with ingest._ingestion_lock(store, "project", pid):
+        waiting = threading.Thread(target=lambda: results.append(index_project(store, pid, walk)))
+        waiting.start()
+        assert blocked.wait(10)
+        ingest._index_project_locked(store, pid, None, {})  # the other caller sees the file that the walk did not
+    waiting.join(30)
+    assert results[0]["deleted"] == 0
+    assert store.query("SELECT id FROM sources WHERE project_id=:project AND uri=:uri AND is_current=true",
+                       {"project": pid, "uri": str(root / "pkg" / "fresh.py")})
 
 
 def test_an_edit_after_an_edge_was_deleted_behind_the_process_replaces_what_differs(workspace):
