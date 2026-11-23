@@ -42,3 +42,10 @@ def test_the_quick_start_says_what_is_required_what_is_optional_and_which_files_
                  ".codex/hooks.json"):
         assert name in section, name
     assert "Ctrl+B then i" in README  # where a proposed finding is confirmed
+
+
+def test_the_install_guide_says_engine_stop_removes_the_container_and_keeps_the_data():
+    """#399: the code removes the container (engine_docker.stop_docker_engine) and the data directory is mounted."""
+    guide = (ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
+    assert "`cairnmind engine stop` stops and removes this installation's container" in guide
+    assert "your memory stays in the data directory, and `cairnmind engine start` creates the container again" in guide

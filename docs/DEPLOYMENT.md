@@ -286,6 +286,8 @@ A headless worker process for extraction and embedding on a server is not planne
 
 The request counts of indexing over a connection are measured; they are in the table of [How long indexing takes over a connection](#how-long-indexing-takes-over-a-connection).
 
+What it costs to write a large code graph over the one that is stored (#385), on a private engine with the default heap: a second write of the same graph takes 0.4 to 0.5 of the first (19 s against 40 s at 119,000 vertices); when most of the symbols went, removing the old vertices grew with the square of the graph (63 s of 134 s at 80,000 vertices, 209 s of 316 s at 119,000) until they were removed in groups of a transaction's rows (#402; one run, test engine, synthetic graph of 39,906 vertices with every symbol moved: 65.6 s against 84.6 s with groups of 250). The figures and the cause are in [How a large code graph is written](STORAGE_AND_MAINTENANCE.md#how-a-large-code-graph-is-written).
+
 ### When the connection drops
 
 Every change is one server transaction that commits whole or not at all, so a dropped connection leaves whole steps, never half of one:

@@ -5,6 +5,7 @@ import pytest
 from test_index_batching import code_tree, dump
 
 from cairnmind import graph_transactions, ingest
+from cairnmind.arcade import ArcadeClient
 from cairnmind.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
 from cairnmind.inspector import Inspector
 from cairnmind.journal import JournalTransaction
@@ -109,6 +110,96 @@ def test_the_wait_for_the_vertices_runs_inside_indexing_before_the_edges_and_the
     ingest.index_project(split, second)
     assert state["hidden"] == 0 and state["waits"] == 2  # indexing waited until the index found its vertices
     assert graph(split, second) == graph(whole, first)
+
+
+def synthetic(store, tmp_path, shift=0, per_file=150):
+    """The graph step's input for 3 files of ``per_file`` symbols; ``shift`` moves every line, so every symbol and call is new."""
+    folder = tmp_path / "folder"
+    folder.mkdir(exist_ok=True)
+    project = store.add_project("synthetic", folder)["id"]
+    if not store.query("SELECT id FROM sources WHERE project_id=:p LIMIT 1", {"p": project}):
+        store.client.command("INSERT INTO sources CONTENT :rows", {"rows": [
+            {"id": f"source-{n}", "project_id": project, "uri": f"file://{folder}/m{n}.py", "kind": "file", "content": "x",
+             "sha256": f"{n:064x}", "is_current": True, "created_at": "2026-11-22T00:00:00+00:00"} for n in range(3)]})
+    indexed = {}
+    for number in range(3):
+        path = folder / f"m{number}.py"
+        symbols = [{"name": f"f{i}", "kind": "function", "line_start": 2 * i + 1 + shift, "line_end": 2 * i + 2 + shift}
+                   for i in range(per_file)]
+        calls = [{"name": f"f{(i * 7 + 1) % per_file}", "line": 2 * i + 1 + shift} for i in range(0, per_file, 4)]
+        indexed[path] = {"source": {"id": f"source-{number}", "uri": f"file://{path}", "kind": "file"}, "root": folder,
+                         "analysis": {"symbols": symbols, "imports": [], "calls": calls}}
+    return project, indexed
+
+
+def counted_requests(monkeypatch):
+    requests, real = [], ArcadeClient._request
+    monkeypatch.setattr(ArcadeClient, "_request", lambda self, method, path, **kw: (requests.append(path), real(self, method, path, **kw))[1])
+    return requests
+
+
+def test_a_second_full_write_of_the_same_graph_makes_no_more_requests_than_the_first(tmp_path, monkeypatch):
+    # Deleting every edge and writing the same ids again failed on the engine from about 40,000 edges on (#385):
+    # the edges that are stored as they would be written stay, and the rest of the write is the same as before.
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path)
+    monkeypatch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 100)
+    requests = counted_requests(monkeypatch)
+    first = ingest._build_graph(store, project, indexed)
+    first_requests = len(requests)
+    requests.clear()
+    monkeypatch.setattr(ingest, "parser_identity", lambda: "another-parser")  # the graph is not the fingerprinted one: full write
+    second = ingest._build_graph(store, project, indexed)
+    assert len(requests) <= first_requests, (len(requests), first_requests)
+    assert first["graph_written"]["edges"] > 500 and second["graph_written"]["edges"] == 0
+    assert store.query("SELECT count(*) AS n FROM edges WHERE project_id=:p", {"p": project})[0]["n"] == first["edges"]
+    assert store.query("SELECT count(*) AS n FROM edges WHERE out IS NULL OR in IS NULL")[0]["n"] == 0
+
+
+def test_a_full_write_over_a_graph_that_changed_deletes_only_the_edges_that_went_and_leaves_no_old_one(tmp_path, monkeypatch):
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path)
+    monkeypatch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 100)
+    first = ingest._build_graph(store, project, indexed)
+    monkeypatch.setattr(ingest, "parser_identity", lambda: "another-parser")
+    _, moved = synthetic(store, tmp_path, shift=1000)
+    second = ingest._build_graph(store, project, moved)
+    kept = first["edges"] - second["graph_written"]["edges"]
+    assert 0 < kept < 10  # the edge of each source to its file does not name a line
+    assert store.query("SELECT count(*) AS n FROM edges WHERE project_id=:p", {"p": project})[0]["n"] == second["edges"]
+    assert store.query("SELECT count(*) AS n FROM edges WHERE out IS NULL OR in IS NULL")[0]["n"] == 0
+
+
+def test_a_full_write_over_a_graph_whose_vertices_all_went_removes_them_in_few_requests(tmp_path, monkeypatch):
+    # The old vertices went 250 to a request, each request scanning the project's index (#402): 1,800 of them took
+    # 7 requests of their own. In groups of a transaction's rows they take one.
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path, per_file=600)
+    ingest._build_graph(store, project, indexed)
+    monkeypatch.setattr(ingest, "parser_identity", lambda: "another-parser")
+    _, moved = synthetic(store, tmp_path, shift=10000, per_file=600)
+    requests = counted_requests(monkeypatch)
+    second = ingest._build_graph(store, project, moved)
+    assert second["graph_written"]["nodes"] > 1800
+    # 60 requests now, 74 with the vertices going 250 to a request; the rest is the writes of the new rows.
+    assert len(requests) <= 66, len(requests)
+    assert store.query("SELECT count(*) AS n FROM nodes WHERE project_id=:p AND kind='symbol'", {"p": project})[0]["n"] == 1800
+
+
+def test_a_vertex_delete_that_removes_fewer_rows_than_asked_fails_the_write_and_leaves_the_graph_not_built(tmp_path, monkeypatch):
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path)
+    ingest._build_graph(store, project, indexed)
+    monkeypatch.setattr(ingest, "parser_identity", lambda: "another-parser")
+    monkeypatch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 100)  # the fingerprint is cleared in a transaction that commits
+    _, moved = synthetic(store, tmp_path, shift=1000)
+    real = JournalTransaction.command
+    monkeypatch.setattr(JournalTransaction, "command", lambda self, sql, params=None: real(
+        self, sql, {**params, "ids": params["ids"][:-1]}) if sql.startswith("DELETE FROM nodes") else real(self, sql, params))
+    with pytest.raises(RuntimeError, match="every graph vertex"):
+        ingest._build_graph(store, project, moved)
+    row = store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0]
+    assert code_graph_pending(row)
 
 
 def test_the_inspector_graph_says_that_the_code_graph_is_not_built_while_it_is_being_written(tmp_path):
