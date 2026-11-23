@@ -529,6 +529,74 @@ measurement of time), a store older than this
 code with the index not yet built (the first writer start builds it; the table is the store with it), and the service
 (the figures are of the same functions in a second process).
 
+### What a command, the bridge and a search cost in their own process
+
+Measured on 23 November 2026 on one machine (WSL 2 on an Intel Core i9-14900K, 32 threads; Python 3.12.3), against a
+running throwaway service of this version in deterministic-only mode (models off) on a store of 29 files and 1,080
+embedded passages, and the owner's Ollama (`qwen3-embedding:0.6b`) for the embedding rows. Before is `main` at `316e1ad`,
+after is the branch of #405 and #407 (`77f119b`). Every pair was run **interleaved** (a before run, then an after run,
+alternating who goes first), 3 warm-ups and 20 runs each, in milliseconds as minimum / median / p95 / maximum. **The
+machine was shared with other work (load average 12 to 15 while these ran), so read the differences, not the absolute
+figures.** A command's figure is the wall time of its whole process, start to exit; the service's own work is in it.
+
+| What | Before | After | Requests of the command |
+| --- | --- | --- | --- |
+| `cairnmind ask` | 1014 / 1072 / 1149 / 1159 | 626 / 679 / 761 / 769 | 3 `GET /health` and the `POST`, then 1 and the `POST` |
+| `cairnmind context` | 761 / 795 / 842 / 877 | 418 / 442 / 456 / 457 | 2 `GET /health`, then 1 |
+| `cairnmind status` | 456 / 504 / 530 / 540 | 450 / 496 / 545 / 565 | 1 `GET /health`, unchanged: it never imported the service |
+| `cairnmind mcp`: start and initialize | 663 / 706 / 745 / 748 | 676 / 715 / 799 / 864 | unchanged |
+| `ask` tool call in an open bridge session | 269 / 284 / 312 / 313 | 277 / 289 / 311 / 311 | unchanged: 1 `GET /health` and the `POST` |
+| Query embedding through the service's client (median of 5 calls per run) | 88 / 94 / 118 / 126 | 35 / 40 / 44 / 44 | |
+| `asearch` with vectors, 10 hits (median of 5 calls per run) | 365 / 376 / 388 / 437 | 315 / 330 / 350 / 361 | |
+
+A second measurement of the query embedding, taken the same way (interleaved, 3 warm-up processes, 20 per side) with the
+load average at 6 to 9, gave 38.6 / 48.4 / 64.4 / 64.9 before and 13.1 / 20.8 / 34.0 / 34.8 after: a saving of about 28
+ms, not the 54 ms of the row above. Building an HTTP client costs more on a loaded machine (the TLS context), so the
+saving is about 30 ms per model request on a quiet machine and roughly twice that under the load of the first run. The
+`asearch` row holds one embedding call and was not repeated; treat its 46 ms the same way.
+
+Where it went. A command that talks to the service used to import the service module, and with it the web framework,
+only to compute the service's instance id: `ask` loaded 607 modules and now loads 420. A command's own imports are
+now the HTTP client, the command-line framework and what they load (`rich`, `anyio`). The bridge imports neither the
+service nor the web framework; its 0.7 s is the MCP library's own imports (`mcp`, `pydantic`, `starlette`,
+`uvicorn`), which the bridge needs. The remaining `GET /health` of a command is the check that the program on the port
+is this data directory's service (the instance id) and runs this version, so nothing is sent to a service of another
+version; the marks of an upgrade and of a change of setup are files, read only when no service answers, so they cost no
+request. The bridge asks before every request because a service can be replaced while the bridge runs. The
+embedding rows are the service's path: the service keeps one HTTP client per model server for its life; a
+command-line process still opens one for each request.
+
+#### The bridge keeps one client to the service, and a plain http client builds no certificate store (#415)
+
+Building an HTTP client costs about 22 ms, most of it the TLS context with the whole certificate store, which a plain
+`http://127.0.0.1` request never uses. The bridge now keeps one client to the service for its life (made on its first
+request, closed when it stops). A command, which sends one or two requests, still makes its client for each request but
+with `verify=False` when the address is plain http, which builds an empty context instead: a plain http connection has
+no TLS, so nothing is left unverified, and an https address, such as a model server on another computer, is verified as
+before. Everything else is unchanged: loopback only, the token, each request's time limit, no redirects, and the
+`GET /health` before every request of the bridge. A service that was restarted between two requests gives the same
+answer or refusal as before (the next request opens a new connection). The service closes an idle connection after 5 s;
+a client that reused one at the very moment of the close would fail with a false "unavailable", and a retry could repeat a
+write, so the bridge's client drops its own idle connections after 4 s, before the service does.
+
+Measured on 23 November 2026 on the same machine, against a running throwaway service (own ports, models off, an empty
+project, a store of one file). Before is the parent of this change (`7a8b94e`), after is this change. Interleaved, 3
+warm-ups and 20 runs each, in milliseconds as minimum / median / p95 / maximum; the machine was shared with other work, so
+read the differences:
+
+| What | Before | After |
+| --- | --- | --- |
+| `ask` tool call in an open bridge session, the first | 112 / 124 / 145 / 158 | 63 / 80 / 141 / 147 |
+| `ask` tool call in an open bridge session, a later one (median of 3 per run) | 112 / 133 / 161 / 182 | 64 / 77 / 99 / 103 |
+| `resume_context` tool call, the first | 267 / 298 / 334 / 388 | 162 / 205 / 255 / 315 |
+| `cairnmind mcp`: start and initialize | 718 / 780 / 816 / 822 | 744 / 793 / 851 / 921 |
+| `cairnmind ask` (the whole process) | 448 / 492 / 548 / 574 | 389 / 425 / 478 / 635 |
+| `cairnmind status` (the whole process) | 443 / 502 / 590 / 684 | 372 / 426 / 476 / 526 |
+
+A tool call is about 45 to 55 ms faster: the kept client, and the `GET /health` probe's client, which no longer builds a
+certificate store. The start of the bridge does not change, it sends nothing. A command is about 65 to 75 ms faster,
+since each client it makes (the probe for the service, the request) no longer builds one.
+
 ### The engine tests against this server
 
 The engine tests of Cairnmind (the tests marked `arcade`) can run against a server instead of an engine they start themselves, through connect-only mode: set `CAIRNMIND_TEST_ARCADE_SERVER_URL` to its address (plain http on this machine) and `CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE` to a private file (mode 0600) holding its root password, then run `uv run pytest -m arcade -rs`. The tests install, start and stop no engine; each creates its databases as root and drops them. The job has not yet run against the image, so whether every test passes there, and how long it takes, is not known. The non-required `server-tests` CI job does this on pushes to main and by hand, against the published image at the digest pinned in `src/cairnmind/config.py`, in production mode. Tests that cannot run against a server (they start an engine, read its files, or run a command a connect-only installation refuses) are skipped, each with its reason; the table is `LEFT_OUT_ON_A_SERVER` in `tests/conftest.py`, and the job summary prints it.

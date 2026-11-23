@@ -597,6 +597,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if ollama is None:  # the models this service made keep one client each, on this loop, until it stops (#407)
+            await model.open()
         tasks = [asyncio.create_task(inference.run())]
         if fingerprint_client is not None and models_on:
             tasks.append(asyncio.create_task(fingerprint_start()))
@@ -610,6 +612,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            if ollama is None:
+                await model.aclose()
 
     app = FastAPI(title="Cairnmind local knowledge agent", version=__version__, lifespan=lifespan)
     app.state.store = store
