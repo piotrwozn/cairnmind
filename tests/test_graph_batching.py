@@ -313,7 +313,9 @@ def clean(row):
     return {key: value for key, value in row.items() if not key.startswith("@") and key != "is_current"}
 
 
-def test_a_failure_in_the_middle_of_the_removal_leaves_the_previous_graph_intact(tmp_path, monkeypatch):
+def failed_removal(tmp_path, monkeypatch, rows):
+    """Index a changed tree with ``rows`` rows to a transaction (None: as in the product), the removal failing in the
+    middle: its second DELETE of vertices, or the only one when the removal is one group, is run and then fails."""
     root = tmp_path / "repo"
     root.mkdir()
     code_tree(root)
@@ -330,24 +332,46 @@ def test_a_failure_in_the_middle_of_the_removal_leaves_the_previous_graph_intact
         result = real(self, sql, params)
         if sql.startswith(GROUPED_REMOVAL[1]):
             deletes.append(len(params["ids"]))
-            if len(deletes) == 2:  # the second group is deleted, then the connection drops
+            if len(deletes) == (1 if rows is None else 2):  # the group is deleted, then the connection drops
                 raise RuntimeError("the connection dropped")
         return result
     with monkeypatch.context() as patch:
-        patch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 20)
+        if rows is not None:
+            patch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", rows)
         patch.setattr(JournalTransaction, "command", failing)
         patch.setattr(ingest, "_build_graph", building)
         with pytest.raises(RuntimeError, match="connection dropped"):
             ingest.index_project(grouped, first)
-    assert len(deletes) == 2 and all(deletes)
-    # A group is a transaction's rows now (#402), so the write is in several transactions (#377): what an earlier one
-    # committed stays, and the graph is reported as not built until the next run completes it.
+    assert len(deletes) == (1 if rows is None else 2) and all(deletes)
     assert before["graph"]["nodes"]
+    return grouped, first, single, second, before
+
+
+def test_a_failure_in_the_middle_of_the_removal_leaves_the_previous_graph_intact(tmp_path, monkeypatch):
+    # The write is one transaction, as for every graph under graph_transactions.ROWS_PER_TRANSACTION rows: all or nothing.
+    grouped, first, single, second, before = failed_removal(tmp_path, monkeypatch, None)
+    assert graph(grouped, first) == before["graph"]
+    again = grouped.query("SELECT out.id AS o, in.id AS i FROM edges WHERE project_id=:p", {"p": first})
+    assert sorted((row["o"], row["i"]) for row in again) == sorted((row["o"], row["i"]) for row in before["traversed"])
+
+    ingest.index_project(grouped, first)  # the next run completes it
+    with monkeypatch.context() as patch:
+        all_row_by_row(patch)
+        ingest.index_project(single, second)
+    assert_same(grouped, first, single, second, "after the failed run")
+
+
+def test_a_removal_that_fails_in_a_write_over_several_transactions_leaves_the_graph_not_built_and_the_next_run_completes_it(
+        tmp_path, monkeypatch):
+    # Over several transactions (#377) what an earlier one committed stays: the graph is reported as not built.
+    grouped, first, single, second, _ = failed_removal(tmp_path, monkeypatch, 20)
     assert code_graph_pending(grouped.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": first})[0])
     again = grouped.query("SELECT out.id AS o, in.id AS i FROM edges WHERE project_id=:p", {"p": first})
     assert all(row["o"] and row["i"] for row in again)
 
-    ingest.index_project(grouped, first)  # the next run completes it
+    with monkeypatch.context() as patch:
+        patch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 20)
+        ingest.index_project(grouped, first)  # the next run completes it
     with monkeypatch.context() as patch:
         all_row_by_row(patch)
         ingest.index_project(single, second)
