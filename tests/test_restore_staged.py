@@ -15,7 +15,7 @@ import time
 import pytest
 from typer.testing import CliRunner
 
-from conftest import own_time
+from conftest import counted_waits
 from cairnmind import api_runtime, arcade, cli, integrations, restore_staged, store_writer
 from cairnmind.journal import Journal, JournalTransaction
 from cairnmind.memory import MemoryManager
@@ -367,10 +367,10 @@ def _hiding_the_index(monkeypatch, hidden, at="wait"):
     wait for the vertices (`at="wait"`: the index misses during the vertex phase) or from the first edge group
     (`at="edges"`: it misses again after the wait), the next `hidden` lookups of vertices by id answer nothing,
     and so does every later lookup of a transaction that has missed one, as under the engine's REPEATABLE_READ (measured
-    on 26.11.1): the end points of its CREATE EDGE are not found either. The sleeps of the wait are counted, not slept."""
+    on 26.11.1): the end points of its CREATE EDGE are not found either. The sleeps that follow a hidden answer are counted, not slept; others (a real lag) are slept, not counted (#417)."""
     from cairnmind import graph_transactions, restore_groups
     query, script, write = JournalTransaction.query, JournalTransaction.script, restore_groups.GraphGroups._write
-    state = {"hidden": hidden, "armed": False, "stale": [], "slept": []}
+    state = {"hidden": hidden, "armed": False, "stale": []}
 
     def hides(tx):
         if tx in state["stale"]:
@@ -378,6 +378,7 @@ def _hiding_the_index(monkeypatch, hidden, at="wait"):
         if state["armed"] and state["hidden"]:
             state["hidden"] -= 1
             state["stale"].append(tx)
+            state["waits_for"].missed = True
             return True
         return False
 
@@ -403,7 +404,7 @@ def _hiding_the_index(monkeypatch, hidden, at="wait"):
     monkeypatch.setattr(JournalTransaction, "query", hiding_query)
     monkeypatch.setattr(JournalTransaction, "script", hiding_script)
     monkeypatch.setattr(restore_groups.GraphGroups, "_write", armed_write)
-    own_time(monkeypatch, graph_transactions, sleep=state["slept"].append)
+    state["waits_for"] = counted_waits(monkeypatch, graph_transactions)
     return state
 
 
@@ -414,7 +415,7 @@ def test_a_restore_waits_for_the_index_to_find_the_vertices_it_committed_before_
     restored = comparable(store.export())
     state = _hiding_the_index(monkeypatch, 2)
     store.restore(path)
-    assert state["hidden"] == 0 and len(state["slept"]) == 2  # it waited, and wrote every edge after
+    assert state["hidden"] == 0 and len(state["waits_for"].slept) == 2  # it waited, and wrote every edge after
     assert state["waits"] == 1  # once for the restore, not before each group of edges (#396)
     monkeypatch.undo()
     assert comparable(store.export()) == restored and restore_staged.unfinished(store.client) is None

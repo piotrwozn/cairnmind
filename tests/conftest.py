@@ -80,7 +80,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_ended_pane_text",
     "test_short_answers", "test_person_acts_consent", "test_workspace_setup_screen",
     "test_setup_mark", "test_setup_change", "test_terminal_setup_change", "test_project_forget_workspace",
-    "test_server_mode", "test_restore_messages",
+    "test_server_mode", "test_restore_messages", "test_no_process_wide_time_patch",
 })
 
 TMUX_MODULES = frozenset({
@@ -287,6 +287,23 @@ def own_time(monkeypatch, module, **replaced):
     ``monkeypatch.setattr(module.time, "sleep", ...)`` would change the one ``time`` module the whole process shares."""
     clock = {name: getattr(time, name) for name in dir(time) if not name.startswith("_")}
     monkeypatch.setattr(module, "time", types.SimpleNamespace(**{**clock, **replaced}))
+
+
+def counted_waits(monkeypatch, module):
+    """``own_time`` for a test that hides vertices from the wait: only the sleep right after a hidden answer is counted.
+
+    The test sets ``waits.missed`` when it answers nothing; the next sleep goes to ``waits.slept`` and returns at once. A sleep
+    for any other reason (the engine's index really lagging) is a real, short one: waited for, not counted (#417)."""
+    waits = types.SimpleNamespace(slept=[], missed=False)
+
+    def sleep(seconds):
+        if waits.missed:
+            waits.missed = False
+            waits.slept.append(seconds)
+        else:
+            time.sleep(0.05)
+    own_time(monkeypatch, module, sleep=sleep)
+    return waits
 
 
 def as_person(store, project_id, record, sources=None):
