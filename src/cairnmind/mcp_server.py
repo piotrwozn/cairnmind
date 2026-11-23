@@ -223,6 +223,11 @@ def start_service(settings: Settings) -> None:
         raise RuntimeError(SERVICE_NOT_STARTED.format(reason=reason, command=command)) from None
 
 
+# The service (uvicorn) closes an idle connection after 5 s. A client that reuses one at that very moment fails with
+# ReadError, and a retry could repeat a write; so the client drops its own idle connections sooner.
+KEEPALIVE_EXPIRY = 4.0
+
+
 class ServiceClient:
     WRITES = {"/remember", "/checkpoint", "/plans/save"}
     BOOTSTRAP = {"/sessions/context", "/sessions/ack"}
@@ -272,7 +277,8 @@ class ServiceClient:
         redirects are as ever: each request names its time limit, and httpx does not follow redirects."""
         loop = asyncio.get_running_loop()
         if self._http is None or self._http_loop is not loop:
-            self._http = httpx.AsyncClient(timeout=15, trust_env=False, verify=tls_verify(self.settings.url))
+            self._http = httpx.AsyncClient(timeout=15, trust_env=False, verify=tls_verify(self.settings.url),
+                                           limits=httpx.Limits(keepalive_expiry=KEEPALIVE_EXPIRY))
             self._http_loop = loop
         return self._http
 

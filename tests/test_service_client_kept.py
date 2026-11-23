@@ -203,3 +203,62 @@ def test_a_command_builds_its_client_without_the_certificate_store_for_the_servi
     assert settings.url.startswith("http://127.0.0.1:")
     assert cli.request(settings, "GET", "/jobs", start_service=False, session=False) == {"ok": True}
     assert made and all(kwargs["verify"] is False and kwargs["trust_env"] is False for kwargs in made)
+
+
+def test_the_kept_client_drops_an_idle_connection_before_the_service_closes_it(settings):
+    import uvicorn
+    assert mcp_server.KEEPALIVE_EXPIRY < uvicorn.Config(lambda *a: None).timeout_keep_alive  # what cli.py serves with
+
+    async def expiry():
+        return bridge(settings)._client()._transport._pool._keepalive_expiry
+    assert asyncio.run(expiry()) == mcp_server.KEEPALIVE_EXPIRY
+
+
+def test_requests_at_the_moment_the_service_closes_an_idle_connection_are_never_unavailable(settings, monkeypatch):
+    """Server keep-alive scaled to 0.2 s; idle gaps sweep 0.94 to 1.06 times of it. Without the shorter client expiry about
+    5 in 100 of these failed with a false 'unavailable (ReadError)'."""
+    import time
+
+    import uvicorn
+    from cairnmind import __version__
+    from cairnmind.service_version import instance_id
+    keep = 0.2
+    monkeypatch.setattr(mcp_server, "KEEPALIVE_EXPIRY", keep * 0.8)
+    health = json.dumps({"service": "cairnmind", "version": __version__, "instance": instance_id(settings)}).encode()
+
+    async def app(scope, receive, send):
+        if scope["type"] != "http":
+            return
+        while (await receive()).get("more_body"):
+            pass
+        body = health if scope["path"] == "/health" else b'{"answer": "x"}'
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+        await send({"type": "http.response.body", "body": body})
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        settings.port = probe.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=settings.port, log_level="error",
+                                           timeout_keep_alive=keep))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    while not server.started:
+        time.sleep(0.02)
+
+    async def sweep():
+        service = bridge(settings)
+        refused = []
+        try:
+            for i in range(120):
+                try:
+                    await service.post("/ask", {"project": "p", "question": "q"})
+                except RuntimeError as exc:
+                    refused.append(str(exc))
+                await asyncio.sleep(keep * (0.94 + 0.12 * (i % 25) / 24))
+        finally:
+            await service.aclose()
+        return refused
+    try:
+        assert asyncio.run(sweep()) == []
+    finally:
+        server.should_exit = True
+        thread.join(5)

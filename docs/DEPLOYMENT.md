@@ -450,8 +450,9 @@ with `verify=False` when the address is plain http, which builds an empty contex
 no TLS, so nothing is left unverified, and an https address, such as a model server on another computer, is verified as
 before. Everything else is unchanged: loopback only, the token, each request's time limit, no redirects, and the
 `GET /health` before every request of the bridge. A service that was restarted between two requests gives the same
-answer or refusal as before (the next request opens a new connection), and a request sent after the service's
-keep-alive time of 5 s, at 4.9 to 5.3 s and at 8 s, all succeeded.
+answer or refusal as before (the next request opens a new connection). The service closes an idle connection after 5 s;
+a client that reused one at the very moment of the close would fail with a false "unavailable", and a retry could repeat a
+write, so the bridge's client drops its own idle connections after 4 s, before the service does.
 
 Measured on 23 November 2026 on the same machine, against a running throwaway service (own ports, models off, an empty
 project, a store of one file). Before is the parent of this change (`7a8b94e`), after is this change. Interleaved, 3
