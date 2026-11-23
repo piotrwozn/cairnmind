@@ -441,6 +441,36 @@ request. The bridge asks before every request because a service can be replaced 
 embedding rows are the service's path: the service keeps one HTTP client per model server for its life; a
 command-line process still opens one for each request.
 
+#### The bridge keeps one client to the service, and a plain http client builds no certificate store (#415)
+
+Building an HTTP client costs about 22 ms, most of it the TLS context with the whole certificate store, which a plain
+`http://127.0.0.1` request never uses. The bridge now keeps one client to the service for its life (made on its first
+request, closed when it stops). A command, which sends one or two requests, still makes its client for each request but
+with `verify=False` when the address is plain http, which builds an empty context instead: a plain http connection has
+no TLS, so nothing is left unverified, and an https address, such as a model server on another computer, is verified as
+before. Everything else is unchanged: loopback only, the token, each request's time limit, no redirects, and the
+`GET /health` before every request of the bridge. A service that was restarted between two requests gives the same
+answer or refusal as before (the next request opens a new connection), and a request sent after the service's
+keep-alive time of 5 s, at 4.9 to 5.3 s and at 8 s, all succeeded.
+
+Measured on 23 November 2026 on the same machine, against a running throwaway service (own ports, models off, an empty
+project, a store of one file). Before is the parent of this change (`7a8b94e`), after is this change. Interleaved, 3
+warm-ups and 20 runs each, in milliseconds as minimum / median / p95 / maximum; the machine was shared with other work, so
+read the differences:
+
+| What | Before | After |
+| --- | --- | --- |
+| `ask` tool call in an open bridge session, the first | 112 / 124 / 145 / 158 | 63 / 80 / 141 / 147 |
+| `ask` tool call in an open bridge session, a later one (median of 3 per run) | 112 / 133 / 161 / 182 | 64 / 77 / 99 / 103 |
+| `resume_context` tool call, the first | 267 / 298 / 334 / 388 | 162 / 205 / 255 / 315 |
+| `cairnmind mcp`: start and initialize | 718 / 780 / 816 / 822 | 744 / 793 / 851 / 921 |
+| `cairnmind ask` (the whole process) | 448 / 492 / 548 / 574 | 389 / 425 / 478 / 635 |
+| `cairnmind status` (the whole process) | 443 / 502 / 590 / 684 | 372 / 426 / 476 / 526 |
+
+A tool call is about 45 to 55 ms faster: the kept client, and the `GET /health` probe's client, which no longer builds a
+certificate store. The start of the bridge does not change, it sends nothing. A command is about 65 to 75 ms faster,
+since each client it makes (the probe for the service, the request) no longer builds one.
+
 ### The engine tests against this server
 
 The engine tests of Cairnmind (the tests marked `arcade`) can run against a server instead of an engine they start themselves, through connect-only mode: set `CAIRNMIND_TEST_ARCADE_SERVER_URL` to its address (plain http on this machine) and `CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE` to a private file (mode 0600) holding its root password, then run `uv run pytest -m arcade -rs`. The tests install, start and stop no engine; each creates its databases as root and drops them. The job has not yet run against the image, so whether every test passes there, and how long it takes, is not known. The non-required `server-tests` CI job does this on pushes to main and by hand, against the published image at the digest pinned in `src/cairnmind/config.py`, in production mode. Tests that cannot run against a server (they start an engine, read its files, or run a command a connect-only installation refuses) are skipped, each with its reason; the table is `LEFT_OUT_ON_A_SERVER` in `tests/conftest.py`, and the job summary prints it.
