@@ -390,7 +390,7 @@ def test_an_edge_delete_that_removes_fewer_rows_than_asked_or_reports_no_count_f
     real = JournalTransaction.command
     for name in ("shortened", "no count"):
         def command(self, sql, params=None, name=name):
-            if not sql.startswith("DELETE FROM edges WHERE project_id"):
+            if not sql.startswith("DELETE FROM edges WHERE id"):
                 return real(self, sql, params)
             if name == "shortened":
                 return real(self, sql, {**params, "ids": params["ids"][:-1]})

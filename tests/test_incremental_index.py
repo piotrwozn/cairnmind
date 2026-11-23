@@ -16,7 +16,7 @@ from cairnmind import ingest
 from cairnmind.arcade import ArcadeClient
 from cairnmind.config import Settings
 from cairnmind.ingest import forget_index_signature, index_project, index_project_if_changed
-from cairnmind.journal import JournalTransaction
+from cairnmind.journal import Journal, JournalTransaction
 from cairnmind.store import Store
 from cairnmind.sql import clean_row
 
@@ -325,6 +325,65 @@ def test_a_pass_after_an_edit_walks_the_tree_once(workspace, monkeypatch):
     edited = index_project_if_changed(store, pid)
     monkeypatch.undo()
     assert edited["changed"] == 1 and len(walks) == 1  # it was three: the check, the signature, the indexing (#409)
+    assert_same_as_a_full_run(store, pid)
+
+
+def stray_node(store, pid):
+    with store.transaction() as tx:
+        Journal.touch(tx, pid, "graph", op="reset")
+        store.write_graph(tx, pid, [{"id": "stray-node", "project_id": pid, "kind": "symbol", "label": "stray"}], [])
+
+
+@pytest.mark.parametrize("damage", [
+    lambda store, pid: stray_node(store, pid),
+    lambda store, pid: store.command("DELETE FROM nodes WHERE project_id=:project AND kind='symbol' LIMIT 1", {"project": pid}),
+    lambda store, pid: store.command("DELETE FROM edges WHERE project_id=:project AND kind='calls' LIMIT 1", {"project": pid}),
+    lambda store, pid: store.command("UPDATE projects SET graph_fingerprint=null WHERE id=:project", {"project": pid}),
+    lambda store, pid: store.command("UPDATE projects SET graph_fingerprint='restored-from-a-backup' WHERE id=:project", {"project": pid}),
+], ids=["a node added", "a node taken", "an edge taken", "marked as not built", "a fingerprint of another graph"])
+def test_a_node_or_an_edge_changed_behind_the_process_is_noticed_and_every_node_is_written_again(workspace, damage):
+    # The remembered graph is trusted only when the fingerprint, the markers, the count of edges and the count of
+    # nodes say that the stored graph is the one this process wrote (#426); else the stored rows are compared.
+    store, pid, root = workspace
+    first = index_project(store, pid)
+    damage(store, pid)
+    (root / "pkg" / "module_03.py").write_text("VALUE_3 = 33\n")
+    repaired = index_project_if_changed(store, pid)
+    assert repaired["read"] == 1 and repaired["graph_written"]["nodes"] == first["nodes"]
+    assert_same_as_a_full_run(store, pid)
+    assert not store.query("SELECT id FROM nodes WHERE id='stray-node'")
+
+
+def test_a_graph_another_process_wrote_after_this_one_is_noticed(workspace):
+    store, pid, root = workspace
+    index_project(store, pid)
+    key = (str(store.data_dir), pid)
+    memory = dict(ingest._REMEMBERED[key]["graph"])
+    (root / "pkg" / "limits.py").write_text("LIMIT = 4\n\n\ndef allowed(token):\n    return token == 'valid'\n")
+    index_project_if_changed(store, pid)  # the other process
+    ingest._REMEMBERED[key]["graph"] = memory  # what this one still remembers
+    ingest._INDEXED.pop(key, None)
+    (root / "pkg" / "module_03.py").write_text("VALUE_3 = 33\n")
+    repaired = index_project_if_changed(store, pid)
+    assert repaired["graph_written"]["nodes"] == repaired["nodes"]
+    assert_same_as_a_full_run(store, pid)
+
+
+def test_a_pass_after_one_edit_reads_no_node_ids_and_deletes_edges_by_their_ids(workspace, monkeypatch):
+    store, pid, root = workspace
+    index_project(store, pid)
+    (root / "pkg" / "limits.py").write_text("LIMIT = 4\n\n\ndef allowed(token):\n    return token == 'valid'\n")
+    seen = []
+    for method in ("query", "command"):
+        real = getattr(JournalTransaction, method)
+        monkeypatch.setattr(JournalTransaction, method, lambda self, sql, params=None, real=real: seen.append(sql) or real(self, sql, params))
+    edited = index_project_if_changed(store, pid)
+    monkeypatch.undo()
+    assert edited["changed"] == 1
+    assert not [sql for sql in seen if sql.startswith("SELECT id FROM nodes WHERE project_id")]  # one count instead
+    assert [sql for sql in seen if sql.startswith("SELECT count(*) AS total FROM nodes WHERE project_id")]
+    deletes = [sql for sql in seen if sql.startswith("DELETE FROM edges")]
+    assert deletes and all(sql == "DELETE FROM edges WHERE id IN :ids" for sql in deletes)
     assert_same_as_a_full_run(store, pid)
 
 

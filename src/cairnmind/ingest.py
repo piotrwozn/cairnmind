@@ -1022,7 +1022,17 @@ def _graph_as_remembered(tx, project_id: str, remembered: dict | None) -> bool:
         return False
     stored = tx.query("SELECT count(*) AS total FROM edges WHERE project_id=:project AND kind IN :kinds",
                       {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)})
-    return bool(stored) and int(stored[0].get("total") or 0) == remembered["counts"][1]
+    if not stored or int(stored[0].get("total") or 0) != remembered["counts"][1]:
+        return False
+    # The nodes that are not evidence nodes: counted, not read one by one, to know that none was added or taken (#426).
+    stored = tx.query("SELECT count(*) AS total FROM nodes WHERE project_id=:project AND kind IN :kinds",
+                      {"project": project_id, "kinds": list(GRAPH_NODE_KINDS)})
+    return bool(stored) and int(stored[0].get("total") or 0) == remembered["code_nodes"]
+
+
+def _code_nodes(digests: dict) -> int:
+    """The nodes of a graph that `_build_graph` may delete: every node but the evidence nodes of the sources."""
+    return sum(1 for identifier in digests if not identifier.startswith("source:"))
 
 
 def _union(parts: dict) -> tuple[dict[str, bytes], set[str]]:
@@ -1247,7 +1257,7 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
     parts, nodes, edges = _graph_parts(project_id, indexed, reuse)
     digests, edge_ids = _union(parts)
     written = {"fingerprint": fingerprint, "parser": parser_identity(), "parts": parts,
-               "counts": (len(digests), len(edge_ids))}
+               "counts": (len(digests), len(edge_ids)), "code_nodes": _code_nodes(digests)}
     if unchanged and _stored_graph_is(store, project_id, nodes, edges):
         # The fingerprint said that the stored graph follows from these sources, and this
         # process has now seen that it does, row for row. Otherwise it is replaced in full below.
@@ -1267,13 +1277,16 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             # one: the rows of every file are needed to compare with it.
             parts, nodes, edges = _graph_parts(project_id, indexed, {})
             digests, edge_ids = _union(parts)
-            written.update(parts=parts, counts=(len(digests), len(edge_ids)))
+            written.update(parts=parts, counts=(len(digests), len(edge_ids)), code_nodes=_code_nodes(digests))
         tx.command("UPDATE projects SET graph_fingerprint=null WHERE id=:project", {"project": project_id})
         if as_remembered:
             before, kept = _union(remembered["parts"])
             removed = sorted(kept - edge_ids)
             changed_nodes = [item for identifier, item in nodes.items() if before.get(identifier) != digests[identifier]]
+            # The stored nodes are those the process wrote (counted above): the ones that go are known, not read.
+            doomed = sorted(identifier for identifier in before if identifier not in digests and not identifier.startswith("source:"))
         else:
+            doomed = None
             # An edge's id names its ends, kind, source and line: a stored edge with a computed id and the marks a
             # full replace gives it is that edge, and it stays. Deleting every edge and writing the same ids again
             # left the engine's unique index holding entries of the deleted ones from about 40,000 edges on, and
@@ -1287,12 +1300,14 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             removed = sorted(row["id"] for row in stored if row["id"] not in kept)
             changed_nodes = list(nodes.values())
         # A whole transaction's rows in one request: with the project in the condition the engine scans the project's
-        # index once per request, so groups of 500 made the scans, and the removal's cost, 80 times more (#385).
+        # index once per request, so groups of 500 made the scans, and the removal's cost, 80 times more (#385). By id
+        # alone it finds each edge in the index of its id (25 ms for 1,000 edges of 110,000, not 230, #426); the id
+        # holds the project, and the count below fails the write when a group is not deleted in full. The journal
+        # takes the project from the parameter (Journal.command), so it reads none of the rows.
         group = graph_transactions.ROWS_PER_TRANSACTION
         for offset in range(0, len(removed), group):
             part = removed[offset:offset + group]
-            deleted = batches.tx.command("DELETE FROM edges WHERE project_id=:project AND kind IN :kinds AND id IN :ids",
-                                         {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS), "ids": part})
+            deleted = batches.tx.command("DELETE FROM edges WHERE id IN :ids", {"project": project_id, "ids": part})
             count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
             if type(count) is not int or count != len(part):
                 raise RuntimeError("The database did not delete every graph edge of a group")
@@ -1318,13 +1333,14 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         tx = batches.tx
         if hasattr(tx, "known"):
             tx.known = None
-        previous_nodes = tx.query(
-            "SELECT id FROM nodes WHERE project_id=:project AND kind IN :kinds",
-            {"project": project_id, "kinds": list(GRAPH_NODE_KINDS)},
-        )
+        if doomed is None:
+            previous_nodes = tx.query(
+                "SELECT id FROM nodes WHERE project_id=:project AND kind IN :kinds",
+                {"project": project_id, "kinds": list(GRAPH_NODE_KINDS)},
+            )
+            doomed = [row["id"] for row in previous_nodes if row["id"] not in digests]
         # Knowledge-record relationships referencing a removed code node must not silently
         # become dangling: such a node is retained. The rest go in groups (issue #167).
-        doomed = [row["id"] for row in previous_nodes if row["id"] not in digests]
         for offset in range(0, len(doomed), graph_transactions.ROWS_PER_TRANSACTION):
             store.remove_graph_nodes(batches.tx, project_id, doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION])
             batches.wrote(len(doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION]))
