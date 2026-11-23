@@ -314,8 +314,9 @@ def clean(row):
 
 
 def failed_removal(tmp_path, monkeypatch, rows):
-    """Index a changed tree with ``rows`` rows to a transaction (None: as in the product), the removal failing in the
-    middle: its second DELETE of vertices, or the only one when the removal is one group, is run and then fails."""
+    """Index a changed tree with ``rows`` rows to a transaction (None: as in the product), the write failing after the
+    removal: the second DELETE of vertices is run and then fails, or, in one transaction, the fingerprint's UPDATE that
+    follows the whole removal."""
     root = tmp_path / "repo"
     root.mkdir()
     code_tree(root)
@@ -332,8 +333,10 @@ def failed_removal(tmp_path, monkeypatch, rows):
         result = real(self, sql, params)
         if sql.startswith(GROUPED_REMOVAL[1]):
             deletes.append(len(params["ids"]))
-            if len(deletes) == (1 if rows is None else 2):  # the group is deleted, then the connection drops
+            if rows is not None and len(deletes) == 2:  # the second group is deleted, then the connection drops
                 raise RuntimeError("the connection dropped")
+        if rows is None and sql.startswith("UPDATE projects SET graph_fingerprint=:fingerprint"):
+            raise RuntimeError("the connection dropped")  # after the whole removal: any commit before it would show
         return result
     with monkeypatch.context() as patch:
         if rows is not None:
@@ -342,7 +345,7 @@ def failed_removal(tmp_path, monkeypatch, rows):
         patch.setattr(ingest, "_build_graph", building)
         with pytest.raises(RuntimeError, match="connection dropped"):
             ingest.index_project(grouped, first)
-    assert len(deletes) == (1 if rows is None else 2) and all(deletes)
+    assert len(deletes) >= (1 if rows is None else 2) and all(deletes)
     assert before["graph"]["nodes"]
     return grouped, first, single, second, before
 
@@ -376,6 +379,27 @@ def test_a_removal_that_fails_in_a_write_over_several_transactions_leaves_the_gr
         all_row_by_row(patch)
         ingest.index_project(single, second)
     assert_same(grouped, first, single, second, "after the failed run", transactions=True)
+
+
+def test_an_edge_delete_that_removes_fewer_rows_than_asked_or_reports_no_count_fails_the_write(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    code_tree(root)
+    grouped, first, *_ = both(tmp_path, root, monkeypatch)
+    remove_code(root)
+    real = JournalTransaction.command
+    for name in ("shortened", "no count"):
+        def command(self, sql, params=None, name=name):
+            if not sql.startswith("DELETE FROM edges WHERE project_id"):
+                return real(self, sql, params)
+            if name == "shortened":
+                return real(self, sql, {**params, "ids": params["ids"][:-1]})
+            real(self, sql, params)
+            return [{}]
+        with monkeypatch.context() as patch:
+            patch.setattr(JournalTransaction, "command", command)
+            with pytest.raises(RuntimeError, match="every graph edge"):
+                ingest.index_project(grouped, first)
 
 
 def test_a_removal_group_the_database_did_not_delete_in_full_fails_its_transaction(tmp_path, monkeypatch):

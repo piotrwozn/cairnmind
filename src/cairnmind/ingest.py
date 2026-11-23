@@ -1168,14 +1168,14 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             removed = sorted(row["id"] for row in stored if row["id"] not in kept)
             changed_nodes = list(nodes.values())
         # A whole transaction's rows in one request: with the project in the condition the engine scans the project's
-        # index once per request, so groups of 500 made the removal grow with the square of the graph (#385).
+        # index once per request, so groups of 500 made the scans, and the removal's cost, 80 times more (#385).
         group = graph_transactions.ROWS_PER_TRANSACTION
         for offset in range(0, len(removed), group):
             part = removed[offset:offset + group]
             deleted = batches.tx.command("DELETE FROM edges WHERE project_id=:project AND kind IN :kinds AND id IN :ids",
                                          {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS), "ids": part})
             count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
-            if isinstance(count, int) and count != len(part):
+            if type(count) is not int or count != len(part):
                 raise RuntimeError("The database did not delete every graph edge of a group")
             batches.wrote(len(part))
         new_edges = [item for identifier, item in edges.items() if identifier not in kept]

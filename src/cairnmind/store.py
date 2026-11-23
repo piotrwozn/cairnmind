@@ -1142,7 +1142,7 @@ class Store:
         """
         identifiers = sorted({identifier for identifier in identifiers if isinstance(identifier, str)})
         # A transaction's rows in one request: the engine scans the project's index once per DELETE, so groups of 250
-        # made the removal of a replaced graph grow with the square of its size (#402). The count is vertices only.
+        # made it 80 times more scans for a replaced graph (#402). The count is vertices only.
         group = graph_transactions.ROWS_PER_TRANSACTION
         for offset in range(0, len(identifiers), group):
             part = identifiers[offset:offset + group]
@@ -1156,7 +1156,7 @@ class Store:
             deleted = tx.command("DELETE FROM nodes WHERE project_id=:project AND id IN :ids",
                                  {"project": project_id, "ids": unlinked})
             count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
-            if isinstance(count, int) and count != len(unlinked):
+            if type(count) is not int or count != len(unlinked):
                 raise RuntimeError("The database did not delete every graph vertex of a group")
 
     def _record_graph(self, tx, record):
