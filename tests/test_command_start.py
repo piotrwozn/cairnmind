@@ -14,6 +14,7 @@ import pytest
 from cairnmind import __version__, cli
 from cairnmind.config import Settings
 from cairnmind.service_version import instance_id
+from conftest import own_time
 from test_other_version import OLD, forbidden, invoke, isolated, old_service  # noqa: F401 - isolated: autouse
 
 HEAVY = ("cairnmind.service", "fastapi", "uvicorn", "starlette")
@@ -128,7 +129,7 @@ def test_a_second_command_asks_again_and_a_stale_answer_is_not_reused(tmp_path, 
     assert service_version.refusal(settings) is None and len(seen) == 1
     assert service_version.refusal(settings) is None and len(seen) == 2  # used once: the next one asks
     cli.service_alive(settings)
-    monkeypatch.setattr(service_version.time, "monotonic", lambda: 10 ** 9)  # a second later
+    own_time(monkeypatch, service_version, monotonic=lambda: 10 ** 9)  # a second later
     assert service_version.refusal(settings) is None and len(seen) == 4
 
 

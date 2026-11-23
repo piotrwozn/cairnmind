@@ -257,6 +257,9 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The tests of the question budget run on a simulated clock instead of real sleeps, so a slow or loaded machine can no longer make a second-look test fail (#383).
 - A test holds the second look of an answer inside the time the question has left: it fails when the second look is given no time limit (#397).
 - `scripts/measure_service_spend.py` prints no row, and exits with code 3, for an index that read and changed no file, because the row would then hold the service's own scan; `--allow-unchanged` keeps it (#420).
+- Tests replace the clock of the module under test instead of `time.sleep` for the whole process, the tests that hide vertices count only the waits their own hidden answers cause, and a guard test over every test file and helper keeps it so; the release gate says to read every job of main's last run, `server-tests` included (#417).
+- The test of a refused or lost request of the workspace's acts no longer fails when the sidebar's own refresh error lands next to the act's sentence, and it still catches a raw broker error told by the act itself (#418).
+- A test's fake client writes its capture file whole, and the tests that read it wait, bounded, for a complete JSON document; the terminal-reading threads of two workspace tests are stopped before their descriptor is closed, so a reused descriptor number can no longer read `state.json` away from its reader (#419).
 
 ## 0.12.0
 

@@ -34,6 +34,7 @@ import tempfile
 import termios
 import threading
 import time
+import types
 from urllib.parse import quote, urlparse
 import uuid
 import zlib
@@ -54,7 +55,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_agent_journal", "test_agent_tools", "test_answer_contract", "test_api_broker",
     "test_api_credentials", "test_api_panels", "test_api_profiles", "test_api_providers",
     "test_api_runtime", "test_api_worker", "test_arcade_transport", "test_client_auth", "test_repository_evaluation",
-    "test_client_runtime", "test_cockpit_cli", "test_cockpit_server", "test_cockpit_state",
+    "test_client_runtime", "test_json_wait", "test_pty_drain", "test_cockpit_cli", "test_cockpit_server", "test_cockpit_state",
     "test_copilot_adapter", "test_database_credentials", "test_deployment", "test_environment_names", "test_graph_raster", "test_graph_widget_rendering", "test_memory_models", "test_memory_view", "test_module_alias",
     "test_project_remove_cli", "test_recorder_install", "test_hook_spool_unassigned", "test_published_memory_format",
     "test_published_memory_secrets",
@@ -80,7 +81,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_short_answers", "test_person_acts_consent", "test_workspace_setup_screen",
     "test_setup_mark", "test_setup_change", "test_terminal_setup_change", "test_project_forget_workspace",
     "test_server_mode", "test_restore_messages", "test_command_start",
-    "test_model_client_kept",
+    "test_model_client_kept", "test_no_process_wide_time_patch",
 })
 
 TMUX_MODULES = frozenset({
@@ -279,6 +280,31 @@ def workspace_person(monkeypatch):
     monkeypatch.setattr(person_proof, "workspace_socket",
                         lambda settings, value: Path(value) if value == TEST_SOCKET else None)
     return {person_proof.KEY_HEADER: TEST_KEY, person_proof.SOCKET_HEADER: TEST_SOCKET}
+
+
+def own_time(monkeypatch, module, **replaced):
+    """Replace ``module``'s own ``time`` name by a copy of the clock with ``replaced`` functions changed (#417).
+
+    ``monkeypatch.setattr(module.time, "sleep", ...)`` would change the one ``time`` module the whole process shares."""
+    clock = {name: getattr(time, name) for name in dir(time) if not name.startswith("_")}
+    monkeypatch.setattr(module, "time", types.SimpleNamespace(**{**clock, **replaced}))
+
+
+def counted_waits(monkeypatch, module):
+    """``own_time`` for a test that hides vertices from the wait: only the sleep right after a hidden answer is counted.
+
+    The test sets ``waits.missed`` when it answers nothing; the next sleep goes to ``waits.slept`` and returns at once. A sleep
+    for any other reason (the engine's index really lagging) is a real, short one: waited for, not counted (#417)."""
+    waits = types.SimpleNamespace(slept=[], missed=False)
+
+    def sleep(seconds):
+        if waits.missed:
+            waits.missed = False
+            waits.slept.append(seconds)
+        else:
+            time.sleep(0.05)
+    own_time(monkeypatch, module, sleep=sleep)
+    return waits
 
 
 def as_person(store, project_id, record, sources=None):
