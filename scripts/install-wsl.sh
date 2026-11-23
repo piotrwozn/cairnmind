@@ -63,14 +63,23 @@ if [[ -z "$connect_url" ]]; then
 
     # $1: what is wrong. macOS finds Homebrew's openjdk@21 only once it is linked into /Library/Java/JavaVirtualMachines
     # (Homebrew's own advice); then every process finds it, also one that a desktop app starts without ~/.zprofile.
+    # What the Java check says is collected in $java_said and printed once Docker has been asked (#399): when Docker
+    # runs the engine, "Java not found" is no failure.
+    java_said=""
+    say_java() {
+        local line
+        printf -v line "$@"
+        java_said+="$line"
+    }
+
     refuse_java() {
         local brew_jdk
-        printf '%s\n' "$1" >&2
+        say_java '%s\n' "$1"
         if [[ "${system:-}" == Darwin ]] && command -v brew >/dev/null 2>&1 \
             && brew_jdk="$(brew --prefix openjdk@21 2>/dev/null)/libexec/openjdk.jdk" \
             && [[ -x "$brew_jdk/Contents/Home/bin/java" ]]; then
-            printf "Homebrew's openjdk@21 is installed, but macOS does not find it. Link it, then run the installer again:\n" >&2
-            printf '  sudo ln -sfn "%s" /Library/Java/JavaVirtualMachines/openjdk-21.jdk\n' "$brew_jdk" >&2
+            say_java "Homebrew's openjdk@21 is installed, but macOS does not find it. Link it, then run the installer again:\n"
+            say_java '  sudo ln -sfn "%s" /Library/Java/JavaVirtualMachines/openjdk-21.jdk\n' "$brew_jdk"
         fi
         return 1
     }
@@ -86,7 +95,7 @@ if [[ -z "$connect_url" ]]; then
                 java_bin="$JAVA_HOME/bin/java"
                 java_source=" (JAVA_HOME=$JAVA_HOME)"
             else
-                printf 'JAVA_HOME is set to %s, which has no bin/java; it is ignored.\n' "$JAVA_HOME" >&2
+                say_java 'JAVA_HOME is set to %s, which has no bin/java; it is ignored.\n' "$JAVA_HOME"
             fi
         fi
         if [[ -z "$java_bin" && "${system:-}" == Darwin ]] \
@@ -147,16 +156,22 @@ if [[ -z "$connect_url" ]]; then
         return "$status"
     }
 
-    if ! check_java; then
+    java_ok=true
+    check_java || java_ok=false
+    if [[ "$java_ok" == true ]]; then
+        printf '%s' "$java_said" >&2
+    else
         if ! command -v docker >/dev/null 2>&1; then
+            printf '%s' "$java_said" >&2
             printf 'Or install Docker and start it; the engine then runs in a container. Then run this installer again.\n' >&2
             printf 'Nothing has been installed yet. Java is the simpler choice.\n' >&2
             exit 1
         fi
         if docker_asked; then
-            printf 'Java 21 or newer was not found and Docker answers, so cairnmind init can run the engine in Docker; it says which mode it chose.\n'
+            printf 'Java 21 or newer was not found, but Docker answers, so cairnmind init can run the engine in Docker instead; it says which mode it chose.\n'
             engine_in_docker=true
         else
+            printf '%s' "$java_said" >&2
             # What docker said is untrusted text: its first non-blank line, printable characters only, cut short.
             docker_said="${docker_said#"${docker_said%%[![:space:]]*}"}" # real docker starts with an empty line
             docker_said="${docker_said%%$'\n'*}"

@@ -622,7 +622,7 @@ def test_linux_keeps_its_apt_hints(mac):
 
 
 def test_the_installer_runs_the_engine_in_docker_when_java_is_missing_and_docker_answers(mac):
-    """Without Java 21 the installer goes on when Docker answers (#272), says so, and still names the Java problem."""
+    """Without Java 21 the installer goes on when Docker answers (#272) and says so in one sentence, not as a failure (#399)."""
     run, state, bin_dir, tmp_path = mac
     state.update(system="Linux")
     hint = "sudo apt install openjdk-21-jre-headless"
@@ -630,13 +630,15 @@ def test_the_installer_runs_the_engine_in_docker_when_java_is_missing_and_docker
     result = run(show_flag=True)
     assert result.returncode == 0, result.stderr
     # It promises nothing `init` may not keep (an installation that holds a native engine stays native).
-    assert "so cairnmind init can run the engine in Docker; it says which mode it chose." in result.stdout
+    # #399: one sentence, on stdout; the bare "Java not found" of a failure is not said when Docker runs the engine.
+    assert ("Java 21 or newer was not found, but Docker answers, so cairnmind init can run the engine in Docker "
+            "instead; it says which mode it chose.") in result.stdout.splitlines()
     assert "Java is not needed" not in result.stdout and "will run in Docker" not in result.stdout
-    assert result.stderr == f"Java not found. Install Java 21+: {hint}\n" and "passed" in result.stdout
+    assert result.stderr == "" and "passed" in result.stdout
     assert "engine_in_docker=true" in result.stdout  # the flag the install branch below is chosen by
     java(bin_dir / "java", 17)
     result = run(show_flag=True)
-    assert result.returncode == 0 and result.stderr == f"Found Java 17. Java 21+ is required: {hint}\n"
+    assert result.returncode == 0 and result.stderr == "" and "Java 21 or newer was not found" in result.stdout
     assert "engine_in_docker=true" in result.stdout
     java(bin_dir / "java", 21)  # Java 21 is used when there is one: no word of Docker
     result = run(show_flag=True)
