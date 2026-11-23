@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import re
 import shlex
+import time
 
 import httpx
 
@@ -67,20 +68,33 @@ def _command(settings, verb: str) -> str:
     return shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), verb])
 
 
+_SEEN: dict = {}  # (url, data directory) -> (when, /health answer) of the answer cli.service_alive just took
+
+
+def remember(settings, health: dict) -> None:
+    _SEEN[settings.url, str(settings.data_dir)] = (time.monotonic(), health)
+
+
 def refusal(settings) -> Sentence | None:
-    """Why nothing may be sent to this data directory's knowledge service, None when it may (or nothing answers)."""
-    try:
-        with httpx.Client(trust_env=False, timeout=5) as client:
-            response = client.request("GET", settings.url + "/health")
-    except httpx.ConnectError:
-        return None  # nothing listens: the request that follows fails, or starts the service, on its own
-    except httpx.HTTPError:
-        # Nothing is known of the program: `stop` would call it "not running" (it waits 0.7 s), so it is not advised.
-        return Sentence(NO_HEALTH, url=settings.url, data_dir=settings.data_dir)
-    try:
-        health = response.json()
-    except ValueError:
-        return None  # not a Cairnmind service: what follows is refused for that reason
+    """Why nothing may be sent to this data directory's knowledge service, None when it may (or nothing answers).
+    The answer cli.service_alive took a moment ago (ensure_service asks both) is used once instead of a second
+    request; any other call asks again, so the bridge's check before every request stays a live one (#405)."""
+    seen = _SEEN.pop((settings.url, str(settings.data_dir)), None)
+    if seen and time.monotonic() - seen[0] < 1:
+        health = seen[1]
+    else:
+        try:
+            with httpx.Client(trust_env=False, timeout=5) as client:
+                response = client.request("GET", settings.url + "/health")
+        except httpx.ConnectError:
+            return None  # nothing listens: the request that follows fails, or starts the service, on its own
+        except httpx.HTTPError:
+            # Nothing is known of the program: `stop` would call it "not running" (it waits 0.7 s), so it is not advised.
+            return Sentence(NO_HEALTH, url=settings.url, data_dir=settings.data_dir)
+        try:
+            health = response.json()
+        except ValueError:
+            return None  # not a Cairnmind service: what follows is refused for that reason
     if not (isinstance(health, dict) and health.get("service") in SERVICE_NAMES
             and health.get("instance") == instance_id(settings)):
         return None  # another program, or another data directory's service, whose refusal of the token says so

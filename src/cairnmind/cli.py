@@ -1,7 +1,6 @@
 """Cairnmind CLI; native coding clients retain their own terminal and permissions."""
 from __future__ import annotations
 
-import asyncio
 import fcntl
 import json
 import os
@@ -271,14 +270,18 @@ def actor_write(store, settings: Settings, project_id: str, worktree: Path | str
 
 
 def service_alive(settings: Settings) -> bool:
-    from cairnmind.service import instance_id
+    from cairnmind import service_version  # not cairnmind.service: that imports the web framework (#405)
     try:
         with httpx.Client(trust_env=False, timeout=0.7) as client:
             result = client.get(settings.url + "/health")
             data = result.json()
-            return result.is_success and data.get("service") in SERVICE_NAMES and data.get("instance") == instance_id(settings)
+            alive = (result.is_success and data.get("service") in SERVICE_NAMES
+                     and data.get("instance") == service_version.instance_id(settings))
     except (httpx.HTTPError, ValueError):
         return False
+    if alive:
+        service_version.remember(settings, data)  # the version check that follows reads this answer, not a new one
+    return alive
 
 
 @contextmanager
@@ -1269,9 +1272,12 @@ def ask(ctx: typer.Context, project: ProjectArg, question: QuestionArg, worktree
     if answer_schema is not None:
         from cairnmind.answer_contract import prepare_answer_schema
         payload["answer_schema"] = prepare_answer_schema(_json_file(answer_schema))
-    if not service_alive(ctx.obj):
+    alive = service_alive(ctx.obj)
+    if alive:
+        _refuse_other_version(ctx.obj)  # reads the answer service_alive just took: one /health for the command (#405)
+    else:
         _refuse_unknown_project(ctx.obj, project)
-    result = request(ctx.obj, "POST", "/ask", json=payload)
+    result = request(ctx.obj, "POST", "/ask", json=payload, matched=alive)  # matched: ensure_service would ask again
 
     def sentences():
         from cairnmind.terminal_commands import ask_summary  # the workspace's view of an answer
@@ -2488,6 +2494,7 @@ def hook(ctx: typer.Context, client: Annotated[str, typer.Option("--client")]):
 @models_app.command("list")
 @initialized
 def model_list(ctx: typer.Context):
+    import asyncio
     from cairnmind.memory_models import from_settings
     output(asyncio.run(from_settings(ctx.obj).models()))
 
@@ -2510,6 +2517,7 @@ def model_set(ctx: typer.Context,
               allow_remote: Annotated[bool, typer.Option(
                   "--allow-remote", help="Consent to send memory content to a server on another computer.")] = False):
     """Choose the knowledge agent's chat or embedding model and server, after a test call to it."""
+    import asyncio
     from cairnmind.memory_models import configure_role
     try:
         result = asyncio.run(configure_role(
@@ -2600,6 +2608,7 @@ def retry_jobs(ctx: typer.Context):
 @initialized
 def rebuild_vectors(ctx: typer.Context, project: ProjectArg):
     """Rebuild the project's derived vectors, keeping sources and history."""
+    import asyncio
     from cairnmind.memory_models import from_settings
     from cairnmind.service import schedule_embeddings
     settings = ctx.obj
