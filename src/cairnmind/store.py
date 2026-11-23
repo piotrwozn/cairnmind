@@ -35,6 +35,9 @@ LOOKUP_INDEXES = (("chunks", "source_id"), ("nodes", "source_id"), ("edges", "so
                   ("record_revisions", "record_id"), ("check_runs", "task_id"), ("session_events", "session_id"),
                   ("resume_packets", "session_id"), ("nodes", "kind"))  # kind: the definitions of an answer read 17 % of the nodes (#408)
 LOOKUP_INDEX_SET = 2
+# Seconds a statement that builds a lookup index waits: the engine drops the build when the client gives up at the
+# 30 s of an ordinary request, so a store that takes longer would never get its index. 88,000 nodes take about 1 s.
+LOOKUP_INDEX_WAIT = 600
 # Graph rows written by one request of Store.write_graph (issue #167).
 GRAPH_ROWS_PER_REQUEST = 250
 KINDS = {"decision", "task", "fact", "constraint", "question", "preference", "checkpoint"}
@@ -692,15 +695,16 @@ class Store:
     def _lookup_indexes(self, recorded):
         """Create the lookup indexes that are missing. Called with the writer lock held; safe to repeat.
 
-        An index only makes a lookup faster. When one cannot be built now, for example because a large
-        table takes longer than a request may, the database is opened all the same and the next start
-        tries again: nothing is recorded until every index exists.
+        An index only makes a lookup faster. When one cannot be built now, for example because the engine
+        refused the statement, the database is opened all the same and the next start tries again:
+        nothing is recorded until every index exists. Each statement waits LOOKUP_INDEX_WAIT, not a request's 30 s.
         """
         from .arcade import ArcadeError
         try:
-            for collection, field in LOOKUP_INDEXES:
-                self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
-                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) NOTUNIQUE NULL_STRATEGY SKIP")
+            with self.client.patient(LOOKUP_INDEX_WAIT):
+                for collection, field in LOOKUP_INDEXES:
+                    self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
+                    self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) NOTUNIQUE NULL_STRATEGY SKIP")
         except ArcadeError:
             return
         with self.client.transaction() as tx:

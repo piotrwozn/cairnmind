@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from test_definitions import CONFIG, _project
 from test_knowledge import FakeOllama, workspace  # noqa: F401  (workspace is a fixture)
+from test_lookup_indexes import as_0_12_0_left_it, indexed, marker
 from test_round_trips import requests_made  # noqa: F401  (a fixture)
+from test_store_writer import second_installation
 
 from cairnmind.agent import KnowledgeAgent
+from cairnmind.store import Store
 
 
 def test_the_definitions_of_an_answer_take_a_few_requests_of_which_none_lists_the_sources(workspace, requests_made):  # noqa: F811
@@ -62,6 +65,28 @@ def test_a_file_that_failed_its_check_fails_the_same_way_the_second_time(workspa
     assert agent._hits([hit], project["id"], {}, None, "cockpit", False, checked=checked) == []
     assert agent._hits([hit], project["id"], {}, None, "cockpit", False, checked=checked) == []
     assert len(checks) == 1
+
+
+def test_a_reader_before_the_writer_built_the_kind_index_gets_the_same_definitions(workspace, requests_made, tmp_path):  # noqa: F811
+    store, project, settings, _root = _project(workspace)
+    question = "On which port does the cockpit listen by default?"
+    hits = [{"source_id": "none", "text": 'getattr(settings, "cockpit_port", 1)'}]
+
+    def definitions(of):
+        return [item["text"] for item in KnowledgeAgent(of, settings, FakeOllama())._definitions(
+            project["id"], question, hits, {})]
+    expected = definitions(store)
+    assert expected
+    as_0_12_0_left_it(store)
+    reader = Store(second_installation(tmp_path, store))
+    assert reader.read_only
+    requests_made.clear()
+    assert definitions(reader) == expected  # slower without the index, not different
+    assert not [sql for sql in requests_made if sql.startswith(("CREATE INDEX", "CREATE PROPERTY", "DROP"))]
+    assert ("nodes", ("kind",)) not in indexed(store) and marker(store) == [1]  # a reader builds nothing
+    writer = Store(store.data_dir)  # the writer's next start builds it; the reader's next read uses it
+    assert ("nodes", ("kind",)) in indexed(writer) and marker(writer) == [2]
+    assert definitions(reader) == expected
 
 
 def test_a_kind_with_more_rows_than_the_read_takes_gives_the_same_definitions(workspace, monkeypatch):  # noqa: F811
