@@ -31,8 +31,8 @@ RESTORED_WITHOUT_WORKSPACE = (
     "workspace what still holds. To keep the person's confirmations instead, open the workspace (`cairnmind`; it "
     "needs tmux 3.4 or newer), stop the service (`cairnmind stop`) and run the same restore again.")
 RESTORED_NOTHING_TO_KEEP = (
-    "Restored without the person's workspace: the backup held no confirmed record and no accepted transcript record "
-    "kind, so nothing was turned into a claim or withdrawn.")
+    "Restored without the person's workspace: the backup held no record confirmed by a person or before the rule and "
+    "no accepted transcript record kind, so nothing was turned into a claim or withdrawn.")
 RESTORED_WITH_AN_OLD_WORKSPACE = (
     "Restored without the person's workspace: the open workspace was started by an earlier version and holds no "
     "key for a person's acts. Nothing in the backup counts as a person's act here: {confirmations} confirmed "
@@ -80,8 +80,8 @@ MESSAGES = {
         "potwierdzenia osoby, otwórz środowisko (`cairnmind`; wymaga tmux 3.4 lub nowszego), zatrzymaj usługę "
         "(`cairnmind stop`) i uruchom to samo przywracanie jeszcze raz."),
     RESTORED_NOTHING_TO_KEEP: (
-        "Przywrócono bez środowiska osoby: kopia zapasowa nie zawierała potwierdzonego rekordu ani zaakceptowanego "
-        "rodzaju rekordów transkrypcji, więc nic nie zamieniono na ustalenie ani nie wycofano."),
+        "Przywrócono bez środowiska osoby: kopia zapasowa nie zawierała rekordu potwierdzonego przez osobę ani przed "
+        "wprowadzeniem reguły, ani zaakceptowanego rodzaju rekordów transkrypcji, więc nic nie zamieniono na ustalenie ani nie wycofano."),
     RESTORED_WITH_AN_OLD_WORKSPACE: (
         "Przywrócono bez środowiska osoby: otwarte środowisko uruchomiła wcześniejsza wersja i nie ma ono klucza dla "
         "czynności osoby. Nic z kopii zapasowej nie liczy się tutaj jako czynność osoby. Ustalenia, które pozostają "
@@ -98,7 +98,7 @@ class BackupClaims:
 
     def __init__(self, where: str, at: str | None = None):
         self.where, self.at = where, at or utc_now()
-        self.confirmations = self.record_kinds = 0
+        self.confirmations = self.record_kinds = self.revisions = 0
 
     def turn(self, collection: str, row: dict) -> dict:
         if collection == "records":
@@ -109,7 +109,10 @@ class BackupClaims:
             return _with_mark(row, mark)
         if collection == "record_revisions" and isinstance(row.get("snapshot"), dict):
             mark = self._claim(row["snapshot"])
-            return row if mark is None else {**row, "snapshot": _with_mark(row["snapshot"], mark)}
+            if mark is None:
+                return row
+            self.revisions += 1  # not in the reported counts, but a redo with the workspace would keep it
+            return {**row, "snapshot": _with_mark(row["snapshot"], mark)}
         if collection == "projects":
             from .record_kinds import withdraw_all  # record_kinds imports the transcript reader: not at the top
             row, count = withdraw_all(row, self.at, ROUTE, WITHDRAW_NOTE)
@@ -133,7 +136,7 @@ def _with_mark(record, mark):
 def notice_item(proof: str, claims: BackupClaims) -> tuple[str, dict]:
     """The sentence said when a restore kept no person's act, as (template, values) for either language."""
     template = RESTORED_WITH_AN_OLD_WORKSPACE if proof == "no_key" else RESTORED_WITHOUT_WORKSPACE
-    if not claims.confirmations and not claims.record_kinds:
+    if not (claims.confirmations or claims.record_kinds or claims.revisions):
         template = RESTORED_NOTHING_TO_KEEP  # nothing to keep: a redo would change nothing
     return template, {"confirmations": claims.confirmations, "kinds": claims.record_kinds}
 
