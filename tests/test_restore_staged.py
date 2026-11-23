@@ -319,30 +319,52 @@ def test_a_failure_before_the_first_delete_that_cannot_remove_the_mark_says_both
     assert restore_staged.unfinished(store.client) is None and not Store(store.data_dir).read_only
 
 
-def test_a_restore_whose_vertex_lookup_misses_fails_cleanly_and_is_put_back(tmp_path, monkeypatch):
-    """#377: at about 160,000 vertices the unique index lookup on nodes.id missed vertices that exist, so a group of
-    edges came back short. That is the failure injected here; this branch's own size test stays far below that size."""
+def test_a_group_of_edges_that_came_back_short_is_written_again_and_loses_no_edge(tmp_path, monkeypatch):
+    """#377, #396: the unique index lookup on nodes.id may miss vertices that exist, so a group of edges comes back
+    short. That is the failure injected here, once: the group is committed, waited for and written again, and the
+    edges the first try wrote are kept, not written twice. (A group that keeps missing fails by name: the tests of
+    `_hiding_the_index`.)"""
     store, path, before, known = _world(tmp_path, monkeypatch)
+    store.restore(path)
+    restored = comparable(store.export())
     script, missed = JournalTransaction.script, []
 
     def missing(self, statements, params, project_id):
         found = script(self, statements, params, project_id)
         if not missed and any(str(sql).startswith("CREATE EDGE edges") for sql in statements):
-            missed.append(True)  # once: the undo then writes its edges where the lookup answers
+            missed.append(True)
             return [{"n": found[0]["n"] - 1}]
         return found
 
     monkeypatch.setattr(JournalTransaction, "script", missing)
-    with pytest.raises(RestoreFailed, match="did not create every graph edge of a group.*put back as it was before"):
-        store.restore(path)
+    store.restore(path)
     monkeypatch.undo()
-    assert missed and comparable(store.export()) == before
+    assert missed and comparable(store.export()) == restored
     assert restore_staged.unfinished(store.client) is None and not Store(store.data_dir).read_only
 
 
-def _hiding_the_index(monkeypatch, hidden):
+def test_an_engine_error_inside_a_group_of_edges_is_named_as_it_is_and_not_retried(tmp_path, monkeypatch):
+    """The engine rolled its transaction back: a commit and a retry would only replace its error with a 404."""
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    script, tried = JournalTransaction.script, []
+
+    def heap(self, statements, params, project_id):
+        if not tried and any(str(sql).startswith("CREATE EDGE edges") for sql in statements):  # the undo writes edges too
+            tried.append(True)
+            raise arcade.ArcadeError("ArcadeDB HTTP 500: Java heap space", status_code=500)
+        return script(self, statements, params, project_id)
+
+    monkeypatch.setattr(JournalTransaction, "script", heap)
+    with pytest.raises(RestoreFailed, match=r"Java heap space\. The database engine ran out of memory.*put back as it was"):
+        store.restore(path)
+    monkeypatch.undo()
+    assert len(tried) == 1 and comparable(store.export()) == before
+
+
+def _hiding_the_index(monkeypatch, hidden, at="wait"):
     """The engine, compacting its unique index on nodes.id, finds no vertex for a while after a commit (#377). From the
-    first edge group, the next `hidden` lookups of vertices by id (the wait's read-back, the prefetch) answer nothing,
+    wait for the vertices (`at="wait"`: the index misses during the vertex phase) or from the first edge group
+    (`at="edges"`: it misses again after the wait), the next `hidden` lookups of vertices by id answer nothing,
     and so does every later lookup of a transaction that has missed one, as under the engine's REPEATABLE_READ (measured
     on 26.11.1): the end points of its CREATE EDGE are not found either. The sleeps of the wait are counted, not slept."""
     from cairnmind import graph_transactions, restore_groups
@@ -368,8 +390,15 @@ def _hiding_the_index(monkeypatch, hidden):
         return script(self, statements, params, project_id)
 
     def armed_write(self, project):
-        state["armed"] = state["armed"] or self.kind == "edge"
+        state["armed"] = state["armed"] or (at == "edges" and self.kind == "edge")
         return write(self, project)
+
+    def armed_wait(*args):
+        state["armed"] = state["armed"] or at == "wait"
+        state["waits"] += 1
+        return wait(*args)
+    wait, state["waits"] = restore_groups.await_vertices, 0
+    monkeypatch.setattr(restore_groups, "await_vertices", armed_wait)
     monkeypatch.setattr(JournalTransaction, "query", hiding_query)
     monkeypatch.setattr(JournalTransaction, "script", hiding_script)
     monkeypatch.setattr(restore_groups.GraphGroups, "_write", armed_write)
@@ -385,8 +414,49 @@ def test_a_restore_waits_for_the_index_to_find_the_vertices_it_committed_before_
     state = _hiding_the_index(monkeypatch, 2)
     store.restore(path)
     assert state["hidden"] == 0 and len(state["slept"]) == 2  # it waited, and wrote every edge after
+    assert state["waits"] == 1  # once for the restore, not before each group of edges (#396)
     monkeypatch.undo()
     assert comparable(store.export()) == restored and restore_staged.unfinished(store.client) is None
+
+
+def test_a_group_of_edges_whose_vertices_the_index_misses_again_is_committed_waited_for_and_written_once_more(
+        tmp_path, monkeypatch):
+    """#396: the wait before the edges is one; a group that still misses a vertex is the retry, and loses no edge."""
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    store.restore(path)
+    restored = comparable(store.export())
+    state = _hiding_the_index(monkeypatch, 1, at="edges")
+    store.restore(path)
+    assert state["hidden"] == 0 and state["waits"] == 2  # the wait before the edges, and the group's own
+    monkeypatch.undo()
+    assert comparable(store.export()) == restored and restore_staged.unfinished(store.client) is None
+
+
+def test_a_group_that_misses_its_vertices_on_the_retry_too_fails_by_name_and_is_put_back(tmp_path, monkeypatch):
+    from cairnmind import graph_transactions
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    state = _hiding_the_index(monkeypatch, 2, at="edges")  # the group, then the read-back of the retry's wait
+    monkeypatch.setattr(graph_transactions, "VERTEX_WAIT", 0)
+    with pytest.raises(RestoreFailed, match=r"did not find \d+ graph vertices it had committed.*put back as it was before"):
+        store.restore(path)
+    assert state["hidden"] == 0
+    monkeypatch.undo()
+    assert comparable(store.export()) == before
+    assert restore_staged.unfinished(store.client) is None and not Store(store.data_dir).read_only
+
+
+def test_a_restore_of_the_usual_shape_commits_once_for_its_vertices_and_once_at_the_end_not_per_group_of_edges(
+        tmp_path, monkeypatch):
+    """#396: before, every group of 250 edges committed, waited and began again (the second project's, too)."""
+    path = _large(Store(tmp_path / "memory"), tmp_path)
+    target = Store(tmp_path / "target")
+    monkeypatch.setattr(restore_staged, "TIME_PER_TRANSACTION", 10 ** 9)  # a slow machine adds no commit of its own
+    made, commit = [], restore_staged.Batches.commit
+    monkeypatch.setattr(restore_staged.Batches, "commit",
+                        lambda self: (made.append(self._stack is not None), commit(self))[1])
+    target.restore(path)
+    monkeypatch.undo()
+    assert sum(made) == 2, made  # the vertices' commit before the one wait, and the last
 
 
 def test_a_restore_whose_index_misses_once_with_no_time_left_to_wait_fails_by_name_and_is_put_back(tmp_path, monkeypatch):
