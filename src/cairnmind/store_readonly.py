@@ -123,6 +123,8 @@ def check_ready(client: ArcadeClient, settings: Settings) -> None:
     if version != SCHEMA_VERSION:
         raise StoreNotReady(f"Database schema version is incompatible: the database has version {version!r} "
                             f"and this release reads version {SCHEMA_VERSION}.")
+    from .restore_staged import refuse_if_unfinished
+    refuse_if_unfinished(client)  # a restore that did not finish leaves part of a backup (#362)
     if "journal_state" not in types or not client.query("SELECT id FROM journal_state WHERE id='current'"):
         raise StoreNotReady("The Cairnmind database has no journal state; any ordinary write, for example "
                             "`cairnmind remember`, recreates it, and `cairnmind restore FILE` is for when the "

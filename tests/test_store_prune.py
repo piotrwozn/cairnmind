@@ -290,6 +290,72 @@ def test_a_person_is_asked_before_safety_backups_are_deleted(tmp_path, person_te
     assert again.exit_code == 0 and json.loads(again.output)["deleted"] == []
 
 
+def first_answer(result):
+    """The plan the command printed first (it prints the plan, then what it deleted)."""
+    return json.JSONDecoder().raw_decode(result.output.lstrip())[0]
+
+
+def marked_store(tmp_path, named, **changes):
+    """A store whose mark of an unfinished restore names the copy ``named``."""
+    from cairnmind import restore_staged
+    from cairnmind.sql import utc_now
+    store = Store(tmp_path / "data")
+    restore_staged.write_mark(store, {"backup": "/elsewhere/the-backup.cairnmind.json.gz", "before": str(named),
+                                      "before_sha256": "0" * 64, "installation_id": store.installation.id,
+                                      "before_installation": store.installation.id, "started_at": utc_now(),
+                                      "undoing": False, **changes})
+    return store
+
+
+def test_prune_without_a_mark_deletes_the_older_restore_copy_as_before(tmp_path, person_terminal):
+    directory = backups_dir(tmp_path)
+    Store(tmp_path / "data")
+    result = invoke(tmp_path, "--keep", "1", "--yes")
+    assert result.exit_code == 0, result.output
+    assert "kept_for_an_unfinished_restore" not in first_answer(result)
+    assert not (directory / "before-restore-b.cairnmind.json.gz").exists()
+
+
+def test_a_copy_that_the_mark_of_an_unfinished_restore_names_is_never_pruned_and_the_output_says_why(tmp_path,
+                                                                                                    person_terminal):
+    directory = backups_dir(tmp_path)
+    named = directory / "before-restore-b.cairnmind.json.gz"  # the older one: --keep 1 would delete it
+    marked_store(tmp_path, named)
+    result = invoke(tmp_path, "--keep", "1", "--yes")
+    answer = first_answer(result)
+    assert result.exit_code == 0, result.output
+    assert named.exists() and answer["kept_for_an_unfinished_restore"] == [named.name]
+    assert named.name in answer["note"] and "did not finish" in answer["note"]
+    assert named.name in answer["note_pl"] and "niedokończonego przywracania" in answer["note_pl"]
+    assert not (directory / "before-schema-4-to-5-b.cairnmind.json.gz").exists()  # the other safety copies still go
+
+
+def test_a_mark_that_cannot_be_read_keeps_every_restore_copy(tmp_path, person_terminal):
+    directory = backups_dir(tmp_path)
+    store = marked_store(tmp_path, directory / "before-restore-b.cairnmind.json.gz")
+    store.command("UPDATE devbrain_meta SET installation_id='' WHERE name='restore_unfinished'")
+    result = invoke(tmp_path, "--keep", "0", "--yes")
+    assert result.exit_code == 0, result.output
+    assert {"before-restore-a.cairnmind.json.gz", "before-restore-b.cairnmind.json.gz"} <= {
+        path.name for path in directory.iterdir()}
+    assert "unreadable" in first_answer(result)["note"]
+
+
+def test_prune_keeps_every_restore_copy_when_no_engine_answers_and_starts_none(tmp_path, monkeypatch, person_terminal):
+    directory = backups_dir(tmp_path)
+
+    def silent(self):
+        raise ArcadeError("no engine answers")
+
+    monkeypatch.setattr("cairnmind.arcade.ArcadeClient.database_exists", silent)
+    result = invoke(tmp_path, "--keep", "0", "--yes")
+    assert result.exit_code == 0, result.output
+    assert {"before-restore-a.cairnmind.json.gz", "before-restore-b.cairnmind.json.gz"} <= {
+        path.name for path in directory.iterdir()}
+    assert "ArcadeError" in first_answer(result)["note"]
+    assert not (directory / "before-schema-3-to-4-a.cairnmind.json.gz").exists()  # the others are pruned as before
+
+
 # engine.log
 
 def test_a_log_at_the_limit_is_moved_aside_and_only_the_set_number_of_copies_stays(tmp_path):

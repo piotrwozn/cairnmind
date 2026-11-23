@@ -84,6 +84,7 @@ class Relay:
         self.requests = 0
         self.down = False
         self.seen: list[bytes] = []  # the request line of every request, in order
+        self.durations: list[tuple[bytes, float]] = []  # (request line, seconds until the answer was sent on)
         self._cut = None
         self._lock = threading.Lock()
         self._sockets: set = set()
@@ -189,6 +190,7 @@ class Relay:
                 self._sockets.update((client, upstream))
             while not self._stop.is_set():
                 request = _read_message(client)
+                received = time.monotonic()
                 decision = self._decide(request)
                 if decision == "drop":
                     self._drop_all()
@@ -201,6 +203,9 @@ class Relay:
                     self._drop_all()
                     return
                 client.sendall(response)
+                with self._lock:  # what the client waited for this request: the delay and the server's work
+                    label = request.split(b"\r\n", 1)[0] + b" | " + request.partition(b"\r\n\r\n")[2][:100]
+                    self.durations.append((label, time.monotonic() - received))
         except (_Closed, OSError, ssl.SSLError, ValueError, IndexError):
             pass
         finally:

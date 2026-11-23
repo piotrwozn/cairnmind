@@ -12,6 +12,7 @@ import pytest
 from cairnmind import arcade
 from cairnmind.journal import JournalTransaction
 from cairnmind.restore_groups import DOCUMENT_BYTES_PER_REQUEST, GRAPH_BYTES_HELD, GraphGroups
+from cairnmind.restore_staged import RestoreFailed
 from cairnmind.sql import clean_row, insert_document, json_text, quote_name
 from cairnmind.store import DOCUMENT_TYPES, Store
 
@@ -125,8 +126,9 @@ def test_restore_writes_rows_in_groups(store, tmp_path, monkeypatch):
     target.restore(path)
     rows = 2 * (NODES + 30) + CHUNKS + VECTORS
     # Row by row this was 6,407 requests: about five per edge, four per vertex and one per document.
-    # Now about a hundred, most of them the safety copy and the statements around the inserts.
-    assert len(seen) < 200, f"{len(seen)} requests for {rows} rows"
+    # Now about a hundred, most of them the safety copy and the statements around the inserts; each edge group
+    # also commits and opens a transaction, so that the wait for the index has none open (#377).
+    assert len(seen) < 250,f"{len(seen)} requests for {rows} rows"
     graph = [command for _, command in seen if command.startswith(("CREATE VERTEX", "CREATE EDGE"))]
     assert len(graph) <= 10, graph  # 630 vertices and 630 edges of two projects, and the fixture's few
     assert comparable(target.export()) == comparable(store.export())
@@ -195,9 +197,9 @@ def test_a_restore_that_fails_in_the_middle_of_a_group_changes_nothing(store, tm
     before = comparable(store.export())
     # The second group: the first has been sent and is part of the open transaction.
     left = _failing_at(monkeypatch, 2, lambda sql: statement in sql)
-    with pytest.raises(OSError, match="went away"):
+    with pytest.raises(RestoreFailed, match="went away.*put back as it was before"):
         store.restore(path)
-    assert left[0] == 0
+    assert left[0] <= 0  # the undo writes the same kinds of group again: it is the one failure that counted
     monkeypatch.undo()
     assert comparable(store.export()) == before
 
@@ -205,14 +207,17 @@ def test_a_restore_that_fails_in_the_middle_of_a_group_changes_nothing(store, tm
 def test_a_group_the_database_did_not_store_in_full_fails_the_restore(store, tmp_path, monkeypatch):
     path = _large(store, tmp_path)
     before = comparable(store.export())
-    command = JournalTransaction.command
+    command, short_once = JournalTransaction.command, []
 
     def short(self, sql, params=None):
         result = command(self, sql, params)
-        return result[:-1] if sql.startswith("INSERT INTO `chunks` CONTENT :rows") else result
+        if sql.startswith("INSERT INTO `chunks` CONTENT :rows") and not short_once:
+            short_once.append(sql)  # once: the undo writes its chunks in full, as an engine that recovered would
+            return result[:-1]
+        return result
 
     monkeypatch.setattr(JournalTransaction, "command", short)
-    with pytest.raises(RuntimeError, match="did not store every row"):
+    with pytest.raises(RestoreFailed, match="did not store every row"):
         store.restore(path)
     monkeypatch.undo()
     assert comparable(store.export()) == before
@@ -241,7 +246,10 @@ class _Recording:
     """A store and transaction that only record the graph groups ``GraphGroups`` writes."""
 
     def __init__(self):
-        self.groups, self.known = [], None
+        self.groups, self.known, self.tx = [], None, self
+
+    def wrote(self, rows, size=0):
+        pass
 
     def prefetch_graph(self, tx, nodes, edges):
         pass

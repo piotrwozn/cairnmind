@@ -634,7 +634,7 @@ def _test_storage(plan, request, yes, result, before_create=None) -> None:
             result["tests"].append((_create_sentence(found), named))
         # A user that does not sign in cannot read the store either: no second refusal, no repeated advice.
         result["writer"] = ([(WRITER_AFTER_USER, {"url": url})] if found["sign_in"] is not None
-                            else _writer_items(store_writer.inspect(candidate), url))
+                            else _writer_items(_inspected(candidate, url), url))
         return
     block = database_credentials.doctor_block(candidate)
     if block.get("available") is True and block.get("database_available") is True and not block.get("error"):
@@ -648,7 +648,16 @@ def _test_storage(plan, request, yes, result, before_create=None) -> None:
             error = (QUERY_FAILED, {"status": block.get("database_status")})
         notes = [item for item in result["done"] if item[0] in CREATED]  # the server was changed before the test failed
         raise SetupRefused(STORAGE_REFUSED_NOTED, url=url, error=error, notes=notes)
-    result["writer"] = _writer_items(store_writer.inspect(candidate), url)
+    result["writer"] = _writer_items(_inspected(candidate, url), url)
+
+
+def _inspected(candidate, url: str) -> dict:
+    """The writer block of the candidate; a store with the mark of an unfinished restore (#362) is refused, with the
+    whole sentence that names the way out, instead of being switched to and read as an unknown writer."""
+    found = store_writer.inspect(candidate)
+    if found.get("restore_unfinished"):
+        raise SetupRefused(STORAGE_REFUSED, url=url, error=found["reason"])
+    return found
 
 
 # --- Models ---------------------------------------------------------------------------------------------------------
@@ -869,7 +878,7 @@ def _back_to_local(settings, plan, result, say, state) -> Settings:
         state["step"] = (STEP_RESTORE, {})
         say(render_one((RESTORING, {"path": written})))
         # The rule of `cairnmind restore` (#214): validation, writer check, safety backup and the workspace's key.
-        outcome = checked_restore(local, written, lambda: Store(local.data_dir, settings=local))
+        outcome = checked_restore(local, written, lambda: Store(local.data_dir, settings=local, for_restore=True))
         state["restored"] = (written, local.data_dir / "backups")
         result["done"].append((RESTORED, {"path": written, "backups": local.data_dir / "backups"}))
         notice = outcome.pop("notice", None)

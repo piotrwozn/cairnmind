@@ -134,6 +134,57 @@ def prune_plan(directory, keep: int) -> dict:
             "delete_bytes": sum(entry["bytes"] for entry in deleted)}
 
 
+KEPT_FOR_A_RESTORE = ("Kept: the store carries the mark of a restore that did not finish, and that mark names this copy "
+                      "as the one to go back to ({names}). Finish the restore with `cairnmind restore FILE`, then run "
+                      "this command again.")
+KEPT_FOR_AN_UNKNOWN_MARK = ("Kept every before-restore-* copy ({names}): whether the store carries the mark of a restore "
+                            "that did not finish could not be read ({reason}), and that mark names the copy to go back "
+                            "to. Start the database engine, or finish the restore with `cairnmind restore FILE`, and "
+                            "run this command again.")
+MESSAGES = {
+    KEPT_FOR_A_RESTORE: ("Zachowano: magazyn ma znacznik niedokończonego przywracania, a ten znacznik wskazuje tę kopię "
+                         "jako tę, do której się wraca ({names}). Dokończ przywracanie poleceniem `cairnmind restore "
+                         "PLIK`, potem uruchom to polecenie ponownie."),
+    KEPT_FOR_AN_UNKNOWN_MARK: ("Zachowano każdą kopię before-restore-* ({names}): nie udało się odczytać, czy magazyn ma "
+                               "znacznik niedokończonego przywracania ({reason}), a ten znacznik wskazuje kopię, do "
+                               "której się wraca. Uruchom silnik bazy danych albo dokończ przywracanie poleceniem "
+                               "`cairnmind restore PLIK` i uruchom to polecenie ponownie."),
+}
+
+
+def named_by_a_restore(settings) -> set[str] | str:
+    """The names of the safety copies the mark of an unfinished restore in the store names; a reason (text) when the mark
+    cannot be read, which keeps every ``before-restore-*`` copy. Starts no engine: a stopped one cannot be asked.
+
+    The same reader the refusal of every opening uses (``restore_staged.unfinished``), on a client, because a marked
+    store cannot be opened."""
+    from .arcade import ArcadeClient, ArcadeError
+    from .restore_staged import unfinished
+    try:
+        client = ArcadeClient(settings)
+        try:
+            if not client.database_exists() or not client.query("SELECT name FROM schema:types WHERE name='devbrain_meta'"):
+                return set()  # no store here, so no restore of it
+            mark = unfinished(client)
+        finally:
+            client.close()
+    except (ArcadeError, ValueError) as exc:
+        return type(exc).__name__
+    if mark is None:
+        return set()
+    return {Path(mark["before"]).name} if mark else "the mark is unreadable"
+
+
+def keep_what_a_restore_names(plan: dict, named: set[str] | str) -> tuple[dict, list[str]]:
+    """``plan`` without the copies a restore needs, and their names: the one the mark names, or, when that is not
+    known, every ``before-restore-*`` copy."""
+    held = [entry for entry in plan["delete"] if entry["kind"] == "before_restore"
+            and (isinstance(named, str) or entry["name"] in named)]
+    delete = [entry for entry in plan["delete"] if entry not in held]
+    return ({**plan, "delete": delete, "delete_bytes": sum(entry["bytes"] for entry in delete),
+             "kept": [*plan["kept"], *held]}, [entry["name"] for entry in held])
+
+
 def delete_backups(directory, plan: dict) -> dict:
     """Delete the files a plan names, each only if it is still the same safety backup the plan listed."""
     directory, current = Path(directory), {entry["name"]: entry for entry in safety_backups(directory)}
