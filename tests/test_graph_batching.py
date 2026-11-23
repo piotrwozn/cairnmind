@@ -390,7 +390,7 @@ def test_an_edge_delete_that_removes_fewer_rows_than_asked_or_reports_no_count_f
     real = JournalTransaction.command
     for name in ("shortened", "no count"):
         def command(self, sql, params=None, name=name):
-            if not sql.startswith("DELETE FROM edges WHERE id"):
+            if not sql.startswith("DELETE FROM edges"):  # by id, and by the project's index, which finds what that missed
                 return real(self, sql, params)
             if name == "shortened":
                 return real(self, sql, {**params, "ids": params["ids"][:-1]})
@@ -400,6 +400,31 @@ def test_an_edge_delete_that_removes_fewer_rows_than_asked_or_reports_no_count_f
             patch.setattr(JournalTransaction, "command", command)
             with pytest.raises(RuntimeError, match="every graph edge"):
                 ingest.index_project(grouped, first)
+
+
+def test_an_edge_that_the_index_of_ids_misses_is_deleted_through_the_projects_index(tmp_path, monkeypatch):
+    # The engine's index of ids missed 569 of 20,000 edges after two commits of one write (#426): the rest are deleted
+    # by the project's index, and the write is the one that row by row gives.
+    root = tmp_path / "repo"
+    root.mkdir()
+    code_tree(root)
+    grouped, first, single, second, *_ = both(tmp_path, root, monkeypatch)
+    remove_code(root)
+    real, seen = JournalTransaction.command, []
+
+    def command(self, sql, params=None):
+        if sql.startswith("DELETE FROM edges WHERE id"):
+            seen.append(len(params["ids"]))
+            return real(self, sql, {**params, "ids": params["ids"][:-1]})  # the index misses one
+        return real(self, sql, params)
+    with monkeypatch.context() as patch:
+        patch.setattr(JournalTransaction, "command", command)
+        ingest.index_project(grouped, first)
+    assert seen
+    with monkeypatch.context() as patch:
+        patch.setattr(Store, "write_graph", graph_row_by_row)
+        ingest.index_project(single, second)
+    assert_same(grouped, first, single, second, "an edge the index of ids missed")
 
 
 def test_a_removal_group_the_database_did_not_delete_in_full_fails_its_transaction(tmp_path, monkeypatch):

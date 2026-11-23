@@ -1309,6 +1309,13 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             part = removed[offset:offset + group]
             deleted = batches.tx.command("DELETE FROM edges WHERE id IN :ids", {"project": project_id, "ids": part})
             count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
+            if type(count) is int and count < len(part):
+                # The engine's index of ids missed rows (569 of 20,000 after two commits of the same write, the way
+                # it misses vertices committed a moment ago, graph_transactions.py): the project's index finds the rest.
+                rest = batches.tx.command("DELETE FROM edges WHERE project_id=:project AND kind IN :kinds AND id IN :ids",
+                                          {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS), "ids": part})
+                more = rest[0].get("count") if isinstance(rest, list) and rest and isinstance(rest[0], dict) else None
+                count = count + more if type(more) is int else None
             if type(count) is not int or count != len(part):
                 raise RuntimeError("The database did not delete every graph edge of a group")
             batches.wrote(len(part))
