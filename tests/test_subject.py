@@ -65,7 +65,13 @@ REPOSITORY = Path(__file__).resolve().parents[1]
     ("What did commit d489cee change, and what is 7f3a9b2c-11de-4a5b-9c3d-2e1f0a9b8c7d?", []),
     # Days and months are capitalised by the language; in headline case every word is.
     ("What changed since Monday in the November notes?", []),
-    ("What Is The Default Zookeeper Port Of The Local Service?", []),
+    # In headline case a word is read only before a generic word; "Local" is an ordinary word that
+    # the quoted source has (#394), and the other capitalised words are not read.
+    ("What Is The Default Zookeeper Port Of The Local Service?", ["Zookeeper", "Local"]),
+    ("On Which Port Does The Local Service Listen By Default?", ["Local"]),
+    ("How Much Java Heap Does The Database Engine Get?", []),
+    ("Which Terraform Version Does Cairnmind Need?", ["Terraform"]),
+    ("Which Terraform Version Does This Project Need, As Anna Asked?", ["Terraform"]),
     # A lower-case product name without backticks has no shape to go by: a known limit. So is a
     # name in capitals, which are an abbreviation or emphasis as often as a name.
     ("What is the default haproxy port?", []),
@@ -360,9 +366,11 @@ def test_what_the_subject_check_withholds_on_the_question_set_built_for_it_is_co
     assert withheld == WITHHELD and all(case in cases for case in CONTROLS)
     # N of M right-answer questions of the cost shapes: all of them, by the way they were chosen; none of the controls.
     assert len(withheld) == 5 and len(cases) - 3 - len(CONTROLS) == 5
-    # The three about things the project does not have name nothing the check can read, except a real name.
+    # Of the three about things the project does not have, the lower-case name is not read; the headline-case
+    # one and the real name are (#394).
     absent = {case["id"]: subject_terms(case["question"], ["cairnmind"]) for case in cases.values() if case.get("absent")}
-    assert absent == {"lower-case-name": [], "headline-case-name": [], "real-name-other-thing": ["Ollama"]}
+    assert absent == {"lower-case-name": [], "headline-case-name": ["Zookeeper", "Local"],
+                      "real-name-other-thing": ["Ollama"]}
 
 
 async def test_a_lower_case_name_the_quotes_do_not_state_is_withheld_by_the_names_call(workspace):  # noqa: F811
@@ -566,21 +574,26 @@ async def test_a_name_that_is_left_after_the_search_still_withholds_and_both_lis
     assert result["diagnostics"]["names_found"] == ["Settings"]
 
 
-async def test_the_headline_case_zookeeper_question_is_still_refused_where_the_judge_refuses_it(workspace):  # noqa: F811
-    # The kept reports: after #340 this question was answered complete with the service's own port in all three
-    # runs. The order of the checks did not change (the judge first, the names call only after its yes), so
-    # the refusal of the earlier trees (the judge said no to the fixture quote) holds whenever the judge says no.
-    # The question has no readable name (headline case), and the answer names none: neither the subject check
-    # nor the names call can object when the judge accepts the quote of the service's port.
+async def test_the_headline_case_zookeeper_question_is_refused_by_the_subject_check_not_the_judge(workspace):  # noqa: F811
+    # The kept reports: this question was answered complete with the service's own port in all three runs,
+    # because no name was read from it and the judge accepted the quote of the port (#394). Now the subject
+    # check reads Zookeeper (it stands before "Port"), and the judge, who says yes here, is not asked.
     store, project, settings = workspace
     question = "What Is The Default Zookeeper Port Of The Local Service?"
-    assert subject_terms(question, ["example"]) == []
-    uri = str(Path(project["root"]) / "src/example/config.py")
-    source, _ = document(store, project, CONFIG, uri=uri, metadata={"relative_path": "src/example/config.py"})
-    no = {"content": json.dumps({"supported": False, "reason": "The quote is about another port."})}
-    model = FakeOllama([final(source["id"], "port: int = 8765", "The default port for the local service is 8765.")],
-                       support=no)
-    result = await KnowledgeAgent(store, settings, model).ask(project["id"], question)
-    assert result["status"] == "partial" and result["diagnostics"]["support_check"] == "unsupported"
-    assert len(model.support_calls) == 1 and model.names_calls == []
-    assert json.loads(model.support_calls[0]["messages"][1]["content"])["question"] == question  # the judge sees it
+    assert subject_terms(question, ["example"]) == ["Zookeeper", "Local"]
+    result, model = await _asked(store, project, settings, question, answer="The default port for the local service is 8765.")
+    assert result["status"] == "partial" and result["diagnostics"]["support_check"] == "subject_missing"
+    assert result["unknowns"][-1] == SUBJECT_GAP + "Zookeeper, Local" and "8765" not in result["answer"]
+    assert not model.support_calls and model.names_calls == []
+
+
+def test_the_headline_case_forms_of_the_questions_with_known_answers_are_not_withheld():
+    # What a model that quoted the right file would have: its text and its path. Every question with a file of the
+    # repository and of the subject set, written with every word capitalised, loses no right answer to the check.
+    cases = [case for path in ("repository-questions.json", "subject-questions.json")
+             for case in load_questions(REPOSITORY / "docs" / "evaluation" / path, REPOSITORY) if case["file"]]
+    assert len(cases) >= 25
+    for case in cases:
+        headline = " ".join(word[:1].upper() + word[1:] for word in case["question"].split(" "))
+        text = (REPOSITORY / case["file"]).read_text(encoding="utf-8")
+        assert missing_subject(headline, [text, case["file"]], ["cairnmind"]) == [], headline
