@@ -7,11 +7,11 @@ import struct
 import subprocess
 import sys
 import termios
-import threading
 import time
 
 import pytest
 
+from pty_drain import drain_pty
 from test_workspace import manager as manager  # noqa: F401 (fixture)
 import cairnmind.workspace as module
 
@@ -48,17 +48,8 @@ def _attached(workspace, script=SCRIPT):
                                 str(workspace.directory)],
                                stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
                                env={**os.environ, "TERM": "xterm-256color"})
-    def drain():  # a terminal nobody reads blocks the tmux client
-        while True:
-            try:
-                chunk = os.read(master, 65536)
-                if not chunk:
-                    return
-                process.captured += chunk
-            except OSError:
-                return
-    process.captured = bytearray()
-    threading.Thread(target=drain, daemon=True).start()
+    process.captured = bytearray()  # a terminal nobody reads blocks the tmux client
+    process.stop_drain = drain_pty(master, process.captured)
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline and process.poll() is None and not workspace.clients():
         time.sleep(.05)
@@ -102,6 +93,7 @@ def test_a_stop_that_comes_while_the_attach_is_claiming_still_ends_it_with_zero(
         if process.poll() is None:
             process.kill()
             process.wait(timeout=3)
+        process.stop_drain()
         os.close(master)
         os.close(slave)
 
@@ -130,6 +122,7 @@ def test_a_claim_refused_by_a_living_server_is_a_stop_only_when_the_stop_marker_
         if process.poll() is None:
             process.kill()
             process.wait(timeout=3)
+        process.stop_drain()
         os.close(master)
         os.close(slave)
         workspace.tmux("kill-server")
@@ -168,5 +161,6 @@ def test_stop_asked_for_by_the_person_ends_the_attached_process_with_zero(manage
         if process.poll() is None:
             process.kill()
             process.wait(timeout=3)
+        process.stop_drain()
         os.close(master)
         os.close(slave)
