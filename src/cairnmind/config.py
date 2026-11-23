@@ -36,9 +36,10 @@ def tls_verify(url: str) -> bool:
 
     httpx builds a TLS context with the whole certificate store for every client, about 20 ms, whether or not the
     address is https. A plain http connection has no TLS and nothing to verify, so skipping the store weakens
-    nothing; an https address, such as a model server on another computer, is verified as before.
+    nothing; an https address, such as a model server on another computer, is verified as before. Whatever is not
+    exactly `http://` (in any case, as httpx reads the scheme) is verified: a space before it, no address, another scheme.
     """
-    return not url.lower().startswith("http://")
+    return not (isinstance(url, str) and url.lower().startswith("http://"))
 
 
 def env_names(name: str) -> tuple[str, ...]:

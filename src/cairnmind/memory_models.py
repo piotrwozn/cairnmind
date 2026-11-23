@@ -508,13 +508,14 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
 
 def doctor_verify(settings: Settings) -> bool:
     """The `verify` of the one client doctor shares across servers: off only when every address it may ask is plain
-    http, so no certificate store is built for nothing and an https server is verified as before (#415)."""
+    http, so no certificate store is built for nothing and an https server is verified as before (#415). A role whose
+    server cannot be read verifies too: nothing is then asked for it, but this is not decided by guessing."""
     urls = [settings.url, settings.ollama_url]
     for role in ROLES:
         try:
             urls.append(server(settings, role)["base_url"])
-        except ValueError:  # refused or invalid: _doctor_role asks no one
-            pass
+        except ValueError:  # refused or invalid
+            return True
     return any(tls_verify(url) for url in urls)
 
 
