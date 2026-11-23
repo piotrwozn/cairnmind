@@ -70,7 +70,7 @@ def test_a_search_with_vectors_asks_for_the_state_of_the_vectors_once(workspace,
     assert any(warning.startswith("Native vector search unavailable") for warning in retriever.warnings)
 
 
-def test_a_search_still_reads_a_ranking_wider_while_the_worktree_holds_too_few_of_its_rows(workspace, tmp_path):  # noqa: F811
+def test_a_small_worktree_costs_one_filtered_read_and_never_a_wider_ranking(workspace, tmp_path, requests_made):  # noqa: F811
     store, project, settings = workspace
     root = Path(project["root"])
     _files(root, 1)
@@ -82,7 +82,11 @@ def test_a_search_still_reads_a_ranking_wider_while_the_worktree_holds_too_few_o
     store.add_project_root(project["id"], second)
     index_project(store, project["id"])
     retriever = Retriever(store, settings, FakeOllama())
+    requests_made.clear()
     ids = [hit["source_id"] for hit in retriever.search(project["id"], "retry budget", 8, worktree=str(root))]
+    ranked = [sql for sql in requests_made if "FROM chunks" in sql and "SEARCH_INDEX" in sql]
+    assert [("source_id IN :eligible" in sql) for sql in ranked] == [False, True], ranked  # one filtered read after the first
+    assert all(sql.endswith("LIMIT 24") for sql in ranked), ranked  # a ranking is never read wider than the first
     uris = {store.get_source(source_id)["uri"] for source_id in ids}
     assert uris == {str(root / "pkg" / "limit_00.py")}
     assert len(retriever.search(project["id"], "retry budget", 8, worktree=str(second))) == 8

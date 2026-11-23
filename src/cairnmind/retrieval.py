@@ -326,20 +326,20 @@ class Retriever:
     def _current_in_scope(self, fetch, wanted: int, sources: dict, project_id, root, roots, bindings) -> list[dict]:
         """The first `wanted` rows of a ranking, in its order, whose source is current and in the worktree.
 
-        `fetch(count)` returns the best `count` rows and whether the ranking holds more. The sources of the rows are
-        read in one request into `sources`. A ranking is read wider (four times) only while too few rows qualify,
-        so a search never lists every source of the project; that is rare: all rows qualify in a project with one
-        worktree.
+        `fetch(count, eligible)` returns the best `count` rows (of the sources in `eligible` when it is given) and
+        whether the ranking holds more. The sources of the rows are read in one request into `sources`. When too few
+        rows qualify, the ranking is read once more, filtered by the list of eligible sources as before: that is the
+        one read a search with a small worktree needs, and it never widens a read over the whole project.
         """
-        count = wanted
+        eligible = None
         while True:
-            rows, more = fetch(count)
+            rows, more = fetch(wanted, eligible)
             sources.update(self.store.get_sources([row["source_id"] for row in rows if row["source_id"] not in sources]))
             kept = [row for row in rows if row["source_id"] in sources
                     and self._in_scope(sources[row["source_id"]], project_id, root, roots, bindings)]
-            if len(kept) >= wanted or not more:
+            if len(kept) >= wanted or not more or eligible is not None:
                 return kept[:wanted]
-            count *= 4
+            eligible = sorted(self._source_ids(project_id, root, roots))
 
     def _record_ids(self, project_id, root, roots, bindings=None):
         bindings = memory_bindings(self.store, project_id) if bindings is None else bindings
@@ -519,11 +519,13 @@ class Retriever:
         if words:
             expression = " OR ".join(words)
 
-            def text_ranking(count):
+            def text_ranking(count, eligible):
                 rows = self.store.query(
                     "SELECT *, $score AS search_score FROM chunks "
                     "WHERE SEARCH_INDEX('chunks[text]', :query)=true AND project_id=:project AND is_current=true "
-                    f"ORDER BY $score DESC LIMIT {count}", {"query": expression, "project": project_id})
+                    + ("" if eligible is None else "AND source_id IN :eligible ") +
+                    f"ORDER BY $score DESC LIMIT {count}",
+                    {"query": expression, "project": project_id} | ({} if eligible is None else {"eligible": eligible}))
                 return rows, len(rows) >= count
             lexical = [hit for row in self._current_in_scope(text_ranking, limit * 3, sources, *scope)
                        if (hit := self._chunk_hit(row, sources[row["source_id"]])) is not None]
@@ -539,15 +541,17 @@ class Retriever:
             if indexes:
                 expected = self._vector_type(project_id, namespace, len(vector))
                 index_name = f"{expected}[vector]"
-                def vector_ranking(count):
+                def vector_ranking(count, eligible):
                     neighbors = self.store.query(
                         "SELECT expand(`vector.neighbors`(:index_name, :query_vector, :count, "
                         "{efSearch: :ef_search,where: :scope,filter:(SELECT @rid FROM " + expected +
-                        " WHERE project_id=:project AND namespace=:namespace AND is_current=true)}))",
+                        " WHERE project_id=:project AND namespace=:namespace AND is_current=true"
+                        + ("" if eligible is None else " AND source_id IN :eligible") + ")}))",
                         {"index_name": index_name, "query_vector": vector, "count": count,
                          "ef_search": max(200, count), "scope": {
                              "project_id": project_id, "namespace": namespace, "is_current": True,
-                         }, "project": project_id, "namespace": namespace},
+                         }, "project": project_id, "namespace": namespace}
+                        | ({} if eligible is None else {"eligible": eligible}),
                     )
                     ids = [row["chunk_id"] for row in neighbors]
                     chunks = self.store.query(
