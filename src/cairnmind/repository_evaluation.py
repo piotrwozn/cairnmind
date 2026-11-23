@@ -176,6 +176,8 @@ def case_result(case: dict, result: dict, root: Path, calls: int, seconds: float
     return {"id": case["id"], "question": case["question"], "file": case["file"], "accepted": case["accepted"],
             **({"absent": True} if absent else {}), **({"failed": True} if failed else {}),
             "status": status, "code": diagnostics.get("code"), "support_check": diagnostics.get("support_check"),
+            # The names the names call reported and those the question or a cited source has (#245): why an answer passed.
+            **{key: diagnostics[key] for key in ("names_reported", "names_found") if key in diagnostics},
             # An absent question is right when it was refused; it is never complete and right, and
             # an ask that broke refused nothing.
             "right": (status != "complete" and not failed if absent else

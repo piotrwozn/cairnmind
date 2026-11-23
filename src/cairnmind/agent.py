@@ -29,7 +29,7 @@ from .retrieval import (Retriever, json_value, last_warnings, public_metadata, p
                         with_source_origin)
 from .store import validate_task_state
 from . import subject as _subject
-from .subject import NAMES_GAP, SUBJECT_GAP, unnamed_answer_names, unnamed_subject
+from .subject import NAMES_GAP, SUBJECT_GAP, found_names, unnamed_answer_names, unnamed_subject
 from .support import (NAMES_SCHEMA, NAMES_TOKENS, SUPPORT_SCHEMA, SUPPORT_TOKENS, names_messages, names_verdict,
                       support_messages, support_verdict)
 
@@ -1057,7 +1057,9 @@ class KnowledgeAgent:
         lose its status. The checks run in this order and the first that fails decides:
         1. the support check: the subject check, then one judge call that its quotes state the answer;
         2. the deterministic check of the names the answer introduces (while ``CHECK_ANSWER_NAMES``);
-        3. one names call that finds every name the answer asserts stated by the quotes.
+        3. one names call that finds every name the answer asserts stated by the quotes; a name it
+        reports as unstated that a cited source has (not the question) is dropped, and both lists
+        are kept in the diagnostics as names_reported and names_found.
         2 and 3 read a plain question only and run only for an answer the judge accepted, so the
         names call is one more call per complete answer (#245). What retrieval may read for a
         hosted run is gated before any of them (memory_egress.ASK, #183).
@@ -1115,6 +1117,12 @@ class KnowledgeAgent:
             else:
                 diagnostics["model_calls"] = [*diagnostics["model_calls"][-2:], _model_diagnostics(response, "names")]
                 unstated = names_verdict(response)
+            if unstated:
+                # A name the model calls unstated that a cited source has (the question does not count) is not one (#245);
+                # a reader sees both lists. Only a name found in neither withholds the answer.
+                found = await asyncio.to_thread(found_names, unstated, question, result["sources"], evidence)
+                diagnostics.update(names_reported=unstated, names_found=found)
+                unstated = [name for name in unstated if name not in found]
             if unstated is None:
                 diagnostics["support_check"] = "names_failed"
                 supported, reason, gap = False, None, "Could not check the names the answer gives."

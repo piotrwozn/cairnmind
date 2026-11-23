@@ -325,6 +325,48 @@ def unnamed_answer_names(store, project_id: str, question: str, answer: str, sou
     return _not_own(store, project_id, _absent(terms, spreads, set(), inflected), spreads, inflected)
 
 
+_DOTTED = re.compile(r"(?<=[^\W\d])\.(?=[^\W\d])")  # a dot between letters: Settings.chat_model
+
+
+def _name_pattern(name: str) -> re.Pattern:
+    """The pattern of one name (casefolded) in casefolded text; see ``name_in``."""
+    core = r"[\s_\-]*".join(re.escape(word) for word in name.split())
+    lead = r"(?<!\w)" + (r"(?<!\d\.)" if name[0].isdigit() else "")
+    tail = r"(?!\w)" + (r"(?!\.\d)" if name[-1].isdigit() else "")
+    # A flag takes its value (-Xmx2g): after "-" or in a name that starts with it, digits may follow.
+    flag = r"(?![^\W\d]|_)"
+    return re.compile(rf"{lead}(?:{core}{tail}|{core}{flag if name[0] == '-' else '(?!)'}|(?<=-){core}{flag})")
+
+
+def name_in(name: str, text: str) -> bool:
+    """True when ``text`` (any case) states ``name`` as a whole: not as a part of a longer word
+    (``Java`` is not in "JavaScript", ``3.12`` not in "13.12" or "3.12.1"), with ``_`` ``-`` or
+    nothing where the name has a space ("Java 21" in "java-21"). Case-insensitive, no endings, no
+    model. A name of several words, or a dotted one (``Settings.chat_model``), that does not stand as
+    written is found when each of its words stands on its own in ``text``; the version of
+    "ArcadeDB 26.11.1" and its name need not be written together."""
+    name, text = " ".join(str(name).casefold().split()), str(text).casefold()
+    if not name:
+        return False
+    if _name_pattern(name).search(text):
+        return True
+    parts = [part for word in name.split() for part in _DOTTED.split(word) if part]
+    return len(parts) > 1 and all(_name_pattern(part).search(text) for part in parts)
+
+
+def found_names(names: Iterable[str], question: str, sources: list[dict], evidence: dict) -> list[str]:
+    """Of the ``names`` a model reported as unstated, those that stand in a source the answer cites (its
+    verified quotes, their paths and the text of the sources). The question is not searched: a name the
+    question carries (nginx in "the nginx port") is exactly what an absent answer must not borrow from it,
+    so ``question`` is kept only for the signature. The name is looked for as ``name_in`` says; a source
+    that was read but not cited, or whose citation failed, is not in ``sources``."""
+    whole = {source["id"]: source for source in evidence.values()}
+    passages = [text for cite in support_citations(sources) for text in (cite["quote"], cite["path"])]
+    passages += [source_text(whole[source["id"]]) for source in sources if source.get("id") in whole]
+    texts = [text for text in passages if text]
+    return [name for name in names if any(name_in(name, text) for text in texts)]
+
+
 def _introduced(question: str, answer: str, own_names: Iterable[str] = ()) -> list[str]:
     asked = inflecting(question)
     return [term for term in subject_terms(answer, own_names) if not mentions(term, question, asked)]
