@@ -86,18 +86,26 @@ class GraphGroups:
         rows = list(self.groups.pop(project).values())
         size = self.sizes.pop(project, 0)
         nodes, edges = (rows, []) if self.kind == "node" else ([], rows)
-        ends = {row[key] for row in edges for key in ("from_id", "to_id") if isinstance(row.get(key), str)}
-        if ends:
-            # The edges look their vertices up by the index of nodes.id, which may not find them yet (#377). A
-            # transaction that has missed a vertex keeps missing it, so wait with none open, as indexing does.
+        try:
+            self._store(project, nodes, edges)
+        except (ValueError, RuntimeError):
+            ends = {row[key] for row in edges for key in ("from_id", "to_id") if isinstance(row.get(key), str)}
+            if not ends:
+                raise
+            # The index of nodes.id may still miss a vertex that write_restored waited for (#377), and a transaction
+            # that has missed one keeps missing it: commit (the retry finds what the failed try wrote and keeps it),
+            # wait with none open, and write the group once more in a new transaction. A second failure ends it.
             self.batches.commit()
             await_vertices(self.store, ends, *self.batches.timeout)
             self.batches.open()
+            self._store(project, nodes, edges)
+        self.batches.wrote(len(rows), size)  # the one place a commit may fall: after a group, never inside one
+
+    def _store(self, project, nodes, edges):
         tx = self.batches.tx
         self.store.prefetch_graph(tx, nodes, edges)
         self.store.write_graph(tx, project, nodes, edges)
         tx.known = None  # what the prefetch read is of this group only
-        self.batches.wrote(len(rows), size)  # the one place a commit may fall: after a group, never inside one
 
     def flush(self):
         for project in list(self.groups):
@@ -127,9 +135,18 @@ def write_restored(store, batches, source, claims=None):
         documents.add(collection, row)
     documents.flush()
     nodes = GraphGroups(store, batches, "node")
+    ids = set()
     for _, _, node in source.rows(("nodes",)):
         nodes.add(node)
+        if isinstance(node.get("id"), str):
+            ids.add(node["id"])
     nodes.flush()
+    if ids:
+        # The edges look their vertices up by the index of nodes.id, which may not find them yet (#377). Once, with no
+        # transaction open, wait for all of them: the edge transactions then begin after the index has caught up.
+        batches.commit()
+        await_vertices(store, ids, *batches.timeout)
+        batches.open()
     edges = GraphGroups(store, batches, "edge")
     for kind, name, row in source.rows(("edges",), vectors=True):
         if kind == "row":
