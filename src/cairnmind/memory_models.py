@@ -280,6 +280,11 @@ class MemoryModels:
         return {"chat": await self.chat_client.model_identity(self.settings.chat_model),
                 "embedding": await self.embedding_client.model_identity(self.settings.embedding_model)}
 
+    async def open(self) -> None:
+        await self.chat_client.open()
+        if self.embedding_client is not self.chat_client:
+            await self.embedding_client.open()
+
     async def aclose(self) -> None:
         await self.chat_client.aclose()
         if self.embedding_client is not self.chat_client:
