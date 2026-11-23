@@ -104,6 +104,27 @@ def test_a_question_asks_for_its_scope_once_and_the_next_question_reads_it_again
     assert scopes[1].root == second.resolve()
 
 
+def test_the_model_tools_and_the_repair_catalog_use_the_scope_of_the_question(workspace):  # noqa: F811
+    from test_knowledge import calls
+    store, project, settings = workspace
+    root = Path(project["root"])
+    (root / "limit.py").write_text(_module("limit"))
+    index_project(store, project["id"])
+    source_id = _current(store, project, root / "limit.py")
+    agent = KnowledgeAgent(store, settings, FakeOllama([
+        calls(("search", {"query": "limit budget"}), ("read_source", {"source_id": source_id})),
+        {"content": "not a typed answer"}]))
+    made, tools, catalogs = [], [], []
+    make, tool, catalog = agent._check_scope, agent._tool, agent._citation_catalog
+    agent._check_scope = lambda *args: made.append(make(*args)) or made[-1]
+    agent._tool = lambda *args, **kwargs: tools.append(args[5:] + tuple(kwargs.values())) or tool(*args, **kwargs)
+    agent._citation_catalog = lambda *args, **kwargs: catalogs.append(kwargs.get("scope")) or catalog(*args, **kwargs)
+    asyncio.run(agent.ask(project["id"], "limit budget"))
+    assert len(made) == 1
+    assert tools == [(made[0],)] * 2  # search and read_source: the question's scope
+    assert len(catalogs) >= 2 and all(scope is made[0] for scope in catalogs)  # the first and the repair catalog
+
+
 def test_every_check_of_a_file_gives_the_verdict_it_gave_without_the_scope(workspace, tmp_path):  # noqa: F811
     store, project, settings = workspace
     root = Path(project["root"])

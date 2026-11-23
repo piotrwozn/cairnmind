@@ -702,13 +702,14 @@ class KnowledgeAgent:
                                                 or task.get("metadata", {}).get("test_source_ids")),
                 "instruction": "Only status=fresh is current machine verification. Run passed is historical; acceptance and review are separate."}
 
-    async def _tool(self, name: str, arguments: dict, project_id: str, evidence: dict, worktree=None) -> Any:
+    async def _tool(self, name: str, arguments: dict, project_id: str, evidence: dict, worktree=None, scope=None) -> Any:
         if name == "search":
             query = arguments.get("query")
             if not isinstance(query, str) or not query.strip():
                 raise ValueError("query must be a nonempty string")
             hits = await self.retriever.asearch(project_id, query[:2000], 6, worktree=worktree)
-            refreshed = await asyncio.to_thread(self._hits, hits, project_id, evidence, worktree, query)
+            refreshed = await asyncio.to_thread(self._hits, hits, project_id, evidence, worktree, query,
+                                              scope=scope)
             return {"hits": refreshed, "warnings": last_warnings(self.retriever.warnings, 3, 10**6)}
         if name == "graph":
             query = arguments.get("query")
@@ -727,7 +728,7 @@ class KnowledgeAgent:
             source = await asyncio.to_thread(
                 self._source, source_id, project_id, evidence,
                 current=True if name == "current_code" else arguments.get("current", True),
-                worktree=worktree,
+                worktree=worktree, scope=scope,
             )
             if name == "read_source" and arguments.get("current") is False:
                 source["_historical_requested"] = True
@@ -1310,7 +1311,7 @@ class KnowledgeAgent:
                             diagnostics["repair_outcome"] = "budget_exhausted"
                             return self._repair_fallback(validated, started,
                                 "No steps were left to correct the answer's format or citations.")
-                        catalog = self._citation_catalog(project_id, evidence, candidate, worktree=worktree)
+                        catalog = self._citation_catalog(project_id, evidence, candidate, worktree=worktree, scope=scope)
                         if not catalog:
                             diagnostics["repair_outcome"] = "missing_evidence"
                             return validated
@@ -1358,7 +1359,7 @@ class KnowledgeAgent:
                                 arguments = json.loads(arguments)
                             if not isinstance(arguments, dict):
                                 raise ValueError("Tool arguments must be an object")
-                            result = await self._tool(name, arguments, project_id, evidence, worktree)
+                            result = await self._tool(name, arguments, project_id, evidence, worktree, scope)
                         except (ValueError, KeyError, TypeError, OSError) as exc:
                             result = {"error": str(exc)[:250]}
                         messages.append({"role": "tool", "tool_name": name,

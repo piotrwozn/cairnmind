@@ -4,7 +4,9 @@ The check of a hit's file on disk (``KnowledgeAgent._source``) needs the project
 bindings and the sources an import brought. They are the same for every file of a question, and the checks read them
 again for each file: about a dozen database requests each. ``check_scope`` reads them once, when a question starts, and
 every check of that question is handed the result. It is made for one question and dropped with it, so a root added or
-removed meanwhile is seen by the next question.
+removed meanwhile is seen by the next question. Within a question it is a snapshot: it spans the wait for the
+embedding model and the model's own tool calls, so a root removed in that time still counts as registered until the
+question ends (the file itself is still read and hashed at each check).
 """
 from __future__ import annotations
 
