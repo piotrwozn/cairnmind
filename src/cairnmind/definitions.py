@@ -195,7 +195,7 @@ def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
                                          _KIND_ORDER.get(row["symbol"].get("kind"), 3) >= 2,
                                          -row["file_relevance"], row["shared_by"],
                                          _KIND_ORDER.get(row["symbol"].get("kind"), 3),
-                                         row["path"], int(row["symbol"].get("line_start") or 0)))
+                                         row["path"], int(row["symbol"].get("line_start") or 0), str(row.get("node_id", ""))))
 
 
 def pattern_words(question: str) -> list[str]:

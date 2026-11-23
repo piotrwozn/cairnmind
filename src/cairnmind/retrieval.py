@@ -529,7 +529,7 @@ class Retriever:
                     "SELECT *, $score AS search_score FROM chunks "
                     "WHERE SEARCH_INDEX('chunks[text]', :query)=true AND project_id=:project AND is_current=true "
                     + ("" if eligible is None else "AND source_id IN :eligible ") +
-                    f"ORDER BY $score DESC LIMIT {count}",
+                    f"ORDER BY $score DESC, id LIMIT {count}",  # a tie is decided by the chunk id, also at the cut
                     {"query": expression, "project": project_id} | ({} if eligible is None else {"eligible": eligible}))
                 return rows, len(rows) >= count
             lexical = [hit for row in self._current_in_scope(text_ranking, limit * 3, sources, *scope)
@@ -564,6 +564,9 @@ class Retriever:
                         {"project": project_id, "ids": ids},
                     ) if ids else []
                     by_id = {row["id"]: row for row in chunks}
+                    # Equal distances: by chunk id, whatever order the index gave them in.
+                    neighbors = sorted(neighbors, key=lambda row: (row.get("distance") is None, row.get("distance") or 0,
+                                                                  str(row["chunk_id"])))
                     return [{**by_id[row["chunk_id"]], "_distance": row.get("distance")}
                             for row in neighbors if row["chunk_id"] in by_id], len(neighbors) >= count
                 try:
@@ -596,13 +599,13 @@ class Retriever:
                 "SELECT *, $score AS search_score FROM records "
                 "WHERE SEARCH_INDEX('records[content]', :query)=true AND project_id=:project AND status<>'superseded' "
                 "AND id IN :eligible_records "
-                f"ORDER BY $score DESC LIMIT {limit * 2 + margin}",
+                f"ORDER BY $score DESC, id LIMIT {limit * 2 + margin}",
                 {"query": " OR ".join(words), "project": project_id, "eligible_records": eligible_records},
             )
             # Exact keys remain useful even when a short task key is absent from its body.
             keyed = self.store.query(
                 "SELECT FROM records WHERE project_id=:project AND status<>'superseded' "
-                f"AND id IN :eligible_records AND key IN :keys LIMIT {limit}",
+                f"AND id IN :eligible_records AND key IN :keys ORDER BY id LIMIT {limit}",
                 {"project": project_id, "keys": words, "eligible_records": eligible_records},
             )
             record_hits, seen, gate = [], set(), ASK.get()
@@ -640,7 +643,8 @@ class Retriever:
             for rank, hit in enumerate(ranking):
                 key = str(hit["id"])
                 fused.setdefault(key, {**hit, "score": 0.0})["score"] += 1.0 / (60 + rank + 1)
-        result = sorted(fused.values(), key=lambda hit: hit["score"], reverse=True)[:limit]
+        # Equal scores: by the id of the chunk or record, then of the source; the cut to the limit follows the same rule.
+        result = sorted(fused.values(), key=lambda hit: (-hit["score"], str(hit["id"]), str(hit.get("source_id"))))[:limit]
         for hit in result:
             hit.pop("_path", None)
             if hit.get("record_id") and _confirmed_by(hit):
