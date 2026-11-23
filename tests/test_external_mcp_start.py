@@ -13,6 +13,7 @@ import sys
 import httpx
 import pytest
 
+from conftest import own_time
 from cairnmind import cli, mcp_server
 from cairnmind.config import Settings
 
@@ -124,7 +125,7 @@ def test_the_service_is_started_as_ask_starts_it(monkeypatch, settings, data):
     monkeypatch.setenv("CAIRNMIND_SESSION_ID", "outer-session")
     answers = iter([False, True])
     monkeypatch.setattr(cli, "service_alive", lambda s: next(answers))
-    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    own_time(monkeypatch, cli, sleep=lambda seconds: None)
     spawned = []
 
     class Process:

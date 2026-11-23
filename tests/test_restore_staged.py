@@ -15,6 +15,7 @@ import time
 import pytest
 from typer.testing import CliRunner
 
+from conftest import own_time
 from cairnmind import api_runtime, arcade, cli, integrations, restore_staged, store_writer
 from cairnmind.journal import Journal, JournalTransaction
 from cairnmind.memory import MemoryManager
@@ -402,7 +403,7 @@ def _hiding_the_index(monkeypatch, hidden, at="wait"):
     monkeypatch.setattr(JournalTransaction, "query", hiding_query)
     monkeypatch.setattr(JournalTransaction, "script", hiding_script)
     monkeypatch.setattr(restore_groups.GraphGroups, "_write", armed_write)
-    monkeypatch.setattr(graph_transactions.time, "sleep", state["slept"].append)
+    own_time(monkeypatch, graph_transactions, sleep=state["slept"].append)
     return state
 
 

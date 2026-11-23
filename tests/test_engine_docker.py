@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import pytest
 from typer.testing import CliRunner
 
+from conftest import own_time
 from cairnmind import config, engine, engine_docker
 from cairnmind.cli import app
 from cairnmind.arcade import ArcadeClient, ArcadeError
@@ -116,7 +117,7 @@ def docker(monkeypatch, tmp_path):
     monkeypatch.setattr(engine_docker, "run_docker", fake)
     monkeypatch.setattr(config, "ARCADE_IMAGE_DIGEST", DIGEST)
     monkeypatch.setattr(ArcadeClient, "server_info", fake.server_info)
-    monkeypatch.setattr(engine_docker.time, "sleep", lambda seconds: None)
+    own_time(monkeypatch, engine_docker, sleep=lambda seconds: None)
     monkeypatch.setattr(engine, "native_engine_pid", lambda settings: None)
     fake.images.add(PUBLISHED)
     return fake
@@ -683,7 +684,7 @@ def test_engine_start_docker_through_a_docker_stand_in_on_path(tmp_path, monkeyp
     monkeypatch.setenv("FAKE_DOCKER", str(work))
     monkeypatch.setattr(config, "ARCADE_IMAGE_DIGEST", DIGEST)
     monkeypatch.setattr(engine, "native_engine_pid", lambda settings: None)
-    monkeypatch.setattr(engine_docker.time, "sleep", lambda seconds: None)
+    own_time(monkeypatch, engine_docker, sleep=lambda seconds: None)
 
     def server_info(self):
         if (work / "ran").exists():

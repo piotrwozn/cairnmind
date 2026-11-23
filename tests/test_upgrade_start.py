@@ -8,6 +8,7 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
+from conftest import own_time
 from cairnmind import cli, upgrade_mark
 from cairnmind.config import Settings
 
@@ -103,7 +104,7 @@ def test_an_installer_that_began_and_ended_while_the_service_started_still_stops
     monkeypatch.setattr(upgrade_mark, "refusal", lambda: next(marks, None))
     alive = iter([False, False, True])
     monkeypatch.setattr(cli, "service_alive", lambda settings: next(alive))
-    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    own_time(monkeypatch, cli, sleep=lambda seconds: None)
     with pytest.raises(cli.UpgradeInProgress):
         cli.ensure_service(settings)
     assert seen == [("POST", "/shutdown", f"Bearer {settings.token}")]
@@ -127,7 +128,7 @@ def test_a_start_that_outlasts_the_wait_while_an_upgrade_began_is_ended_and_says
     monkeypatch.setattr(upgrade_mark, "refusal", lambda: calls.append(1) or (
         upgrade_mark.NOTE_RUNNING.format(pid=4242) if len(calls) > 1 else None))
     monkeypatch.setattr(cli, "service_alive", lambda settings: False)
-    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    own_time(monkeypatch, cli, sleep=lambda seconds: None)
     ended = []
     monkeypatch.setattr(cli.subprocess, "Popen",
                         lambda *args, **kwargs: SimpleNamespace(poll=lambda: None, terminate=lambda: ended.append(1)))
@@ -159,7 +160,7 @@ def broker_started_while_an_upgrade_began(tmp_path, monkeypatch):
     answers = iter([{"available": False}, {"available": True, "version_matches": True}])
     monkeypatch.setattr(cockpit, "cockpit_status", lambda settings: next(answers))
     monkeypatch.setattr(cockpit.subprocess, "Popen", lambda *args, **kwargs: SimpleNamespace())
-    monkeypatch.setattr(cockpit.time, "sleep", lambda seconds: None)
+    own_time(monkeypatch, cockpit, sleep=lambda seconds: None)
     return cockpit, settings
 
 

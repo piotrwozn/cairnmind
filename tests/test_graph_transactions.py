@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 from test_index_batching import code_tree, dump
 
+from conftest import own_time
 from cairnmind import graph_transactions, ingest
 from cairnmind.arcade import ArcadeClient
 from cairnmind.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
@@ -77,7 +78,7 @@ def test_vertices_the_index_does_not_find_yet_are_waited_for_and_never_assumed(t
             return []
         return found
     monkeypatch.setattr(JournalTransaction, "query", query)
-    monkeypatch.setattr(graph_transactions.time, "sleep", slept.append)
+    own_time(monkeypatch, graph_transactions, sleep=slept.append)
     graph_transactions.await_vertices(whole, ids)
     assert len(slept) == 2
     monkeypatch.setattr(graph_transactions, "VERTEX_WAIT", 0)
@@ -106,7 +107,7 @@ def test_the_wait_for_the_vertices_runs_inside_indexing_before_the_edges_and_the
     monkeypatch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 100)
     monkeypatch.setattr(ingest, "await_vertices", wait)
     monkeypatch.setattr(JournalTransaction, "query", query)
-    monkeypatch.setattr(graph_transactions.time, "sleep", lambda _seconds: state.update(waits=state["waits"] + 1))
+    own_time(monkeypatch, graph_transactions, sleep=lambda _seconds: state.update(waits=state["waits"] + 1))
     ingest.index_project(split, second)
     assert state["hidden"] == 0 and state["waits"] == 2  # indexing waited until the index found its vertices
     assert graph(split, second) == graph(whole, first)

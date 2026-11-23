@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from installer_script import installer_functions
+from conftest import own_time
 from cairnmind import process_identity, upgrade_mark
 from cairnmind.terminal_i18n import CATALOG
 
@@ -106,7 +107,7 @@ def test_a_living_process_is_not_called_stale_by_one_failed_read(mark, monkeypat
     monkeypatch.setattr(process_identity, "command_line", lambda pid: next(answers))
     monkeypatch.setattr(process_identity, "executable", lambda pid: "/usr/bin/python3")
     monkeypatch.setattr(process_identity, "alive", lambda pid: True)
-    monkeypatch.setattr(upgrade_mark.time, "sleep", lambda seconds: None)
+    own_time(monkeypatch, upgrade_mark, sleep=lambda seconds: None)
     assert upgrade_mark.state() == ("running", 4242)
 
 
@@ -116,7 +117,7 @@ def test_a_command_line_read_again_that_names_another_program_is_stale(mark, mon
     monkeypatch.setattr(process_identity, "command_line", lambda pid: next(answers))
     monkeypatch.setattr(process_identity, "executable", lambda pid: "/usr/bin/python3")
     monkeypatch.setattr(process_identity, "alive", lambda pid: True)
-    monkeypatch.setattr(upgrade_mark.time, "sleep", lambda seconds: None)
+    own_time(monkeypatch, upgrade_mark, sleep=lambda seconds: None)
     assert upgrade_mark.state() == ("stale", 4242)
     assert next(answers, None) is None  # the second read was used
 

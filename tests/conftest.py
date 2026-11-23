@@ -34,6 +34,7 @@ import tempfile
 import termios
 import threading
 import time
+import types
 from urllib.parse import quote, urlparse
 import uuid
 import zlib
@@ -278,6 +279,14 @@ def workspace_person(monkeypatch):
     monkeypatch.setattr(person_proof, "workspace_socket",
                         lambda settings, value: Path(value) if value == TEST_SOCKET else None)
     return {person_proof.KEY_HEADER: TEST_KEY, person_proof.SOCKET_HEADER: TEST_SOCKET}
+
+
+def own_time(monkeypatch, module, **replaced):
+    """Replace ``module``'s own ``time`` name by a copy of the clock with ``replaced`` functions changed (#417).
+
+    ``monkeypatch.setattr(module.time, "sleep", ...)`` would change the one ``time`` module the whole process shares."""
+    clock = {name: getattr(time, name) for name in dir(time) if not name.startswith("_")}
+    monkeypatch.setattr(module, "time", types.SimpleNamespace(**{**clock, **replaced}))
 
 
 def as_person(store, project_id, record, sources=None):
