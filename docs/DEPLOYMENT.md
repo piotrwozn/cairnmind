@@ -423,8 +423,9 @@ with vectors off and on, the five questions: 0 differences). Milliseconds are mi
 | with vectors: database requests | 71 to 99 | 14 to 15 |
 
 What was removed: a request per hit for its source (now one for all), the list of every current source of the project
-that filtered the ranking (now the hits' own rows are checked, by the same rule, and a ranking is read wider only while too
-few of its rows lie in the worktree), a second `jobs` query for the vectors' state (see below), and the same project
+that filtered the ranking (now the hits' own rows are checked, by the same rule; only when too few of the first rows lie
+in the worktree, as with a small registered root next to a large one, the ranking is read once more, filtered by the
+list of sources as before, so that search costs the old reads plus one and is never read wider than that), a second `jobs` query for the vectors' state (see below), and the same project
 scope read three times. **The state of the vectors is one query, not remembered:** it groups the embedding jobs by state
 (pending, running, failed) and the failed ones are read only when some failed and none is left. A remembered answer was
 not chosen because a stale "vectors are ready" is worse than the 12 ms the second query cost.
@@ -439,7 +440,7 @@ stage's median; the total is the range of the five questions' median totals):
 | on-disk checks of its hits | 302 (120) | 211 (72 to 108) |
 | hybrid search (the vector given, no embedding call) | 523 (98) | 139 (15) |
 | on-disk checks of its hits | 311 (120) | 100 (24 to 72) |
-| `_definitions` | 1,792 (57) | 471 (48 to 60) |
+| `_definitions` | 1,792 (57) | 471 (48 to 60; the time falls through the index, not through fewer requests) |
 | the rest (`cache_stamp`, context, citation catalog) | 72 (30) | 70 (30) |
 | total | 3,435 to 3,516 (461 to 495) | 1,072 to 1,397 (212 to 264) |
 
@@ -450,7 +451,9 @@ metadata of every one of the 88,000 nodes, 0.3 to 0.6 s each; then at most 8 fre
 definitions, about a dozen requests each. It is now: no list of sources; the same reads, in the same order and with the same
 bounds, but over an index on `nodes.kind` (a lookup index, built at the next start of the writer like the other
 lookup indexes; a read goes from about 290 to 55 ms); the rows' sources read together; and a file that an earlier pass of
-the same answer already checked on disk is not checked again. The code identity (git, 105 ms) is computed once per
+the same answer already checked on disk is not checked again. The number of requests did not fall (about 45 to 60 both
+before and after, 11 questions, medians 45 and 47); the time falls through the index, which is about four fifths of the
+gain. The code identity (git, 105 ms) is computed once per
 answer and was left alone. A file that both searches return is checked on disk once. The remaining time is the 5 to 8
 on-disk checks of the files (each about a dozen requests and a hash of the file).
 
@@ -464,7 +467,8 @@ own time varies from run to run and is not a claim): 13.7 / 7.0 s, 6.1 / 6.3 s, 
 above, not these runs, are what the change measures.
 
 Not measured: a store with memory records (the store has none, so the record queries are the same 3), a project with
-two worktrees of many files (the widening of a ranking is covered by a test, not by a measurement), a store older than this
+two worktrees of many files (a small root next to a large one is covered by a test, which counts the reads, not by a
+measurement of time), a store older than this
 code with the index not yet built (the first writer start builds it; the table is the store with it), and the service
 (the figures are of the same functions in a second process).
 
