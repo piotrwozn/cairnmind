@@ -242,9 +242,9 @@ def topology(settings, *, models: dict | None = None, writer: dict | None = None
 def probe(settings) -> dict:
     """What `cairnmind setup` shows: the requests doctor makes (read-only), then the topology."""
     import httpx
-    from .memory_models import doctor_models
+    from .memory_models import doctor_models, doctor_verify
     from .store_writer import inspect
-    with httpx.Client(timeout=1.5, trust_env=False) as http:
+    with httpx.Client(timeout=1.5, trust_env=False, verify=doctor_verify(settings)) as http:
         models = doctor_models(settings, http)
     return topology(settings, models=models, writer=inspect(settings))
 

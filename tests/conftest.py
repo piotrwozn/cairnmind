@@ -80,7 +80,8 @@ NO_ARCADE_MODULES = frozenset({
     "test_ended_pane_text",
     "test_short_answers", "test_person_acts_consent", "test_workspace_setup_screen",
     "test_setup_mark", "test_setup_change", "test_terminal_setup_change", "test_project_forget_workspace",
-    "test_server_mode", "test_restore_messages", "test_no_process_wide_time_patch",
+    "test_server_mode", "test_restore_messages", "test_command_start",
+    "test_model_client_kept", "test_no_process_wide_time_patch",
 })
 
 TMUX_MODULES = frozenset({

@@ -50,8 +50,8 @@ def missing_models(settings) -> list[str]:
     """Why the configured models cannot be used now, one phrase per server or model, or [] when each role's server
     answers and lists its model. Read-only: the requests doctor makes (doctor_models), never a download."""
     import httpx
-    from .memory_models import ROLES, doctor_models
-    with httpx.Client(timeout=1.5, trust_env=False) as http:
+    from .memory_models import ROLES, doctor_models, doctor_verify
+    with httpx.Client(timeout=1.5, trust_env=False, verify=doctor_verify(settings)) as http:
         found = doctor_models(settings, http)
     reasons = []
     for role in ROLES:
