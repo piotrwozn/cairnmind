@@ -450,7 +450,8 @@ names, names made of question words, names with a question word in a file or cla
 metadata of every one of the 88,000 nodes, 0.3 to 0.6 s each; then at most 8 freshness checks of the files of the
 definitions, about a dozen requests each. It is now: no list of sources; the same reads, in the same order and with the same
 bounds, but over an index on `nodes.kind` (a lookup index, built at the next start of the writer like the other
-lookup indexes; a read goes from about 290 to 55 ms); the rows' sources read together; and a file that an earlier pass of
+lookup indexes, in about a second at this size; a read goes from about 290 to 55 ms; what happens on an upgrade, to a reader
+and to an older client is in [UPGRADING.md](UPGRADING.md)); the rows' sources read together; and a file that an earlier pass of
 the same answer already checked on disk is not checked again. The number of requests did not fall (about 45 to 60 both
 before and after, 11 questions, medians 45 and 47); the time falls through the index, which is about four fifths of the
 gain. The code identity (git, 105 ms) is computed once per
