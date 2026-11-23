@@ -12,9 +12,10 @@ next indexing replaces the whole graph.
 
 The engine's unique index on ``nodes.id`` does not find vertices that were committed a moment ago while the engine
 compacts the index (seen on ArcadeDB 26.11.1; seconds, and not with compaction switched off). ``await_vertices``
-reads the vertices back by that index before the edges that name them are written; the restore (#362) commits, waits with no
-transaction open and opens a new one before it writes the edges of each group (a transaction that has missed a vertex
-keeps missing it, whatever is committed after), and shares ``BoundedTransactions`` with the indexer.
+reads the vertices back by that index before the edges that name them are written; the restore (#362) commits its
+vertices, waits once with no transaction open and only then begins the transactions of its edges (a transaction that
+has missed a vertex keeps missing it, whatever is committed after; a group that still misses one is committed, waited
+for and written again in a new transaction, once), and shares ``BoundedTransactions`` with the indexer.
 """
 from __future__ import annotations
 
