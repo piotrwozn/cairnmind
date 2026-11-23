@@ -422,6 +422,12 @@ figures.** A command's figure is the wall time of its whole process, start to ex
 | Query embedding through the service's client (median of 5 calls per run) | 88 / 94 / 118 / 126 | 35 / 40 / 44 / 44 | |
 | `asearch` with vectors, 10 hits (median of 5 calls per run) | 365 / 376 / 388 / 437 | 315 / 330 / 350 / 361 | |
 
+A second measurement of the query embedding, taken the same way (interleaved, 3 warm-up processes, 20 per side) with the
+load average at 6 to 9, gave 38.6 / 48.4 / 64.4 / 64.9 before and 13.1 / 20.8 / 34.0 / 34.8 after: a saving of about 28
+ms, not the 54 ms of the row above. Building an HTTP client costs more on a loaded machine (the TLS context), so the
+saving is about 30 ms per model request on a quiet machine and roughly twice that under the load of the first run. The
+`asearch` row holds one embedding call and was not repeated; treat its 46 ms the same way.
+
 Where it went. A command that talks to the service used to import the service module, and with it the web framework,
 only to compute the service's instance id: `ask` loaded 607 modules and now loads 420. A command's own imports are
 now the HTTP client, the command-line framework and what they load (`rich`, `anyio`). The bridge imports neither the
