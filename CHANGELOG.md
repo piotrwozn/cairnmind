@@ -238,6 +238,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - A restore without the workspace says "nothing to keep" only when no person's or before-the-rule confirmation was turned, revision snapshots included, and advises redoing with the workspace otherwise; on an installation without tmux it names tmux (#399).
 - A restore of a large project no longer commits and waits before every group of 250 edges: it waits once for the index to find all its vertices, so the usual project restores in 3,968 requests instead of 8,182 on the test engine through a relay adding 20 ms (#396).
 - A group of edges that still misses a vertex after that wait is committed, waited for and written once more, and fails by name and is put back if it misses again; an error of the engine itself (out of memory, a timeout) is never retried and reaches the person with its own text and memory hint (#396).
+- A command that asks the running service (`ask`, `context` and the others) no longer loads the service and its web framework, and asks `/health` once instead of two or three times: `ask` takes about 0.4 s less in its own process (#405).
+- The service now keeps one HTTP client per model server for its whole life and closes it when it stops: about 30 ms less per model request, which a new HTTP client for every request cost (#407).
 
 ### Development and CI
 
