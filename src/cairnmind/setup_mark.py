@@ -136,22 +136,7 @@ def held(data_dir):
         except BlockingIOError:
             raise ChangeBusy(Sentence(BUSY)) from None
         # The lock is held, so a mark that is there belongs to a holder that is gone: it is replaced.
-        own = f"{os.getpid()}\n".encode()
-        private = data_dir / f".{MARK}.{os.getpid()}"
-        file = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-        try:
-            os.write(file, own)
-            os.fsync(file)
-        finally:
-            os.close(file)
-        os.replace(private, mark_path(data_dir))
-        try:
+        with upgrade_mark.own_mark(mark_path(data_dir)):
             yield
-        finally:
-            try:
-                if mark_path(data_dir).read_bytes() == own:
-                    mark_path(data_dir).unlink()
-            except OSError:
-                pass
     finally:
         os.close(descriptor)

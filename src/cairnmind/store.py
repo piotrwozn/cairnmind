@@ -705,8 +705,9 @@ class Store:
         nothing is recorded until every index exists. Each statement waits LOOKUP_INDEX_WAIT, not a request's 30 s.
         """
         from .arcade import ArcadeError
+        from .index_mark import building
         try:
-            with self.client.patient(LOOKUP_INDEX_WAIT):
+            with building(self.data_dir), self.client.patient(LOOKUP_INDEX_WAIT):  # the mark tells a waiting command (#422)
                 for collection, field in LOOKUP_INDEXES:
                     self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
                     self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) NOTUNIQUE NULL_STRATEGY SKIP")

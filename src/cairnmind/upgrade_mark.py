@@ -9,6 +9,8 @@ The English sentences are the source; MESSAGES is their Polish for the terminal 
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import contextmanager
+import os
 from pathlib import Path
 import re
 import time
@@ -104,6 +106,29 @@ def mark_state(path: Path, holds: Callable[[list[str]], bool], may_hold: Callabl
         if not process_identity.alive(pid):
             return "stale", pid
     return "stale", pid  # alive, its command line unreadable every time, and a readable program that cannot be the holder
+
+
+@contextmanager
+def own_mark(path: Path):
+    """Hold a mark file with this process's id for the block: written whole beside it and moved in, so a reader never
+    sees half of it; removed at the end only when it is still this process's own."""
+    own = f"{os.getpid()}\n".encode()
+    private = path.parent / f".{path.name}.{os.getpid()}"
+    file = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    try:
+        os.write(file, own)
+        os.fsync(file)
+    finally:
+        os.close(file)
+    os.replace(private, path)
+    try:
+        yield
+    finally:
+        try:
+            if path.read_bytes() == own:
+                path.unlink()
+        except OSError:
+            pass
 
 
 def state() -> tuple[str, int | None]:

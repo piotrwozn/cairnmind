@@ -13,6 +13,7 @@ from .project_removal import MESSAGES as PROJECT_REMOVAL_MESSAGES
 from .recorder_agent import MESSAGES as RECORDER_MESSAGES
 from .restore_claims import MESSAGES as RESTORE_CLAIM_MESSAGES
 from .restore_staged import MESSAGES as RESTORE_STAGED_MESSAGES
+from .index_mark import MESSAGES as INDEX_MARK_MESSAGES
 from .store import MESSAGES as STORE_MESSAGES
 from .store_prune import MESSAGES as PRUNE_MESSAGES
 from .service_version import MESSAGES as SERVICE_VERSION_MESSAGES
@@ -704,6 +705,7 @@ CATALOG.update(RESTORE_CLAIM_MESSAGES)  # a restore without the person's workspa
 CATALOG.update(RESTORE_STAGED_MESSAGES)  # a restore in bounded transactions, and one that did not finish (#362)
 CATALOG.update(PRUNE_MESSAGES)  # a safety copy that an unfinished restore needs is kept (#362)
 CATALOG.update(STORE_MESSAGES)  # a lookup index that could not be built (#408)
+CATALOG.update(INDEX_MARK_MESSAGES)  # a lookup index is being built (#422)
 CATALOG.update(SERVICE_VERSION_MESSAGES)  # a service of another version is not used (#319)
 CATALOG.update(PROJECT_REMOVAL_MESSAGES)  # removing a project from the registry (#327)
 CATALOG.update(SETUP_MARK_MESSAGES)  # a change of where storage and models run is in progress (#339)
