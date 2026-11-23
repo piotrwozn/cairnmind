@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import functools
 import time
 
 from . import config
@@ -128,8 +129,10 @@ async def text_matches(agent, project_id: str, question: str, worktree=None, als
     evidence: dict = {}
     try:
         hits = await asyncio.to_thread(agent.retriever.search, project_id, question, INITIAL_HITS, worktree=worktree)
-        shown = await asyncio.to_thread(agent._hits, hits, project_id, evidence, worktree, question, False,
-                                        MATCH_EXCERPT_CHARS)
+        # The scope of the question, once, as _ask_impl makes it: not worked out again for every file.
+        scope = await asyncio.to_thread(agent._check_scope, project_id, worktree)
+        shown = await asyncio.to_thread(functools.partial(agent._hits, scope=scope), hits, project_id, evidence,
+                                        worktree, question, False, MATCH_EXCERPT_CHARS)
     finally:
         ASK.reset(token)
     matches = []

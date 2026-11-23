@@ -7,6 +7,7 @@ each file: a dozen database requests a file. Now they are read when the question
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -120,9 +121,61 @@ def test_the_model_tools_and_the_repair_catalog_use_the_scope_of_the_question(wo
     agent._tool = lambda *args, **kwargs: tools.append(args[5:] + tuple(kwargs.values())) or tool(*args, **kwargs)
     agent._citation_catalog = lambda *args, **kwargs: catalogs.append(kwargs.get("scope")) or catalog(*args, **kwargs)
     asyncio.run(agent.ask(project["id"], "limit budget"))
-    assert len(made) == 1
-    assert tools == [(made[0],)] * 2  # search and read_source: the question's scope
-    assert len(catalogs) >= 2 and all(scope is made[0] for scope in catalogs)  # the first and the repair catalog
+    assert len(made) == 2  # the question's, and one for the tool step (#423)
+    assert tools == [(made[1],)] * 2  # search and read_source of one step share the step's scope
+    # the first catalog is the question's; the repair catalog comes after the step and uses the latest
+    assert len(catalogs) >= 2 and catalogs[0] is made[0] and all(scope is made[1] for scope in catalogs[1:])
+
+
+def test_the_ask_without_models_uses_the_scope_of_its_question(workspace, requests_made):  # noqa: F811
+    from cairnmind.knowledge_mode import text_matches
+    store, project, settings = workspace
+    root = Path(project["root"])
+    (root / "pkg").mkdir()
+    for index in range(12):
+        (root / "pkg" / f"limit_{index:02d}.py").write_text(_module(f"limit_{index:02d}", "\nNOTE = 'retry budget'\n"))
+    index_project(store, project["id"])
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    made, make = [], agent._check_scope
+    agent._check_scope = lambda *args: made.append(make(*args)) or made[-1]
+    requests_made.clear()
+    found = asyncio.run(text_matches(agent, project["id"], "retry budget"))
+    with_scope = len(requests_made)
+    assert len(made) == 1 and len(found["matches"]) == 8
+    agent._check_scope = lambda *args: None  # the checks work the scope out for every file, as they did
+    requests_made.clear()
+    before = asyncio.run(text_matches(agent, project["id"], "retry budget"))
+    assert [match["id"] for match in found["matches"]] == [match["id"] for match in before["matches"]]
+    assert [match["excerpt"] for match in found["matches"]] == [match["excerpt"] for match in before["matches"]]
+    print(f"deterministic ask: {with_scope} requests with the scope of its question, {len(requests_made)} without")
+    assert with_scope <= 30 and len(requests_made) - with_scope >= 5 * len(found["matches"]), (with_scope, len(requests_made))
+
+
+def test_a_folder_removed_between_two_tool_steps_is_not_read_from_by_the_second(workspace):  # noqa: F811
+    from test_knowledge import calls
+    store, project, settings = workspace
+    root = Path(project["root"])
+    second = root.parent / "a-second-worktree"
+    second.mkdir()
+    (second / "other.py").write_text(_module("other"))
+    store.add_project_root(project["id"], second)
+    index_project(store, project["id"])
+    source_id = _current(store, project, second / "other.py")
+    read = ("read_source", {"source_id": source_id})
+
+    def remove_the_root(messages, tools):  # the owner removes the folder while the model thinks
+        store.command("DELETE FROM project_roots WHERE project_id=:p AND path=:path",
+                      {"p": project["id"], "path": str(second)})
+        return calls(read)
+    model = FakeOllama([calls(read), remove_the_root, {"content": "not a typed answer"}])
+    agent = KnowledgeAgent(store, settings, model)
+    made, make = [], agent._check_scope
+    agent._check_scope = lambda *args: made.append(make(*args)) or made[-1]
+    asyncio.run(agent.ask(project["id"], "other budget", worktree=str(second)))
+    tools = [json.loads(message["content"]) for message in model.calls[2]["messages"] if message.get("role") == "tool"]
+    assert "LIMIT_OTHER" in tools[0]["content"]  # accepted while the folder was registered
+    assert "error" in tools[1] and "content" not in tools[1]  # refused once it was removed
+    assert len(made) == 2 and made[0] is not made[1]  # the first checks share one scope, each tool step has its own
 
 
 def test_every_check_of_a_file_gives_the_verdict_it_gave_without_the_scope(workspace, tmp_path):  # noqa: F811

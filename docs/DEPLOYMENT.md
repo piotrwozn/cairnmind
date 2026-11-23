@@ -488,9 +488,12 @@ hits), and a check of a file takes the one request that belongs to it, the curre
 definition takes two (its row, that one). The scope is made for one question and dropped with it, so a root added or
 removed meanwhile is seen by the next question; a check decides exactly as before (the same hits, in the same order,
 with the same warnings: 15 questions compared, 0 differences, and the awkward cases below). The scope is held for the
-whole question, also across the wait for the embedding model and the model's own search and read calls; a root removed
-in that time still counts as registered until the question ends (each file is still read and hashed at its check). The
-deterministic-only `/ask` (no model) does not take a scope yet: its checks cost what they did.
+checks before the model's first call, and again for each step of the model's own search and read calls (#423): one value
+inside a step, a new one (about 5 more requests) for each step that calls a tool, so a folder removed in the minutes
+a question lasts is not read from by the steps after it; a worktree that is no longer registered refuses that step's
+calls. The scope after the last step also serves the repair catalog. Each file is still read and hashed at its check.
+The deterministic-only `/ask` (no model) takes the scope of its question as well (#423): for 12 files and 8 matches it
+took 119 database requests before and takes 25 now, with the same matches in the same order.
 
 Measured on 23 November 2026, code at `2614d8e` against `ebe58bc`, on a clone of this repository (588 indexed files, 3,286
 chunks, no vectors, a stub in place of the model server, so the part of `ask` before its first chat call is the whole

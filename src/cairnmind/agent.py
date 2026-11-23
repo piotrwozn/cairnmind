@@ -1349,6 +1349,13 @@ class KnowledgeAgent:
                                             ["The model broke the tool protocol."], started,
                                             code="tool_protocol_invalid")
                     messages.append({"role": "assistant", "content": message.get("content", ""), "tool_calls": calls})
+                    # One value for the calls of this step, a new one for each step (about 5 requests): a folder
+                    # removed since the last step is not read from. A root that is gone refuses the step's calls.
+                    gone = None
+                    try:
+                        scope = await asyncio.to_thread(self._check_scope, project_id, worktree)
+                    except ValueError as exc:
+                        gone = exc
                     for call in calls:
                         function = call.get("function", {}) if isinstance(call, dict) else {}
                         if not isinstance(function, dict):
@@ -1359,6 +1366,8 @@ class KnowledgeAgent:
                                 arguments = json.loads(arguments)
                             if not isinstance(arguments, dict):
                                 raise ValueError("Tool arguments must be an object")
+                            if gone is not None:
+                                raise gone
                             result = await self._tool(name, arguments, project_id, evidence, worktree, scope)
                         except (ValueError, KeyError, TypeError, OSError) as exc:
                             result = {"error": str(exc)[:250]}
