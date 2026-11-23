@@ -380,8 +380,9 @@ def _wait_for_start(settings: Settings, process, log: Path, started_at: int) -> 
         polls += 1
         if polls >= START_POLLS:
             # Past the ordinary wait the store may still be prepared (a lookup index is being built, #422): that is not
-            # a service that did not start. Said once, and the wait goes on up to the longest build (every statement
-            # may take LOOKUP_INDEX_WAIT) while the builder lives; when its mark is gone the ordinary wait starts anew.
+            # a service that did not start. Said once, and the wait goes on while the builder lives, bounded by
+            # LOOKUP_INDEX_WAIT per index (13 x 600 s = 130 min; in practice the first statement that hangs ends it and
+            # the mark goes); when its mark is gone the ordinary wait starts anew.
             building = index_mark.note(settings.data_dir)
             if building and not told:
                 from cairnmind.store import LOOKUP_INDEX_WAIT, LOOKUP_INDEXES

@@ -16,10 +16,10 @@ from . import upgrade_mark
 MARK = "index-build-in-progress"
 
 NOTE_RUNNING = ("The store is being prepared for this version: a lookup index is being built (process {pid}). It is "
-                "the first start after an upgrade, can take minutes on a large store, and nothing is to be done.")
+                "usually the first start after an upgrade, can take minutes on a large store, and nothing is to be done.")
 MESSAGES = {
     NOTE_RUNNING: ("Baza jest przygotowywana do tej wersji: trwa budowa indeksu wyszukiwania (proces {pid}). To "
-                   "pierwszy start po aktualizacji, na dużej bazie może potrwać kilka minut i nic nie trzeba robić."),
+                   "zwykle pierwszy start po aktualizacji, na dużej bazie może potrwać kilka minut i nic nie trzeba robić."),
 }
 
 
@@ -40,7 +40,9 @@ def building(data_dir):
 
 
 def state(data_dir) -> tuple[str, int | None]:
-    return upgrade_mark.mark_state(mark_path(data_dir), lambda arguments: any("cairnmind" in part for part in arguments),
+    # The builder runs as `python -m cairnmind` or the `cairnmind` script: an argument that is that name, not one that
+    # merely contains it (a pager on service.log). A pid reused by another cairnmind process is still taken as the holder.
+    return upgrade_mark.mark_state(mark_path(data_dir), lambda arguments: any(Path(part).name == "cairnmind" for part in arguments),
                                    lambda program: Path(program).name.lower().startswith("python"))
 
 
