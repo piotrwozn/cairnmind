@@ -65,7 +65,7 @@ def test_a_database_of_an_earlier_release_gets_them_when_it_is_opened_and_only_o
     assert not [sql for sql in commands if "CREATE INDEX" in sql or "CREATE PROPERTY" in sql]  # nothing to do the next time
 
 
-def test_an_index_that_cannot_be_built_does_not_keep_the_database_closed(tmp_path, monkeypatch):
+def test_an_index_that_cannot_be_built_does_not_keep_the_database_closed(tmp_path, monkeypatch, capsys):
     from cairnmind.arcade import ArcadeError
 
     store = Store(tmp_path / "memory")
@@ -80,6 +80,8 @@ def test_an_index_that_cannot_be_built_does_not_keep_the_database_closed(tmp_pat
         patch.setattr(ArcadeClient, "command", failing)
         opened = Store(tmp_path / "memory")  # opens, and records nothing
         assert marker(opened) == []
+    # Not silent: the person is told, and told what it costs.
+    assert "could not be built (Local ArcadeDB is unavailable (ReadTimeout))" in capsys.readouterr().err
     assert marker(Store(tmp_path / "memory")) == [LOOKUP_INDEX_SET]  # the next start finishes the work
 
 

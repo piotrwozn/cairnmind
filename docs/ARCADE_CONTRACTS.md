@@ -81,7 +81,7 @@ embeddings, by `from_id` and `to_id` on edges, by `chunk_id` on embeddings, `sou
 `devbrain_meta` `lookup_indexes` records the set the database has (`LOOKUP_INDEX_SET`; 0.12.0 wrote 1, which is also what
 0.12.0 writes back when it opens a store of set 2). Only the writer declares and builds them, at its start, with every
 statement waiting up to `LOOKUP_INDEX_WAIT` (600 s) because the engine drops a build whose client gave up; nothing is
-recorded until all exist, and a start that finds the recorded set sends no DDL. A reader and a 0.12.0 client build and drop
+recorded until all exist, and a start that finds the recorded set sends no lookup-index DDL. A build that fails is printed to stderr and tried again at the next start. A reader and a 0.12.0 client build and drop
 none. A read that would use a missing index is the same read, slower.
 
 `list_records`,get_source,resolve_project return plain field dictionaries with metadata

@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import re
+import sys
 import threading
 import time
 from uuid import uuid4
@@ -38,6 +39,10 @@ LOOKUP_INDEX_SET = 2
 # Seconds a statement that builds a lookup index waits: the engine drops the build when the client gives up at the
 # 30 s of an ordinary request, so a store that takes longer would never get its index. 88,000 nodes take about 1 s.
 LOOKUP_INDEX_WAIT = 600
+LOOKUP_INDEX_GAVE_UP = ("A lookup index of the store could not be built ({error}). The store opens without it, some reads "
+                        "are slower, and the next start tries again.")
+MESSAGES = {LOOKUP_INDEX_GAVE_UP: ("Nie udało się zbudować indeksu wyszukiwania w bazie ({error}). Baza otwiera się bez "
+                                   "niego, część odczytów jest wolniejsza, a następny start spróbuje ponownie.")}
 # Graph rows written by one request of Store.write_graph (issue #167).
 GRAPH_ROWS_PER_REQUEST = 250
 KINDS = {"decision", "task", "fact", "constraint", "question", "preference", "checkpoint"}
@@ -705,7 +710,8 @@ class Store:
                 for collection, field in LOOKUP_INDEXES:
                     self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
                     self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) NOTUNIQUE NULL_STRATEGY SKIP")
-        except ArcadeError:
+        except ArcadeError as exc:
+            print("cairnmind: " + LOOKUP_INDEX_GAVE_UP.format(error=safe_text(str(exc))), file=sys.stderr)
             return
         with self.client.transaction() as tx:
             # Read again, as for schema_version: another installation may have recorded it in between.

@@ -13,6 +13,7 @@ from .project_removal import MESSAGES as PROJECT_REMOVAL_MESSAGES
 from .recorder_agent import MESSAGES as RECORDER_MESSAGES
 from .restore_claims import MESSAGES as RESTORE_CLAIM_MESSAGES
 from .restore_staged import MESSAGES as RESTORE_STAGED_MESSAGES
+from .store import MESSAGES as STORE_MESSAGES
 from .store_prune import MESSAGES as PRUNE_MESSAGES
 from .service_version import MESSAGES as SERVICE_VERSION_MESSAGES
 from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
@@ -702,6 +703,7 @@ CATALOG.update(UPGRADE_MARK_MESSAGES)  # an upgrade in progress; an MCP server o
 CATALOG.update(RESTORE_CLAIM_MESSAGES)  # a restore without the person's workspace (#214)
 CATALOG.update(RESTORE_STAGED_MESSAGES)  # a restore in bounded transactions, and one that did not finish (#362)
 CATALOG.update(PRUNE_MESSAGES)  # a safety copy that an unfinished restore needs is kept (#362)
+CATALOG.update(STORE_MESSAGES)  # a lookup index that could not be built (#408)
 CATALOG.update(SERVICE_VERSION_MESSAGES)  # a service of another version is not used (#319)
 CATALOG.update(PROJECT_REMOVAL_MESSAGES)  # removing a project from the registry (#327)
 CATALOG.update(SETUP_MARK_MESSAGES)  # a change of where storage and models run is in progress (#339)
