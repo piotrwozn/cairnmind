@@ -416,7 +416,7 @@ def _stop_started(settings: Settings) -> None:
     "in progress"."""
     from cairnmind import upgrade_mark
     try:
-        with httpx.Client(trust_env=False, timeout=5) as client:
+        with httpx.Client(trust_env=False, timeout=5, verify=tls_verify(settings.url)) as client:
             client.post(settings.url + "/shutdown",
                         headers={"Authorization": f"Bearer {settings.token}"}).raise_for_status()
     except httpx.HTTPError:
@@ -2548,7 +2548,8 @@ def model_pull(ctx: typer.Context):
         local_server(settings)
     except ValueError as exc:  # another computer: nothing is downloaded there or asked (#288)
         refuse(str(exc))
-    with httpx.Client(trust_env=False, timeout=httpx.Timeout(60, read=900)) as client:
+    with httpx.Client(trust_env=False, timeout=httpx.Timeout(60, read=900),
+                      verify=tls_verify(settings.ollama_url)) as client:
         for name in local:
             typer.echo(f"Downloading {name}…", err=True)
             with client.stream("POST", settings.ollama_url + "/api/pull", json={"name": name, "stream": True}) as res:

@@ -17,6 +17,7 @@ from urllib.parse import quote
 
 import httpx
 
+from .config import tls_verify
 from .memory_egress import ordered
 from .sql import clean_row, json_text, one_row
 from .terminal_safe import safe_text
@@ -436,7 +437,8 @@ class AgentMemoryClient:
     async def _request(self, method, path, *, body=None, params=None):
         timeout = self.settings.ask_timeout + 15 if path == "/ask" else 45
         try:
-            async with httpx.AsyncClient(transport=self.transport, timeout=timeout, trust_env=False) as client:
+            async with httpx.AsyncClient(transport=self.transport, timeout=timeout, trust_env=False,
+                                         verify=tls_verify(self.settings.url)) as client:
                 response = await client.request(method, self.settings.url + path,
                     json=body if method == "POST" else None,
                     params={k: v for k, v in (params or {}).items() if v is not None},

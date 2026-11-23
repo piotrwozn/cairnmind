@@ -28,7 +28,7 @@ from uuid import uuid4
 import httpx
 
 from . import platform_hints
-from .config import ENV_PREFIXES, Settings
+from .config import ENV_PREFIXES, Settings, tls_verify
 from .process_identity import start as process_start
 from .runtime_selection import resolve_tmux
 from .runtime_sockets import MAX_SOCKET_PATH, prepare_socket_base, socket_directory
@@ -273,7 +273,8 @@ class NativeRuntime:
             return {}
         try:
             result = httpx.get(self.settings.url + "/sessions/" + row["session_id"],
-                headers={"Authorization": f"Bearer {self.settings.token}"}, timeout=2, trust_env=False)
+                headers={"Authorization": f"Bearer {self.settings.token}"}, timeout=2, trust_env=False,
+                verify=tls_verify(self.settings.url))
             result.raise_for_status()
             status = result.json()
             if status.get("session_id") == row["session_id"]:
