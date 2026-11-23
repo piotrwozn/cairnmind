@@ -948,6 +948,13 @@ class Store:
     def get_source(self, source_id):
         return one_row(self, "SELECT FROM sources WHERE id=:id", {"id": source_id})
 
+    def get_sources(self, source_ids) -> dict:
+        """The sources with these ids as `get_source` returns them, id -> row, in requests of 500 ids; an id that
+        does not exist is not in the result (`get_source` raises for it)."""
+        ids = list(dict.fromkeys(source_ids))
+        return {row["id"]: row for start in range(0, len(ids), 500) for row in (
+            clean_row(found) for found in self.query("SELECT FROM sources WHERE id IN :ids", {"ids": ids[start:start + 500]}))}
+
     @staticmethod
     def _validate_sources(tx, project_id, sources):
         if not isinstance(sources, list) or not sources or not all(isinstance(item, str) for item in sources):
