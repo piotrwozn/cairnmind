@@ -604,3 +604,33 @@ async def test_the_record_kinds_check_run_by_the_poll_yields_to_the_outcome(tmp_
         now[0] += OUTCOME_HOLD + 1
         app._hold_over()
         assert "probe_kind" in line(app)  # it waited, as a refresh error does
+
+
+@pytest.mark.asyncio
+async def test_a_notice_is_counted_once_per_event_whatever_path_tells_it(tmp_path, monkeypatch):
+    """The history counts a repeat of the last entry; the outcome that tells what already waits is that event."""
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    now = [0.0]
+    monkeypatch.setattr(terminal_ui, "_clock", lambda: now[0])
+
+    def count(text):
+        return [e.count for e in app.notice_history.entries if e.text == text]
+
+    async with app.run_test(size=(120, 40)):
+        await app.workers.wait_for_complete()
+        app.notice("outcome")
+        assert count("outcome") == [1]  # an outcome told once
+        background(app, "again")
+        background(app, "again")
+        assert count("again") == [2]  # the source told it twice while it waited: counted as a repeat, no more
+        now[0] += OUTCOME_HOLD + 1
+        app._hold_over()
+        assert line(app) == "again" and count("again") == [2]  # shown at the end of the hold: not counted
+        app.notice("outcome two")
+        background(app, "poll says it", "info")
+        app.notice("poll says it")  # the person's act tells what waits: one event, shown now
+        assert line(app) == "poll says it" and count("poll says it") == [1]
+        now[0] += OUTCOME_HOLD + 1
+        app._hold_over()
+        assert line(app) == "poll says it" and count("poll says it") == [1]

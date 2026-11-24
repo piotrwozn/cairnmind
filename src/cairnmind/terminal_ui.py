@@ -547,8 +547,11 @@ class BasePanel(App):
                 self._held = None  # a cleared line: what waited was recorded before and is no longer news
             self._line_scope = self._workspace_scope() if shown.plain else None
             with suppress(Exception):
-                self.notice_history.add(shown.plain, self._notice_about or self.workspace_data, kind)
+                waiting = self._held if not background else None
+                self.notice_history.add(shown.plain, self._notice_about or self.workspace_data, kind, waiting=waiting)
                 entry = self.notice_history.on_line()
+                if waiting is not None and entry is waiting:
+                    self._held = None  # what waited is on the line now
                 self._outcome = None if background or entry is None else (entry.seq, _clock() + OUTCOME_HOLD)
                 self.show_notice_mark()
                 if self._outcome:

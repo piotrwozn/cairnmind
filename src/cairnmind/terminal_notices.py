@@ -42,9 +42,11 @@ class NoticeHistory:
         self._seen = 0        # highest seq the person has opened the history at
         self._on_line = None   # seq of the entry the notice line shows, if any
 
-    def add(self, text: object, scope: dict | None, kind: str = "info", *, on_line: bool = True) -> None:
+    def add(self, text: object, scope: dict | None, kind: str = "info", *, on_line: bool = True,
+            waiting: Notice | None = None) -> None:
         """Store one notice. `on_line` is False for a notice kept only here, never shown on the line
-        (the outcome of work for a project that is no longer shown); the line keeps what it shows."""
+        (the outcome of work for a project that is no longer shown); the line keeps what it shows.
+        `waiting` is the entry kept off the line during a hold: shown now by this same text, it is not counted again."""
         kind = kind if kind in KINDS else "info"
         shown = safe_text(text, limit=MAX_ENTRY_CHARS)
         if not shown.strip():
@@ -56,7 +58,9 @@ class NoticeHistory:
         last = self.entries[-1] if self.entries else None
         if (last is not None and last.text == shown and (last.project_id, last.worktree) == project
                 and last.kind == kind):
-            last.when, last.count = _now(), last.count + 1  # also a held notice that repeats (#430)
+            last.when = _now()
+            if last is not waiting:  # told for the first time to the person: the waiting one is that same event
+                last.count += 1  # also a held notice that repeats (#430)
             if on_line:
                 self._on_line = last.seq
             return
