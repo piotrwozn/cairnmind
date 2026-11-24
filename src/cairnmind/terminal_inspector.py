@@ -259,12 +259,14 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                 await self.load_memory()
             else:
                 await self.load_page()
+            if background:
+                self.refresh_recovered()
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc, "error")
+            self.refresh_failed(exc, "error")
         except Exception as exc:  # the worker-state handler cannot tell a background reload from a foreground read
             if not background:
                 raise
-            self.notice(exc, "error")
+            self.refresh_failed(exc, "error")
 
     def params(self):
         return {"project": self.workspace_data.get("project_id"), "worktree": self.workspace_data.get("worktree")}

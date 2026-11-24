@@ -637,8 +637,9 @@ class SidebarApp(BasePanel):
         BACKGROUND.set(True)  # its notices yield to the outcome of a person's act (#430)
         try:
             await self.load_state()
+            self.refresh_recovered()
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc)
+            self.refresh_failed(exc)
 
     async def load_state(self):
         value = await self.request("GET", "/api/state")

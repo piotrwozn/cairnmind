@@ -426,6 +426,7 @@ class BasePanel(App):
         self._notice_about, self._mark_text = None, ""
         self._outcome = None  # (history seq, hold ends) of the notice a person's act left on the line
         self._held = None  # the newest background notice kept in the history during the hold
+        self._failed = None  # the one of them that a failed refresh left
         self._line_scope = None  # (project id, worktree) the workspace state held when the line got its notice
         self._scope_version = 0
         self._workspace_revision = None
@@ -473,6 +474,15 @@ class BasePanel(App):
             self._line_scope = self._workspace_scope()
             self.notice_history.put_on_line(held)
             self.show_notice_mark()
+
+    def refresh_failed(self, exc, kind="info") -> None:
+        self.notice(exc, kind)
+        self._failed = self._held  # what this failure left waiting, if the hold kept it off the line
+
+    def refresh_recovered(self) -> None:
+        """The refresh worked: an error of its own that still waits is over. What another source told once stays."""
+        if self._held is not None and self._held is self._failed:
+            self._held = None
 
     def _paint(self, shown, kind) -> None:
         line = self.query_one("#panel-notice", Static)
@@ -533,6 +543,8 @@ class BasePanel(App):
             shown = plain(self.t(value))
             self._paint(shown, kind)
         if shown is not None:
+            if not shown.plain:
+                self._held = None  # a cleared line: what waited was recorded before and is no longer news
             self._line_scope = self._workspace_scope() if shown.plain else None
             with suppress(Exception):
                 self.notice_history.add(shown.plain, self._notice_about or self.workspace_data, kind)

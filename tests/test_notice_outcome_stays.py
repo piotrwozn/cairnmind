@@ -513,3 +513,94 @@ async def test_the_graphs_interrupted_connection_is_told_once_and_shows_when_the
         now[0] += OUTCOME_HOLD + 1
         app._hold_over()
         assert "graph-read-down" in line(app)  # the newest one that waited
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("panel", ["sidebar", "inspector"])
+async def test_a_refresh_that_recovered_leaves_nothing_to_show_when_the_hold_ends(tmp_path, monkeypatch, panel):
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    app = (SidebarApp if panel == "sidebar" else InspectorApp)(settings, broker=broker, workspace=workspace)
+    now = [0.0]
+    monkeypatch.setattr(terminal_ui, "_clock", lambda: now[0])
+    async with app.run_test(size=(120, 40)):
+        await app.workers.wait_for_complete()
+        healthy, down = app.request, [True]
+
+        async def request(*args, **kwargs):
+            if down[0]:
+                raise BrokerError(503, "probe-down")
+            return await healthy(*args, **kwargs)
+
+        app.request = request
+
+        async def refresh_once():
+            app.refresh_sidebar() if panel == "sidebar" else app.refresh_page(background=True)
+            await app.workers.wait_for_complete()
+
+        app.notice("outcome")
+        await refresh_once()  # fails: waits for the end of the hold
+        assert line(app) == "outcome" and app._held is not None
+        down[0] = False
+        await refresh_once()  # the service is back
+        now[0] += OUTCOME_HOLD + 1
+        app._hold_over()
+        assert "probe-down" not in line(app)
+
+
+@pytest.mark.asyncio
+async def test_a_notice_that_waited_before_the_line_was_cleared_is_not_shown_after_a_later_outcome(tmp_path, monkeypatch):
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    now = [0.0]
+    monkeypatch.setattr(terminal_ui, "_clock", lambda: now[0])
+    async with app.run_test(size=(120, 40)):
+        await app.workers.wait_for_complete()
+        app.notice("outcome")
+        background(app, "old error")
+        app.notice("")  # the line was cleared
+        app.notice("outcome two")
+        now[0] += OUTCOME_HOLD + 1
+        app._hold_over()
+        assert line(app) == "outcome two"
+
+
+@pytest.mark.asyncio
+async def test_an_older_waiting_notice_is_not_shown_after_a_newer_background_notice_reached_the_line(tmp_path, monkeypatch):
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    now = [0.0]
+    monkeypatch.setattr(terminal_ui, "_clock", lambda: now[0])
+    async with app.run_test(size=(120, 40)):
+        await app.workers.wait_for_complete()
+        app.notice("outcome")
+        background(app, "E1")  # waits
+        app.leave_hint("a hint")  # takes the line from the outcome
+        background(app, "E2")  # nothing holds: shown at once
+        assert line(app) == "E2"
+        app.notice("outcome two")
+        now[0] += OUTCOME_HOLD + 1
+        app._hold_over()
+        assert line(app) == "outcome two"
+
+
+@pytest.mark.asyncio
+async def test_the_record_kinds_check_run_by_the_poll_yields_to_the_outcome(tmp_path, monkeypatch):
+    from cairnmind.terminal_record_kinds import _announce
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    now = [0.0]
+    monkeypatch.setattr(terminal_ui, "_clock", lambda: now[0])
+    async with app.run_test(size=(120, 40)):
+        await app.workers.wait_for_complete()
+
+        async def request(*args, **kwargs):
+            return {"blocking": [{"client": "probe_client", "kind": "probe_kind"}]}
+
+        app.request = request
+        app.notice("outcome")
+        app.run_worker(_announce(app, "p1", {"project_name": "P"}), exit_on_error=False)
+        await app.workers.wait_for_complete()
+        assert line(app) == "outcome"
+        now[0] += OUTCOME_HOLD + 1
+        app._hold_over()
+        assert "probe_kind" in line(app)  # it waited, as a refresh error does
