@@ -6,7 +6,12 @@ used to read every row of the project, build that whole view and cut one page ou
 counts and the groups, and returns only the rows of the page: the first identifiers in order, then their rows and the
 edges between them. The answers are the same as the whole read gave (tests/test_inspector_graph.py compares them).
 They rest on what the writers guarantee: a vertex names a source of its project, an edge joins two vertices of its
-project, and a native vertex with a prefixed identifier has the source, record or plan of that identifier.
+project, and a native vertex with a prefixed identifier has the source, record or plan of that identifier (a memory
+package that names one without its row is refused, and no other path writes one or deletes the row).
+
+A request for one worktree of a project that has other roots leaves out what that worktree holds back: the rows whose
+root, worktree or file path name another root, the vertices and edges of their sources, and the edges to such a vertex.
+`held` finds them once per watermark, from the distinct values the rows carry, as the whole read matches each row.
 """
 from __future__ import annotations
 

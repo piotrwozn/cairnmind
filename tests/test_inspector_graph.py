@@ -334,6 +334,18 @@ def test_rows_of_two_more_roots_are_paged_with_the_same_answers(stores, tmp_path
     compare_groups_and_neighbors(store, pid, worktree)
 
 
+def test_a_scope_that_holds_back_more_than_the_limit_is_read_whole_with_the_same_answers(stores, tmp_path, monkeypatch):
+    from cairnmind import inspector_graph
+    store, project, root, other = stores
+    add_roots(stores, tmp_path)
+    inspector = Inspector(store)
+    assert inspector_graph.held(inspector, inspector._scope(project["id"], root)) is not None
+    monkeypatch.setattr(inspector_graph, "HELD_LIMIT", 3)
+    assert inspector_graph.held(inspector, inspector._scope(project["id"], root)) is None
+    assert compare_graph(store, project["id"], root, limits=(3, 2000)) > 10
+    compare_groups_and_neighbors(store, project["id"], root)
+
+
 def test_the_scope_is_remembered_at_a_watermark_found_again_after_a_write_and_bounded(stores, tmp_path):
     """Finding what a worktree holds back scans each table: the same scope at the same watermark is not scanned again, a
     write moves the watermark so that the scope is found anew (the counts follow), and only CACHED scopes are kept."""
@@ -528,10 +540,13 @@ def test_the_project_row_counts_the_code_graph_only_so_the_counts_come_from_the_
 def test_no_path_leaves_a_vertex_of_a_record_plan_or_source_without_its_row(stores, tmp_path):
     """The writers of such a vertex (a record's graph, a plan's, the indexer's source nodes, a restore) write the row in the
     same transaction, no path deletes a source, record or plan while its vertex stays, and a package that carries one is refused."""
+    from cairnmind import ingest
     from cairnmind.memory import TABLES, _validate
     store, project, root, other = stores
     add_roots(stores, tmp_path)
     pid = project["id"]
+    (root / "z.py").write_text("def z():\n    return 1\n")
+    ingest.index_project(store, pid)  # the indexer's own source vertices
     owners = {"record:": "records", "plan:": "plans", "source:": "sources"}
     vertices = store.query("SELECT id FROM nodes WHERE project_id=:project", {"project": pid})
     assert any(row["id"].startswith(prefix) for row in vertices for prefix in owners)
