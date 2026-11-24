@@ -1189,7 +1189,8 @@ class Store:
             deleted = tx.command("DELETE FROM nodes WHERE project_id=:project AND id IN :ids",
                                  {"project": project_id, "ids": unlinked})
             count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
-            if type(count) is not int or count != len(unlinked):
+            # More than asked: an id stored twice (#456) goes with every copy; graph_duplicates counts what is left.
+            if type(count) is not int or count < len(unlinked):
                 raise RuntimeError("The database did not delete every graph vertex of a group")
         return kept
 

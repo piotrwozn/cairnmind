@@ -22,10 +22,10 @@ def store_twice(store, identifier):
     store.client.command("CREATE VERTEX nodes CONTENT :row", {"row": original})
     first, second = sorted((row["rid"] for row in store.query("SELECT @rid AS rid FROM nodes WHERE id=:id", {"id": identifier})),
                            key=lambda rid: tuple(int(part) for part in rid.lstrip("#").split(":")))
-    edge = clean_row(store.query("SELECT FROM edges WHERE kind='snapshot_of' AND from_id=:id", {"id": identifier})[0])
-    store.client.command("DELETE FROM edges WHERE id=:id", {"id": edge["id"]})
-    store.client.command(f"CREATE EDGE edges FROM {second} TO (SELECT FROM nodes WHERE id=:to) CONTENT :edge",
-                         {"to": edge["to_id"], "edge": edge})
+    for edge in map(clean_row, store.query("SELECT FROM edges WHERE kind='snapshot_of' AND from_id=:id", {"id": identifier})):
+        store.client.command("DELETE FROM edges WHERE id=:id", {"id": edge["id"]})
+        store.client.command(f"CREATE EDGE edges FROM {second} TO (SELECT FROM nodes WHERE id=:to) CONTENT :edge",
+                             {"to": edge["to_id"], "edge": edge})
     return first, second
 
 
@@ -62,6 +62,36 @@ def test_a_vertex_stored_twice_behind_the_product_is_removed_with_its_edge_put_b
     # And the engine itself agrees that no id is held twice: the unique index can be made again.
     stored.client.command("CREATE INDEX ON nodes(id) UNIQUE NULL_STRATEGY SKIP")
 
+def test_the_copy_that_stays_gets_what_the_pass_computed_where_the_two_copies_differ(tmp_path):
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path)
+    ingest._build_graph(store, project, indexed)
+    identifier = store.query("SELECT id FROM nodes WHERE project_id=:p AND kind!='source' LIMIT 1", {"p": project})[0]["id"]
+    first, second = store_twice(store, identifier)
+    current = clean_row(store.query("SELECT FROM nodes WHERE @rid=:rid", {"rid": second})[0])
+    store.client.command("UPDATE nodes SET label='stale' WHERE @rid=:rid", {"rid": first})
+    assert graph_duplicates.repair(store, project, [{**current, "label": "computed"}]) == 1
+    rows = store.query("SELECT @rid AS rid,label FROM nodes WHERE id=:id", {"id": identifier})
+    assert [(row["rid"], row["label"]) for row in rows] == [(first, "computed")]
+
+
+def test_a_duplicate_that_the_pass_did_not_make_of_a_vertex_whose_id_goes_away_is_removed_by_the_pass(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    code_tree(root)
+    store = Store(tmp_path / "memory")
+    project = store.add_project("p", root)["id"]
+    ingest.index_project(store, project)
+    symbol = store.query("SELECT id FROM nodes WHERE project_id=:p AND label LIKE '%function_5_4' AND kind!='source' LIMIT 1", {"p": project})[0]["id"]
+    store_twice(store, symbol)
+    text = (root / "module_05.py").read_text()
+    (root / "module_05.py").write_text("\n" + text)  # every line moves: the symbol's id, which holds its line, is another
+    result = ingest.index_project(store, project)
+    assert not any("did not delete" in str(error) for error in result["errors"])
+    assert store.query("SELECT count(*) AS n FROM nodes WHERE id=:id", {"id": symbol})[0]["n"] == 0
+    assert graph_duplicates.surplus(store, project) == 0
+
+
 def test_a_repair_that_does_not_end_whole_fails_by_name_and_leaves_the_graph_marked_not_built(tmp_path, monkeypatch):
     store = Store(tmp_path / "memory")
     project, indexed = synthetic(store, tmp_path)
@@ -88,14 +118,14 @@ def test_the_check_costs_one_request_where_vertices_were_written_and_none_where_
 
     calls = []
     real = graph_duplicates.repair
-    counting = lambda store, project: (calls.append(project), real(store, project))[1]  # noqa: E731
+    counting = lambda store, project, written: (calls.append(project), real(store, project, written))[1]  # noqa: E731
     wrote, result = requests_of_a_pass("wrote", True, counting)
     assert result["graph_written"]["nodes"] > 0 and len(calls) == 1
-    assert wrote - requests_of_a_pass("wrote-too", True, lambda store, project: 0)[0] == 1  # the one count
+    assert wrote - requests_of_a_pass("wrote-too", True, lambda store, project, written: 0)[0] == 1  # the one count
     calls.clear()
     nothing, result = requests_of_a_pass("same", False, counting)
     assert result["graph_unchanged"] is True and not calls  # nothing written: the check is not asked
-    assert nothing == requests_of_a_pass("same-too", False, lambda store, project: 0)[0]
+    assert nothing == requests_of_a_pass("same-too", False, lambda store, project, written: 0)[0]
 
 def test_a_store_that_holds_a_vertex_twice_is_counted_by_doctor_and_said_in_both_languages(tmp_path, monkeypatch):
     from typer.testing import CliRunner
@@ -124,8 +154,8 @@ def test_a_store_that_holds_a_vertex_twice_is_counted_by_doctor_and_said_in_both
     monkeypatch.setattr(cli, "store_for_read", lambda s: (_ for _ in ()).throw(ValueError("no store")))
     assert json.loads(CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "doctor", "--json"]).output)[
         "vertices_stored_twice"] is None
-    assert tr(graph_duplicates.REPAIRED, "pl", count=2, project="p").startswith("Baza zapisała 2 wierzchołków grafu projektu p")
-    assert tr(graph_duplicates.IN_STORE, "pl", count=3).startswith("W magazynie jest 3 wierzchołków")
+    assert tr(graph_duplicates.REPAIRED, "pl", count=1, project="p").startswith("Wierzchołki grafu projektu p, które baza zapisała dwa razy pod jednym id: 1.")
+    assert tr(graph_duplicates.IN_STORE, "pl", count=3).startswith("Wierzchołki magazynu, które mają to samo id co inny: 3.")
 
 
 def test_a_graph_without_a_duplicate_is_not_changed_by_the_check(tmp_path):

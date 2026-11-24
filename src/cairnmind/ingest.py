@@ -1412,7 +1412,7 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         time.sleep(graph_transactions.DUPLICATE_WAIT)
         return {**_build_graph(store, project_id, indexed, remembered, state, True, links), "graph_written_again": True}
     # The index that finds a vertex can let a second one of its id in (#456): counted by the project's own index, where a write happened.
-    removed = graph_duplicates.repair(store, project_id) if changed_nodes else 0
+    removed = graph_duplicates.repair(store, project_id, changed_nodes) if changed_nodes else 0
     if state is not None:
         state.update(written)
     return {"nodes": len(digests), "edges": len(edge_ids), "graph_unchanged": False,
