@@ -26,7 +26,7 @@ from cairnmind.arcade import ArcadeError
 from cairnmind.embed_jobs import queue_embed_jobs
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
-from cairnmind import graph_transactions
+from cairnmind import graph_duplicates, graph_transactions
 from cairnmind.code_graph import code_graph_pending
 from cairnmind.graph_transactions import GraphTransactions, await_vertices
 from cairnmind.journal import MAX_TRANSACTION_EVENTS
@@ -969,6 +969,9 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                 "root": Path(row.get("root") or project["root"])}
         counts.update(_build_graph(store, project_id, indexed, previous.get("graph") if previous else None, graph,
                                     False, tuple(links)))
+        if counts.get("graph_duplicates_removed"):
+            counts["errors"].append(graph_duplicates.REPAIRED.format(
+                count=counts["graph_duplicates_removed"], project=safe_text(project["name"])))
     if away:
         counts["unavailable"] = [project_folders.entry(project, folder) for folder in folders
                                  if folder["root"] in away]
@@ -1408,10 +1411,13 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
                                f"{left} and the next indexing writes the graph again") from exc
         time.sleep(graph_transactions.DUPLICATE_WAIT)
         return {**_build_graph(store, project_id, indexed, remembered, state, True, links), "graph_written_again": True}
+    # The index that finds a vertex can let a second one of its id in (#456): counted by the project's own index, where a write happened.
+    removed = graph_duplicates.repair(store, project_id) if changed_nodes else 0
     if state is not None:
         state.update(written)
     return {"nodes": len(digests), "edges": len(edge_ids), "graph_unchanged": False,
-            "graph_written": {"nodes": len(changed_nodes), "edges": len(new_edges)}}
+            "graph_written": {"nodes": len(changed_nodes), "edges": len(new_edges)},
+            **({"graph_duplicates_removed": removed} if removed else {})}
 
 
 def _save_cursor(store, path: Path, project_id: str | None, client: str, offset: int) -> None:

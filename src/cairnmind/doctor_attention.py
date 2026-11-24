@@ -14,6 +14,7 @@ import sys
 
 from . import platform_hints
 from .engine_docker import DOCKER_ATTENTION
+from .graph_duplicates import IN_STORE
 from .first_start import (
     CLIENT_NAMES, CLIENT_OFF, CLIENT_ON, DATA_DIR, ENGINE_DOWN, ENGINE_NOT_INSTALLED, ENGINE_ON_DEMAND, ENGINE_READY,
     ENGINE_RELEASE, FULL_REPORT, JAVA_NEEDED, KNOWLEDGE_DISABLED, MODELS_OFF, MODELS_ON, NEXT_FIX, NEXT_PROJECTS,
@@ -231,8 +232,9 @@ def summary(report: dict) -> list[str]:
     # A project folder this machine cannot read (#371): a note, never a fault; the exit code does not change.
     folders = [e["message"] for e in report.get("project_folders") or []
                if isinstance(e, dict) and isinstance(e.get("message"), str)]
+    twice = [IN_STORE.format(count=report["vertices_stored_twice"])] if report.get("vertices_stored_twice") else []  # #456
     for heading, items in ((OPTIONAL_BROKEN, broken), (OPTIONAL_OFF, off), (OPTIONAL_ON, on),
-                           (NOTES, [n for n in notes if n not in blockers] + folders)):
+                           (NOTES, [n for n in notes if n not in blockers] + folders + twice)):
         if items:
             lines.append(heading)
             lines += [f"  - {_line(item, limit=900 if item in folders else 300)}" for item in items]
