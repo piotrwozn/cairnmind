@@ -6,7 +6,7 @@
 
 The project is a copy of this repository, in a temporary directory with a database engine and ports of its own;
 nothing of an installation is touched and everything is removed at the end. One service is started and kept for the
-steps 1, 2, 3, 5, 6 and 7; step 4 needs a different configuration (the knowledge agent disabled) and so a second,
+steps 1, 2, 3, 5, 6, 7 and 8; step 4 needs a different configuration (the knowledge agent disabled) and so a second,
 fresh service. After every step the service's resident memory (VmRSS, VmHWM from /proc) is read, and again after an
 idle wait, together with Python's own view (tracemalloc and the object counts after a collection; the service runs
 under this script's launcher, the product is not changed). Each repetition of a step is read too, so a step up once
@@ -14,6 +14,7 @@ shows apart from a slope per edit or per answer.
 
     1 start and first scan   2 embedding queue to empty   3 one-file edits   4 answers without a model
     5 answers with the chat model   6 `status` and inspector graph requests   7 long idle
+    8 the cockpit's broker asked for state, status, graph and groups (#450; --repeat requests, in blocks of 50)
 
 Steps 2 and 5 ask the model server of the settings (an Ollama on 127.0.0.1:11434 by default): inference only,
 nothing is pulled or changed there. --no-ollama skips what needs it (2, 5) and points the service at a closed port.
@@ -38,7 +39,7 @@ FORBIDDEN_PORTS = {8765, 8766, 2480}
 MB = 1024 * 1024
 STEP_NAMES = {1: "start and first scan", 2: "embedding queue to empty", 3: "one-file edits",
               4: "answers without a model", 5: "answers with the chat model", 6: "status and graph requests",
-              7: "long idle"}
+              7: "long idle", 8: "cockpit broker requests"}
 QUESTIONS = [
     "Where is the tree signature of a project computed and what does it contain?",
     "What does the service do when the database engine stops answering?",
@@ -72,6 +73,7 @@ def parse_args(argv=None):
     p.add_argument("--quick", action="store_true", help="3 repetitions, 5 s idle, 30 s long idle, 300 s queue wait")
     p.add_argument("--no-trace", action="store_true", help="no tracemalloc: the resident figures without its overhead")
     p.add_argument("--no-ollama", action="store_true", help="point the service at a closed port and skip steps 2 and 5")
+    p.add_argument("--routes", default="graph", help="step 6's requests, taken in turn: graph, groups, neighbors (comma separated)")
     p.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1], help="the project to copy")
     p.add_argument("--workdir", type=Path, default=Path.home() / "tmp" / "cm-measure" / "h410")
     p.add_argument("--keep", action="store_true", help="keep the working directory")
@@ -86,9 +88,11 @@ def parse_args(argv=None):
     except ValueError:
         p.error("--steps takes numbers, for example 1,3,5")
     if not args.step_list or any(step not in STEP_NAMES for step in args.step_list):
-        p.error("--steps takes numbers from 1 to 7")
+        p.error("--steps takes numbers from 1 to 8")
     if args.repeat < 1:
         p.error("--repeat must be at least 1")
+    if not set(args.routes.split(",")) <= {"graph", "groups", "neighbors"}:
+        p.error("--routes takes graph, groups, neighbors")
     return args
 
 
@@ -101,6 +105,33 @@ def memory_figures(status_text: str) -> tuple[float, float, int]:
 def slope(values: list[float]) -> float:
     """Megabytes per repetition, the least-squares line through the readings after each repetition."""
     return statistics.linear_regression(range(len(values)), values).slope if len(values) > 1 else 0.0
+
+
+def tree_rss(pid: int) -> tuple[float, int]:
+    """Resident MB of a process and every process below it, and how many that are (from /proc)."""
+    parents = {}
+    for entry in Path("/proc").iterdir():
+        if entry.name.isdigit():
+            with contextlib.suppress(OSError, ValueError, IndexError):
+                parents[int(entry.name)] = int((entry / "stat").read_text().rpartition(")")[2].split()[1])
+    found, stack = {pid}, [pid]
+    while stack:
+        parent = stack.pop()
+        children = [child for child, owner in parents.items() if owner == parent and child not in found]
+        found.update(children)
+        stack.extend(children)
+    total = 0.0
+    for process in found:
+        with contextlib.suppress(OSError, KeyError, ValueError):
+            total += memory_figures(Path(f"/proc/{process}/status").read_text())[0]
+    return total, len(found)
+
+
+def request_blocks(readings: list[float], milliseconds: list[float], size: int = 50) -> dict:
+    """Mean resident MB of each block of `size` requests, and the median and worst time of a request (#450)."""
+    blocks = [round(statistics.mean(readings[start:start + size]), 1) for start in range(0, len(readings), size)]
+    return {"request_blocks_mb": blocks, "request_ms_median": round(statistics.median(milliseconds), 1),
+            "request_ms_worst": round(max(milliseconds), 1)}
 
 
 def free_port() -> int:
@@ -306,6 +337,8 @@ class Measurement:
         row["idle"] = self.sample(full=True)
         row["rss_after_each_repetition"] = readings
         row["growth_per_repetition_mb"] = round(slope(readings[-count:] if count else readings), 3) if readings else None  # step 6: only its graph half
+        if number == 6 and getattr(self, "request_ms", None):
+            row.update(request_blocks(readings[-count:], self.request_ms))
         self.steps.append(row)
         print(json.dumps({k: v for k, v in row.items() if k != "idle"} | {"idle_rss_mb": row["idle"]["rss_mb"]}), flush=True)
 
@@ -346,9 +379,56 @@ class Measurement:
         for _ in range(self.args.repeat):
             self.client.get("/status").raise_for_status()
             readings.append(self.rss())
-        for _ in range(self.args.repeat):
-            self.client.get("/inspector/graph", params={"project": pid, "limit": 300}).raise_for_status()
+        node = self.client.get("/inspector/graph", params={"project": pid, "limit": 300}).json()["nodes"][0]["id"]
+        paths = {"graph": ("/inspector/graph", {"limit": 300}), "groups": ("/inspector/graph/groups", {"limit": 100}),
+                 "neighbors": (f"/inspector/graph/{node}/neighbors", {"limit": 100})}
+        routes = [paths[name] for name in self.args.routes.split(",")]
+        self.request_ms = []
+        for number in range(self.args.repeat):
+            path, params = routes[number % len(routes)]
+            started = time.perf_counter()
+            self.client.get(path, params={"project": pid, **params}).raise_for_status()
+            self.request_ms.append((time.perf_counter() - started) * 1000)
             readings.append(self.rss())
+
+    def step8(self):
+        """The cockpit's broker, started as the product starts it, asked what a workspace asks most (#450).
+
+        Its resident memory and that of every process below it, in blocks of 50 requests, with the time per request."""
+        from cairnmind.cockpit import _runtime_file, stop_cockpit
+        from cairnmind.terminal_client import BrokerClient
+        pid = self.client.get("/projects").json()[0]["id"]
+        process = subprocess.Popen([sys.executable, "-I", "-m", "cairnmind", "--data-dir", str(self.data), "cockpit", "serve"],
+                                   env=self.environment(), stdout=(self.work / "cockpit.out").open("a"),
+                                   stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + 60
+            while not _runtime_file(self.settings).exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.2)
+            broker = BrokerClient(self.settings)
+            routes = [("/api/state", {}), ("/api/status", {}), ("/api/inspector/graph", {"project": pid, "limit": 2000}),
+                      ("/api/inspector/graph/groups", {"project": pid, "limit": 100})]
+            broker.request("GET", "/api/state")
+            start, readings, milliseconds = tree_rss(process.pid), [], []
+            for number in range(self.args.repeat):
+                path, params = routes[number % len(routes)]
+                started = time.perf_counter()
+                broker.request("GET", path, params=params, timeout=600)
+                milliseconds.append((time.perf_counter() - started) * 1000)
+                readings.append(tree_rss(process.pid)[0])
+            row = {"step": 8, "name": "cockpit broker: state, status, graph and groups requests", "repetitions": self.args.repeat,
+                   "processes_at_start": start[1], "rss_at_start_mb": round(start[0], 1), "rss_after_mb": round(readings[-1], 1),
+                   "growth_per_repetition_mb": round(slope(readings), 3), **request_blocks(readings, milliseconds)}
+            self.cockpit = row
+            print(json.dumps(row), flush=True)
+        finally:
+            with contextlib.suppress(Exception):
+                stop_cockpit(self.settings)
+            try:
+                process.wait(30)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                process.wait(30)
 
     def step7(self, readings):
         end = time.monotonic() + self.args.long_idle
@@ -362,7 +442,9 @@ class Measurement:
             self.start_service()
             self.run_step(1, self.step1)  # the service has only just started: "before" is the process before its first scan
             for number in steps:
-                if number != 1:
+                if number == 8:
+                    self.step8()
+                elif number != 1:
                     self.run_step(number, {2: self.step2, 3: self.step3, 5: self.ask, 6: self.step6, 7: self.step7}[number],
                                   count=self.args.repeat if number in (3, 5, 6) else None,
                                   idle=self.args.idle)
@@ -387,7 +469,7 @@ class Measurement:
             self.series()
         finally:
             self.teardown()
-        return {"steps": self.steps, "arguments": {k: str(v) for k, v in vars(self.args).items() if k != "step_list"}}
+        return {"steps": self.steps, "cockpit": getattr(self, "cockpit", None), "arguments": {k: str(v) for k, v in vars(self.args).items() if k != "step_list"}}
 
 
 def table(result: dict) -> str:

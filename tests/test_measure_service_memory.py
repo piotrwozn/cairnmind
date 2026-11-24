@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -26,7 +27,7 @@ def test_the_defaults_run_every_step_and_quick_shortens_the_series():
     assert quick.step_list == [1, 3] and (quick.repeat, quick.idle, quick.long_idle) == (3, 5, 30)
 
 
-@pytest.mark.parametrize("bad", [["--steps", "x"], ["--steps", "8"], ["--steps", ""], ["--repeat", "0"]])
+@pytest.mark.parametrize("bad", [["--steps", "x"], ["--steps", "9"], ["--steps", ""], ["--repeat", "0"]])
 def test_a_wrong_argument_is_refused(bad):
     with pytest.raises(SystemExit) as stopped:
         script.parse_args(bad)
@@ -51,6 +52,29 @@ def test_the_growth_of_step_six_counts_the_graph_requests_only(monkeypatch):
     # 20 flat status readings, then 20 graph readings rising 3 MB each: the slope is 3, not about half of it
     measurement.run_step(6, lambda readings: readings.extend([300.0] * 20 + [300.0 + 3 * n for n in range(20)]), count=20, idle=0)
     assert measurement.steps[0]["growth_per_repetition_mb"] == 3.0
+
+
+def test_the_requests_are_summed_up_in_blocks_of_fifty_with_their_median_and_worst_time():
+    blocks = script.request_blocks([float(100 + n) for n in range(120)], [float(n) for n in range(1, 121)])
+    assert blocks == {"request_blocks_mb": [124.5, 174.5, 209.5], "request_ms_median": 60.5, "request_ms_worst": 120.0}
+
+
+def test_the_requests_of_step_six_are_graph_groups_and_neighbors_and_nothing_else():
+    assert script.parse_args(["--routes", "graph,groups,neighbors"]).routes == "graph,groups,neighbors"
+    with pytest.raises(SystemExit):
+        script.parse_args(["--routes", "graph,summary"])
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc")
+def test_the_memory_of_a_process_tree_counts_the_process_and_what_it_started():
+    alone, count = script.tree_rss(os.getpid())
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        with_child, with_count = script.tree_rss(os.getpid())
+    finally:
+        child.kill()
+        child.wait()
+    assert alone > 0 and with_count == count + 1 and with_child > alone
 
 
 def test_an_installation_directory_is_refused(tmp_path):

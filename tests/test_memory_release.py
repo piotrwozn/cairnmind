@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import types
 
 import pytest
 
@@ -67,6 +68,27 @@ def test_without_glibc_both_say_false_and_do_nothing(monkeypatch):
 
 def test_a_library_without_the_functions_is_not_called_as_if_it_had_them(monkeypatch):
     monkeypatch.setattr(memory_release, "_libc", lambda: object())  # a libc of another kind: no mallopt, no malloc_trim
+    assert memory_release.limit_arenas() is False and memory_release.release_freed() is False
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32", "freebsd14"])
+def test_off_linux_no_library_is_looked_up_and_both_calls_do_nothing(monkeypatch, platform):
+    monkeypatch.setattr(memory_release, "sys", types.SimpleNamespace(platform=platform))  # not the real sys
+    memory_release._libc.cache_clear()
+    try:
+        assert memory_release._libc() is None
+        assert memory_release.limit_arenas() is False and memory_release.release_freed() is False
+    finally:
+        monkeypatch.undo()
+        memory_release._libc.cache_clear()
+
+
+def test_a_libc_that_refuses_the_setting_or_the_trim_is_reported_as_doing_nothing(monkeypatch):
+    class Refusing:  # what a library without the glibc behaviour may answer: "not done"
+        mallopt = staticmethod(lambda option, value: 0)
+        malloc_trim = staticmethod(lambda pad: 2)
+
+    monkeypatch.setattr(memory_release, "_libc", lambda: Refusing())
     assert memory_release.limit_arenas() is False and memory_release.release_freed() is False
 
 
