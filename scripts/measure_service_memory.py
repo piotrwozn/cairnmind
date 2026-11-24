@@ -76,6 +76,8 @@ def parse_args(argv=None):
     p.add_argument("--no-ollama", action="store_true", help="point the service at a closed port and skip steps 2 and 5")
     p.add_argument("--routes", default="graph", help="step 6's requests, taken in turn: graph, groups, neighbors, and the same "
                    "with the main root as worktree: scoped-graph, scoped-groups, scoped-neighbors (comma separated)")
+    p.add_argument("--no-status", action="store_true", help="step 6 sends its graph requests only, none of `status` before them: the "
+                   "service's pool of worker threads grows during them, as on a fresh service asked for the graph")
     p.add_argument("--block", type=int, default=50, help="requests per block of the resident-memory figures of steps 6 and 8")
     p.add_argument("--trace-at", default="", help="request numbers (comma separated) after which steps 6 and 8 read the allocation sites")
     p.add_argument("--second-root", action="store_true", help="register a copy of the project as a second root with files of its own")
@@ -397,7 +399,7 @@ class Measurement:
 
     def step6(self, readings):
         pid = self.client.get("/projects").json()[0]["id"]
-        for _ in range(self.args.repeat):
+        for _ in range(0 if self.args.no_status else self.args.repeat):
             self.client.get("/status").raise_for_status()
             readings.append(self.rss())
         node = next(row["id"] for row in self.client.get("/inspector/graph", params={"project": pid, "limit": 300}).json()["nodes"]

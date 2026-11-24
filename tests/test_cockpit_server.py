@@ -131,6 +131,7 @@ def cockpit(tmp_path, monkeypatch):
     with TestClient(app, base_url=ORIGIN) as client:
         yield settings, app, client, runtime, project, requests, outage
     assert runtime.closed is True
+    assert not app.state.service_client  # the client of the requests to the service was closed with the broker
 
 
 def login(app, client):
@@ -139,6 +140,27 @@ def login(app, client):
     assert response.status_code == 200
     assert "HttpOnly" in response.headers["set-cookie"] and "SameSite=strict" in response.headers["set-cookie"]
     return {"Origin": ORIGIN, "X-CSRF-Token": response.json()["csrf"]}
+
+
+def test_the_broker_makes_one_client_for_its_requests_to_the_service_and_keeps_no_connection(cockpit, monkeypatch):
+    """A client of its own for each request loaded the system's certificate store each time (#450): one is made, and
+    it keeps no connection, so a service that was restarted is found at the next request."""
+    settings, app, client, runtime, project, requests, outage = cockpit
+    made = []
+
+    class Counted(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            made.append(kwargs)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", Counted)
+    login(app, client)
+    for _ in range(12):
+        assert client.get("/api/state").status_code == 200
+        assert client.get("/api/status").status_code == 200
+    assert len(requests) > 24 and len(made) == 1
+    assert made[0]["verify"] is False and made[0]["limits"].max_keepalive_connections == 0
+    assert app.state.service_client["client"].is_closed is False
 
 
 def test_bootstrap_tickets_expire_are_one_use_and_sessions_expire():
