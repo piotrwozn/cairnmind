@@ -63,7 +63,7 @@ def test_a_command_sends_nothing_to_a_service_of_another_version(tmp_path, monke
     result = invoke(settings, "index", "demo")
     assert result.exit_code == 2, result.output
     assert " ".join(result.output.split()).startswith("Error: " + " ".join(sentence(settings).split())[:80])
-    assert [path for _, path, _ in seen] == ["/health", "/health"]  # service_alive, then the version: no write
+    assert [path for _, path, _ in seen] == ["/health"]  # one answer is both alive and the version (#405): no write
 
 
 @pytest.mark.parametrize("arguments", [["status"], ["jobs", "list", "demo"], ["memory", "status", "demo"]])

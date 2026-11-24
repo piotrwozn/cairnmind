@@ -15,6 +15,7 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus
 
 from . import person_proof
+from .config import tls_verify
 from .service_token import foreign_service, foreign_service_text, refused_token
 
 
@@ -61,7 +62,8 @@ class BrokerClient:
         if self._client is None or self._url != url:
             if self._client is not None:
                 self._client.close()
-            self._client = httpx.Client(base_url=url, timeout=20, trust_env=False, transport=self._transport)
+            self._client = httpx.Client(base_url=url, timeout=20, trust_env=False, transport=self._transport,
+                                       verify=tls_verify(url))
             self._url, self._csrf = url, None
         if self._csrf is None:
             self._authenticate()
@@ -213,7 +215,7 @@ class BrokerClient:
                 if cursor:
                     headers["Last-Event-ID"] = cursor
                 async with httpx.AsyncClient(base_url=url, transport=self._async_transport, trust_env=False,
-                    timeout=httpx.Timeout(10, read=None)) as client:
+                    timeout=httpx.Timeout(10, read=None), verify=tls_verify(url)) as client:
                     async with client.stream("GET", "/api/events", headers=headers,
                                              params={"project": project} if project else {}) as response:
                         if response.status_code == 401:

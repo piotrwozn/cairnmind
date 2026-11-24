@@ -30,7 +30,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .api_profiles import MODEL_ID, _credential_ref, normalize_base_url
-from .config import Settings
+from .config import Settings, tls_verify
 from .memory_openai import OpenAICompatible, server_tag
 from .ollama import Ollama, OllamaUnavailable
 
@@ -280,6 +280,11 @@ class MemoryModels:
         return {"chat": await self.chat_client.model_identity(self.settings.chat_model),
                 "embedding": await self.embedding_client.model_identity(self.settings.embedding_model)}
 
+    async def open(self) -> None:
+        await self.chat_client.open()
+        if self.embedding_client is not self.chat_client:
+            await self.embedding_client.open()
+
     async def aclose(self) -> None:
         await self.chat_client.aclose()
         if self.embedding_client is not self.chat_client:
@@ -499,6 +504,19 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
         entry["structured_output"] = doctor_note(settings.data_dir, row["base_url"], model) or {
             "refused": False, "text": "structured output: no refusal seen"}
     return entry
+
+
+def doctor_verify(settings: Settings) -> bool:
+    """The `verify` of the one client doctor shares across servers: off only when every address it may ask is plain
+    http, so no certificate store is built for nothing and an https server is verified as before (#415). A role whose
+    server cannot be read verifies too: nothing is then asked for it, but this is not decided by guessing."""
+    urls = [settings.url, settings.ollama_url]
+    for role in ROLES:
+        try:
+            urls.append(server(settings, role)["base_url"])
+        except ValueError:  # refused or invalid
+            return True
+    return any(tls_verify(url) for url in urls)
 
 
 def doctor_models(settings: Settings, http: httpx.Client) -> dict:

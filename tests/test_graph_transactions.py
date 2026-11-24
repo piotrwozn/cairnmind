@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 from test_index_batching import code_tree, dump
 
+from conftest import counted_waits, own_time
 from cairnmind import graph_transactions, ingest
 from cairnmind.arcade import ArcadeClient
 from cairnmind.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
@@ -68,18 +69,19 @@ def test_vertices_the_index_does_not_find_yet_are_waited_for_and_never_assumed(t
     whole, first, *_ = pair(tmp_path)
     ingest.index_project(whole, first)
     ids = [row["id"] for row in whole.query("SELECT id FROM nodes WHERE project_id=:p LIMIT 5", {"p": first})]
-    real, hidden, slept = JournalTransaction.query, [2], []
+    real, hidden = JournalTransaction.query, [2]
 
     def query(self, sql, params=None):
         found = real(self, sql, params)
         if "FROM nodes WHERE id IN" in sql and hidden[0]:  # the engine, compacting its index, finds nothing
             hidden[0] -= 1
+            waits.missed = True
             return []
         return found
     monkeypatch.setattr(JournalTransaction, "query", query)
-    monkeypatch.setattr(graph_transactions.time, "sleep", slept.append)
+    waits = counted_waits(monkeypatch, graph_transactions)
     graph_transactions.await_vertices(whole, ids)
-    assert len(slept) == 2
+    assert len(waits.slept) == 2
     monkeypatch.setattr(graph_transactions, "VERTEX_WAIT", 0)
     with pytest.raises(RuntimeError, match="did not find 1 graph vertices"):
         graph_transactions.await_vertices(whole, [*ids, "no-such-vertex"])
@@ -88,7 +90,7 @@ def test_vertices_the_index_does_not_find_yet_are_waited_for_and_never_assumed(t
 def test_the_wait_for_the_vertices_runs_inside_indexing_before_the_edges_and_the_graph_is_still_the_same(tmp_path, monkeypatch):
     whole, first, split, second = pair(tmp_path)
     ingest.index_project(whole, first)
-    real_query, real_wait, state = JournalTransaction.query, ingest.await_vertices, {"inside": False, "hidden": 2, "waits": 0}
+    real_query, real_wait, state = JournalTransaction.query, ingest.await_vertices, {"inside": False, "hidden": 2}
 
     def wait(store, identifiers):
         state["inside"] = True
@@ -101,14 +103,15 @@ def test_the_wait_for_the_vertices_runs_inside_indexing_before_the_edges_and_the
         found = real_query(self, sql, params)
         if state["inside"] and state["hidden"] and "FROM nodes WHERE id IN" in sql:  # the index, compacting, finds nothing
             state["hidden"] -= 1
+            waits.missed = True
             return []
         return found
     monkeypatch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 100)
     monkeypatch.setattr(ingest, "await_vertices", wait)
     monkeypatch.setattr(JournalTransaction, "query", query)
-    monkeypatch.setattr(graph_transactions.time, "sleep", lambda _seconds: state.update(waits=state["waits"] + 1))
+    waits = counted_waits(monkeypatch, graph_transactions)
     ingest.index_project(split, second)
-    assert state["hidden"] == 0 and state["waits"] == 2  # indexing waited until the index found its vertices
+    assert state["hidden"] == 0 and len(waits.slept) == 2  # indexing waited until the index found its vertices
     assert graph(split, second) == graph(whole, first)
 
 
@@ -200,6 +203,96 @@ def test_a_vertex_delete_that_removes_fewer_rows_than_asked_fails_the_write_and_
         ingest._build_graph(store, project, moved)
     row = store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0]
     assert code_graph_pending(row)
+
+
+def hiding_stored_vertices(monkeypatch, after=0, times=None):
+    """The lookup of a vertex by its id says 'not there' for a vertex that is (``times`` lookups, from the one after ``after``):
+    the write creates it again and the engine itself refuses that, with the error it gives for the id of a vertex deleted a
+    moment ago (#433). The engine's own lag was shown by a script on a renamed directory of 160 files and more; on a test
+    engine it cannot be forced, so its answer is hidden the way the tests of ``await_vertices`` hide it."""
+    real, state = Store._checked_node, {"calls": 0, "hidden": 0}
+
+    def checked(self, tx, node):
+        out, existing = real(self, tx, node)
+        state["calls"] += 1
+        if existing and state["calls"] > after and (times is None or state["hidden"] < times):
+            state["hidden"] += 1
+            return out, None
+        return out, existing
+    monkeypatch.setattr(Store, "_checked_node", checked)
+    return state
+
+
+def test_a_vertex_the_index_refuses_for_a_duplicated_key_is_written_after_one_wait_and_the_graph_is_the_same(tmp_path, monkeypatch):
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path)
+    first = ingest._build_graph(store, project, indexed)
+    before = graph(store, project)
+    monkeypatch.setattr(ingest, "parser_identity", lambda: "another-parser")  # a full write: every vertex is written again
+    refusals, slept = hiding_stored_vertices(monkeypatch, times=1), []
+    own_time(monkeypatch, ingest, sleep=slept.append)
+    result = ingest._build_graph(store, project, indexed)  # before #433: ArcadeDB HTTP 409, Duplicated key on nodes[id]
+    assert refusals["hidden"] == 1 and slept == [graph_transactions.DUPLICATE_WAIT]
+    assert result["graph_written_again"] is True  # the doubled write is in the result, not only in the time it took
+    assert graph(store, project) == before and (result["nodes"], result["edges"]) == (first["nodes"], first["edges"])
+    assert not code_graph_pending(store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0])
+
+
+def test_a_vertex_the_index_refuses_twice_fails_by_name_leaves_the_graph_not_built_and_the_next_pass_repairs_it(tmp_path, monkeypatch):
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path, per_file=600)
+    first = ingest._build_graph(store, project, indexed)
+    before = graph(store, project)
+    monkeypatch.setattr(ingest, "parser_identity", lambda: "another-parser")
+    monkeypatch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 100)  # the first group commits, with the fingerprint cleared
+    slept = []
+    own_time(monkeypatch, ingest, sleep=slept.append)
+    with monkeypatch.context() as patch:
+        hiding_stored_vertices(patch, after=1000)  # the second group of vertices is refused, every time
+        with pytest.raises(RuntimeError, match="still refused a graph vertex.*Duplicated key.*marked not built"):
+            ingest._build_graph(store, project, indexed)
+    assert slept == [graph_transactions.DUPLICATE_WAIT]  # one wait, one more write, then the name
+    assert code_graph_pending(store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0])
+    result = ingest._build_graph(store, project, indexed)
+    assert graph(store, project) == before and result["nodes"] == first["nodes"]
+    assert not code_graph_pending(store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0])
+
+
+def test_a_write_in_one_transaction_that_the_index_refuses_twice_says_that_the_previous_graph_is_kept(tmp_path, monkeypatch):
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path)
+    ingest._build_graph(store, project, indexed)
+    before = graph(store, project)
+    monkeypatch.setattr(ingest, "parser_identity", lambda: "another-parser")
+    own_time(monkeypatch, ingest, sleep=lambda seconds: None)
+    hiding_stored_vertices(monkeypatch)
+    with pytest.raises(RuntimeError, match="previous code graph is kept") as caught:
+        ingest._build_graph(store, project, indexed)
+    assert "not built" not in str(caught.value)  # nothing was committed: the readers still see the previous graph as built
+    assert not code_graph_pending(store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0])
+    assert graph(store, project) == before
+
+
+def test_edges_that_find_no_endpoint_for_a_vertex_deleted_shortly_before_are_written_after_one_wait(tmp_path, monkeypatch):
+    # The same index, the other way it shows (#433): the group of edges counts fewer rows than it created.
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path)
+    ingest._build_graph(store, project, indexed)
+    monkeypatch.setattr(ingest, "parser_identity", lambda: "another-parser")
+    _, moved = synthetic(store, tmp_path, shift=1000)  # new edges: a group of them is written
+    real, calls, slept = Store.write_graph, [], []
+
+    def failing(self, tx, project_id, nodes, edges):
+        if edges and not calls:
+            calls.append(1)
+            raise RuntimeError("The database did not create every graph edge of a group")
+        return real(self, tx, project_id, nodes, edges)
+    monkeypatch.setattr(Store, "write_graph", failing)
+    own_time(monkeypatch, ingest, sleep=slept.append)
+    result = ingest._build_graph(store, project, moved)
+    assert slept == [graph_transactions.DUPLICATE_WAIT] and result["graph_written_again"] is True
+    assert store.query("SELECT count(*) AS n FROM edges WHERE project_id=:p", {"p": project})[0]["n"] == result["edges"]
+    assert store.query("SELECT count(*) AS n FROM edges WHERE out IS NULL OR in IS NULL")[0]["n"] == 0
 
 
 def test_the_inspector_graph_says_that_the_code_graph_is_not_built_while_it_is_being_written(tmp_path):

@@ -14,7 +14,6 @@ import signal
 import struct
 import sys
 import termios
-import threading
 import time
 from types import SimpleNamespace
 import warnings
@@ -24,6 +23,7 @@ import pytest
 from cairnmind.cockpit_state import CockpitState
 from cairnmind.workspace import ACTIVITY_WIDTH, SESSION, WorkspaceManager
 from cairnmind.workspace_activity import FOCUS_MIN_WIDTH
+from pty_drain import drain_pty
 from test_workspace import manager as manager  # noqa: F401 (the fixture)
 
 pytestmark = pytest.mark.tmux
@@ -121,26 +121,17 @@ def attached(workspace, columns, lines):
                   environment)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", lines, columns, 0, 0))
     output = bytearray()
-
-    def drain():
-        while True:
-            try:
-                data = os.read(fd, 65536)
-            except OSError:
-                return
-            if not data:
-                return
-            output.extend(data)
-    threading.Thread(target=drain, daemon=True).start()
-    deadline = time.monotonic() + 10
-    while not workspace.tmux("list-clients", "-t", SESSION, "-F", "#{client_tty}").stdout.strip():
-        assert time.monotonic() < deadline, "the terminal did not attach"
-        time.sleep(.05)
+    stop_drain = drain_pty(fd, output)
     try:
+        deadline = time.monotonic() + 10
+        while not workspace.tmux("list-clients", "-t", SESSION, "-F", "#{client_tty}").stdout.strip():
+            assert time.monotonic() < deadline, "the terminal did not attach"
+            time.sleep(.05)
         yield output, fd
     finally:
         os.kill(pid, signal.SIGTERM)
         os.waitpid(pid, 0)
+        stop_drain()  # before the close: the number goes to the next file opened, e.g. state.json
         os.close(fd)
 
 

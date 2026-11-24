@@ -255,7 +255,7 @@ The data directory keeps everything that is not in the database: `config.json` (
 
 ### Why the knowledge service stays on your machine
 
-Decided on 22 November 2026, from reading the code of 0.13.0 (the answer was first written on 14 November from 0.10.0; nothing in it was measured): the knowledge service, the process that owns the queue and extracts, embeds and answers, stays on the machine where you work. Cairnmind plans no split of it before 1.0.0, and no headless worker for the extraction and embedding jobs only. The database and the models can already be elsewhere (see above); the service is what ties them to your checkout. The reasons, each with the module that causes it:
+Decided on 22 November 2026, from reading the code of 0.13.0 (the answer was first written on 14 November from 0.10.0; the reasons come from reading the code, and what the laptop spends was measured once, below): the knowledge service, the process that owns the queue and extracts, embeds and answers, stays on the machine where you work. Cairnmind plans no split of it before 1.0.0, and no headless worker for the extraction and embedding jobs only. The database and the models can already be elsewhere (see above); the service is what ties them to your checkout. The reasons, each with the module that causes it:
 
 | Reason | Module |
 | --- | --- |
@@ -273,20 +273,35 @@ The three options that were compared, with the verdict:
 | Option | What it would need | Verdict |
 | --- | --- | --- |
 | A full split: the service on a server, the laptop sends what it reads | A new authenticated, non-loopback protocol for parsed sources, fingerprints, hook events and transcript segments, with TLS and tokens; in effect a rewrite of the service's API | Not built. Large, and it contradicts one writer per store. |
-| The service stays local; the database and the models are remote (what `cairnmind setup remote-db` and `setup remote` set up) | Nothing more | The supported way. What stays on the laptop is Python parsing, `git`, hashing and the service's many small database requests; over a network the requests matter more than CPU (inferred, not measured; for context, [first indexing took](#how-long-indexing-takes-over-a-connection) 33.4 s and 80.4 s on two different machines, so those seconds do not separate requests from CPU). What a running service costs while idle is measured in [What a running service costs over a connection](#what-a-running-service-costs-over-a-connection). |
+| The service stays local; the database and the models are remote (what `cairnmind setup remote-db` and `setup remote` set up) | Nothing more | The supported way. What stays on the laptop is Python parsing, `git`, hashing and the service's many small database requests; on a loopback the service spent 33 to 38 CPU seconds in 70 s of indexing this repository, so about half of the time it waited (for the database, and with models on also for the model server; which of the two was not measured) (measured, below); over a network the requests matter more than CPU (inferred, not measured; for context, [first indexing took](#how-long-indexing-takes-over-a-connection) 33.4 s and 80.4 s on two different machines, so those seconds do not separate requests from CPU). What a running service costs while idle is measured in [What a running service costs over a connection](#what-a-running-service-costs-over-a-connection). |
 | A remote service with its own clone | A server that clones the project | Not built. Every answer and check status would describe the server's clone, not your work; fit only for read-only questions at a pinned commit. |
 
 A headless worker process for extraction and embedding on a server is not planned and has no issue: the models already run on a server, so it would move only the service's HTTP calls and database writes, and it needs a second writer.
 
 `cairnmind index` only asks the service to index, so the figures below are the service's own: its CPU and peak memory while the command runs, and in a fixed interval after the command returned, while it works off its queue.
 
-| Measured | While `cairnmind index` runs (CPU, peak memory) | After it returned, working off the queue (CPU, peak memory) |
-| --- | --- | --- |
-| **NOT MEASURED YET.** One run is still to be made with `scripts/measure_service_spend.py` (a throwaway data directory and its own ports, the service started just before it, the database connect-only, both model roles remote). | NOT MEASURED YET | NOT MEASURED YET |
+**Measured on 23 November 2026** with `scripts/measure_service_spend.py`, on main at 05a247a (the repository itself as the project: 586 files, 3,288 chunks, 88,352 graph nodes, 110,218 edges, 33 extraction jobs and 3,288 embedding jobs after the command). The machine was one Windows computer with 32 logical processors and 32 GB of memory, running Linux in WSL 2, and it was **shared with other work**: the load average was 10 to 29 during the runs. Everything ran on that one machine: the installation was connect-only (`cairnmind setup remote-db`, a database user and a database named `cairnmind_measure_...` of its own, the data directory and the ports throwaway), the database was Cairnmind's own image (by the digest this release pins, in development mode, as Cairnmind's own local container runs it; a server set up as on this page runs production mode, which flushes its log at each commit, not measured) in one Docker container reached over `127.0.0.1`, and the models were the release's (`qwen3.5:9b` and `qwen3-embedding:0.6b`) on a model server on the same machine, reached over `127.0.0.1`. So what is measured is what the **service process** spends when the database and the models are separate processes that it only calls; the network is not in it. The service was started on a folder that held no project files, and the repository was added to it afterwards, with `poll_seconds` 600 in the throwaway `config.json`, so that the command, not the service's own scan, did the first indexing. The database container was restarted before each run, which makes its counters its own.
+
+| Run (models on) | `cairnmind index` (wall): service CPU, peak memory | The next 1,200 s, working off the queue: service CPU, peak memory | Queue done after 1,200 s | The database container over the whole run: CPU, peak memory |
+| --- | --- | --- | --- | --- |
+| 1 | 74.2 s: 38.4 s, 262 MB | 295.3 s, 262 MB | 2,429 of 3,288 embedding jobs, 28 of 33 extraction jobs (864 jobs left) | 669 s, 1,588 MB |
+| 2 | 70.2 s: 36.4 s, 262 MB | 284.3 s, 262 MB | 2,288 and 28 (1,005 left) | 667 s, 1,709 MB |
+| 3 | 71.7 s: 35.9 s, 261 MB | 273.6 s, 261 MB | 2,204 and 28 (1,089 left) | 683 s, 1,557 MB |
+| Spread | 35.9 to 38.4 s (mean 36.9) | 273.6 to 295.3 s (mean 284.4) | 2,204 to 2,429 | 667 to 683 s |
+| One run, models off (`knowledge_agent: disabled`) | 69.5 s: 33.1 s, 257 MB | 0.2 s in 120 s, 257 MB (3,321 jobs held, none run) | not run | 111 s, 1,238 MB |
+
+How to read it:
+
+- **`cairnmind index`** costs the service about 33 to 38 CPU seconds and a peak of about 260 MB (the peak is since the service started, so its start is in it) for this repository, in about 70 s. The rest of the time it waited. The same command ran in the database for about 111 s of CPU (models off, one run) and about 1.2 GB; that is what a separate database moves off the laptop's service process: about three times the service's own CPU and about five times its memory. The command's own process is not counted (it only waits for the service).
+- **The queue** did not run empty in 20 minutes in any of the three runs: 864 to 1,089 jobs were left (5 of them extraction jobs, the rest embeddings). In 1,200 s the service spent 274 to 295 CPU seconds, that is about a quarter of one processor, with the same memory, for about 2,300 jobs: about 0.12 CPU seconds in the service per job. A full queue of this repository would therefore cost the service roughly 400 s of CPU (computed from the average, not measured; the jobs left are almost all embeddings, whose own cost per job was not separated). How far the queue got depended on the load of the shared model server. The models' own CPU and memory are not given: the model server was used by other work at the same time, so its counters cannot be told apart from it (it was never touched except by the service's embedding and chat requests).
+- Over the 1,200 s the database container spent about 670 to 680 CPU seconds in each run, including the indexing: about twice what the service spent in the same time (310 to 334 s).
+- **What the measurement does not show.** It has no network: requests over a real network make the service wait longer, not compute more, but that is not measured here (for the figures of a real network see [How long indexing takes over a connection](#how-long-indexing-takes-over-a-connection)). It covers one repository, one indexing of it, and three runs on one busy machine, so the spread is a sample of three, not a bound. The queue was cut at 20 minutes, so the figures of the queue are for its first part, whose jobs are mostly embeddings; the extraction jobs (a chat model) were 28 of 33 done. The database ran in a container, whose memory was the container's, not that of a server with its own tuning. The daily backup was not in the window. Two rounds of the service's scan of the unchanged tree (every 600 s), its memory snapshot every 60 s and about ten `cairnmind status` requests of the sampler were in it; their share was not separated. One known way to get a wrong row, which the script now refuses: with the default `poll_seconds` the service's own scan indexes a new folder before the command runs, the command then finds nothing to do, and the row would hold the scan's CPU, which is not the cost of a question (nobody asked one); the script prints no row for an index that read and changed no file, unless `--allow-unchanged` is given.
 
 The request counts of indexing over a connection are measured; they are in the table of [How long indexing takes over a connection](#how-long-indexing-takes-over-a-connection).
 
 What it costs to write a large code graph over the one that is stored (#385), on a private engine with the default heap: a second write of the same graph takes 0.4 to 0.5 of the first (19 s against 40 s at 119,000 vertices); when most of the symbols went, removing the old vertices grew with the square of the graph (63 s of 134 s at 80,000 vertices, 209 s of 316 s at 119,000) until they were removed in groups of a transaction's rows (#402; one run, test engine, synthetic graph of 39,906 vertices with every symbol moved: 65.6 s against 84.6 s with groups of 250). The figures and the cause are in [How a large code graph is written](STORAGE_AND_MAINTENANCE.md#how-a-large-code-graph-is-written).
+
+What indexing costs after one file changed (#409), on `127.0.0.1` with a private engine, a copy of this repository (586 files, 88,352 graph nodes, 110,218 edges), 20 runs after 3 warm-ups at commit 6021825 on 23 November 2026, old and new code in alternating blocks of 5 runs on a machine shared with other work (load 2.6 to 12): the first pass after a comment line was added in a function took a median 5.6 s (4.1 s of Python CPU, 147 requests) and now takes 2.1 s (0.7 s of CPU, 143 requests); a pass with nothing changed is 0.11 s and 4 requests, as before. Three reads of that pass that grew with the project (the ids of every node, the count of the edges, the scan for the edges to delete: 731 ms together) are now 312 ms (#426, on 24 November 2026, 587 files, 88,644 nodes, 110,599 edges, 20 runs after 3 warm-ups, code before and after in turns, the machine at load 10 to 13): the median first pass was 2.90 s (1.06 s of CPU, 148 requests; 2.66 to 3.35 s) and is 2.51 s (1.01 s of CPU, 148 requests; 2.32 to 2.88 s). The node ids are counted instead of read, and the edges are deleted by id; the count of the edges stays, since no cheaper count notices an edge taken in place (`docs/STORAGE_AND_MAINTENANCE.md`). The graph step is no longer rebuilt from every file: only the files that changed and those that import a changed symbol are computed, and the tree is walked once per pass instead of three times. In the running service (models off, directly to its engine, 20 edits at random moments of the 10 s poll period for each code, 4 blocks of 5 edits taking turns, the machine at load 13 to 28), from the edit to the new source in the database the median was 5.1 s before and 7.1 s after (1.3 to 10.9 s and 0.7 to 10.9 s: this is the poll wait, 0 to 10 s, and the 20 draws differ; the change does not touch it), and from the new source to the end of the scan round that wrote it 5.8 s before (5.4 to 6.5) and 1.9 s after (1.7 to 2.6).
 
 ### When the connection drops
 
@@ -368,7 +383,7 @@ Until 22 November 2026 the database on another host (the headline of 0.11.0) had
 - **`doctor --json` on a reader ends with exit status 1 while naming nothing as missing** (#373). Read the report, not the status, until it is fixed.
 - **`setup remote-db --admin-password-file` without `--yes` answers HTTP 401 instead of a plan** when the user does not exist yet (#365).
 
-**Not tried.** A model server on another computer (`setup remote` over HTTPS with a key); the published image from `ghcr.io` and Docker Desktop (the trial built the image and used Colima); indexing after a change of every file; the service with models on over the network (#363, about 21,000 requests every 90 s, not measured over a real network); `scripts/measure_service_spend.py`, which needs Docker on the Linux side; and more than one run of anything.
+**Not tried.** A model server on another computer (`setup remote` over HTTPS with a key); the published image from `ghcr.io` and Docker Desktop (the trial built the image and used Colima); indexing after a change of every file; the service with models on over the network (#363, about 21,000 requests every 90 s, not measured over a real network); and more than one run of anything (what the service spends was measured separately, [above](#why-the-knowledge-service-stays-on-your-machine), in three runs on one machine).
 
 ### What a running service costs over a connection
 
@@ -398,11 +413,79 @@ While the check ran, no job of the queue ran. Now it writes nothing when every p
 leaves every passage with a pending job), and the requests of an idle service grow by at most one request
 per 500 passages without a vector (the jobs are read in groups of 500), not by a request per row. What is left of `index` in a new process is about 6 requests per file, once per start of the
 service. The requests of an open workspace, which asks the service for its status on its own, are not
-measured.
+measured, but one `GET /status` is: 27 requests (25 of them counts of the tables), measured on 23 November 2026 (#409) through the relay, against about 14 for a whole idle round of 10 seconds with models off and nobody asking (56 requests in 40 s). A client that asks for the status every half second adds about 54 requests a second. This is what the "466 requests" of the second and third scan round of a fresh service were in a measurement of 23 November 2026: the measuring script asked `/status` twenty times in each round; with nobody asking, each round after the first is the idle round above, and an unchanged project costs 4 of it.
 
 Between two machines these figures exist only from before this change: the trial of 22 November 2026 is in [How long indexing takes over a connection](#how-long-indexing-takes-over-a-connection) (first indexing, `index` with nothing changed, `backup` and an idle service with models off, where the embedding check did not run). The figures after #363 over a real network do not exist yet: no machine has run this change over a connection, and the embedding check itself was never measured over one.
 The "Now" column above is the test engine on one machine, and its 20 ms relay is the nearest thing to a
 network that this change was measured on; it is a relay on the same machine, not a network.
+
+### What a command, the bridge and a search cost in their own process
+
+Measured on 23 November 2026 on one machine (WSL 2 on an Intel Core i9-14900K, 32 threads; Python 3.12.3), against a
+running throwaway service of this version in deterministic-only mode (models off) on a store of 29 files and 1,080
+embedded passages, and the owner's Ollama (`qwen3-embedding:0.6b`) for the embedding rows. Before is `main` at `316e1ad`,
+after is the branch of #405 and #407 (`77f119b`). Every pair was run **interleaved** (a before run, then an after run,
+alternating who goes first), 3 warm-ups and 20 runs each, in milliseconds as minimum / median / p95 / maximum. **The
+machine was shared with other work (load average 12 to 15 while these ran), so read the differences, not the absolute
+figures.** A command's figure is the wall time of its whole process, start to exit; the service's own work is in it.
+
+| What | Before | After | Requests of the command |
+| --- | --- | --- | --- |
+| `cairnmind ask` | 1014 / 1072 / 1149 / 1159 | 626 / 679 / 761 / 769 | 3 `GET /health` and the `POST`, then 1 and the `POST` |
+| `cairnmind context` | 761 / 795 / 842 / 877 | 418 / 442 / 456 / 457 | 2 `GET /health`, then 1 |
+| `cairnmind status` | 456 / 504 / 530 / 540 | 450 / 496 / 545 / 565 | 1 `GET /health`, unchanged: it never imported the service |
+| `cairnmind mcp`: start and initialize | 663 / 706 / 745 / 748 | 676 / 715 / 799 / 864 | unchanged |
+| `ask` tool call in an open bridge session | 269 / 284 / 312 / 313 | 277 / 289 / 311 / 311 | unchanged: 1 `GET /health` and the `POST` |
+| Query embedding through the service's client (median of 5 calls per run) | 88 / 94 / 118 / 126 | 35 / 40 / 44 / 44 | |
+| `asearch` with vectors, 10 hits (median of 5 calls per run) | 365 / 376 / 388 / 437 | 315 / 330 / 350 / 361 | |
+
+A second measurement of the query embedding, taken the same way (interleaved, 3 warm-up processes, 20 per side) with the
+load average at 6 to 9, gave 38.6 / 48.4 / 64.4 / 64.9 before and 13.1 / 20.8 / 34.0 / 34.8 after: a saving of about 28
+ms, not the 54 ms of the row above. Building an HTTP client costs more on a loaded machine (the TLS context), so the
+saving is about 30 ms per model request on a quiet machine and roughly twice that under the load of the first run. The
+`asearch` row holds one embedding call and was not repeated; treat its 46 ms the same way.
+
+Where it went. A command that talks to the service used to import the service module, and with it the web framework,
+only to compute the service's instance id: `ask` loaded 607 modules and now loads 420. A command's own imports are
+now the HTTP client, the command-line framework and what they load (`rich`, `anyio`). The bridge imports neither the
+service nor the web framework; its 0.7 s is the MCP library's own imports (`mcp`, `pydantic`, `starlette`,
+`uvicorn`), which the bridge needs. The remaining `GET /health` of a command is the check that the program on the port
+is this data directory's service (the instance id) and runs this version, so nothing is sent to a service of another
+version; the marks of an upgrade and of a change of setup are files, read only when no service answers, so they cost no
+request. The bridge asks before every request because a service can be replaced while the bridge runs. The
+embedding rows are the service's path: the service keeps one HTTP client per model server for its life; a
+command-line process still opens one for each request.
+
+#### The bridge keeps one client to the service, and a plain http client builds no certificate store (#415)
+
+Building an HTTP client costs about 22 ms, most of it the TLS context with the whole certificate store, which a plain
+`http://127.0.0.1` request never uses. The bridge now keeps one client to the service for its life (made on its first
+request, closed when it stops). A command, which sends one or two requests, still makes its client for each request but
+with `verify=False` when the address is plain http, which builds an empty context instead: a plain http connection has
+no TLS, so nothing is left unverified, and an https address, such as a model server on another computer, is verified as
+before. Everything else is unchanged: loopback only, the token, each request's time limit, no redirects, and the
+`GET /health` before every request of the bridge. A service that was restarted between two requests gives the same
+answer or refusal as before (the next request opens a new connection). The service closes an idle connection after 5 s;
+a client that reused one at the very moment of the close would fail with a false "unavailable", and a retry could repeat a
+write, so the bridge's client drops its own idle connections after 4 s, before the service does.
+
+Measured on 23 November 2026 on the same machine, against a running throwaway service (own ports, models off, an empty
+project, a store of one file). Before is the parent of this change (`7a8b94e`), after is this change. Interleaved, 3
+warm-ups and 20 runs each, in milliseconds as minimum / median / p95 / maximum; the machine was shared with other work, so
+read the differences:
+
+| What | Before | After |
+| --- | --- | --- |
+| `ask` tool call in an open bridge session, the first | 112 / 124 / 145 / 158 | 63 / 80 / 141 / 147 |
+| `ask` tool call in an open bridge session, a later one (median of 3 per run) | 112 / 133 / 161 / 182 | 64 / 77 / 99 / 103 |
+| `resume_context` tool call, the first | 267 / 298 / 334 / 388 | 162 / 205 / 255 / 315 |
+| `cairnmind mcp`: start and initialize | 718 / 780 / 816 / 822 | 744 / 793 / 851 / 921 |
+| `cairnmind ask` (the whole process) | 448 / 492 / 548 / 574 | 389 / 425 / 478 / 635 |
+| `cairnmind status` (the whole process) | 443 / 502 / 590 / 684 | 372 / 426 / 476 / 526 |
+
+A tool call is about 45 to 55 ms faster: the kept client, and the `GET /health` probe's client, which no longer builds a
+certificate store. The start of the bridge does not change, it sends nothing. A command is about 65 to 75 ms faster,
+since each client it makes (the probe for the service, the request) no longer builds one.
 
 ### The engine tests against this server
 

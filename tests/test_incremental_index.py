@@ -7,13 +7,16 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import threading
+import time
 
 import pytest
 
 from cairnmind import ingest
+from cairnmind.arcade import ArcadeClient
 from cairnmind.config import Settings
 from cairnmind.ingest import forget_index_signature, index_project, index_project_if_changed
-from cairnmind.journal import JournalTransaction
+from cairnmind.journal import Journal, JournalTransaction
 from cairnmind.store import Store
 from cairnmind.sql import clean_row
 
@@ -313,6 +316,165 @@ def test_a_stored_graph_that_differs_from_its_fingerprint_is_replaced(workspace,
     assert_same_as_a_full_run(store, pid)
 
 
+def test_a_pass_after_an_edit_walks_the_tree_once(workspace, monkeypatch):
+    store, pid, root = workspace
+    index_project(store, pid)
+    (root / "pkg" / "limits.py").write_text("LIMIT = 4\n\n\ndef allowed(token):\n    return token == 'valid'\n")
+    walks, original = [], ingest._files
+    monkeypatch.setattr(ingest, "_files", lambda *a, **k: walks.append(a[0]) or original(*a, **k))
+    edited = index_project_if_changed(store, pid)
+    monkeypatch.undo()
+    assert edited["changed"] == 1 and len(walks) == 1  # it was three: the check, the signature, the indexing (#409)
+    assert_same_as_a_full_run(store, pid)
+
+
+def stray_node(store, pid):
+    with store.transaction() as tx:
+        Journal.touch(tx, pid, "graph", op="reset")
+        store.write_graph(tx, pid, [{"id": "stray-node", "project_id": pid, "kind": "symbol", "label": "stray"}], [])
+
+
+@pytest.mark.parametrize("damage", [
+    lambda store, pid: stray_node(store, pid),
+    lambda store, pid: store.command("DELETE FROM nodes WHERE project_id=:project AND kind='symbol' LIMIT 1", {"project": pid}),
+    lambda store, pid: store.command("DELETE FROM edges WHERE project_id=:project AND kind='calls' LIMIT 1", {"project": pid}),
+    lambda store, pid: store.command("UPDATE projects SET graph_fingerprint=null WHERE id=:project", {"project": pid}),
+    lambda store, pid: store.command("UPDATE projects SET graph_fingerprint='restored-from-a-backup' WHERE id=:project", {"project": pid}),
+], ids=["a node added", "a node taken", "an edge taken", "marked as not built", "a fingerprint of another graph"])
+def test_a_node_or_an_edge_changed_behind_the_process_is_noticed_and_every_node_is_written_again(workspace, damage):
+    # The remembered graph is trusted only when the fingerprint, the markers, the count of edges and the count of
+    # nodes say that the stored graph is the one this process wrote (#426); else the stored rows are compared.
+    store, pid, root = workspace
+    first = index_project(store, pid)
+    damage(store, pid)
+    (root / "pkg" / "module_03.py").write_text("VALUE_3 = 33\n")
+    repaired = index_project_if_changed(store, pid)
+    assert repaired["read"] == 1 and repaired["graph_written"]["nodes"] == first["nodes"]
+    assert_same_as_a_full_run(store, pid)
+    assert not store.query("SELECT id FROM nodes WHERE id='stray-node'")
+
+
+def test_a_graph_another_process_wrote_after_this_one_is_noticed(workspace):
+    store, pid, root = workspace
+    index_project(store, pid)
+    key = (str(store.data_dir), pid)
+    memory = dict(ingest._REMEMBERED[key]["graph"])
+    (root / "pkg" / "limits.py").write_text("LIMIT = 4\n\n\ndef allowed(token):\n    return token == 'valid'\n")
+    index_project_if_changed(store, pid)  # the other process
+    ingest._REMEMBERED[key]["graph"] = memory  # what this one still remembers
+    ingest._INDEXED.pop(key, None)
+    (root / "pkg" / "module_03.py").write_text("VALUE_3 = 33\n")
+    repaired = index_project_if_changed(store, pid)
+    assert repaired["graph_written"]["nodes"] == repaired["nodes"]
+    assert_same_as_a_full_run(store, pid)
+
+
+def test_a_record_linked_to_a_code_node_that_moves_keeps_every_later_pass_incremental(workspace):
+    # A symbol's id holds its line, so a line added above it leaves the old vertex in the store when a knowledge
+    # record's edge names it; the count of stored nodes then holds that vertex too (#426).
+    store, pid, root = workspace
+    index_project(store, pid)
+    allowed = store.query("SELECT id FROM nodes WHERE project_id=:project AND kind='symbol' AND label LIKE '%allowed%' LIMIT 1",
+                          {"project": pid})[0]["id"]
+    source = store.query("SELECT id FROM sources WHERE project_id=:project AND is_current=true LIMIT 1", {"project": pid})[0]["id"]
+    with store.transaction() as tx:
+        store.write_graph(tx, pid, [{"id": "record:linked", "project_id": pid, "kind": "decision", "label": "linked"}],
+                          [{"id": "linked-edge", "project_id": pid, "from_id": "record:linked", "to_id": allowed,
+                            "kind": "relates_to", "source_id": source, "status": "proposed", "is_current": True}])
+    limits = root / "pkg" / "limits.py"
+    limits.write_text("# moved\n" + limits.read_text())
+    moved = index_project_if_changed(store, pid)
+    assert store.query("SELECT id FROM nodes WHERE id=:id", {"id": allowed})  # kept, an edge names it
+    assert moved["graph_written"]["nodes"] < moved["nodes"]
+    for step in (4, 5, 6):
+        (root / "pkg" / f"module_{step:02d}.py").write_text(f"VALUE_{step} = {step + 40}\n")
+        later = index_project_if_changed(store, pid)
+        assert later["changed"] == 1 and later["graph_written"]["nodes"] <= 4 < later["nodes"] / 4, later
+    assert_same_as_a_full_run(store, pid)
+
+
+def test_a_pass_after_one_edit_reads_no_node_ids_and_deletes_edges_by_their_ids(workspace, monkeypatch):
+    store, pid, root = workspace
+    index_project(store, pid)
+    (root / "pkg" / "limits.py").write_text("LIMIT = 4\n\n\ndef allowed(token):\n    return token == 'valid'\n")
+    seen = []
+    for method in ("query", "command"):
+        real = getattr(JournalTransaction, method)
+        monkeypatch.setattr(JournalTransaction, method, lambda self, sql, params=None, real=real: seen.append(sql) or real(self, sql, params))
+    edited = index_project_if_changed(store, pid)
+    monkeypatch.undo()
+    assert edited["changed"] == 1
+    assert not [sql for sql in seen if sql.startswith("SELECT id FROM nodes WHERE project_id")]  # one count instead
+    assert [sql for sql in seen if sql.startswith("SELECT count(*) AS total FROM nodes WHERE project_id")]
+    deletes = [sql for sql in seen if sql.startswith("DELETE FROM edges")]
+    assert deletes and all(sql == "DELETE FROM edges WHERE id IN :ids" for sql in deletes)
+    assert_same_as_a_full_run(store, pid)
+
+
+def test_a_pass_after_one_edit_asks_the_database_and_computes_graph_rows_in_proportion_to_the_edit(workspace, monkeypatch):
+    store, pid, root = workspace
+    first = index_project(store, pid)
+    (root / "pkg" / "limits.py").write_text("LIMIT = 4\n\n\ndef allowed(token):\n    return token == 'valid'\n")
+    asked, digested = [], []
+    original, digest = ArcadeClient._request, ingest._node_digest
+    monkeypatch.setattr(ArcadeClient, "_request", lambda self, method, path, **kw: asked.append(path) or original(self, method, path, **kw))
+    monkeypatch.setattr(ingest, "_node_digest", lambda item: digested.append(item["id"]) or digest(item))
+    index_project_if_changed(store, pid)
+    monkeypatch.undo()
+    # 62 requests for 19 files; a pass that walked and looked the project up three times asked 64 (#409), and none of
+    # them grows with the project. Digests are made of the nodes that were computed, not of every node.
+    assert len(asked) <= 63, len(asked)
+    assert 0 < len(digested) <= 8 < first["nodes"] / 4, (len(digested), first["nodes"])
+
+
+def test_a_definition_that_stops_being_doubled_changes_the_calls_of_its_importers(workspace):
+    store, pid, root = workspace
+    (root / "dup.py").write_text("x = 1; x = 2\n")
+    (root / "user.py").write_text("from dup import x\n\n\ndef run():\n    return x()\n")
+    index_project(store, pid)
+    for text in ("x = 1\n", "x = 1; x = 2\n"):
+        (root / "dup.py").write_text(text)
+        assert index_project_if_changed(store, pid)["changed"] == 1
+        assert_same_as_a_full_run(store, pid)  # it leaves a graph remembered for the next edit
+
+
+def test_a_walk_made_before_waiting_for_another_indexing_is_not_used(workspace, monkeypatch):
+    store, pid, root = workspace
+    index_project(store, pid)
+    listing = {}
+    walk = (0, time.time_ns(), ingest._tree_state(store, pid, listing), listing)
+    (root / "pkg" / "fresh.py").write_text("FRESH = 1\n")
+    blocked, real, results = threading.Event(), ingest.fcntl.flock, []
+
+    def flock(descriptor, operation):
+        try:
+            return real(descriptor, operation)
+        except BlockingIOError:
+            blocked.set()
+            raise
+    monkeypatch.setattr(ingest.fcntl, "flock", flock)
+    with ingest._ingestion_lock(store, "project", pid):
+        waiting = threading.Thread(target=lambda: results.append(index_project(store, pid, walk)))
+        waiting.start()
+        assert blocked.wait(10)
+        ingest._index_project_locked(store, pid, None, {})  # the other caller sees the file that the walk did not
+    waiting.join(30)
+    assert results[0]["deleted"] == 0
+    assert store.query("SELECT id FROM sources WHERE project_id=:project AND uri=:uri AND is_current=true",
+                       {"project": pid, "uri": str(root / "pkg" / "fresh.py")})
+
+
+def test_an_edit_after_an_edge_was_deleted_behind_the_process_replaces_what_differs(workspace):
+    store, pid, root = workspace
+    index_project(store, pid)
+    # This process still remembers the graph it wrote: the count of the stored edges says that it is not stored.
+    store.command("DELETE FROM edges WHERE project_id=:project AND kind='calls' LIMIT 1", {"project": pid})
+    (root / "pkg" / "limits.py").write_text("LIMIT = 4\n\n\ndef allowed(token):\n    return token == 'valid'\n")
+    edited = index_project_if_changed(store, pid)
+    assert edited["changed"] == 1
+    assert_same_as_a_full_run(store, pid)
+
+
 def test_a_memory_package_kept_deeper_in_the_tree_is_not_indexed_as_project_text(tmp_path):
     root = tmp_path / "repo"
     for folder in ("examples/sample/.memory/cairnmind/objects", "examples/sample/.memory/devbrain", "examples/sample/src",
@@ -325,3 +487,108 @@ def test_a_memory_package_kept_deeper_in_the_tree_is_not_indexed_as_project_text
     (root / "docs/.memory/other/note.md").write_text("an ordinary file\n")
     found = sorted(path.relative_to(root).as_posix() for path in ingest._files(root))
     assert found == ["docs/.memory/other/note.md", "examples/sample/src/app.py"]
+
+
+def relink(path, target):
+    if path.is_symlink():
+        path.unlink()
+    path.symlink_to(target)
+
+
+def lead_to_user(root):
+    (root / "pkg2").mkdir()
+    (root / "pkg2" / "limits.py").write_text("LIMIT = 5\n")
+    (root / "user.py").write_text(
+        "from pkg.alias import LIMIT\nfrom lib.limits import LIMIT as OTHER\n\n\ndef use():\n    return LIMIT + OTHER\n")
+
+
+# A symlink is left out of the walk and an import is resolved through it, so a link that is moved, added or removed
+# moves an import though no file changed (#451). (what is done first, what is done alone, whether the graph moves)
+LINKS = {
+    "retargeted": (lambda root: relink(root / "pkg" / "alias.py", "limits.py"),
+                   lambda root: relink(root / "pkg" / "alias.py", "module_00.py"), True),
+    "added": (lambda root: None, lambda root: relink(root / "pkg" / "alias.py", "limits.py"), True),
+    "removed": (lambda root: relink(root / "pkg" / "alias.py", "limits.py"),
+                lambda root: (root / "pkg" / "alias.py").unlink(), True),
+    "to a directory, retargeted": (lambda root: relink(root / "lib", "pkg"), lambda root: relink(root / "lib", "pkg2"), True),
+    "to a directory, removed": (lambda root: relink(root / "lib", "pkg"), lambda root: (root / "lib").unlink(), True),
+    "in a chain, its second link retargeted": (
+        lambda root: (relink(root / "pkg" / "via.py", "limits.py"), relink(root / "pkg" / "alias.py", "via.py")),
+        lambda root: relink(root / "pkg" / "via.py", "module_00.py"), True),
+    "broken, then broken elsewhere": (lambda root: relink(root / "pkg" / "alias.py", "gone.py"),
+                                      lambda root: relink(root / "pkg" / "alias.py", "gone_too.py"), False),
+    "to a file outside the root, retargeted": (
+        lambda root: (root.parent.joinpath("one.py").write_text("ONE = 1\n"), root.parent.joinpath("two.py").write_text("TWO = 2\n"),
+                      relink(root / "pkg" / "alias.py", root.parent / "one.py")),
+        lambda root: relink(root / "pkg" / "alias.py", root.parent / "two.py"), False),
+    "to a directory named like an excluded one, retargeted": (
+        lambda root: (relink(root / "vendor", "pkg"), root.joinpath("uses_vendor.py").write_text("from vendor.limits import LIMIT\n")),
+        lambda root: relink(root / "vendor", "pkg2"), True),
+    "into a loop": (lambda root: relink(root / "pkg" / "alias.py", "limits.py"),
+                    lambda root: (relink(root / "pkg" / "alias.py", "loop.py"), relink(root / "pkg" / "loop.py", "alias.py")), True),
+}
+
+
+@pytest.mark.parametrize("name", list(LINKS))
+def test_a_link_changed_alone_is_noticed_by_a_running_indexer(workspace, monkeypatch, name):
+    store, pid, root = workspace
+    first, change, moves = LINKS[name]
+    lead_to_user(root)
+    first(root)
+    index_project(store, pid)
+    before = index_state(store, pid)
+    change(root)  # nothing else: no file is written
+    passes = []
+    original = ingest._index_project_locked
+    monkeypatch.setattr(ingest, "_index_project_locked", lambda *a: passes.append(1) or original(*a))
+    result = index_project_if_changed(store, pid)
+    monkeypatch.undo()
+    assert passes == [1] and "skipped" not in result and not result["errors"]
+    assert result["changed"] == 0 and result["read"] == 0
+    # Where the imports lead is written from the remembered graph, the rows that moved: not the whole graph.
+    assert (index_state(store, pid) != before) is moves
+    assert not moves or 0 < result["graph_written"]["edges"] < result["edges"] / 4
+    assert_same_as_a_full_run(store, pid)
+
+
+def test_a_round_in_which_nothing_changed_does_no_pass_and_no_write_though_links_are_there(workspace, monkeypatch):
+    store, pid, root = workspace
+    lead_to_user(root)
+    relink(root / "lib", "pkg")
+    relink(root / "pkg" / "alias.py", "limits.py")
+    index_project(store, pid)
+    asked = []
+    original = ArcadeClient._request
+    monkeypatch.setattr(ArcadeClient, "_request", lambda self, method, path, **kw: asked.append(path) or original(self, method, path, **kw))
+    monkeypatch.setattr(ingest, "_index_project_locked", lambda *a: pytest.fail("An unchanged tree was indexed"))
+    assert index_project_if_changed(store, pid)["skipped"] is True
+    assert asked and all("/query/" in path for path in asked) and len(asked) <= 4, asked  # the project is looked up, nothing written
+
+
+def test_the_walk_notes_the_symlinks_it_leaves_out_and_where_they_lead(tmp_path):
+    root = tmp_path / "repo"
+    (root / "pkg").mkdir(parents=True)
+    (root / "node_modules" / "dep").mkdir(parents=True)
+    (root / "pkg" / "real.py").write_text("X = 1\n")
+    (tmp_path / "outside.py").write_text("Y = 1\n")
+    (root / ".gitignore").write_text("ignored.py\n")
+    for name, target in (("pkg/file_link.py", "real.py"), ("lib", "pkg"), ("pkg/broken.py", "gone.py"),
+                         ("pkg/out.py", tmp_path / "outside.py"), ("pkg/a.py", "b.py"), ("pkg/b.py", "a.py"),
+                         ("ignored.py", "pkg/real.py"), ("node_modules/dep/link.py", "../../pkg/real.py"),
+                         ("vendor", "pkg")):
+        (root / name).symlink_to(target)
+    links: list = []
+    found = sorted(path.relative_to(root).as_posix() for path in ingest._files(root, links=links))
+    assert found == [".gitignore", "pkg/real.py"]  # as before: no link is a file of the project
+    assert sorted(links) == sorted((str(root / name), target) for name, target in (
+        ("lib", "pkg"), ("pkg/a.py", "b.py"), ("pkg/b.py", "a.py"), ("pkg/broken.py", "gone.py"),
+        ("pkg/file_link.py", "real.py"), ("pkg/out.py", str(tmp_path / "outside.py")),
+        ("ignored.py", "pkg/real.py"), ("vendor", "pkg"))), links  # one in a directory the walk leaves out (node_modules) is not noted
+
+
+def test_a_link_replaced_under_the_walk_is_noted_and_does_not_fail_it(tmp_path, monkeypatch):
+    (tmp_path / "a.py").symlink_to("b.py")
+    monkeypatch.setattr(ingest.os, "readlink", lambda item: (_ for _ in ()).throw(FileNotFoundError(item)))
+    links: list = []
+    assert list(ingest._files(tmp_path, links=links)) == []
+    assert links == [(str(tmp_path / "a.py"), None)]

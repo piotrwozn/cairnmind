@@ -330,6 +330,8 @@ def test_an_interrupted_start_ends_the_service_it_spawned(data_dir, isolated, mo
     """ensure_service leaves nothing behind when a signal reaches it while it waits for the service it started."""
     from types import SimpleNamespace
 
+    from conftest import own_time
+
     from cairnmind import cli
     from cairnmind.config import Settings
     ended = []
@@ -339,7 +341,7 @@ def test_an_interrupted_start_ends_the_service_it_spawned(data_dir, isolated, mo
 
     def interrupt(seconds):
         raise KeyboardInterrupt
-    monkeypatch.setattr(cli.time, "sleep", interrupt)
+    own_time(monkeypatch, cli, sleep=interrupt)
     with pytest.raises(KeyboardInterrupt):
         cli.ensure_service(Settings.load(data_dir, create=True))
     assert ended == ["terminate"]

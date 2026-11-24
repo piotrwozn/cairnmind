@@ -26,7 +26,7 @@ import httpx
 import tomlkit
 from tomlkit.items import Comment, Table
 
-from .config import SESSION_NAMES, Settings, drop_env, env_names, session_value, set_env
+from .config import SESSION_NAMES, Settings, drop_env, env_names, session_value, set_env, tls_verify
 from .first_start import (CLIENT_SKIPPED, LAUNCH_REFUSED, PART_CONTRACT, PART_HOOKS, PART_INSTRUCTIONS, PART_MCP,
                           REMOVED_COMMAND, REMOVED_COMMAND_BESIDE, TRUST_NOTE)
 from .removed_command import bare_devbrain_entries
@@ -264,7 +264,8 @@ def doctor(settings: Settings) -> dict[str, Any]:
                                        "slow); cairnmind engine start waits longer, 30 seconds, twice")
         except (OSError, subprocess.SubprocessError) as exc:
             result["java"]["error"] = type(exc).__name__
-    with httpx.Client(timeout=1.5, trust_env=False) as client:
+    from .memory_models import doctor_verify
+    with httpx.Client(timeout=1.5, trust_env=False, verify=doctor_verify(settings)) as client:
         # Read-only diagnostics: never construct Store, create a database, start
         # Java or install/download an engine just to report its availability.
         from .memory_models import RemoteServerRefused, local_server
@@ -1017,7 +1018,7 @@ def _hook_startup_context(settings: Settings, payload: dict[str, Any]) -> dict[s
     if reason in {"compact", "clear", "fork"}:
         return pending(f"{reason} receipt was durably spooled; a new packet epoch must be read")
     try:
-        with httpx.Client(timeout=0.7, trust_env=False) as client:
+        with httpx.Client(timeout=0.7, trust_env=False, verify=tls_verify(settings.url)) as client:
             response = client.post(f"{settings.url}/sessions/context",
                                    json={"session_id": session_id, "packet_id": packet_id},
                                    headers={"Authorization": f"Bearer {settings.token}"})

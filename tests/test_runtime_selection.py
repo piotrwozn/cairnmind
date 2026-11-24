@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from conftest import own_time
 from cairnmind.arcade import ArcadeError
 from cairnmind.config import Settings
 from cairnmind import engine, integrations
@@ -191,7 +192,7 @@ def test_a_server_that_does_not_come_up_is_gone_before_start_engine_fails(tmp_pa
             real_sleep(0.005)
         return {"available": False}
     monkeypatch.setattr(engine, "engine_status", not_up)
-    monkeypatch.setattr(engine.time, "sleep", lambda seconds: real_sleep(0.001))
+    own_time(monkeypatch, engine, sleep=lambda seconds: real_sleep(0.001))
     with pytest.raises(ArcadeError, match="startup timed out"):
         engine.start_engine(settings)
     # The server ignored the first SIGTERM for 1.5 s; start_engine must have waited for it.
