@@ -9,6 +9,8 @@ import sys
 
 import pytest
 
+from conftest import own_time
+
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "measure_service_memory.py"
 SPEC = importlib.util.spec_from_file_location("measure_service_memory", SCRIPT)
 script = importlib.util.module_from_spec(SPEC)
@@ -48,7 +50,7 @@ def test_the_growth_of_step_six_counts_the_graph_requests_only(monkeypatch):
     measurement = object.__new__(script.Measurement)
     measurement.args, measurement.steps = script.parse_args(["--repeat", "20"]), []
     monkeypatch.setattr(measurement, "sample", lambda full=False: {"rss_mb": 1.0})
-    monkeypatch.setattr(script.time, "sleep", lambda seconds: None)
+    own_time(monkeypatch, script, sleep=lambda seconds: None)
     # 20 flat status readings, then 20 graph readings rising 3 MB each: the slope is 3, not about half of it
     measurement.run_step(6, lambda readings: readings.extend([300.0] * 20 + [300.0 + 3 * n for n in range(20)]), count=20, idle=0)
     assert measurement.steps[0]["growth_per_repetition_mb"] == 3.0
