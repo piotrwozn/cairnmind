@@ -250,6 +250,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - Indexing no longer fails when a directory of many files is renamed and then renamed back: if the engine's index of vertex ids still holds the ids the earlier pass deleted and refuses the write (a duplicated key, or edges that find no endpoint), the pass waits 5 seconds and writes the code graph once more; the result of such a pass says `graph_written_again`. If it is refused again, indexing fails with an error that names the refusal and says whether the code graph is marked not built or the previous graph is kept, and the next indexing writes it (#433).
 - A running indexer now notices a symbolic link that is retargeted, added or removed on its own, whatever its name, and writes the imports that moved, at no measurable cost to a scan round in which nothing changed (#451).
 - A loop of symbolic links, or a link replaced while the indexer walks, no longer fails an indexing pass; an import that leads into a loop stays unresolved (#451).
+- With the database in Docker or on a server (production mode), a directory renamed and renamed back is indexed again after one wait, as with the engine the product starts itself, instead of failing with 'Found duplicate key in index' (#455).
 
 ### Development and CI
 
@@ -268,6 +269,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - Tests replace the clock of the module under test instead of `time.sleep` for the whole process, the tests that hide vertices count only the waits their own hidden answers cause, and a guard test over every test file and helper keeps it so; the release gate says to read every job of main's last run, `server-tests` included (#417).
 - The test of a refused or lost request of the workspace's acts no longer fails when the sidebar's own refresh error lands next to the act's sentence, and it still catches a raw broker error told by the act itself (#418).
 - A test's fake client writes its capture file whole, and the tests that read it wait, bounded, for a complete JSON document; the terminal-reading threads of two workspace tests are stopped before their descriptor is closed, so a reused descriptor number can no longer read `state.json` away from its reader (#419).
+- The release gate and the pull request guide say that a branch touching the store, the engine's errors or the graph write gets `server-tests` and `restore-size` started on it by hand by a maintainer, and green, before its pull request is merged (#455).
 
 ## 0.12.0
 
