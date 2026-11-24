@@ -20,7 +20,7 @@ from .terminal_person_act import agreed, refused, reloaded, resolve_text, review
 from .terminal_proposed import ProposedView
 from .terminal_published_import import archive_replaced, archive_text
 from .terminal_safe import plain, safe_text
-from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal, relabel_select, replaces_here,
+from .terminal_ui import (BACKGROUND, BasePanel, ChoiceModal, Field, FieldError, FormModal, relabel_select, replaces_here,
                           summary_text)
 
 _VIEWS = [("Records", "records"), ("Sources", "sources"), ("Plans", "plans"),
@@ -252,14 +252,21 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self.refresh_page()
 
     @work(group="inspector-read", exclusive=True, exit_on_error=False)
-    async def refresh_page(self):
+    async def refresh_page(self, background=False):
+        BACKGROUND.set(background)  # the journal's reload yields to the outcome of a person's act (#430)
         try:
             if self.view == "memory":
                 await self.load_memory()
             else:
                 await self.load_page()
+            if background:
+                self.refresh_recovered()
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc, "error")
+            self.refresh_failed(exc, "error")
+        except Exception as exc:  # the worker-state handler cannot tell a background reload from a foreground read
+            if not background:
+                raise
+            self.refresh_failed(exc, "error")
 
     def params(self):
         return {"project": self.workspace_data.get("project_id"), "worktree": self.workspace_data.get("worktree")}
@@ -788,6 +795,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
 
     @work(group="inspector-journal", exclusive=True, exit_on_error=False)
     async def watch_journal(self):
+        BACKGROUND.set(True)
         try:
             async for event in self.broker.events():
                 data = event.get("data") or {}
@@ -806,7 +814,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
     def refresh_if_list(self):
         # The impact list runs Git over the worktree and changes with files the journal does not report: r reads it.
         if not self.entity and not self.history_owner and self.view not in {"memory", "impact"}:
-            self.refresh_page()
+            self.refresh_page(background=True)
 
     @on(Button.Pressed)
     def button_pressed(self, event):

@@ -54,10 +54,11 @@ class NoticeHistory:
         scope = scope if isinstance(scope, dict) else {}
         project = (scope.get("project_id"), scope.get("worktree"))
         last = self.entries[-1] if self.entries else None
-        if (on_line and last is not None and last.text == shown and (last.project_id, last.worktree) == project
+        if (last is not None and last.text == shown and (last.project_id, last.worktree) == project
                 and last.kind == kind):
-            last.when, last.count = _now(), last.count + 1
-            self._on_line = last.seq
+            last.when, last.count = _now(), last.count + 1  # also a held notice that repeats (#430)
+            if on_line:
+                self._on_line = last.seq
             return
         self._seq += 1
         name = scope.get("project_name")
@@ -68,6 +69,10 @@ class NoticeHistory:
             self._on_line = self._seq
         while len(self.entries) > 1 and (len(self.entries) > self.max_entries or self._chars > self.max_chars):
             self._chars -= len(self.entries.popleft().text)
+
+    def put_on_line(self, entry: Notice) -> None:
+        """A notice kept only here (add with on_line=False) is now shown on the line."""
+        self._on_line = entry.seq
 
     def on_line(self) -> Notice | None:
         """The entry the notice line shows, if it shows one."""

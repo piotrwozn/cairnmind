@@ -66,7 +66,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_terminal_ux080", "test_topology", "test_usage", "test_workspace","test_workspace_cli", "test_workspace_locale",
     "test_workspace_state", "test_workspace_ux080", "test_workspace_focus_column", "test_shards",
     "test_run_guard", "test_process_identity", "test_machine_identity", "test_socket_base", "test_python_pin",
-    "test_ci_macos_job",
+    "test_ci_macos_job", "test_notice_outcome_stays",
     "test_system_links", "test_legacy_groups_workspace",
     "test_install_macos",
     "test_first_start_round2", "test_first_start_round3", "test_engine_docker", "test_tmux_optional", "test_external_mcp_start",
