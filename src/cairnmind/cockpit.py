@@ -223,7 +223,12 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
                 timeout=settings.ask_timeout + 120, limits=httpx.Limits(max_keepalive_connections=0),
                 headers={"Authorization": f"Bearer {settings.token}"})
         try:
-            return await service["client"].request(method, path, params=params, json=data, headers=person)
+            response = await service["client"].request(method, path, params=params, json=data, headers=person)
+            # httpx binds the answer's stream to the answer, a reference cycle that only a run of the collector frees, and
+            # the runs come rarer as the heap grows: the bodies of the graph piled up in the broker (#450). The body is
+            # read and the stream closed already, so the cycle is cut, as for the database's answers (arcade.py).
+            response.stream = httpx.ByteStream(response.content)
+            return response
         except httpx.HTTPError:
             from .setup_mark import refusal as setup_refusal
             # A change of setup stopped the service on purpose: the panels say that, not "restart" (#339).

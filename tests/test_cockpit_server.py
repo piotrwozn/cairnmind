@@ -163,6 +163,31 @@ def test_the_broker_makes_one_client_for_its_requests_to_the_service_and_keeps_n
     assert app.state.service_client["client"].is_closed is False
 
 
+def test_the_answers_of_the_service_are_freed_when_the_request_ends_not_at_the_next_collection(tmp_path):
+    """httpx binds the stream of an answer to the answer: a reference cycle that only a collection frees, and a run of the
+    collector comes rarer as the heap grows, so the bodies of the graph (megabytes each) piled up in the broker (#450)."""
+    import gc
+    import weakref
+    settings = Settings.load(tmp_path / "data", create=True)
+    answers = []
+
+    def upstream(request):
+        answers.append(weakref.ref(response := httpx.Response(200, json={"ok": True, "text": "x" * 100000})))
+        return response
+
+    app = create_cockpit_app(settings, runtime=Runtime(), proxy_transport=httpx.MockTransport(upstream), public_url=ORIGIN)
+    with TestClient(app, base_url=ORIGIN) as client:
+        login(app, client)
+        gc.collect()
+        gc.disable()
+        try:
+            for _ in range(10):
+                assert client.get("/api/status").status_code == 200
+            assert len(answers) == 10 and [ref() for ref in answers] == [None] * 10
+        finally:
+            gc.enable()
+
+
 def test_bootstrap_tickets_expire_are_one_use_and_sessions_expire():
     clock = [0.]
     sessions = BrowserSessions(clock=lambda: clock[0])
