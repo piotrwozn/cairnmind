@@ -28,7 +28,7 @@ from .terminal_notices import about as notice_about
 from .terminal_person_act import refused
 from .terminal_published_import import archive_replaced, archive_text
 from .terminal_i18n_messages import broker_error_text
-from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal,
+from .terminal_ui import (BACKGROUND, BasePanel, ChoiceModal, Field, FieldError, FormModal,
                           LocalizedModal, MessageModal, remeasure_buttons, replaces_here, summary_text)
 
 
@@ -630,6 +630,7 @@ class SidebarApp(BasePanel):
 
     @work(group="sidebar-refresh", exclusive=True, exit_on_error=False)
     async def refresh_sidebar(self):
+        BACKGROUND.set(True)  # its notices yield to the outcome of a person's act (#430)
         try:
             await self.load_state()
         except (OSError, ValueError, RuntimeError) as exc:

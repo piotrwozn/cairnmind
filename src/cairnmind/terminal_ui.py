@@ -8,10 +8,11 @@ import inspect
 import threading
 from pathlib import Path
 from contextlib import suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 from rich.cells import cell_len
-from textual import on, work
+from textual import _time as textual_time, on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
@@ -394,6 +395,14 @@ def drop_unseen_key(app, event) -> None:
         event.stop()
 
 
+BACKGROUND = ContextVar("cairnmind_background_notice", default=False)  # set in a worker that refreshes by itself
+OUTCOME_HOLD = 12.0  # seconds: ~35 words at 3 words a second plus the tick of a 3 s refresh to pass, a dozen as in #430
+
+
+def _clock() -> float:
+    return textual_time.get_time()  # a test replaces this, not time.sleep of the process (#417)
+
+
 class BasePanel(App):
     ENABLE_COMMAND_PALETTE = False
     run_start_request = False  # set by `--run-request`: the request found at start is for this start
@@ -414,6 +423,7 @@ class BasePanel(App):
         self.notice_history = NoticeHistory()  # memory only, for the life of this panel (#130)
         self._feed_lock, self._feed_rows, self._feed_sent = threading.Lock(), None, None
         self._notice_about, self._mark_text = None, ""
+        self._outcome = None  # (history seq, hold ends) of the notice a person's act left on the line
         self._line_scope = None  # (project id, worktree) the workspace state held when the line got its notice
         self._scope_version = 0
         self._workspace_revision = None
@@ -426,6 +436,15 @@ class BasePanel(App):
 
     def on_key(self, event) -> None:
         drop_unseen_key(self, event)
+        self._outcome = None  # a key or a click is the person moving on: the outcome no longer holds (#430)
+
+    def on_click(self, event) -> None:
+        self._outcome = None
+
+    def _outcome_holds(self) -> bool:
+        entry = self.notice_history.on_line()
+        return bool(self._outcome and entry is not None and entry.seq == self._outcome[0]
+                    and _clock() < self._outcome[1])
 
     def open_command(self, action):
         """Only known UI actions can be dispatched; never evaluate command text."""
@@ -446,10 +465,23 @@ class BasePanel(App):
         return await asyncio.to_thread(self.broker.request, method, path, params=params, json=json)
 
     def notice(self, value, kind="info") -> None:
-        """Show one line. `kind` ("info", "warn", "error") only picks a style; the text is exactly `value`."""
+        """Show one line. `kind` ("info", "warn", "error") only picks a style; the text is exactly `value`.
+
+        A notice has a source (#430): a background refresh (a worker that set BACKGROUND) or anything else, which
+        is what a person's act told. The outcome of an act stays on the line for OUTCOME_HOLD seconds or until the
+        person presses a key or clicks; a background notice meanwhile goes to the history only (counted when it
+        repeats), and the next one after the hold shows as ever. An outcome replaces whatever stood there at once."""
         shown = None
         if isinstance(value, BaseException):
             value = broker_error_text(value, self.t)  # "Broker 503: …" with a fixed detail translated
+        background = BACKGROUND.get()
+        if background and self._outcome_holds():
+            with suppress(Exception):
+                self.notice_history.add(plain(self.t(value)).plain, self._notice_about or self.workspace_data, kind,
+                                        on_line=False)
+                self.show_notice_mark()
+            self.publish_notices(later=True)
+            return
         with suppress(Exception):
             shown = plain(self.t(value))
             line = self.query_one("#panel-notice", Static)
@@ -461,6 +493,8 @@ class BasePanel(App):
             self._line_scope = self._workspace_scope() if shown.plain else None
             with suppress(Exception):
                 self.notice_history.add(shown.plain, self._notice_about or self.workspace_data, kind)
+                entry = self.notice_history.on_line()
+                self._outcome = None if background or entry is None else (entry.seq, _clock() + OUTCOME_HOLD)
                 self.show_notice_mark()
             self.publish_notices(later=True)
 

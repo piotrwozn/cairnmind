@@ -54,10 +54,11 @@ class NoticeHistory:
         scope = scope if isinstance(scope, dict) else {}
         project = (scope.get("project_id"), scope.get("worktree"))
         last = self.entries[-1] if self.entries else None
-        if (on_line and last is not None and last.text == shown and (last.project_id, last.worktree) == project
+        if (last is not None and last.text == shown and (last.project_id, last.worktree) == project
                 and last.kind == kind):
-            last.when, last.count = _now(), last.count + 1
-            self._on_line = last.seq
+            last.when, last.count = _now(), last.count + 1  # also a held notice that repeats (#430)
+            if on_line:
+                self._on_line = last.seq
             return
         self._seq += 1
         name = scope.get("project_name")
