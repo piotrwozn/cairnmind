@@ -221,7 +221,10 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
         if links is not None:
             # What the link says, one call: a chain, a loop and a broken link need no more, as every link inside the
             # root is noted too. (A link outside the root that leads back in is not: it is treated as today.)
-            links.append((str(item), os.readlink(item)))
+            try:
+                links.append((str(item), os.readlink(item)))
+            except OSError:  # replaced under the walk: noted as gone, the signature differs and a pass resolves again
+                links.append((str(item), None))
         return True
 
     for directory, dirs, names in os.walk(root, followlinks=False,
@@ -249,7 +252,7 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
 
         dirs[:] = sorted(
             name for name in sorted(dirs)  # sorted before the links are noted: the same order every round
-            if not excluded_directory(name) and not link(folder / name) and not is_memory_path(folder / name, root)
+            if not (link(folder / name) or excluded_directory(name)) and not is_memory_path(folder / name, root)
             # A memory package kept deeper in the tree, such as a sample, is somebody's stored memory
             # and not text of this project: its rows are not indexed as sources.
             and not (folder.name.casefold() == ".memory" and name.casefold() in ("cairnmind", "devbrain"))

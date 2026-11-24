@@ -521,6 +521,9 @@ LINKS = {
         lambda root: (root.parent.joinpath("one.py").write_text("ONE = 1\n"), root.parent.joinpath("two.py").write_text("TWO = 2\n"),
                       relink(root / "pkg" / "alias.py", root.parent / "one.py")),
         lambda root: relink(root / "pkg" / "alias.py", root.parent / "two.py"), False),
+    "to a directory named like an excluded one, retargeted": (
+        lambda root: (relink(root / "vendor", "pkg"), root.joinpath("uses_vendor.py").write_text("from vendor.limits import LIMIT\n")),
+        lambda root: relink(root / "vendor", "pkg2"), True),
     "into a loop": (lambda root: relink(root / "pkg" / "alias.py", "limits.py"),
                     lambda root: (relink(root / "pkg" / "alias.py", "loop.py"), relink(root / "pkg" / "loop.py", "alias.py")), True),
 }
@@ -571,7 +574,8 @@ def test_the_walk_notes_the_symlinks_it_leaves_out_and_where_they_lead(tmp_path)
     (root / ".gitignore").write_text("ignored.py\n")
     for name, target in (("pkg/file_link.py", "real.py"), ("lib", "pkg"), ("pkg/broken.py", "gone.py"),
                          ("pkg/out.py", tmp_path / "outside.py"), ("pkg/a.py", "b.py"), ("pkg/b.py", "a.py"),
-                         ("ignored.py", "pkg/real.py"), ("node_modules/dep/link.py", "../../pkg/real.py")):
+                         ("ignored.py", "pkg/real.py"), ("node_modules/dep/link.py", "../../pkg/real.py"),
+                         ("vendor", "pkg")):
         (root / name).symlink_to(target)
     links: list = []
     found = sorted(path.relative_to(root).as_posix() for path in ingest._files(root, links=links))
@@ -579,4 +583,12 @@ def test_the_walk_notes_the_symlinks_it_leaves_out_and_where_they_lead(tmp_path)
     assert sorted(links) == sorted((str(root / name), target) for name, target in (
         ("lib", "pkg"), ("pkg/a.py", "b.py"), ("pkg/b.py", "a.py"), ("pkg/broken.py", "gone.py"),
         ("pkg/file_link.py", "real.py"), ("pkg/out.py", str(tmp_path / "outside.py")),
-        ("ignored.py", "pkg/real.py"))), links  # one in a directory the walk leaves out (node_modules) is not noted
+        ("ignored.py", "pkg/real.py"), ("vendor", "pkg"))), links  # one in a directory the walk leaves out (node_modules) is not noted
+
+
+def test_a_link_replaced_under_the_walk_is_noted_and_does_not_fail_it(tmp_path, monkeypatch):
+    (tmp_path / "a.py").symlink_to("b.py")
+    monkeypatch.setattr(ingest.os, "readlink", lambda item: (_ for _ in ()).throw(FileNotFoundError(item)))
+    links: list = []
+    assert list(ingest._files(tmp_path, links=links)) == []
+    assert links == [(str(tmp_path / "a.py"), None)]
