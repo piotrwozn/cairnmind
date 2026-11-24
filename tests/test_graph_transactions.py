@@ -1,12 +1,14 @@
 """A graph larger than one transaction is written in several, and is still the graph one would have written (#377)."""
 from __future__ import annotations
 
+import httpx
 import pytest
 from test_index_batching import code_tree, dump
 
 from conftest import counted_waits, own_time
 from cairnmind import graph_transactions, ingest
-from cairnmind.arcade import ArcadeClient
+from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.config import Settings
 from cairnmind.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
 from cairnmind.inspector import Inspector
 from cairnmind.journal import JournalTransaction
@@ -223,6 +225,44 @@ def hiding_stored_vertices(monkeypatch, after=0, times=None):
     return state
 
 
+# Answers of ArcadeDB 26.11.1 to a commit that met a duplicated key, captured with a probe on 2026-11-24: the managed
+# engine (development mode) and the pinned image in production mode (#455). The body of production mode has no `detail`,
+# and its `exceptionArgs` hides the key; the index is named by `exceptionArgs` in both.
+DUPLICATED_KEY = {
+    "managed": {"error": "Found duplicate key in index", "exception": "com.arcadedb.exception.DuplicatedKeyException",
+                "exceptionArgs": "{index}|[v1]|#28:0",
+                "detail": "Duplicated key [v1] found on index '{index}' already assigned to record #28:0"},
+    "production": {"error": "Found duplicate key in index", "exception": "com.arcadedb.exception.DuplicatedKeyException",
+                   "exceptionArgs": "{index}|[concealed]|#28:0"},
+}
+
+
+def engine_refusal(tmp_path, mode, index, status=409):
+    """The ArcadeError the client raises for a captured answer (``ArcadeClient._request`` over a stub transport)."""
+    body = {key: value.replace("{index}", index) for key, value in DUPLICATED_KEY[mode].items()}
+    client = ArcadeClient(Settings.load(tmp_path, create=True), transport=httpx.MockTransport(lambda _: httpx.Response(status, json=body)))
+    with pytest.raises(ArcadeError) as caught:
+        client.command("CREATE VERTEX nodes SET id='v1'")
+    return caught.value
+
+
+@pytest.mark.parametrize("mode", ["managed", "production"])
+def test_the_refusal_of_the_index_of_vertex_ids_is_recognised_in_both_wordings_of_the_engine(tmp_path, mode):
+    assert graph_transactions.refused_by_id_index(engine_refusal(tmp_path, mode, "nodes[id]"))
+
+
+@pytest.mark.parametrize("mode", ["managed", "production"])
+@pytest.mark.parametrize("index", ["records[id]", "records[active_key]", "projects[name]", "projects[root]", "sources[current_key]",
+                                   "journal_events[epoch,seq]", "nodes_0_61688107467487"])
+def test_a_duplicated_key_of_another_index_is_not_taken_for_the_index_of_vertex_ids(tmp_path, mode, index):
+    assert not graph_transactions.refused_by_id_index(engine_refusal(tmp_path, mode, index))
+
+
+def test_only_a_duplicated_key_answered_with_409_counts(tmp_path):
+    assert not graph_transactions.refused_by_id_index(engine_refusal(tmp_path, "production", "nodes[id]", status=503))
+    assert not graph_transactions.refused_by_id_index(ArcadeError("ArcadeDB HTTP 409: Found duplicate key in index", status_code=409))
+
+
 def test_a_vertex_the_index_refuses_for_a_duplicated_key_is_written_after_one_wait_and_the_graph_is_the_same(tmp_path, monkeypatch):
     store = Store(tmp_path / "memory")
     project, indexed = synthetic(store, tmp_path)
@@ -249,7 +289,7 @@ def test_a_vertex_the_index_refuses_twice_fails_by_name_leaves_the_graph_not_bui
     own_time(monkeypatch, ingest, sleep=slept.append)
     with monkeypatch.context() as patch:
         hiding_stored_vertices(patch, after=1000)  # the second group of vertices is refused, every time
-        with pytest.raises(RuntimeError, match="still refused a graph vertex.*Duplicated key.*marked not built"):
+        with pytest.raises(RuntimeError, match="still refused a graph vertex.*(Duplicated key|Found duplicate key).*marked not built"):  # the engine's own text, either mode
             ingest._build_graph(store, project, indexed)
     assert slept == [graph_transactions.DUPLICATE_WAIT]  # one wait, one more write, then the name
     assert code_graph_pending(store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0])
