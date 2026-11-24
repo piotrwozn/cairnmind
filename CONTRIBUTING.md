@@ -103,6 +103,7 @@ If a change touches the knowledge agent, retrieval or extraction, include evalua
 2. Keep each pull request focused on one change, with tests.
 3. Make sure lint and the fast tier pass locally. CI runs the full suite.
 4. Describe what you changed, why, and what you could not verify.
+5. A branch that touches the store, the engine's errors or the graph write gets `server-tests` and `restore-size` started on it by hand (`gh workflow run ci.yml --ref BRANCH`) before its pull request is offered for merge: no pull request runs them, and the engine of production mode words some errors differently from the one the tests start (#455).
 
 ## Reporting security issues
 
