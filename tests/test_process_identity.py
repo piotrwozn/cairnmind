@@ -145,8 +145,8 @@ def empty_reads(monkeypatch, pid, count=None):
 @linux
 def test_linux_a_child_held_before_its_exec_has_its_parents_identity_and_the_same_birth():
     # The deterministic form of the window: a forked child that waits for a byte before it executes sleep.
-    # Before the exec its command line, program and (all through) its birth are the parent's: the birth does not
-    # change at exec, so "same birth, another command line" is what a process that has just started looks like.
+    # Before the exec its command line and program are the parent's; its own birth is the same after the exec as
+    # before it, so "same birth, another command line" is what a process that has just started looks like.
     release, wake = os.pipe()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)  # fork with threads: this child only reads and execs
