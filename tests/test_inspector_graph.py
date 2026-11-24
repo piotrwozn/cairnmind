@@ -301,6 +301,36 @@ def test_a_second_worktrees_rows_keep_the_whole_read_and_the_same_answers(stores
         compare_groups_and_neighbors(store, pid, worktree)
 
 
+def hold_back(stores, how):
+    """One row of the project that only `how` shows to belong elsewhere: the scope check must see it and read the whole graph."""
+    from cairnmind import inspector_graph
+    store, project, root, other = stores
+    pid = project["id"]
+    if how == "path":  # stored with this root, but the file lies under another registered root
+        nested = root / ".worktrees" / "b"
+        nested.mkdir(parents=True)
+        store.add_project_root(pid, nested)
+        store.snapshot(pid, str(nested / "n.py"), "n = 1", "code", {"path": str(nested / "n.py"), "root": str(root)})
+    elif how == "worktree":  # no root, no path: only the worktree field names the other root
+        store.add_project_root(pid, other)
+        store.snapshot(pid, "note://elsewhere", "Elsewhere.", "manual", {"worktree": str(other)})
+    else:  # the record is of this root now; only its first revision's snapshot names the other
+        store.add_project_root(pid, other)
+        source = store.snapshot(pid, "note://r", "Quote.", "manual")
+        made = store.remember(pid, {"kind": "fact", "content": "Quote.", "metadata": {"root": str(other)}}, [source["id"]])
+        store.remember(pid, {"id": made["id"], "expected_version": 1, "content": "Quote.", "metadata": {"root": str(root)}}, [source["id"]])
+    inspector = Inspector(store)
+    assert inspector_graph.keeps_everything(inspector, inspector._scope(pid, None))
+    assert not inspector_graph.keeps_everything(inspector, inspector._scope(pid, root))
+    assert compare_graph(store, pid, root, limits=(3, 2000)) > 10
+    compare_groups_and_neighbors(store, pid, root)
+
+
+@pytest.mark.parametrize("how", ["path", "worktree", "revision"])
+def test_one_row_that_belongs_elsewhere_keeps_the_whole_read_however_it_shows_it(stores, how):
+    hold_back(stores, how)
+
+
 def compare_groups_and_neighbors(store, pid, worktree):
     new, old = Inspector(store), WholeRead(store)
     for limit in (2, 100):
