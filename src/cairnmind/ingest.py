@@ -27,6 +27,7 @@ from cairnmind.embed_jobs import queue_embed_jobs
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
 from cairnmind import graph_transactions
+from cairnmind.code_graph import code_graph_pending
 from cairnmind.graph_transactions import GraphTransactions, await_vertices
 from cairnmind.journal import MAX_TRANSACTION_EVENTS
 from cairnmind.memory_paths import (bound_metadata, imported_source_ids, is_memory_path, is_reserved_below,
@@ -1365,17 +1366,22 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         batches.commit()
     except BaseException as exc:
         batches.abandon()
-        if not graph_transactions.refused_duplicate_vertex(exc):
+        if not graph_transactions.refused_by_id_index(exc):
             raise
         # The engine's index still holds the id of a vertex that an earlier pass deleted (a directory renamed and
-        # renamed back, #433) and the index cannot be asked about it: the commit was refused and rolled back. The graph
-        # is written once more after a wait (the fingerprint is cleared if an earlier transaction committed, so it
-        # is the whole write); a second refusal fails by name, and the graph stays marked not built.
+        # renamed back, #433) and the index cannot be asked about it: the commit was refused, or an edge found no
+        # endpoint, and the transaction was rolled back. The graph is written once more after a wait (the fingerprint
+        # is cleared if an earlier transaction committed, so it is the whole write); a second refusal fails by name.
         if retried:
-            raise RuntimeError("The database's index of vertex ids still refused a graph vertex whose id was deleted "
-                               "shortly before; the code graph is not built and the next indexing writes it again") from exc
+            row = store.query("SELECT graph_fingerprint FROM projects WHERE id=:project", {"project": project_id})
+            # Only a write of several transactions has committed anything: one that fits in one leaves the previous graph.
+            left = ("the code graph is marked not built" if not row or code_graph_pending(row[0]) else
+                    "the previous code graph is kept, though it no longer matches the files")
+            raise RuntimeError(f"The database's index of vertex ids still refused a graph vertex whose id was deleted "
+                               f"shortly before, {graph_transactions.DUPLICATE_WAIT:g} s after the first refusal ({str(exc)[:300]}); "
+                               f"{left} and the next indexing writes the graph again") from exc
         time.sleep(graph_transactions.DUPLICATE_WAIT)
-        return _build_graph(store, project_id, indexed, remembered, state, True)
+        return {**_build_graph(store, project_id, indexed, remembered, state, True), "graph_written_again": True}
     if state is not None:
         state.update(written)
     return {"nodes": len(digests), "edges": len(edge_ids), "graph_unchanged": False,

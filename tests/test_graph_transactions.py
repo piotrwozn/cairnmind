@@ -233,6 +233,7 @@ def test_a_vertex_the_index_refuses_for_a_duplicated_key_is_written_after_one_wa
     own_time(monkeypatch, ingest, sleep=slept.append)
     result = ingest._build_graph(store, project, indexed)  # before #433: ArcadeDB HTTP 409, Duplicated key on nodes[id]
     assert refusals["hidden"] == 1 and slept == [graph_transactions.DUPLICATE_WAIT]
+    assert result["graph_written_again"] is True  # the doubled write is in the result, not only in the time it took
     assert graph(store, project) == before and (result["nodes"], result["edges"]) == (first["nodes"], first["edges"])
     assert not code_graph_pending(store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0])
 
@@ -248,13 +249,50 @@ def test_a_vertex_the_index_refuses_twice_fails_by_name_leaves_the_graph_not_bui
     own_time(monkeypatch, ingest, sleep=slept.append)
     with monkeypatch.context() as patch:
         hiding_stored_vertices(patch, after=1000)  # the second group of vertices is refused, every time
-        with pytest.raises(RuntimeError, match="still refused a graph vertex"):
+        with pytest.raises(RuntimeError, match="still refused a graph vertex.*Duplicated key.*marked not built"):
             ingest._build_graph(store, project, indexed)
     assert slept == [graph_transactions.DUPLICATE_WAIT]  # one wait, one more write, then the name
     assert code_graph_pending(store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0])
     result = ingest._build_graph(store, project, indexed)
     assert graph(store, project) == before and result["nodes"] == first["nodes"]
     assert not code_graph_pending(store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0])
+
+
+def test_a_write_in_one_transaction_that_the_index_refuses_twice_says_that_the_previous_graph_is_kept(tmp_path, monkeypatch):
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path)
+    ingest._build_graph(store, project, indexed)
+    before = graph(store, project)
+    monkeypatch.setattr(ingest, "parser_identity", lambda: "another-parser")
+    own_time(monkeypatch, ingest, sleep=lambda seconds: None)
+    hiding_stored_vertices(monkeypatch)
+    with pytest.raises(RuntimeError, match="previous code graph is kept") as caught:
+        ingest._build_graph(store, project, indexed)
+    assert "not built" not in str(caught.value)  # nothing was committed: the readers still see the previous graph as built
+    assert not code_graph_pending(store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0])
+    assert graph(store, project) == before
+
+
+def test_edges_that_find_no_endpoint_for_a_vertex_deleted_shortly_before_are_written_after_one_wait(tmp_path, monkeypatch):
+    # The same index, the other way it shows (#433): the group of edges counts fewer rows than it created.
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path)
+    ingest._build_graph(store, project, indexed)
+    monkeypatch.setattr(ingest, "parser_identity", lambda: "another-parser")
+    _, moved = synthetic(store, tmp_path, shift=1000)  # new edges: a group of them is written
+    real, calls, slept = Store.write_graph, [], []
+
+    def failing(self, tx, project_id, nodes, edges):
+        if edges and not calls:
+            calls.append(1)
+            raise RuntimeError("The database did not create every graph edge of a group")
+        return real(self, tx, project_id, nodes, edges)
+    monkeypatch.setattr(Store, "write_graph", failing)
+    own_time(monkeypatch, ingest, sleep=slept.append)
+    result = ingest._build_graph(store, project, moved)
+    assert slept == [graph_transactions.DUPLICATE_WAIT] and result["graph_written_again"] is True
+    assert store.query("SELECT count(*) AS n FROM edges WHERE project_id=:p", {"p": project})[0]["n"] == result["edges"]
+    assert store.query("SELECT count(*) AS n FROM edges WHERE out IS NULL OR in IS NULL")[0]["n"] == 0
 
 
 def test_the_inspector_graph_says_that_the_code_graph_is_not_built_while_it_is_being_written(tmp_path):

@@ -97,12 +97,15 @@ class GraphTransactions(BoundedTransactions):
         return self.rows >= ROWS_PER_TRANSACTION
 
 
-def refused_duplicate_vertex(exc):
-    """Whether the engine refused a write because its index of ``nodes.id`` still holds a deleted vertex's id (#433).
+def refused_by_id_index(exc):
+    """Whether the engine's index of ``nodes.id`` is why a write failed, after a vertex of that id was deleted shortly before (#433).
 
-    The refusal comes at the commit. A vertex deleted in an earlier pass and written again by the next one meets it
-    (a directory renamed and renamed back): the index cannot be asked about it, as it finds no row for that id."""
-    return isinstance(exc, ArcadeError) and exc.status_code == 409 and "Duplicated key" in str(exc) and "nodes[id]" in str(exc)
+    A vertex deleted in an earlier pass and written again by the next one (a directory renamed and renamed back) meets it
+    in one of two ways, and the index cannot be asked about either: the commit is refused with a duplicated key, or the
+    edges that name the re-created vertex find no endpoint (``Store.write_graph`` counts what it wrote)."""
+    if isinstance(exc, ArcadeError):
+        return exc.status_code == 409 and "Duplicated key" in str(exc) and "nodes[id]" in str(exc)
+    return isinstance(exc, RuntimeError) and "did not create every graph edge" in str(exc)
 
 
 def await_vertices(store, identifiers, *timeout):
