@@ -23,8 +23,11 @@ from contextlib import ExitStack
 import sys
 import time
 
+from .arcade import ArcadeError
+
 ROWS_PER_TRANSACTION = 20000
 VERTEX_WAIT = 60.0  # seconds the engine's index may take to find the vertices that were committed
+DUPLICATE_WAIT = 5.0  # seconds a pass waits after the index refused a vertex of a deleted id, before it writes the graph once more
 
 
 class BoundedTransactions:
@@ -92,6 +95,14 @@ class GraphTransactions(BoundedTransactions):
 
     def full(self):
         return self.rows >= ROWS_PER_TRANSACTION
+
+
+def refused_duplicate_vertex(exc):
+    """Whether the engine refused a write because its index of ``nodes.id`` still holds a deleted vertex's id (#433).
+
+    The refusal comes at the commit. A vertex deleted in an earlier pass and written again by the next one meets it
+    (a directory renamed and renamed back): the index cannot be asked about it, as it finds no row for that id."""
+    return isinstance(exc, ArcadeError) and exc.status_code == 409 and "Duplicated key" in str(exc) and "nodes[id]" in str(exc)
 
 
 def await_vertices(store, identifiers, *timeout):

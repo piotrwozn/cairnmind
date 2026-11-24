@@ -1228,7 +1228,7 @@ def _stored_graph_is(store, project_id: str, nodes: dict[str, dict], edges: dict
 
 
 def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: dict | None = None,
-                 state: dict | None = None) -> dict:
+                 state: dict | None = None, retried: bool = False) -> dict:
     """Write the graph that follows from `indexed`.
 
     With `remembered`, the graph this process wrote last, only rows that differ are written,
@@ -1363,9 +1363,19 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             {"fingerprint": fingerprint, "nodes": len(digests), "edges": len(edge_ids), "project": project_id},
         )
         batches.commit()
-    except BaseException:
+    except BaseException as exc:
         batches.abandon()
-        raise
+        if not graph_transactions.refused_duplicate_vertex(exc):
+            raise
+        # The engine's index still holds the id of a vertex that an earlier pass deleted (a directory renamed and
+        # renamed back, #433) and the index cannot be asked about it: the commit was refused and rolled back. The graph
+        # is written once more after a wait (the fingerprint is cleared if an earlier transaction committed, so it
+        # is the whole write); a second refusal fails by name, and the graph stays marked not built.
+        if retried:
+            raise RuntimeError("The database's index of vertex ids still refused a graph vertex whose id was deleted "
+                               "shortly before; the code graph is not built and the next indexing writes it again") from exc
+        time.sleep(graph_transactions.DUPLICATE_WAIT)
+        return _build_graph(store, project_id, indexed, remembered, state, True)
     if state is not None:
         state.update(written)
     return {"nodes": len(digests), "edges": len(edge_ids), "graph_unchanged": False,

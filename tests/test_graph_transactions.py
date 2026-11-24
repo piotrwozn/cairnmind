@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from test_index_batching import code_tree, dump
 
-from conftest import counted_waits
+from conftest import counted_waits, own_time
 from cairnmind import graph_transactions, ingest
 from cairnmind.arcade import ArcadeClient
 from cairnmind.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
@@ -203,6 +203,58 @@ def test_a_vertex_delete_that_removes_fewer_rows_than_asked_fails_the_write_and_
         ingest._build_graph(store, project, moved)
     row = store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0]
     assert code_graph_pending(row)
+
+
+def hiding_stored_vertices(monkeypatch, after=0, times=None):
+    """The lookup of a vertex by its id says 'not there' for a vertex that is (``times`` lookups, from the one after ``after``):
+    the write creates it again and the engine itself refuses that, with the error it gives for the id of a vertex deleted a
+    moment ago (#433). The engine's own lag was shown by a script on a renamed directory of 160 files and more; on a test
+    engine it cannot be forced, so its answer is hidden the way the tests of ``await_vertices`` hide it."""
+    real, state = Store._checked_node, {"calls": 0, "hidden": 0}
+
+    def checked(self, tx, node):
+        out, existing = real(self, tx, node)
+        state["calls"] += 1
+        if existing and state["calls"] > after and (times is None or state["hidden"] < times):
+            state["hidden"] += 1
+            return out, None
+        return out, existing
+    monkeypatch.setattr(Store, "_checked_node", checked)
+    return state
+
+
+def test_a_vertex_the_index_refuses_for_a_duplicated_key_is_written_after_one_wait_and_the_graph_is_the_same(tmp_path, monkeypatch):
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path)
+    first = ingest._build_graph(store, project, indexed)
+    before = graph(store, project)
+    monkeypatch.setattr(ingest, "parser_identity", lambda: "another-parser")  # a full write: every vertex is written again
+    refusals, slept = hiding_stored_vertices(monkeypatch, times=1), []
+    own_time(monkeypatch, ingest, sleep=slept.append)
+    result = ingest._build_graph(store, project, indexed)  # before #433: ArcadeDB HTTP 409, Duplicated key on nodes[id]
+    assert refusals["hidden"] == 1 and slept == [graph_transactions.DUPLICATE_WAIT]
+    assert graph(store, project) == before and (result["nodes"], result["edges"]) == (first["nodes"], first["edges"])
+    assert not code_graph_pending(store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0])
+
+
+def test_a_vertex_the_index_refuses_twice_fails_by_name_leaves_the_graph_not_built_and_the_next_pass_repairs_it(tmp_path, monkeypatch):
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path, per_file=600)
+    first = ingest._build_graph(store, project, indexed)
+    before = graph(store, project)
+    monkeypatch.setattr(ingest, "parser_identity", lambda: "another-parser")
+    monkeypatch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 100)  # the first group commits, with the fingerprint cleared
+    slept = []
+    own_time(monkeypatch, ingest, sleep=slept.append)
+    with monkeypatch.context() as patch:
+        hiding_stored_vertices(patch, after=1000)  # the second group of vertices is refused, every time
+        with pytest.raises(RuntimeError, match="still refused a graph vertex"):
+            ingest._build_graph(store, project, indexed)
+    assert slept == [graph_transactions.DUPLICATE_WAIT]  # one wait, one more write, then the name
+    assert code_graph_pending(store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0])
+    result = ingest._build_graph(store, project, indexed)
+    assert graph(store, project) == before and result["nodes"] == first["nodes"]
+    assert not code_graph_pending(store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0])
 
 
 def test_the_inspector_graph_says_that_the_code_graph_is_not_built_while_it_is_being_written(tmp_path):
