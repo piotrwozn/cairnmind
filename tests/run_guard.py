@@ -17,6 +17,10 @@ Left running. After each test, what the test itself started and left running is 
 - a child process the test started (subprocess, asyncio), and the process group it leads when it was
   started in a group of its own: SIGTERM, and SIGKILL after STOP_GRACE seconds. Only a child of this
   process that has not been reaped is signalled: its pid cannot belong to anyone else.
+Then, by what the system lists (ps), every process of this user whose command line names a path under the
+test's tmp_path is stopped whatever its parent or session, and the test fails by name (#457): a service the
+product started for the test's data directory (a broker started by a panel) is nobody's child and the rest
+cannot see it.
 Processes that fixtures of a wider scope (module, session) start are theirs and are not touched; the
 default tmux socket, the installation's data directory and its port are never looked at. What was
 stopped is reported as a LeftRunning warning naming each process and socket.
@@ -36,6 +40,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import stat
@@ -351,6 +356,41 @@ def stop_engines(funcargs) -> list[str]:
     return stopped
 
 
+def processes_under(root: Path) -> list[tuple[int, str]]:
+    """(pid, command line) of every process of this user, other than this one and its parent, whose command
+    line names `root` or a path below it, whatever its parent or session: a service the product started
+    for the test's data directory is nobody's child (#457)."""
+    names = {str(root), str(root.resolve())}
+    pattern = re.compile("(?:" + "|".join(re.escape(name) for name in names) + r")(?=[/\s]|$)")
+    try:
+        listing = subprocess.run(["ps", "-U", str(os.getuid()), "-ww", "-o", "pid=,args="], capture_output=True,
+                                 text=True, timeout=10, stdin=subprocess.DEVNULL).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found = []
+    for line in listing.splitlines():
+        pid, _, args = line.strip().partition(" ")
+        if pid.isdigit() and int(pid) not in (os.getpid(), os.getppid()) and pattern.search(args):
+            found.append((int(pid), args.strip()))
+    return found
+
+
+def stop_strays(funcargs) -> list[str]:
+    """Stop what still runs with the test's tmp_path in its command line, after everything else was stopped."""
+    root = funcargs.get("tmp_path")
+    if not isinstance(root, Path) or not root.is_dir():
+        return []
+    found = processes_under(root)
+    for number in (signal.SIGTERM, signal.SIGKILL):
+        for pid, _ in found:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(pid, number)
+        deadline = time.monotonic() + (STOP_GRACE if number == signal.SIGTERM else 0)
+        while time.monotonic() < deadline and {pid for pid, _ in processes_under(root)} & {pid for pid, _ in found}:
+            time.sleep(.05)
+    return [f"process {pid} ({args[:160]})" for pid, args in found]
+
+
 def socket_directories() -> set[str]:
     """The workspace and native-run socket directories now in the product's socket base (#235)."""
     from cairnmind.runtime_sockets import KINDS, socket_directory
@@ -478,3 +518,7 @@ def leftover_processes_are_stopped(request):
     stopped = SPAWNED.stop_all(request.node)
     if stopped:
         warnings.warn(LeftRunning("The test left running, and it was stopped: " + "; ".join(stopped)))
+    strays = stop_strays(request.node.funcargs)
+    if strays:
+        pytest.fail("The test left a process of its own data directory running, with no parent to stop it "
+                    "(stopped now): " + "; ".join(strays), pytrace=False)

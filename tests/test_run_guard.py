@@ -212,6 +212,42 @@ def test_what_a_failed_test_left_running_is_stopped_after_it(tmp_path):
                 kill(pid, signal.SIGKILL)
 
 
+def test_a_process_with_no_parent_that_names_the_tests_directory_fails_the_test_and_is_stopped(tmp_path):
+    """Started by a shell that ends, so it is nobody's child: only its command line says whose it is (#457)."""
+    marker = tmp_path / "pid"
+    result, _ = inner_run(tmp_path, """
+        import os
+        from pathlib import Path
+        import subprocess
+        import sys
+        import time
+        import run_guard
+
+        def test_leaves_an_orphan(tmp_path):
+            data = tmp_path / "data"
+            data.mkdir()
+            command = f'{sys.executable} -c "import time; time.sleep(3600)" --data-dir {data} >/dev/null 2>&1 &'
+            subprocess.run(["sh", "-c", command], check=True)
+            for _ in range(100):
+                found = run_guard.processes_under(tmp_path)
+                if found:
+                    break
+                time.sleep(.05)
+            Path(os.environ["GUARD_PID"]).write_text(str(found[0][0]))
+
+        def test_after_it_passes(tmp_path):
+            pass
+    """, env={"GUARD_PID": str(marker)})
+    pid = int(marker.read_text())
+    try:
+        assert "2 passed, 1 error" in result.stdout, result.stdout  # the error is the teardown of the first
+        assert "left a process of its own data directory" in result.stdout and str(pid) in result.stdout
+        assert gone(pid), result.stdout
+    finally:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+
+
 def test_a_limit_is_a_number_of_seconds():
     assert run_guard.read_limit("2.5") == 2.5 and run_guard.read_limit("0") == 0 and run_guard.read_limit(7) == 7
     for wrong in ("", "abc", "-1", "nan", "inf", None):

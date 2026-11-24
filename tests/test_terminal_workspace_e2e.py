@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import asyncio
+import contextlib
 from dataclasses import dataclass
 import fcntl
 import inspect
@@ -29,6 +30,7 @@ import pytest
 import uvicorn
 from websockets.sync.client import connect
 
+import run_guard
 from conftest import status_flags, terminal_attributes, time_budget
 from cairnmind import client_auth
 from cairnmind.client_runtime import NativeRuntime
@@ -249,11 +251,28 @@ class TerminalStack:
         rows = [json.loads(line) for line in self.trace_path.read_text().splitlines()] if self.trace_path.exists() else []
         return [row for row in rows if event is None or row["event"] == event]
 
+    def stop_brokers_the_product_started(self):
+        """While this stack's broker is stopped, a panel of an open workspace starts a broker of its own, detached
+        by design (BrokerClient.reconnect): it is nobody's child, and only `cockpit stop` or this stops it (#457)."""
+        brokers = [pid for pid, args in run_guard.processes_under(self.settings.data_dir)
+                   if args.endswith(" cockpit serve")]
+        for number in (signal.SIGTERM, signal.SIGKILL):
+            for pid in brokers:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, number)
+            deadline = time.monotonic() + (time_budget(10) if number == signal.SIGTERM else 0)
+            while time.monotonic() < deadline:
+                brokers = [pid for pid in brokers if pane_process_alive(pid)]
+                if not brokers:
+                    return
+                time.sleep(.05)
+
     def close(self):
         if self.http:
             self.http.close()
         if self.broker:
             self.broker.stop()
+        self.stop_brokers_the_product_started()
         for row in self.runtime.list_runs():
             if row["lifecycle"] in {"running", "starting", "stopping"}:
                 self.runtime.stop(row["id"], row["generation"])
@@ -459,6 +478,14 @@ async def test_raw_bridge_real_pty_input_paste_resize_and_terminal_restore(termi
         os.close(slave)
 
 
+def pane_process_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 @pytest.fixture
 def outer_workspace(terminal_stack):
     from cairnmind.workspace import WorkspaceManager
@@ -468,7 +495,19 @@ def outer_workspace(terminal_stack):
     try:
         yield manager
     finally:
+        # A panel that is still ending when the stack's broker stops would start a broker of its own, which
+        # nobody stops (#457): the workspace's panes are gone before the stack closes.
+        pids = [int(pid) for pid in manager.tmux("list-panes", "-a", "-F", "#{pane_pid}", check=False).stdout.split()]
         manager.tmux("kill-server", check=False)
+        deadline = time.monotonic() + time_budget(10)
+        while time.monotonic() < deadline:
+            pids = [pid for pid in pids if pane_process_alive(pid)]
+            if not pids:
+                break
+            time.sleep(.05)
+        for pid in pids:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
         manager.broker.close()
 
 
