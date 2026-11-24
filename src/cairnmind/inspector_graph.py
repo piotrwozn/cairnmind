@@ -163,6 +163,8 @@ def held(inspector, scope, watermark=None):
 
     Finding them takes a scan of each table. With the journal's watermark of the request's snapshot they are remembered
     (at most CACHED scopes): the same scope at the same watermark is the same answer, and any write moves the watermark.
+    Limit: the match resolves stored paths on disk, so a link inside a stored value that is re-pointed with no write
+    keeps the old verdict until the next write; the roots of the request are re-resolved every time (they are in the key).
     """
     store, root = inspector.store, scope[1]
     result = Held()
