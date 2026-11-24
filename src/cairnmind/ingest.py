@@ -27,6 +27,7 @@ from cairnmind.embed_jobs import queue_embed_jobs
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
 from cairnmind import graph_transactions
+from cairnmind.code_graph import code_graph_pending
 from cairnmind.graph_transactions import GraphTransactions, await_vertices
 from cairnmind.journal import MAX_TRANSACTION_EVENTS
 from cairnmind.memory_paths import (bound_metadata, imported_source_ids, is_memory_path, is_reserved_below,
@@ -108,7 +109,8 @@ def _identifier(*parts: Any) -> str:
 
 
 @contextmanager
-def _ingestion_lock(store, category: str, identity: str, *, deadline: float | None = None):
+def _ingestion_lock(store, category: str, identity: str, *, deadline: float | None = None,
+                    waited: list | None = None):
     """Serialize whole ingest operations across workers and CLI processes.
 
     Native database transactions protect writes, but cannot prevent an older
@@ -121,7 +123,12 @@ def _ingestion_lock(store, category: str, identity: str, *, deadline: float | No
     descriptor = os.open(filename, os.O_CREAT | os.O_RDWR, 0o600)
     try:
         if deadline is None:
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                if waited is not None:
+                    waited.append(True)  # whoever held it may have changed what was read before
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
         else:
             while True:
                 if time.monotonic() >= deadline:
@@ -183,19 +190,21 @@ class _NestedMemory:
         return is_reserved_below(Path(*parts), self._bases)
 
 
-def _walk_args(store, root: Path, errors: list[OSError]):
-    """(excluded, errors, nested) for _files: what a walk of a root leaves out besides its own reserved
+def _walk_args(store, root: Path, errors: list[OSError], links: list | None = None):
+    """(excluded, errors, nested, links) for _files: what a walk of a root leaves out besides its own reserved
     memory, the data directory and the memory directories of the projects registered below it (#174)."""
-    return (store.data_dir,), errors, _NestedMemory(store, root)
+    return (store.data_dir,), errors, _NestedMemory(store, root), links
 
 
 def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | None = None,
-           nested: _NestedMemory | None = None):
+           nested: _NestedMemory | None = None, links: list | None = None):
     """Walk with nested gitignore rules. Symlinks are deliberately not followed.
 
     A directory that cannot be listed is appended to `errors`: the walk is then incomplete,
     and its caller must not treat the files it did not see as deleted. `nested`: the memory
-    directories of projects registered below the root (#174), also left out.
+    directories of projects registered below the root (#174), also left out. `links` receives
+    (path, what it says) of every symlink in the directories the walk lists and leaves out: resolving an import follows
+    them, so a link that is moved, added or removed moves an import (#451).
     """
     rules: dict[Path, pathspec.GitIgnoreSpec] = {}
     # Also by identity: on a file system that ignores case the root may be registered with other letter
@@ -205,6 +214,18 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
     def left_out(path: Path) -> bool:
         return (any(path.is_relative_to(base) for base in excluded) or (nested is not None and nested.covers(path))
                 or (bool(excluded_ids) and path_identity(path) in excluded_ids))
+
+    def link(item: Path) -> bool:
+        if not item.is_symlink():
+            return False
+        if links is not None:
+            # What the link says, one call: a chain, a loop and a broken link need no more, as every link inside the
+            # root is noted too. (A link outside the root that leads back in is not: it is treated as today.)
+            try:
+                links.append((str(item), os.readlink(item)))
+            except OSError:  # replaced under the walk: noted as gone, the signature differs and a pass resolves again
+                links.append((str(item), None))
+        return True
 
     for directory, dirs, names in os.walk(root, followlinks=False,
                                           onerror=errors.append if errors is not None else None):
@@ -230,9 +251,8 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
             return answer
 
         dirs[:] = sorted(
-            name for name in dirs
-            if not excluded_directory(name) and not (folder / name).is_symlink()
-            and not is_memory_path(folder / name, root)
+            name for name in sorted(dirs)  # sorted before the links are noted: the same order every round
+            if not (link(folder / name) or excluded_directory(name)) and not is_memory_path(folder / name, root)
             # A memory package kept deeper in the tree, such as a sample, is somebody's stored memory
             # and not text of this project: its rows are not indexed as sources.
             and not (folder.name.casefold() == ".memory" and name.casefold() in ("cairnmind", "devbrain"))
@@ -241,7 +261,7 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
         )
         for name in sorted(names):
             path = folder / name
-            if path.is_symlink() or _is_secret(path) or ignored(path):
+            if link(path) or _is_secret(path) or ignored(path):
                 continue
             yield path
 
@@ -571,19 +591,25 @@ def _file_identity(status: os.stat_result) -> tuple:
     return (status.st_dev, status.st_ino, status.st_mode, status.st_size, status.st_mtime_ns, status.st_ctime_ns)
 
 
-def _tree_state(store, project_id: str) -> tuple[str, int, bool, list[dict]]:
+def _tree_state(store, project_id: str, listing: dict | None = None) -> tuple[str, int, bool, list[dict]]:
     """The signature, the newest file time seen, whether every directory could be listed, and the folders
-    that are not available on this machine (#371): those are named in the signature and never walked."""
+    that are not available on this machine (#371): those are named in the signature and never walked.
+    `listing` receives what the walk found, so that the indexing that follows does not walk again (#409)."""
     project = store.resolve_project(project_id)
     entries: list[Any] = [parser_identity()]
     newest, errors, away = 0, [], []
+    links: list[tuple[str, str]] = []
+    if listing is not None:
+        listing.update(files={}, errors=errors, links=links)
     for folder in project_folders.folder_states(store, project):
         root = Path(folder["root"])
         if folder["state"] != "available":
             entries.append([folder["root"], folder["state"]])
             away.append(folder)
             continue
-        for path in _files(root, *_walk_args(store, root, errors)):
+        walked = [] if listing is None else listing["files"].setdefault(folder["root"], [])
+        for path in _files(root, *_walk_args(store, root, errors, links)):
+            walked.append(path)
             try:
                 status = os.stat(path, follow_symlinks=False)
             except OSError:
@@ -591,6 +617,7 @@ def _tree_state(store, project_id: str) -> tuple[str, int, bool, list[dict]]:
                 continue
             entries.append([str(path), status.st_size, status.st_mtime_ns, status.st_ctime_ns])
             newest = max(newest, status.st_mtime_ns, status.st_ctime_ns)
+    entries.extend(links)  # a link moved, added or removed alone changes the signature, so a pass runs (#451)
     return hashlib.sha256(_json(entries).encode()).hexdigest(), newest, not errors, away
 
 
@@ -629,26 +656,36 @@ def forget_missing_projects(store, project_ids) -> None:
             remembered.pop(key, None)
 
 
-def index_project(store, project_id: str) -> dict:
+def index_project(store, project_id: str, walk: tuple | None = None) -> dict:
     """Snapshot changed files, update chunks, and bring the derived code graph up to date.
 
     Files that this process indexed before and whose identity on disk is unchanged are not
     opened again, and only graph rows that differ are written. The result is the index a
     run that reads every file would produce; the first run of a process is such a run.
+    `walk` is the walk that `index_project_if_changed` made just before: the invalidations and the time
+    taken before it, and what it found. It is used only when the lock was free: after waiting for another
+    indexing, the sources it read are newer than the walk, and a file created meanwhile would be seen as deleted (#409).
     """
     project_id = store.resolve_project(project_id)["id"]
     key = (str(store.data_dir), project_id)
-    with _ingestion_lock(store, "project", project_id):
+    waited: list[bool] = []
+    with _ingestion_lock(store, "project", project_id, waited=waited):
+        if waited:
+            walk = None
         # No signature while indexing runs or after it raises: a concurrent or later caller
         # then waits for the lock and indexes, instead of trusting a half-written index.
         _INDEXED.pop(key, None)
         previous = _REMEMBERED.pop(key, None)
-        invalidations = _INVALIDATIONS.get(key[0], 0)
-        # Taken before any file is read: a file edited during indexing then differs next time.
-        started = time.time_ns()
-        signature, newest, complete, _ = _tree_state(store, project_id)
+        if walk is None:
+            invalidations = _INVALIDATIONS.get(key[0], 0)
+            # Taken before any file is read: a file edited during indexing then differs next time.
+            started, listing = time.time_ns(), {}
+            tree = _tree_state(store, project_id, listing)
+        else:
+            invalidations, started, tree, listing = walk
+        signature, newest, complete, _ = tree
         state: dict = {}
-        result = _index_project_locked(store, project_id, previous, state, started)
+        result = _index_project_locked(store, project_id, previous, state, started, listing)
         if _INVALIDATIONS.get(key[0], 0) == invalidations:
             _REMEMBERED[key] = state
             # A folder that is not here is no reason to index again: its sentence is only repeated (#371).
@@ -668,8 +705,12 @@ def index_project_if_changed(store, project_id: str) -> dict:
     """
     project_id = store.resolve_project(project_id)["id"]
     recorded = _INDEXED.get((str(store.data_dir), project_id))
+    walk = None
     if recorded is not None:
-        signature, _, complete, away = _tree_state(store, project_id)
+        invalidations, started, listing = _INVALIDATIONS.get(str(store.data_dir), 0), time.time_ns(), {}
+        tree = _tree_state(store, project_id, listing)
+        signature, _, complete, away = tree
+        walk = invalidations, started, tree, listing
         if complete and signature == recorded:
             skipped = {"files": 0, "changed": 0, "unchanged": 0, "deleted": 0, "chunks": 0, "errors": [], "skipped": True}
             if away:
@@ -680,18 +721,20 @@ def index_project_if_changed(store, project_id: str) -> dict:
                 if kept:
                     skipped["errors"].append(kept)
             return skipped
-    return index_project(store, project_id)
+    return index_project(store, project_id, walk)
 
 
 def _index_project_locked(store, project_id: str, previous: dict | None = None, state: dict | None = None,
-                          started: int | None = None) -> dict:
-    """Index under the project lock. `previous` is what an earlier run remembered; `state` receives this run's."""
+                          started: int | None = None, listing: dict | None = None) -> dict:
+    """Index under the project lock. `previous` is what an earlier run remembered; `state` receives this run's.
+    `listing` is the walk that was made for the signature: the folders it found are not walked again (#409)."""
     project = store.resolve_project(project_id)
     project_id = project["id"]
     counts: dict[str, Any] = {"files": 0, "changed": 0, "unchanged": 0, "deleted": 0, "chunks": 0, "errors": [],
                               "read": 0}
     indexed: dict[Path, dict] = {}
-    walk_errors: list[OSError] = []
+    walk_errors: list[OSError] = list((listing or {}).get("errors", []))
+    links: list[tuple[str, str]] = list((listing or {}).get("links", []))
     folders = project_folders.folder_states(store, project)
     registered_roots = [Path(folder["root"]) for folder in folders]
     away = {folder["root"] for folder in folders if folder["state"] != "available"}
@@ -783,7 +826,8 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
         commit = _git(root, "rev-parse", "HEAD") or None
         if folder["adopt"]:
             walked.append(folder["row_id"])
-        for path in _files(root, *_walk_args(store, root, walk_errors)):
+        walked_here = (listing or {}).get("files", {}).get(folder["root"])
+        for path in walked_here if walked_here is not None else _files(root, *_walk_args(store, root, walk_errors, links)):
             name = str(path)
             try:
                 # Before the file is opened: an edit made while it is read then shows as a new identity.
@@ -923,7 +967,8 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
             indexed[Path(row["path"])] = {
                 "source": {"id": row["id"], "uri": row["uri"], "kind": row["kind"]}, "analysis": analyses[row["id"]],
                 "root": Path(row.get("root") or project["root"])}
-        counts.update(_build_graph(store, project_id, indexed, previous.get("graph") if previous else None, graph))
+        counts.update(_build_graph(store, project_id, indexed, previous.get("graph") if previous else None, graph,
+                                    False, tuple(links)))
     if away:
         counts["unavailable"] = [project_folders.entry(project, folder) for folder in folders
                                  if folder["root"] in away]
@@ -976,7 +1021,12 @@ def _resolve_import(path: Path, root: Path, module: str, indexed: dict[Path, dic
         # TypeScript often names emitted .js while the source is .ts.
         if target.suffix == ".js":
             candidates.extend([target.with_suffix(".ts"), target.with_suffix(".tsx")])
-    return next((p.resolve() for p in candidates if p.resolve() in indexed), None)
+    def reached(candidate: Path) -> Path | None:
+        try:
+            return candidate.resolve()
+        except (RuntimeError, OSError):  # a loop of symlinks leads nowhere: the import stays unresolved (#451)
+            return None
+    return next((found for found in map(reached, candidates) if found in indexed), None)
 
 
 def _node_digest(item: dict) -> bytes:
@@ -991,12 +1041,185 @@ def _graph_as_remembered(tx, project_id: str, remembered: dict | None) -> bool:
                        {"project": project_id})
     if not markers or markers[0].get("graph_fingerprint") != remembered["fingerprint"]:
         return False
-    if (int(markers[0].get("graph_nodes") or 0), int(markers[0].get("graph_edges") or 0)) != (
-            len(remembered["nodes"]), len(remembered["edges"])):
+    if (int(markers[0].get("graph_nodes") or 0), int(markers[0].get("graph_edges") or 0)) != remembered["counts"]:
         return False
     stored = tx.query("SELECT count(*) AS total FROM edges WHERE project_id=:project AND kind IN :kinds",
                       {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)})
-    return bool(stored) and int(stored[0].get("total") or 0) == len(remembered["edges"])
+    if not stored or int(stored[0].get("total") or 0) != remembered["counts"][1]:
+        return False
+    # The nodes that are not evidence nodes: counted, not read one by one, to know that none was added or taken (#426).
+    stored = tx.query("SELECT count(*) AS total FROM nodes WHERE project_id=:project AND kind IN :kinds",
+                      {"project": project_id, "kinds": list(GRAPH_NODE_KINDS)})
+    return bool(stored) and int(stored[0].get("total") or 0) == remembered["code_nodes"]
+
+
+def _code_nodes(digests: dict) -> int:
+    """The nodes of a graph that `_build_graph` may delete: every node but the evidence nodes of the sources."""
+    return sum(1 for identifier in digests if not identifier.startswith("source:"))
+
+
+def _union(parts: dict) -> tuple[dict[str, bytes], set[str]]:
+    """The digest of every node and the id of every edge of a graph, from its parts."""
+    nodes: dict[str, bytes] = {}
+    edges: set[str] = set()
+    for part in parts.values():
+        for digests, ids in (part["first"], part["second"]):
+            nodes.update(digests)
+            edges |= ids
+    return nodes, edges
+
+
+def _graph_parts(project_id: str, indexed: dict[Path, dict], reuse: dict) -> tuple[dict, dict, dict]:
+    """The graph that follows from `indexed`: its parts, and the rows (nodes, edges) that were computed for them.
+
+    A part is what one file adds: `first` is its own rows (the file, its source and its symbols), `second` the
+    rows of its imports and calls, which look at the symbols of the files it imports; each is the digests of the
+    nodes and the ids of the edges. `reuse` are the parts of the last graph of this process, for the very same
+    files: then only a file whose source changed is computed again, and the files that import a file whose
+    symbols changed (a name, or a line, is in the id of a symbol). Resolving an import looks only at which files
+    exist, and these are the same. The parts, and so the graph, are those of a computation of every file.
+    """
+    tables: dict[Path, dict[str, list[dict]]] = {}
+    firsts: dict[Path, tuple[dict, dict]] = {}
+
+    def emitters(nodes: dict, edges: dict):
+        def node(kind: str, label: str, source_id: str | None, metadata: dict, identity: str | None = None) -> str:
+            identifier = _identifier(project_id, kind, identity or label)
+            nodes[identifier] = {"id": identifier, "project_id": project_id, "kind": kind,
+                                 "label": label, "source_id": source_id, "metadata": metadata}
+            return identifier
+
+        def edge(first: str, second: str, kind: str, source_id: str, line: int = 0):
+            identifier = _identifier(project_id, first, second, kind, source_id, line)
+            edges[identifier] = {"id": identifier, "project_id": project_id, "from_id": first, "to_id": second,
+                                 "kind": kind, "source_id": source_id, "status": "observed"}
+        return node, edge
+
+    def file_node(path: Path) -> str:
+        return _identifier(project_id, "file", str(path))
+
+    def first(path: Path) -> tuple[dict, dict]:
+        if path not in firsts:
+            entry = indexed[path]
+            source = entry["source"]
+            nodes, edges = {}, {}
+            node, edge = emitters(nodes, edges)
+            identifier = node("file", str(path), source["id"], {"path": str(path)}, str(path))
+            # Store.remember uses exactly this evidence-node identity. Bridging the
+            # immutable snapshot to the file node connects decision/task provenance
+            # to real code dependencies without guessing a semantic relationship.
+            source_node = f"source:{source['id']}"
+            nodes[source_node] = {
+                "id": source_node, "project_id": project_id, "kind": "source", "label": source["uri"],
+                "source_id": source["id"], "metadata": {"source_id": source["id"], "source_kind": source["kind"]},
+            }
+            edge(source_node, identifier, "snapshot_of", source["id"])
+            tables[path] = {}
+            for item in entry["analysis"]["symbols"]:
+                symbol = node("symbol", item["name"], source["id"], {**item, "path": str(path)},
+                              f"{path}:{item['name']}:{item['line_start']}")
+                tables[path].setdefault(item["name"], []).append({**item, "id": symbol})
+                edge(identifier, symbol, "defines", source["id"], item["line_start"])
+            firsts[path] = nodes, edges
+        return firsts[path]
+
+    resolved: dict[tuple, Path | None] = {}
+
+    def lead(path: Path, root: Path, module: str) -> Path | None:
+        # What an import leads to depends on the kind of file, the folder it starts from and the module only; a
+        # standard module is looked for by many files.
+        key = path.suffix in {".py", ".pyi"}, path.parent if module.startswith(".") else root, module
+        if key not in resolved:
+            resolved[key] = _resolve_import(path, root, module, indexed)
+        return resolved[key]
+
+    def leads_to(path: Path) -> tuple:
+        entry = indexed[path]
+        return tuple(lead(path, entry["root"], item["module"]) for item in entry["analysis"]["imports"])
+
+    def second(path: Path) -> tuple[dict, dict, set[Path]]:
+        entry = indexed[path]
+        source_id = entry["source"]["id"]
+        nodes, edges, targets = {}, {}, set()
+        node, edge = emitters(nodes, edges)
+        first(path)
+        symbols = tables[path]
+        imported: dict[str, tuple[Path, str]] = {}
+        namespace: dict[str, Path] = {}
+        is_test = path.name.startswith("test_") or bool(re.search(r"[._](test|spec)\.", path.name))
+        for item in entry["analysis"]["imports"]:
+            module = item["module"]
+            target = lead(path, entry["root"], module)
+            if target is None:
+                target_id = node("external_module", module, None, {"unresolved": True})
+            else:
+                targets.add(target)
+                target_id = file_node(target)
+                aliases = item.get("aliases", {})
+                for name in item.get("names", []):
+                    local = aliases.get(name, name)
+                    if name in {module, "*"}:
+                        namespace[local] = target
+                    else:
+                        imported[local] = (target, name)
+            edge(file_node(path), target_id, "imports", source_id, item["line"])
+            if is_test and target is not None:
+                edge(file_node(path), target_id, "test_imports", source_id, item["line"])
+        for item in entry["analysis"]["calls"]:
+            label = item["name"]
+            candidates = symbols.get(label, [])
+            if label in imported:
+                target, original = imported[label]
+                first(target)
+                candidates = tables[target].get(original, [])
+            if "." in label:
+                head, last = label.rsplit(".", 1)
+                if head in namespace:
+                    first(namespace[head])
+                    candidates = tables[namespace[head]].get(last, [])
+            # A call in a parameter's default belongs to the function, not to the parameter.
+            owner_candidates = [
+                symbol for group in symbols.values() for symbol in group
+                if symbol["line_start"] <= item["line"] <= symbol["line_end"] and symbol.get("kind") != "parameter"
+            ]
+            owner = min(owner_candidates, key=lambda s: s["line_end"] - s["line_start"])["id"] if owner_candidates else file_node(path)
+            if len(candidates) == 1:
+                edge(owner, candidates[0]["id"], "calls", source_id, item["line"])
+            else:
+                target_id = node(
+                    "unresolved_reference", label, source_id,
+                    {"path": str(path), "line": item["line"], "unresolved": True}, f"{path}:{label}:{item['line']}",
+                )
+                edge(owner, target_id, "references", source_id, item["line"])
+        return nodes, edges, targets
+
+    def part(rows: tuple[dict, dict]) -> tuple[dict, set]:
+        return {identifier: _node_digest(item) for identifier, item in rows[0].items()}, set(rows[1])
+
+    parts: dict[Path, dict] = dict(reuse)
+    nodes: dict[str, dict] = {}
+    edges: dict[str, dict] = {}
+    keys = {path: (entry["source"]["id"], entry["source"]["uri"], entry["source"]["kind"], str(entry["root"]))
+            for path, entry in indexed.items()}
+    changed = [path for path in indexed if path not in reuse or reuse[path]["key"] != keys[path]]
+    moved: set[Path] = set()
+    for path in changed:
+        rows = first(path)
+        # With multiplicity: two symbols of one id make a call ambiguous, and one does not.
+        symbols = tuple(sorted(item["id"] for group in tables[path].values() for item in group))
+        if not reuse or reuse[path]["symbols"] != symbols:
+            moved.add(path)
+        parts[path] = {"key": keys[path], "symbols": symbols, "first": part(rows)}
+        nodes.update(rows[0])
+        edges.update(rows[1])
+    # Resolving an import follows a symlink, which the walk leaves out: where every import leads is asked again, and
+    # a file whose imports lead elsewhere is computed again though no file changed.
+    for path in set(changed) | {path for path, old in reuse.items() if old["deps"] & moved or old["leads"] != leads_to(path)}:
+        *rows, targets = second(path)
+        parts[path] = {**parts[path], "deps": frozenset(targets), "leads": leads_to(path), "second": part(rows)}
+        nodes.update(rows[0])
+        edges.update(rows[1])
+    return parts, nodes, edges
 
 
 def _stored_graph_is(store, project_id: str, nodes: dict[str, dict], edges: dict[str, dict]) -> bool:
@@ -1028,12 +1251,13 @@ def _stored_graph_is(store, project_id: str, nodes: dict[str, dict], edges: dict
 
 
 def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: dict | None = None,
-                 state: dict | None = None) -> dict:
+                 state: dict | None = None, retried: bool = False, links: tuple = ()) -> dict:
     """Write the graph that follows from `indexed`.
 
     With `remembered`, the graph this process wrote last, only rows that differ are written,
     provided the database still holds exactly that graph. Otherwise every row is replaced.
-    `state` receives what was written, for the next call.
+    `state` receives what was written, for the next call. `links` are the symlinks the walk saw and where they
+    lead: resolving an import follows them, and the fingerprint, which holds only files, does not (#451).
     """
     fingerprint = _identifier(parser_identity(), *[
         f"{path}:{indexed[path]['source']['id']}" for path in sorted(indexed)
@@ -1043,98 +1267,25 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         {"project": project_id},
     )
     unchanged = bool(markers) and markers[0].get("graph_fingerprint") == fingerprint
-    if unchanged and (state is None or (remembered and remembered["fingerprint"] == fingerprint)):
+    ours = unchanged and bool(remembered) and remembered["fingerprint"] == fingerprint  # the stored graph is this process's
+    if unchanged and (state is None or (ours and remembered.get("links", ()) == links)):
         if state is not None:
             state.update(remembered)
         return {"nodes": int(markers[0].get("graph_nodes") or 0),
                 "edges": int(markers[0].get("graph_edges") or 0), "graph_unchanged": True}
-    nodes: dict[str, dict] = {}
-    edges: dict[str, dict] = {}
-    symbols: dict[Path, dict[str, list[dict]]] = {}
-
-    def node(kind: str, label: str, source_id: str | None, metadata: dict, identity: str | None = None) -> str:
-        identifier = _identifier(project_id, kind, identity or label)
-        nodes[identifier] = {"id": identifier, "project_id": project_id, "kind": kind,
-                             "label": label, "source_id": source_id, "metadata": metadata}
-        return identifier
-
-    def edge(first: str, second: str, kind: str, source_id: str, line: int = 0):
-        identifier = _identifier(project_id, first, second, kind, source_id, line)
-        edges[identifier] = {"id": identifier, "project_id": project_id, "from_id": first, "to_id": second,
-                             "kind": kind, "source_id": source_id, "status": "observed"}
-
-    file_nodes = {}
-    for path, entry in indexed.items():
-        source = entry["source"]
-        file_nodes[path] = node("file", str(path), source["id"], {"path": str(path)}, str(path))
-        # Store.remember uses exactly this evidence-node identity. Bridging the
-        # immutable snapshot to the file node connects decision/task provenance
-        # to real code dependencies without guessing a semantic relationship.
-        source_node = f"source:{source['id']}"
-        nodes[source_node] = {
-            "id": source_node, "project_id": project_id, "kind": "source", "label": source["uri"],
-            "source_id": source["id"], "metadata": {"source_id": source["id"], "source_kind": source["kind"]},
-        }
-        edge(source_node, file_nodes[path], "snapshot_of", source["id"])
-        symbols[path] = {}
-        for item in entry["analysis"]["symbols"]:
-            identifier = node(
-                "symbol", item["name"], source["id"], {**item, "path": str(path)},
-                f"{path}:{item['name']}:{item['line_start']}",
-            )
-            symbols[path].setdefault(item["name"], []).append({**item, "id": identifier})
-            edge(file_nodes[path], identifier, "defines", source["id"], item["line_start"])
-
-    for path, entry in indexed.items():
-        source_id = entry["source"]["id"]
-        imported: dict[str, tuple[Path, str]] = {}
-        namespace: dict[str, Path] = {}
-        is_test = path.name.startswith("test_") or bool(re.search(r"[._](test|spec)\.", path.name))
-        for item in entry["analysis"]["imports"]:
-            module = item["module"]
-            target = _resolve_import(path, entry["root"], module, indexed)
-            if target is None:
-                target_id = node("external_module", module, None, {"unresolved": True})
-            else:
-                target_id = file_nodes[target]
-                aliases = item.get("aliases", {})
-                for name in item.get("names", []):
-                    local = aliases.get(name, name)
-                    if name in {module, "*"}:
-                        namespace[local] = target
-                    else:
-                        imported[local] = (target, name)
-            edge(file_nodes[path], target_id, "imports", source_id, item["line"])
-            if is_test and target is not None:
-                edge(file_nodes[path], target_id, "test_imports", source_id, item["line"])
-        for item in entry["analysis"]["calls"]:
-            label = item["name"]
-            candidates = symbols[path].get(label, [])
-            if label in imported:
-                target, original = imported[label]
-                candidates = symbols[target].get(original, [])
-            if "." in label:
-                first, last = label.rsplit(".", 1)
-                if first in namespace:
-                    candidates = symbols[namespace[first]].get(last, [])
-            # A call in a parameter's default belongs to the function, not to the parameter.
-            owner_candidates = [
-                symbol for group in symbols[path].values() for symbol in group
-                if symbol["line_start"] <= item["line"] <= symbol["line_end"] and symbol.get("kind") != "parameter"
-            ]
-            owner = min(owner_candidates, key=lambda s: s["line_end"] - s["line_start"])["id"] if owner_candidates else file_nodes[path]
-            if len(candidates) == 1:
-                edge(owner, candidates[0]["id"], "calls", source_id, item["line"])
-            else:
-                target_id = node(
-                    "unresolved_reference", label, source_id,
-                    {"path": str(path), "line": item["line"], "unresolved": True}, f"{path}:{label}:{item['line']}",
-                )
-                edge(owner, target_id, "references", source_id, item["line"])
-
-    digests = {identifier: _node_digest(item) for identifier, item in nodes.items()}
-    written = {"fingerprint": fingerprint, "nodes": digests, "edges": set(edges)}
-    if unchanged and _stored_graph_is(store, project_id, nodes, edges):
+    # The last graph of this process is the start only for the very same files, and when the stored fingerprint
+    # is not already ours (a graph that another writer made is compared row by row below).
+    last = remembered or {}
+    reuse = last.get("parts") or {}
+    if (unchanged and not ours) or last.get("parser") != parser_identity() or reuse.keys() != indexed.keys():
+        reuse = {}
+    parts, nodes, edges = _graph_parts(project_id, indexed, reuse)
+    digests, edge_ids = _union(parts)
+    written = {"fingerprint": fingerprint, "parser": parser_identity(), "parts": parts, "links": links,
+               "counts": (len(digests), len(edge_ids)), "code_nodes": _code_nodes(digests)}
+    # Not for a graph that is ours and only a link moved: the write below checks it against the remembered one
+    # by counts, and writes the rows that differ, as after a changed file.
+    if unchanged and not ours and _stored_graph_is(store, project_id, nodes, edges):
         # The fingerprint said that the stored graph follows from these sources, and this
         # process has now seen that it does, row for row. Otherwise it is replaced in full below.
         state.update(written)
@@ -1148,13 +1299,23 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         if not tx.query("SELECT id FROM projects WHERE id=:project", {"project": project_id}):
             raise ValueError("Project no longer exists; graph was not rebuilt")
         as_remembered = _graph_as_remembered(tx, project_id, remembered)  # reads the fingerprint: before it is cleared
+        if reuse and not as_remembered:
+            # Only the rows of the files that changed were computed, and the stored graph is not the remembered
+            # one: the rows of every file are needed to compare with it.
+            parts, nodes, edges = _graph_parts(project_id, indexed, {})
+            digests, edge_ids = _union(parts)
+            written.update(parts=parts, counts=(len(digests), len(edge_ids)), code_nodes=_code_nodes(digests))
         tx.command("UPDATE projects SET graph_fingerprint=null WHERE id=:project", {"project": project_id})
         if as_remembered:
-            kept = remembered["edges"]
-            removed = sorted(kept - edges.keys())
-            changed_nodes = [item for identifier, item in nodes.items()
-                             if remembered["nodes"].get(identifier) != digests[identifier]]
+            before, kept = _union(remembered["parts"])
+            removed = sorted(kept - edge_ids)
+            changed_nodes = [item for identifier, item in nodes.items() if before.get(identifier) != digests[identifier]]
+            # The stored nodes are those the process wrote (counted above): the ones that go are known, not read.
+            doomed = sorted(identifier for identifier in before if identifier not in digests and not identifier.startswith("source:"))
+            carried = remembered.get("kept", frozenset()) - digests.keys()  # kept before, still not computed
         else:
+            doomed = None
+            carried = frozenset()
             # An edge's id names its ends, kind, source and line: a stored edge with a computed id and the marks a
             # full replace gives it is that edge, and it stays. Deleting every edge and writing the same ids again
             # left the engine's unique index holding entries of the deleted ones from about 40,000 edges on, and
@@ -1168,13 +1329,22 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             removed = sorted(row["id"] for row in stored if row["id"] not in kept)
             changed_nodes = list(nodes.values())
         # A whole transaction's rows in one request: with the project in the condition the engine scans the project's
-        # index once per request, so groups of 500 made the scans, and the removal's cost, 80 times more (#385).
+        # index once per request, so groups of 500 made the scans, and the removal's cost, 80 times more (#385). By id
+        # alone it finds each edge in the index of its id (25 ms for 1,000 edges of 110,000, not 230, #426); the id
+        # holds the project, and the count below fails the write when a group is not deleted in full. The journal
+        # takes the project from the parameter (Journal.command), so it reads none of the rows.
         group = graph_transactions.ROWS_PER_TRANSACTION
         for offset in range(0, len(removed), group):
             part = removed[offset:offset + group]
-            deleted = batches.tx.command("DELETE FROM edges WHERE project_id=:project AND kind IN :kinds AND id IN :ids",
-                                         {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS), "ids": part})
+            deleted = batches.tx.command("DELETE FROM edges WHERE id IN :ids", {"project": project_id, "ids": part})
             count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
+            if type(count) is int and count < len(part):
+                # The engine's index of ids missed rows (569 of 20,000 after two commits of the same write, the way
+                # it misses vertices committed a moment ago, graph_transactions.py): the project's index finds the rest.
+                rest = batches.tx.command("DELETE FROM edges WHERE project_id=:project AND kind IN :kinds AND id IN :ids",
+                                          {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS), "ids": part})
+                more = rest[0].get("count") if isinstance(rest, list) and rest and isinstance(rest[0], dict) else None
+                count = count + more if type(more) is int else None
             if type(count) is not int or count != len(part):
                 raise RuntimeError("The database did not delete every graph edge of a group")
             batches.wrote(len(part))
@@ -1199,29 +1369,48 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         tx = batches.tx
         if hasattr(tx, "known"):
             tx.known = None
-        previous_nodes = tx.query(
-            "SELECT id FROM nodes WHERE project_id=:project AND kind IN :kinds",
-            {"project": project_id, "kinds": list(GRAPH_NODE_KINDS)},
-        )
+        if doomed is None:
+            previous_nodes = tx.query(
+                "SELECT id FROM nodes WHERE project_id=:project AND kind IN :kinds",
+                {"project": project_id, "kinds": list(GRAPH_NODE_KINDS)},
+            )
+            doomed = [row["id"] for row in previous_nodes if row["id"] not in digests]
         # Knowledge-record relationships referencing a removed code node must not silently
         # become dangling: such a node is retained. The rest go in groups (issue #167).
-        doomed = [row["id"] for row in previous_nodes if row["id"] not in nodes]
+        kept_nodes = set(carried)
         for offset in range(0, len(doomed), graph_transactions.ROWS_PER_TRANSACTION):
-            store.remove_graph_nodes(batches.tx, project_id, doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION])
+            kept_nodes.update(store.remove_graph_nodes(batches.tx, project_id, doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION]) or ())
             batches.wrote(len(doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION]))
+        # What the store holds is what was computed and what an edge keeps: the next pass counts exactly that.
+        written.update(kept=frozenset(kept_nodes), code_nodes=_code_nodes(digests) + len(kept_nodes))
         # This marker commits with the last of the vertex/edge replacement, and until it does the graph is not built.
         # An interrupted/failed graph write can never claim completion.
         batches.tx.command(
             "UPDATE projects SET graph_fingerprint=:fingerprint,graph_nodes=:nodes,graph_edges=:edges WHERE id=:project",
-            {"fingerprint": fingerprint, "nodes": len(nodes), "edges": len(edges), "project": project_id},
+            {"fingerprint": fingerprint, "nodes": len(digests), "edges": len(edge_ids), "project": project_id},
         )
         batches.commit()
-    except BaseException:
+    except BaseException as exc:
         batches.abandon()
-        raise
+        if not graph_transactions.refused_by_id_index(exc):
+            raise
+        # The engine's index still holds the id of a vertex that an earlier pass deleted (a directory renamed and
+        # renamed back, #433) and the index cannot be asked about it: the commit was refused, or an edge found no
+        # endpoint, and the transaction was rolled back. The graph is written once more after a wait (the fingerprint
+        # is cleared if an earlier transaction committed, so it is the whole write); a second refusal fails by name.
+        if retried:
+            row = store.query("SELECT graph_fingerprint FROM projects WHERE id=:project", {"project": project_id})
+            # Only a write of several transactions has committed anything: one that fits in one leaves the previous graph.
+            left = ("the code graph is marked not built" if not row or code_graph_pending(row[0]) else
+                    "the previous code graph is kept, though it no longer matches the files")
+            raise RuntimeError(f"The database's index of vertex ids still refused a graph vertex whose id was deleted "
+                               f"shortly before, {graph_transactions.DUPLICATE_WAIT:g} s after the first refusal ({str(exc)[:300]}); "
+                               f"{left} and the next indexing writes the graph again") from exc
+        time.sleep(graph_transactions.DUPLICATE_WAIT)
+        return {**_build_graph(store, project_id, indexed, remembered, state, True, links), "graph_written_again": True}
     if state is not None:
         state.update(written)
-    return {"nodes": len(nodes), "edges": len(edges), "graph_unchanged": False,
+    return {"nodes": len(digests), "edges": len(edge_ids), "graph_unchanged": False,
             "graph_written": {"nodes": len(changed_nodes), "edges": len(new_edges)}}
 
 
