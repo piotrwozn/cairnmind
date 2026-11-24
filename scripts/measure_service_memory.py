@@ -305,7 +305,7 @@ class Measurement:
         time.sleep(idle)
         row["idle"] = self.sample(full=True)
         row["rss_after_each_repetition"] = readings
-        row["growth_per_repetition_mb"] = round(slope(readings), 3) if readings else None
+        row["growth_per_repetition_mb"] = round(slope(readings[-count:] if count else readings), 3) if readings else None  # step 6: only its graph half
         self.steps.append(row)
         print(json.dumps({k: v for k, v in row.items() if k != "idle"} | {"idle_rss_mb": row["idle"]["rss_mb"]}), flush=True)
 

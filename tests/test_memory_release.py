@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 
 import pytest
@@ -15,6 +16,48 @@ GLIBC = sys.platform.startswith("linux") and os.confstr("CS_GNU_LIBC_VERSION").s
 def test_glibc_accepts_the_arena_limit_and_trims():
     assert memory_release.limit_arenas(2) is True
     assert memory_release.release_freed() is True
+
+
+SCATTERED = """
+import ctypes, threading
+from cairnmind import memory_release
+
+def rss():
+    return int([l for l in open("/proc/self/status") if l.startswith("VmRSS")][0].split()[1]) / 1024
+
+libc = ctypes.CDLL(None)
+libc.malloc.restype = ctypes.c_void_p
+libc.free.argtypes = [ctypes.c_void_p]
+kept = []
+
+def work():  # what a worker does: build a lot, free nearly all of it, keep a few scattered chunks
+    chunks = []
+    for _ in range(40_000):
+        pointer = libc.malloc(1000)
+        ctypes.memset(pointer, 1, 1000)
+        chunks.append(pointer)
+    for number, pointer in enumerate(chunks):
+        kept.append(pointer) if number % 50 == 0 else libc.free(pointer)
+
+assert memory_release.limit_arenas(2)
+start = rss()
+threads = [threading.Thread(target=work) for _ in range(4)]
+[t.start() for t in threads]
+[t.join() for t in threads]
+held = rss() - start
+assert memory_release.release_freed()
+print(held, rss() - start)
+"""
+
+
+@pytest.mark.skipif(not GLIBC, reason="glibc only")
+def test_release_freed_gives_back_what_freed_worker_threads_still_hold():
+    done = subprocess.run([sys.executable, "-c", SCATTERED], capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    held, left = (float(number) for number in done.stdout.split())
+    if held < 30:
+        pytest.skip("this glibc already returned the memory by itself")
+    assert left < held / 2
 
 
 def test_without_glibc_both_say_false_and_do_nothing(monkeypatch):

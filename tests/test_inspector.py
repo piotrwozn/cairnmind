@@ -280,10 +280,15 @@ def test_a_read_of_the_whole_graph_gives_its_freed_memory_back_and_a_light_read_
     assert client.get("/inspector/graph", params={"project": project["id"]}, headers=headers).status_code == 200
     assert client.get("/inspector/graph/groups", params={"project": project["id"]}, headers=headers).status_code == 200
     assert len(released) == 2
-    assert client.get("/inspector/graph", params={"project": "no-such-project"}, headers=headers).status_code in (400, 404)
-    assert len(released) == 3  # a refusal also ends the read
-    assert client.get("/inspector/records", params={"project": project["id"]}, headers=headers).status_code == 200
+    node = client.get("/inspector/graph", params={"project": project["id"]}, headers=headers).json()["nodes"][0]["id"]
     assert len(released) == 3
+    assert client.get(f"/inspector/graph/{node}/neighbors", params={"project": project["id"]}, headers=headers).status_code == 200
+    assert len(released) == 4
+    released.clear()
+    assert client.get("/inspector/graph", params={"project": "no-such-project"}, headers=headers).status_code in (400, 404)
+    assert len(released) == 1  # a refusal also ends the read
+    assert client.get("/inspector/records", params={"project": project["id"]}, headers=headers).status_code == 200
+    assert len(released) == 1
 
 
 def test_graph_watermark_is_read_in_the_same_database_transaction(workspace, monkeypatch):
