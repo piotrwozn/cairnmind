@@ -506,8 +506,11 @@ def stop_engine(settings: Settings) -> dict:
     # and one whose command line cannot be read is not either (#226). A process that is gone is already stopped.
     try:
         argv = process_identity.command_line(pid)
-        if argv is None and not process_identity.alive(pid):
-            raise ProcessLookupError
+        if argv is None:
+            if not process_identity.alive(pid):
+                raise ProcessLookupError
+            from .engine_docker import NATIVE_STOP_UNKNOWN
+            raise ArcadeError(NATIVE_STOP_UNKNOWN.format(pid=pid))  # alive, unreadable: named, never "foreign"
         command = "\0".join(argv or [])
         if "com.arcadedb.server.ArcadeDBServer" not in command or str(state) not in command:
             raise ArcadeError("Managed ArcadeDB PID no longer belongs to this environment")
