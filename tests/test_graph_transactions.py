@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 from test_index_batching import code_tree, dump
 
+from conftest import counted_waits
 from cairnmind import graph_transactions, ingest
 from cairnmind.arcade import ArcadeClient
 from cairnmind.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
@@ -68,18 +69,19 @@ def test_vertices_the_index_does_not_find_yet_are_waited_for_and_never_assumed(t
     whole, first, *_ = pair(tmp_path)
     ingest.index_project(whole, first)
     ids = [row["id"] for row in whole.query("SELECT id FROM nodes WHERE project_id=:p LIMIT 5", {"p": first})]
-    real, hidden, slept = JournalTransaction.query, [2], []
+    real, hidden = JournalTransaction.query, [2]
 
     def query(self, sql, params=None):
         found = real(self, sql, params)
         if "FROM nodes WHERE id IN" in sql and hidden[0]:  # the engine, compacting its index, finds nothing
             hidden[0] -= 1
+            waits.missed = True
             return []
         return found
     monkeypatch.setattr(JournalTransaction, "query", query)
-    monkeypatch.setattr(graph_transactions.time, "sleep", slept.append)
+    waits = counted_waits(monkeypatch, graph_transactions)
     graph_transactions.await_vertices(whole, ids)
-    assert len(slept) == 2
+    assert len(waits.slept) == 2
     monkeypatch.setattr(graph_transactions, "VERTEX_WAIT", 0)
     with pytest.raises(RuntimeError, match="did not find 1 graph vertices"):
         graph_transactions.await_vertices(whole, [*ids, "no-such-vertex"])
@@ -88,7 +90,7 @@ def test_vertices_the_index_does_not_find_yet_are_waited_for_and_never_assumed(t
 def test_the_wait_for_the_vertices_runs_inside_indexing_before_the_edges_and_the_graph_is_still_the_same(tmp_path, monkeypatch):
     whole, first, split, second = pair(tmp_path)
     ingest.index_project(whole, first)
-    real_query, real_wait, state = JournalTransaction.query, ingest.await_vertices, {"inside": False, "hidden": 2, "waits": 0}
+    real_query, real_wait, state = JournalTransaction.query, ingest.await_vertices, {"inside": False, "hidden": 2}
 
     def wait(store, identifiers):
         state["inside"] = True
@@ -101,14 +103,15 @@ def test_the_wait_for_the_vertices_runs_inside_indexing_before_the_edges_and_the
         found = real_query(self, sql, params)
         if state["inside"] and state["hidden"] and "FROM nodes WHERE id IN" in sql:  # the index, compacting, finds nothing
             state["hidden"] -= 1
+            waits.missed = True
             return []
         return found
     monkeypatch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 100)
     monkeypatch.setattr(ingest, "await_vertices", wait)
     monkeypatch.setattr(JournalTransaction, "query", query)
-    monkeypatch.setattr(graph_transactions.time, "sleep", lambda _seconds: state.update(waits=state["waits"] + 1))
+    waits = counted_waits(monkeypatch, graph_transactions)
     ingest.index_project(split, second)
-    assert state["hidden"] == 0 and state["waits"] == 2  # indexing waited until the index found its vertices
+    assert state["hidden"] == 0 and len(waits.slept) == 2  # indexing waited until the index found its vertices
     assert graph(split, second) == graph(whole, first)
 
 

@@ -11,6 +11,7 @@ import subprocess
 from fastapi.testclient import TestClient
 import pytest
 
+from conftest import own_time
 from cairnmind import ingest
 from cairnmind.config import Settings
 from cairnmind.ingest import forget_index_signature, index_project, index_project_if_changed, tree_signature
@@ -283,7 +284,7 @@ def test_files_touched_just_before_indexing_are_indexed_once_more(workspace, mon
     index_project(store, pid)
     assert "skipped" not in index_project_if_changed(store, pid)
     monkeypatch.setattr(ingest, "RACY_WINDOW_NS", 2_000_000_000)
-    monkeypatch.setattr(ingest.time, "time_ns", lambda: 10**19)  # long after every file time
+    own_time(monkeypatch, ingest, time_ns=lambda: 10**19)  # long after every file time
     index_project(store, pid)
     assert index_project_if_changed(store, pid)["skipped"] is True
 

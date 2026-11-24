@@ -8,7 +8,6 @@ import shutil
 import shlex
 import subprocess
 import sys
-import time
 from uuid import uuid4
 
 import pytest
@@ -16,6 +15,7 @@ import pytest
 from cairnmind import client_auth, integrations
 from cairnmind.client_runtime import NativeRuntime
 from cairnmind.config import Settings
+from json_wait import read_json_when_complete
 
 
 FAKE = r'''
@@ -45,8 +45,10 @@ if args and args[0] in {'login', 'auth'}:
     raise SystemExit
 capture = os.environ.get('FIXTURE_CAPTURE')
 if capture:
-    Path(capture).write_text(json.dumps({'argv':args,'cwd':os.getcwd(),
+    part = Path(capture + '.part')  # written whole, then renamed: a reader never sees it empty (#419)
+    part.write_text(json.dumps({'argv':args,'cwd':os.getcwd(),
         'session_id':os.environ.get('DEVBRAIN_SESSION_ID'),'packet_id':os.environ.get('DEVBRAIN_PACKET_ID')}))
+    os.replace(part, capture)
 signal.signal(signal.SIGINT, lambda *a: print('INTERRUPTED', flush=True))
 signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
 tty.setcbreak(0)
@@ -169,10 +171,7 @@ def test_native_model_flags_keep_exact_bootstrap_and_environment(native, tmp_pat
     capture = tmp_path/'capture.json'
     monkeypatch.setenv('FIXTURE_CAPTURE', str(capture))
     row = runtime.start(project, 'codex', model='gpt-fixture')
-    deadline = time.monotonic()+3
-    while not capture.exists() and time.monotonic() < deadline:
-        time.sleep(.01)
-    seen = json.loads(capture.read_text())
+    seen = read_json_when_complete(capture, 3)
     assert seen['argv'][:3] == ['--no-daemon','--model','gpt-fixture']
     assert 'resume_context' in seen['argv'][-1] and 'ack_resume' in seen['argv'][-1]
     assert row['session_id'] == seen['session_id']
@@ -447,10 +446,7 @@ def test_explicit_resume_uses_scoped_native_id_and_new_verified_prompt(native,tm
         runtime._save(rows)
     capture.unlink(missing_ok=True)
     resumed=runtime.start(project,'codex',resume=True,model='gpt-fixture')
-    deadline=time.monotonic()+3
-    while not capture.exists() and time.monotonic()<deadline:
-        time.sleep(.01)
-    seen=json.loads(capture.read_text())
+    seen=read_json_when_complete(capture,3)
     assert seen['argv'][:5]==['--no-daemon','resume','known-project-native-session','--model','gpt-fixture']
     assert 'ack_resume' in seen['argv'][-1]
     assert resumed['session_id']!=first['session_id']

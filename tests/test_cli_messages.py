@@ -17,7 +17,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from conftest import plain_words
+from conftest import plain_words, own_time
 
 from cairnmind import __version__, cli
 from cairnmind.config import Settings
@@ -105,7 +105,7 @@ def test_a_service_that_never_answers_is_a_refusal(tmp_path, monkeypatch):
     Settings.load(tmp_path / "memory", create=True)
     monkeypatch.setattr(cli, "service_alive", lambda settings: False)
     monkeypatch.setattr(cli.subprocess, "Popen", lambda *args, **kwargs: SimpleNamespace(poll=lambda: None))
-    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    own_time(monkeypatch, cli, sleep=lambda seconds: None)
     said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(tmp_path / "memory"), "index", "demo"]))
     assert "The service did not start" in said and "may be in use" in said
 

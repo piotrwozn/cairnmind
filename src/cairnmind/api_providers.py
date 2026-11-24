@@ -14,6 +14,7 @@ from uuid import uuid4
 import httpx
 
 from .api_profiles import normalize_profile
+from .config import tls_verify
 
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
@@ -356,7 +357,8 @@ class Provider:
 
     def _http(self):
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=15), follow_redirects=False)
+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=15), follow_redirects=False,
+                                             verify=tls_verify(self.profile["base_url"]))
         return self._client
 
     def _headers(self):

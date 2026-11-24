@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 
 from . import __version__, person_proof
-from .config import BROKER_NAMES, SESSION_NAMES, drop_env
+from .config import BROKER_NAMES, SESSION_NAMES, drop_env, tls_verify
 from .path_spelling import lies_in
 from .process_identity import start as process_start
 from .service_token import refused_token
@@ -213,7 +213,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         # holds and checks nothing (person_proof, #214).
         try:
             async with httpx.AsyncClient(base_url=settings.url, transport=proxy_transport, trust_env=False,
-                                       timeout=settings.ask_timeout + 120,
+                                       timeout=settings.ask_timeout + 120, verify=tls_verify(settings.url),
                                        headers={"Authorization": f"Bearer {settings.token}"}) as client:
                 return await client.request(method, path, params=params, json=data, headers=person)
         except httpx.HTTPError:
@@ -926,7 +926,8 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         async def stream():
             try:
                 async with httpx.AsyncClient(base_url=settings.url, transport=proxy_transport, trust_env=False,
-                    timeout=httpx.Timeout(15, read=None), headers=stream_headers) as client:
+                    timeout=httpx.Timeout(15, read=None), headers=stream_headers,
+                    verify=tls_verify(settings.url)) as client:
                     async with client.stream("GET", "/events", params=request.query_params) as response:
                         if response.is_error:
                             yield 'event: unavailable\ndata: {"reason":"memory_service"}\n\n'
@@ -959,7 +960,7 @@ def cockpit_status(settings):
         parsed = urlparse(info["url"])
         if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or not parsed.port:
             return result
-        with httpx.Client(trust_env=False, timeout=1) as client:
+        with httpx.Client(trust_env=False, timeout=1, verify=tls_verify(info["url"])) as client:
             response = client.get(info["url"] + "/health")
             health = response.json()
         if (response.is_success and health.get("service") in BROKER_NAMES
@@ -1047,7 +1048,7 @@ def stop_cockpit(settings, stop_clients=False):
     status = cockpit_status(settings)
     if not status["available"]:
         return {"stopping": False, "available": False}
-    with httpx.Client(trust_env=False, timeout=20) as client:
+    with httpx.Client(trust_env=False, timeout=20, verify=tls_verify(status["url"])) as client:
         response = client.post(status["url"] + "/_control/stop", json={"stop_clients": stop_clients},
                                headers={"Authorization": f"Bearer {settings.token}"})
         response.raise_for_status()

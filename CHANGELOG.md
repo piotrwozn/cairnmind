@@ -238,6 +238,10 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - A restore without the workspace says "nothing to keep" only when no person's or before-the-rule confirmation was turned, revision snapshots included, and advises redoing with the workspace otherwise; on an installation without tmux it names tmux (#399).
 - A restore of a large project no longer commits and waits before every group of 250 edges: it waits once for the index to find all its vertices, so the usual project restores in 3,968 requests instead of 8,182 on the test engine through a relay adding 20 ms (#396).
 - A group of edges that still misses a vertex after that wait is committed, waited for and written once more, and fails by name and is put back if it misses again; an error of the engine itself (out of memory, a timeout) is never retried and reaches the person with its own text and memory hint (#396).
+- A command that asks the running service (`ask`, `context` and the others) no longer loads the service and its web framework, and asks `/health` once instead of two or three times: `ask` takes about 0.4 s less in its own process (#405).
+- The service now keeps one HTTP client per model server for its whole life and closes it when it stops: about 30 ms less per model request, which a new HTTP client for every request cost (#407).
+- The MCP bridge now keeps one connection client to the service for its whole life instead of opening a new one for every request, which makes each tool call about 45 to 55 ms faster; it drops its own idle connections after 4 s, before the service's 5 s keep-alive, so reusing one never gives a false "service is unavailable" (#415).
+- A client for a plain http address (a command, the identity check of the service, the broker, the cockpit, a model server on this machine) no longer builds a TLS certificate store it never used: commands such as `ask` and `status` are about 65 to 75 ms faster. An https address is verified as before, each place is tested for it, a diagnostic client that cannot read a model server's profile verifies, and a guard test rejects any HTTP client written without a stated verify (#415).
 
 ### Development and CI
 
@@ -253,6 +257,9 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The tests of the question budget run on a simulated clock instead of real sleeps, so a slow or loaded machine can no longer make a second-look test fail (#383).
 - A test holds the second look of an answer inside the time the question has left: it fails when the second look is given no time limit (#397).
 - `scripts/measure_service_spend.py` prints no row, and exits with code 3, for an index that read and changed no file, because the row would then hold the service's own scan; `--allow-unchanged` keeps it (#420).
+- Tests replace the clock of the module under test instead of `time.sleep` for the whole process, the tests that hide vertices count only the waits their own hidden answers cause, and a guard test over every test file and helper keeps it so; the release gate says to read every job of main's last run, `server-tests` included (#417).
+- The test of a refused or lost request of the workspace's acts no longer fails when the sidebar's own refresh error lands next to the act's sentence, and it still catches a raw broker error told by the act itself (#418).
+- A test's fake client writes its capture file whole, and the tests that read it wait, bounded, for a complete JSON document; the terminal-reading threads of two workspace tests are stopped before their descriptor is closed, so a reused descriptor number can no longer read `state.json` away from its reader (#419).
 
 ## 0.12.0
 
