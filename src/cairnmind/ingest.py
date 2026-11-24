@@ -965,7 +965,7 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                 "source": {"id": row["id"], "uri": row["uri"], "kind": row["kind"]}, "analysis": analyses[row["id"]],
                 "root": Path(row.get("root") or project["root"])}
         counts.update(_build_graph(store, project_id, indexed, previous.get("graph") if previous else None, graph,
-                                    links=tuple(links)))
+                                    False, tuple(links)))
     if away:
         counts["unavailable"] = [project_folders.entry(project, folder) for folder in folders
                                  if folder["root"] in away]
