@@ -422,7 +422,11 @@ class SidebarApp(BasePanel):
     async def workspace_changed(self, value):
         self.render_project()
         if value.get("launch_errors") or value.get("last_error"):
-            self.post_launch_notice(value)
+            token = BACKGROUND.set(True)  # the state poll's notice yields to the outcome of an act (#430)
+            try:
+                self.post_launch_notice(value)
+            finally:
+                BACKGROUND.reset(token)
         else:
             self._update_launch_feedback(value)
         from .terminal_record_kinds import check_partial

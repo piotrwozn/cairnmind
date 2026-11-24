@@ -273,13 +273,14 @@ async def test_a_notice_that_waited_shows_when_the_hold_ends(tmp_path, monkeypat
         assert entries["newest, told once"][0] == 1 and entries["told once"][0] == 1  # told once: not counted twice
         assert app.notice_history.on_line().text == "newest, told once"
         assert app.query_one("#panel-notice").has_class("-error")
-        # an outcome that took the line since: the waiting notice does not replace it
+        # an outcome that took the line since: the waiting notice stays until the last hold ends, then shows
         app.notice("outcome two")
         background(app, "waits again")
         app.notice("outcome three")
+        assert line(app) == "outcome three"
         now[0] += OUTCOME_HOLD + 1
         app._hold_over()
-        assert line(app) == "outcome three"
+        assert line(app) == "waits again"
         # a background notice that clears the failure cancels the waiting one
         app.notice("outcome four")
         background(app, "failing")
@@ -349,6 +350,52 @@ async def test_the_workspace_poll_and_a_dying_refresh_worker_yield_too(tmp_path,
         assert line(app) == "outcome two"
         app.run_worker(dies(), group="an-act", exit_on_error=False)
         await wait_until(pilot, lambda: "worker-died" in line(app))  # an act's own failure is shown at once
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("order", ["state-first", "outcome-first"])
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_the_workspaces_own_unavailable_state_yields_to_the_outcome(tmp_path, monkeypatch, language, order):
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    down = {"broker_available": False, "last_error": "The client service is unavailable; running sessions are kept."}
+    async with app.run_test(size=(120, 40)):
+        await app.workers.wait_for_complete()
+        if order == "state-first":
+            workspace.update(down)
+            await app._poll_workspace()
+            assert line(app) != "outcome"  # nothing stands on the line: the state is shown as before
+            app.notice("outcome")
+        else:
+            app.notice("outcome")
+            workspace.update(down)
+            await app._poll_workspace()
+        assert line(app) == "outcome"
+        assert app._outcome is not None and app._outcome[0] == app.notice_history.on_line().seq  # the state started no hold
+        assert any(e.text == tr(app.launch_notice(workspace.read()), language) for e in app.notice_history.entries)
+
+
+@pytest.mark.asyncio
+async def test_a_background_inspector_reload_that_dies_yields_to_the_outcome(tmp_path, monkeypatch):
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    app = InspectorApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.workers.wait_for_complete()
+
+        async def dies(*args, **kwargs):
+            raise KeyError("reload-died")
+
+        monkeypatch.setattr(app, "load_page", dies)
+        app.notice("outcome")
+        app.refresh_if_list()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert line(app) == "outcome"
+        assert any("reload-died" in e.text for e in app.notice_history.entries)
+        await pilot.press("shift")  # the person moved on: a foreground read that dies is shown at once
+        app.refresh_page()
+        await wait_until(pilot, lambda: "reload-died" in line(app))
 
 
 @pytest.mark.asyncio

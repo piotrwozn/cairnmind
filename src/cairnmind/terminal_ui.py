@@ -526,7 +526,8 @@ class BasePanel(App):
                 self.show_notice_mark()
             self.publish_notices(later=True)
             return
-        self._held = None
+        if background:  # an outcome keeps what waits: it shows when the last hold ends
+            self._held = None
         with suppress(Exception):
             shown = plain(self.t(value))
             self._paint(shown, kind)
