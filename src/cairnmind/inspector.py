@@ -61,6 +61,7 @@ def _decode_cursor(value):
 class Inspector:
     def __init__(self, store):
         self.store = store
+        self._held = {}  # the scopes of graph requests at a watermark (inspector_graph.held)
 
     def _project(self, project):
         from .project_removal import ProjectRemoved
@@ -427,7 +428,7 @@ class Inspector:
                 if decoded.get("query") != query_key:
                     raise ValueError("Graph page cursor belongs to another scope")
                 after = decoded["after"]
-            held = None if _full else inspector_graph.held(self, scope)
+            held = None if _full else inspector_graph.held(self, scope, watermark)
             paged = held is not None
             if paged:  # the database counts and returns the rows of the page only, the scope's held rows left out (#450)
                 counts, bucket_counts, sessions = inspector_graph.totals(self.store, pid, True, held)
@@ -469,9 +470,10 @@ class Inspector:
         _limit(limit)
         with self.store.transaction() as reader:
             scope = self._scope(project, worktree)
-            held = inspector_graph.held(self, scope)
+            watermark = _cursor(reader, self.store)
+            held = inspector_graph.held(self, scope, watermark)
             if held is not None:  # the database sums the groups (#450)
-                projection = {"cursor": _cursor(reader, self.store), "warnings": [CODE_GRAPH_NOT_BUILT] if code_graph_pending(scope[0]) else [],
+                projection = {"cursor": watermark, "warnings": [CODE_GRAPH_NOT_BUILT] if code_graph_pending(scope[0]) else [],
                               "groups": inspector_graph.group_rows(scope[0]["id"], inspector_graph.totals(self.store, scope[0]["id"], False, held)[1])}
             else:
                 projection = self.graph(project, worktree=worktree, _full=True)
@@ -487,9 +489,8 @@ class Inspector:
                 "after": rows[limit - 1]["id"]}) if len(rows) > limit else None, "warnings": projection["warnings"],
                 "cursor": projection["cursor"]}
 
-    def _neighbors_page(self, reader, scope, held, project, node_id, worktree, limit, cursor):
-        pid, query_key = scope[0]["id"], hashlib.sha256(json_text([project, str(worktree), node_id]).encode()).hexdigest()
-        watermark, after = _cursor(reader, self.store), None
+    def _neighbors_page(self, watermark, scope, held, project, node_id, worktree, limit, cursor):
+        pid, query_key, after = scope[0]["id"], hashlib.sha256(json_text([project, str(worktree), node_id]).encode()).hexdigest(), None
         if cursor:
             decoded = _decode_cursor(cursor)
             if decoded.get("query") != query_key:
@@ -508,9 +509,10 @@ class Inspector:
         _limit(limit, 500)
         with self.store.transaction() as reader:
             scope = self._scope(project, worktree)
-            held = inspector_graph.held(self, scope)
+            watermark = _cursor(reader, self.store)
+            held = inspector_graph.held(self, scope, watermark)
             if held is not None:  # the database returns the node's edges of one page (#450)
-                return self._neighbors_page(reader, scope, held, project, node_id, worktree, limit, cursor)
+                return self._neighbors_page(watermark, scope, held, project, node_id, worktree, limit, cursor)
             projection = self.graph(project, worktree=worktree, _full=True)
         nodes = {row["id"]: row for row in projection["nodes"]}
         if node_id not in nodes:

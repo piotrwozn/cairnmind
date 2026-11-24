@@ -23,6 +23,12 @@ FIELDS = {
     "nodes": "id,kind,label,source_id,is_current,metadata.root AS root,metadata.worktree AS worktree,metadata.path AS path",
     "edges": "id,from_id,to_id,kind,source_id,is_current,status",
 }
+KEEP_FIELDS = {  # what Held.keeps reads of a row
+    "sources": "id,kind,metadata.root AS root,metadata.worktree AS worktree,metadata.path AS path",
+    "records": "id,metadata.root AS root,metadata.worktree AS worktree",
+    "nodes": "id,source_id,metadata.root AS root,metadata.worktree AS worktree",
+    "record_revisions": "id,record_id,snapshot.metadata.root AS root,snapshot.metadata.worktree AS worktree",
+    "plans": "id", "plan_revisions": "id"}
 PREFIXES = {"sources": "source:", "records": "record:", "plans": "plan:",
             "record_revisions": "revision:record:", "plan_revisions": "revision:plan:"}
 STANDING_IN = "NOT (id LIKE 'source:%' OR id LIKE 'record:%' OR id LIKE 'plan:%')"  # the native vertices no node replaces
@@ -76,6 +82,7 @@ def group_rows(pid, buckets):
 
 SCOPED = {"sources": "metadata", "records": "metadata", "nodes": "metadata", "record_revisions": "snapshot.metadata"}
 HELD_LIMIT = 50000  # rows a scope may hold back before its page is cut out of the whole read instead
+CACHED = 8  # scopes (a project's worktree at a watermark) an inspector remembers
 
 
 class Held:
@@ -89,11 +96,27 @@ class Held:
     """
 
     def __init__(self):
-        self.bad, self.sources, self.records, self.own, self.kept = {}, [], [], [], []
+        self.bad, self.sources, self.records, self.own, self.kept, self.dropped = {}, [], [], [], [], None
 
     @property
     def empty(self):
         return not self.bad
+
+    def keeps(self, table, row):
+        """Whether the scope keeps this row of `table` (read with the fields of FIELDS): the whole read's own match."""
+        if self.empty:
+            return True
+        if self._sets is None:
+            self._sets = {key: set(values) for key, values in self.bad.items()}, set(self.sources), set(self.records)
+        bad, sources, records = self._sets
+        if any(row.get(name) in bad.get((table, name), ()) for name in ("root", "worktree")):
+            return False
+        if table == "sources" and row["kind"] in FILE_KINDS and row.get("path") in bad.get(("sources", "path"), ()):
+            return False
+        return not (row.get("source_id") in sources if table in ("nodes", "edges") else
+                    row["record_id"] in records if table == "record_revisions" else False)
+
+    _sets = None
 
 
 def _checks(held, table):
@@ -126,23 +149,32 @@ def inside(held, table):
     return "".join(" AND " + part for part in parts), params
 
 
-def held(inspector, scope):
+def held(inspector, scope, watermark=None):
     """What the scope holds back, or None when the database cannot cut the page (the whole read answers then).
 
     Every distinct root and worktree the project's rows name, and every path of its file sources, goes through the
     match the whole read applies to each row (one row each, not one per vertex); the rows that carry a value that does
     not match are what is held back. None for a value that is not text, or when more than HELD_LIMIT rows are held.
+
+    Finding them takes a scan of each table. With the journal's watermark of the request's snapshot they are remembered
+    (at most CACHED scopes): the same scope at the same watermark is the same answer, and any write moves the watermark.
     """
     store, root = inspector.store, scope[1]
     result = Held()
     if root is None:
         return result
+    key = (scope[0]["id"], str(root), tuple(map(str, scope[2])), tuple((str(a), str(b)) for a, b in scope[3]),
+           tuple(sorted(watermark.items())) if watermark else None)
+    if watermark and key in inspector._held:
+        return inspector._held[key]
     params = {"project": scope[0]["id"]}
     for table, field in SCOPED.items():
+        pairs = store.query(f"SELECT {field}.root AS root, {field}.worktree AS worktree FROM {table} WHERE project_id=:project "
+                            f"AND ({field}.root IS NOT NULL OR {field}.worktree IS NOT NULL) GROUP BY {field}.root, {field}.worktree", params)
         for name in ("root", "worktree"):
-            values = [row["value"] for row in store.query(f"SELECT {field}.{name} AS value FROM {table} WHERE project_id=:project "
-                                                          f"AND {field}.{name} IS NOT NULL GROUP BY {field}.{name}", params)]
+            values = [pair[name] for pair in pairs if pair[name] is not None]
             out = [value for value in values if not inspector._matches(scope, {"metadata": {name: value}})]
+            out = [value for number, value in enumerate(out) if value not in out[:number]]  # each value once, whatever it is
             if out:
                 result.bad[(table, name)] = out
     paths = [row["value"] for row in store.query(
@@ -163,11 +195,19 @@ def held(inspector, scope):
         result.own = [row["id"] for row in store.query(
             f"SELECT id FROM nodes WHERE project_id=:project AND ({' OR '.join(out)})", {**params, **extra})]
     if result.sources:  # a held vertex of a record or plan that is in scope still stands for it in the view
-        result.kept = [row["id"] for row in store.query(
-            "SELECT id FROM nodes WHERE project_id=:project AND source_id IN :held_sources AND (id LIKE 'record:%' OR id LIKE 'plan:%')",
-            {**params, "held_sources": result.sources}) if not row["id"].startswith("record:") or row["id"][7:] not in set(result.records)]
+        owners = {row["id"] for row in store.query("SELECT id FROM records WHERE project_id=:project", params)} - set(result.records)
+        names = [*("record:" + identifier for identifier in sorted(owners)),
+                 *("plan:" + row["id"] for row in store.query("SELECT id FROM plans WHERE project_id=:project", params))]
+        for start in range(0, len(names), 2000):
+            result.kept += [row["id"] for row in store.query(
+                "SELECT id FROM nodes WHERE project_id=:project AND id IN :ids AND source_id IN :held_sources",
+                {**params, "ids": names[start:start + 2000], "held_sources": result.sources})]
     if len(result.sources) + len(result.records) + len(result.own) > HELD_LIMIT:
         return None
+    if watermark:
+        if len(inspector._held) >= CACHED:
+            inspector._held.clear()
+        inspector._held[key] = result
     return result
 
 
@@ -177,8 +217,8 @@ def dropped(store, pid, held):
     A vertex is held back by its own root or worktree (`own`) or by its source, unless it stands in the view for a record
     or plan that is in scope (`kept`). The edges that join one are asked of the database by the source of their ends.
     """
-    if held.empty:
-        return 0
+    if held.empty or held.dropped is not None:
+        return held.dropped or 0
     where, params = inside(held, "edges")
     found, kept, sources = set(), set(held.kept), set(held.sources)
     if sources:
@@ -191,7 +231,8 @@ def dropped(store, pid, held):
             found.update(row["id"] for row in store.query(
                 f"SELECT id FROM edges WHERE project_id=:project AND {side} IN :ids{where}",
                 {"project": pid, "ids": held.own[start:start + 2000], **params}))
-    return len(found)
+    held.dropped = len(found)  # as long as the scope is remembered, which is as long as nothing was written
+    return held.dropped
 
 
 def totals(store, pid, counted=True, held=None):
@@ -207,6 +248,20 @@ def totals(store, pid, counted=True, held=None):
         return store.query(f"SELECT {fields}, count(*) AS n FROM {table} WHERE project_id=:project{where}{scope} GROUP BY {by}",
                            {"project": pid, **params})
 
+    def natives(where=""):
+        """The native vertices the scope keeps, counted by kind: all of them less those of the held sources and the held
+        ones of their own (the database counts a source's vertices by its index; a `NOT IN` of them would go over every row)."""
+        kinds = Counter({row["kind"]: row["n"] for row in store.query(
+            f"SELECT kind, count(*) AS n FROM nodes WHERE project_id=:project{where} GROUP BY kind", {"project": pid})})
+        queries = [(f" AND source_id IN :held_sources{where}", {"held_sources": held.sources})] if held.sources else []
+        for start in range(0, len(held.own), 2000):
+            queries.append((" AND id IN :ids" + (" AND (source_id IS NULL OR source_id NOT IN :held_sources)" if held.sources else "") + where,
+                            {"ids": held.own[start:start + 2000], **({"held_sources": held.sources} if held.sources else {})}))
+        for condition, params in queries:
+            kinds.subtract({row["kind"]: row["n"] for row in store.query(
+                f"SELECT kind, count(*) AS n FROM nodes WHERE project_id=:project{condition} GROUP BY kind", {"project": pid, **params})})
+        return +kinds  # the kinds with something left
+
     buckets, sessions, counts = Counter(), {}, {}
     counts["sources"] = counts["records"] = 0
     for row in grouped("sources", "kind, metadata.client AS client, metadata.session_id AS session_id",
@@ -221,15 +276,27 @@ def totals(store, pid, counted=True, held=None):
     for row in grouped("records", "kind", "kind"):
         buckets["records:" + row["kind"]] += row["n"]
         counts["records"] += row["n"]
-    for row in grouped("nodes", "kind", "kind", " AND " + STANDING_IN):
-        buckets["native:" + row["kind"]] += row["n"]
+    for kind, number in natives(" AND " + STANDING_IN).items():
+        buckets["native:" + kind] += number
     plans, revisions = count("plans"), {"record_revisions": count("record_revisions"), "plan_revisions": count("plan_revisions")}
     for key, number in (("plans", plans), ("history:record", revisions["record_revisions"]), ("history:plan", revisions["plan_revisions"])):
         if number:
             buckets[key] = number
     if not counted:  # the groups and neighbors routes show no counts
         return None, buckets, sessions
-    counts.update(plans=plans, **revisions, nodes=count("nodes"), edges=count("edges"))
+    edges = store.query("SELECT count(*) AS n FROM edges WHERE project_id=:project", {"project": pid})[0]["n"]
+    if held.sources:
+        edges -= store.query("SELECT count(*) AS n FROM edges WHERE project_id=:project AND source_id IN :held_sources",
+                             {"project": pid, "held_sources": held.sources})[0]["n"]
+    nodes = store.query("SELECT count(*) AS n FROM nodes WHERE project_id=:project", {"project": pid})[0]["n"]
+    if held.sources:
+        nodes -= store.query("SELECT count(*) AS n FROM nodes WHERE project_id=:project AND source_id IN :held_sources",
+                             {"project": pid, "held_sources": held.sources})[0]["n"]
+    for start in range(0, len(held.own), 2000):  # the ones held by their own root or worktree, not counted with their source
+        nodes -= store.query("SELECT count(*) AS n FROM nodes WHERE project_id=:project AND id IN :ids" + (
+            " AND (source_id IS NULL OR source_id NOT IN :held_sources)" if held.sources else ""),
+            {"project": pid, "ids": held.own[start:start + 2000], **({"held_sources": held.sources} if held.sources else {})})[0]["n"]
+    counts.update(plans=plans, **revisions, nodes=nodes, edges=edges)
     counts.update(display_nodes=sum(buckets.values()),
                   display_edges=counts["edges"] - dropped(store, pid, held) + sum(revisions.values()))
     return counts, buckets, sessions
@@ -278,37 +345,45 @@ def rows_for(store, pid, identifiers, held=None):
     for table, prefix in PREFIXES.items():
         found = [identifier[len(prefix):] for identifier in identifiers if identifier.startswith(prefix)]
         if found:
-            scope, params = inside(held, table)
-            rows[table] = store.query(f"SELECT {FIELDS[table]} FROM {table} WHERE project_id=:project AND id IN :ids{scope} ORDER BY id",
-                                      {"project": pid, "ids": found, **params})
+            rows[table] = [row for row in store.query(f"SELECT {FIELDS[table]} FROM {table} WHERE project_id=:project AND id IN :ids ORDER BY id",
+                                                      {"project": pid, "ids": found}) if held.keeps(table, row)]
     # The native vertices of the same identifiers too: a node that stands in for one keeps the place it has in the view.
-    scope, params = inside(held, "nodes")
-    rows["nodes"] = store.query(f"SELECT {FIELDS['nodes']} FROM nodes WHERE project_id=:project AND id IN :ids{scope} ORDER BY id",
-                                {"project": pid, "ids": list(identifiers), **params})
+    rows["nodes"] = [row for row in store.query(f"SELECT {FIELDS['nodes']} FROM nodes WHERE project_id=:project AND id IN :ids ORDER BY id",
+                                                {"project": pid, "ids": list(identifiers)}) if held.keeps("nodes", row)]
     return rows
 
 
 def select(store, pid, group, after, size, sessions, held=None):
-    """`size` node identifiers of the group in order after `after`, and whether more follow."""
+    """`size` node identifiers of the group in order after `after`, and whether more follow.
+
+    The scope's held rows are left out as the rows come, in batches in the order of the identifiers, until a page is full."""
     held, found = held or Held(), []
     for table, prefix in (("nodes", ""), *PREFIXES.items()):
         where, after_where = _where(table, group, sessions), _after(prefix, after)
         if where is None or after_where is None:
             continue
-        scope, params = inside(held, table)
-        found += [prefix + row["id"] for row in store.query(
-            f"SELECT id FROM {table} WHERE project_id=:project {where[0]} {after_where[0]}{scope}"
-            f"{' AND ' + STANDING_IN if table == 'nodes' else ''} ORDER BY id LIMIT {size + 1}",
-            {"project": pid, **where[1], **after_where[1], **params})]
+        fields = "id" if held.empty else KEEP_FIELDS[table]
+        batch, clause, params = (size + 1) * (1 if held.empty else 2), after_where[0], {**where[1], **after_where[1]}
+        wanted, kept = size + 1, []
+        while len(kept) < wanted:
+            rows = store.query(f"SELECT {fields} FROM {table} WHERE project_id=:project {where[0]} {clause}"
+                               f"{' AND ' + STANDING_IN if table == 'nodes' else ''} ORDER BY id LIMIT {batch}", {"project": pid, **params})
+            kept += [prefix + row["id"] for row in rows if held.keeps(table, row)]
+            if len(rows) < batch:
+                break
+            clause, params = "AND id>:last", {**where[1], "last": rows[-1]["id"]}
+        found += kept[:wanted]
     found.sort()
     return found[:size], len(found) > size
 
 
 def page_rows(store, pid, selected, held=None):
     """The rows of the selected nodes and of the edges between them."""
-    rows, (scope, params) = rows_for(store, pid, selected, held), inside(held or Held(), "edges")
-    rows["edges"] = store.query(f"SELECT {FIELDS['edges']} FROM edges WHERE project_id=:project AND from_id IN :ids AND to_id IN :ids"
-                                f"{scope} ORDER BY id", {"project": pid, "ids": selected, **params}) if selected else []
+    held = held or Held()
+    rows = rows_for(store, pid, selected, held)
+    rows["edges"] = [row for row in store.query(
+        f"SELECT {FIELDS['edges']} FROM edges WHERE project_id=:project AND from_id IN :ids AND to_id IN :ids ORDER BY id",
+        {"project": pid, "ids": selected}) if held.keeps("edges", row)] if selected else []
     return rows
 
 
@@ -338,14 +413,14 @@ def neighbors(store, pid, node_id, after, limit, groups, sessions, held=None):
     if node_id not in found:
         return None
     # The identifiers of the node's edges after `after`, at most one more than a page; the native ones with their rows.
-    edge_scope, scope_params = inside(held, "edges")
     since = after if held.empty else None  # a scope that holds rows back counts the edges before the cursor too
-    params, candidates = {"project": pid, "node": node_id, **scope_params, **({"beyond": since} if since is not None else {})}, {}
+    params, candidates = {"project": pid, "node": node_id, **({"beyond": since} if since is not None else {})}, {}
     where, cap = "" if since is None else " AND id>:beyond", f" LIMIT {limit + 1}" if held.empty else ""
     total = 0
     for side in ("from", "to"):
         candidates.update({row["id"]: row for row in store.query(
-            f"SELECT {FIELDS['edges']} FROM edges WHERE project_id=:project AND {side}_id=:node{where}{edge_scope} ORDER BY id{cap}", params)})
+            f"SELECT {FIELDS['edges']} FROM edges WHERE project_id=:project AND {side}_id=:node{where} ORDER BY id{cap}", params)
+            if held.keeps("edges", row)})
         total += store.query(f"SELECT count(*) AS n FROM edges WHERE project_id=:project AND {side}_id=:node", params)[0]["n"]
     total -= store.query("SELECT count(*) AS n FROM edges WHERE project_id=:project AND from_id=:node AND to_id=:node", params)[0]["n"]
     for table, prefix, owner in (("record_revisions", "record:", "record_id"), ("plan_revisions", "plan:", "plan_id")):

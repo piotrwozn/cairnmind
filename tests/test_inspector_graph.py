@@ -334,6 +334,43 @@ def test_rows_of_two_more_roots_are_paged_with_the_same_answers(stores, tmp_path
     compare_groups_and_neighbors(store, pid, worktree)
 
 
+def test_the_scope_is_remembered_at_a_watermark_found_again_after_a_write_and_bounded(stores, tmp_path):
+    """Finding what a worktree holds back scans each table: the same scope at the same watermark is not scanned again, a
+    write moves the watermark so that the scope is found anew (the counts follow), and only CACHED scopes are kept."""
+    from cairnmind import inspector_graph
+    store, project, root, other = stores
+    add_roots(stores, tmp_path)
+    pid, inspector, asked = project["id"], Inspector(store), []
+    real = store.query
+
+    def counting(sql, params=None):
+        asked.append(sql)
+        return real(sql, params)
+
+    store.query = counting
+
+    def scans():
+        found = [sql for sql in asked if "GROUP BY" in sql and "metadata.root" in sql and "count(*)" not in sql]
+        asked.clear()
+        return len(found)
+
+    first = inspector.graph(pid, worktree=root, limit=5)
+    assert scans() > 0
+    assert inspector.graph(pid, worktree=root, limit=5) == first and scans() == 0
+    node = next(row["id"] for row in first["nodes"] if row["kind"] != "group")
+    inspector.groups(pid, worktree=root)
+    inspector.neighbors(pid, node, worktree=root)
+    assert scans() == 0
+    store.snapshot(pid, "note://late", "Late.", "manual")
+    after = inspector.graph(pid, worktree=root, limit=5)
+    assert scans() > 0 and after["counts"]["sources"] == first["counts"]["sources"] + 1
+    assert after["counts"] == WholeRead(store).graph(pid, worktree=root, limit=5)["counts"]
+    for number in range(inspector_graph.CACHED + 2):
+        store.snapshot(pid, f"note://more-{number}", "More.", "manual")
+        inspector.graph(pid, worktree=root, limit=5)
+        assert len(inspector._held) <= inspector_graph.CACHED
+
+
 def hold_back(stores, how):
     """One row of the project that only `how` shows to belong elsewhere: the scope check must see it and hold it back."""
     from cairnmind import inspector_graph
@@ -453,9 +490,10 @@ def test_a_request_reads_the_rows_of_its_page_not_the_project(tmp_path):
                  lambda: inspector.neighbors(pid, "symbol:00005", worktree=root, limit=limit)):
         seen.clear()
         call()
-        assert sum(count for _, count in seen) < 6 * limit, [(sql[:60], count) for sql, count in seen if count > 5]
-        assert len(seen) < 40
-        assert all(count <= limit + 1 or "GROUP BY" in sql for sql, count in seen), [(sql[:80], count) for sql, count in seen if count > limit + 1]
+        assert sum(count for _, count in seen) < 8 * limit, [(sql[:60], count) for sql, count in seen if count > 5]
+        assert len(seen) < 60
+        # a scope that holds rows back asks for twice a page, in the order of the identifiers, to leave them out
+        assert all(count <= 2 * (limit + 1) or "GROUP BY" in sql for sql, count in seen), [(sql[:80], count) for sql, count in seen if count > limit + 1]
 
 
 def test_the_project_row_counts_the_code_graph_only_so_the_counts_come_from_the_tables(tmp_path):
