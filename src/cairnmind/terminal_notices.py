@@ -70,6 +70,10 @@ class NoticeHistory:
         while len(self.entries) > 1 and (len(self.entries) > self.max_entries or self._chars > self.max_chars):
             self._chars -= len(self.entries.popleft().text)
 
+    def put_on_line(self, entry: Notice) -> None:
+        """A notice kept only here (add with on_line=False) is now shown on the line."""
+        self._on_line = entry.seq
+
     def on_line(self) -> Notice | None:
         """The entry the notice line shows, if it shows one."""
         return next((entry for entry in reversed(self.entries) if entry.seq == self._on_line), None)
