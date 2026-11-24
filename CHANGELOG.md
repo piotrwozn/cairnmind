@@ -248,6 +248,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - A pass after one file changed counts the stored code graph nodes instead of reading every node id, and deletes the edges that went by their ids instead of scanning the project's index, which takes about 420 ms less on a project of 88,000 nodes (#426).
 - A code graph node added behind a running indexer is now noticed and the stored graph is compared row by row before the next incremental write; a vertex kept because a knowledge record's relationship names it is counted, so such a link does not make every later pass write the whole graph (#426).
 - Indexing no longer fails when a directory of many files is renamed and then renamed back: if the engine's index of vertex ids still holds the ids the earlier pass deleted and refuses the write (a duplicated key, or edges that find no endpoint), the pass waits 5 seconds and writes the code graph once more; the result of such a pass says `graph_written_again`. If it is refused again, indexing fails with an error that names the refusal and says whether the code graph is marked not built or the previous graph is kept, and the next indexing writes it (#433).
+- A running indexer now notices a symbolic link that is retargeted, added or removed on its own, whatever its name, and writes the imports that moved, at no measurable cost to a scan round in which nothing changed (#451).
+- A loop of symbolic links, or a link replaced while the indexer walks, no longer fails an indexing pass; an import that leads into a loop stays unresolved (#451).
 
 ### Development and CI
 
