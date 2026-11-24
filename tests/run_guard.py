@@ -363,12 +363,14 @@ def processes_under(root: Path) -> list[tuple[int, str]]:
     names = {str(root), str(root.resolve())}
     pattern = re.compile("(?:" + "|".join(re.escape(name) for name in names) + r")(?=[/\s]|$)")
     try:
-        listing = subprocess.run(["ps", "-U", str(os.getuid()), "-ww", "-o", "pid=,args="], capture_output=True,
-                                 text=True, timeout=10, stdin=subprocess.DEVNULL).stdout
-    except (OSError, subprocess.SubprocessError):
-        return []
+        done = subprocess.run(["ps", "-U", str(os.getuid()), "-ww", "-o", "pid=,args="], capture_output=True,
+                              text=True, timeout=10, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"the guard cannot list processes, so it cannot see a stray one: {exc}") from exc
+    if done.returncode or not done.stdout.strip():  # a user always has a process: an empty list is a failed `ps`
+        raise RuntimeError(f"the guard cannot list processes (ps exited {done.returncode}): {done.stderr.strip()[:200]}")
     found = []
-    for line in listing.splitlines():
+    for line in done.stdout.splitlines():
         pid, _, args = line.strip().partition(" ")
         if pid.isdigit() and int(pid) not in (os.getpid(), os.getppid()) and pattern.search(args):
             found.append((int(pid), args.strip()))
@@ -386,14 +388,17 @@ def stop_strays(funcargs) -> list[str]:
     while found and time.monotonic() < deadline:
         time.sleep(.1)
         found = [row for row in processes_under(root) if row[0] in {pid for pid, _ in found}]
+    left = found
     for number in (signal.SIGTERM, signal.SIGKILL):
+        # The identity is read again before each signal: a pid that ended, or was reused, gets none.
+        found = [row for row in processes_under(root) if row[0] in {pid for pid, _ in found}]
         for pid, _ in found:
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.kill(pid, number)
         deadline = time.monotonic() + (STOP_GRACE if number == signal.SIGTERM else 0)
         while time.monotonic() < deadline and {pid for pid, _ in processes_under(root)} & {pid for pid, _ in found}:
             time.sleep(.05)
-    return [f"process {pid} ({args[:160]})" for pid, args in found]
+    return [f"process {pid} ({args[:160]})" for pid, args in left]
 
 
 def socket_directories() -> set[str]:

@@ -248,6 +248,20 @@ def test_a_process_with_no_parent_that_names_the_tests_directory_fails_the_test_
             os.kill(pid, signal.SIGKILL)
 
 
+def test_a_guard_that_cannot_list_processes_says_so_instead_of_finding_none(tmp_path, monkeypatch):
+    real = subprocess.run
+    for broken in (FileNotFoundError("ps"), subprocess.CompletedProcess([], 1, "", "bad option")):
+        def fake(*args, _broken=broken, **kwargs):
+            if isinstance(_broken, Exception):
+                raise _broken
+            return _broken
+        monkeypatch.setattr(subprocess, "run", fake)
+        with pytest.raises(RuntimeError, match="cannot list processes"):
+            run_guard.processes_under(tmp_path)
+    monkeypatch.setattr(subprocess, "run", real)
+    assert run_guard.processes_under(tmp_path) == []
+
+
 def test_a_limit_is_a_number_of_seconds():
     assert run_guard.read_limit("2.5") == 2.5 and run_guard.read_limit("0") == 0 and run_guard.read_limit(7) == 7
     for wrong in ("", "abc", "-1", "nan", "inf", None):
