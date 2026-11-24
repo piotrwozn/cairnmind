@@ -31,10 +31,13 @@ RESTORE_COMMIT_TIMEOUT = 120
 class ArcadeError(RuntimeError):
     """The local ArcadeDB engine rejected or could not execute an operation."""
 
-    def __init__(self, message: str, *, status_code: int | None = None, exception_name: str = ""):
+    def __init__(self, message: str, *, status_code: int | None = None, exception_name: str = "", exception_args: str = ""):
         super().__init__(message)
         self.status_code = status_code
         self.exception_name = exception_name
+        # The engine's `exceptionArgs`, kept in production mode too, where `detail` is left out: for a duplicated
+        # key it is "INDEX|[key]|RID" (the key itself concealed there), so it is what names the index (#455).
+        self.exception_args = exception_args
 
 
 class _Connections:
@@ -174,7 +177,8 @@ class ArcadeClient:
                                         + sentence.format(url=self._base_url, data_dir=self.settings.data_dir))
                 raise ArcadeError(f"ArcadeDB HTTP {response.status_code}: {safe_message}",
                                   status_code=response.status_code,
-                                  exception_name=str(error.get("exception", "")) if isinstance(error, dict) else "")
+                                  exception_name=str(error.get("exception", "")),
+                                  exception_args=str(error.get("exceptionArgs", "")))
             return response
         except httpx.HTTPError as exc:
             if _certificate_refused(exc):

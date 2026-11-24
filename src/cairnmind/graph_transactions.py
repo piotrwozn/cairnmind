@@ -102,9 +102,13 @@ def refused_by_id_index(exc):
 
     A vertex deleted in an earlier pass and written again by the next one (a directory renamed and renamed back) meets it
     in one of two ways, and the index cannot be asked about either: the commit is refused with a duplicated key, or the
-    edges that name the re-created vertex find no endpoint (``Store.write_graph`` counts what it wrote)."""
+    edges that name the re-created vertex find no endpoint (``Store.write_graph`` counts what it wrote).
+
+    The engine names the index in its ``exceptionArgs`` ("nodes[id]|[key]|RID") in both modes; its ``detail`` text, which
+    production mode leaves out ("Found duplicate key in index"), is not read."""
     if isinstance(exc, ArcadeError):
-        return exc.status_code == 409 and "Duplicated key" in str(exc) and "nodes[id]" in str(exc)
+        return (exc.status_code == 409 and exc.exception_name.endswith(".DuplicatedKeyException")
+                and exc.exception_args.split("|")[0] == "nodes[id]")
     return isinstance(exc, RuntimeError) and "did not create every graph edge" in str(exc)
 
 
