@@ -14,7 +14,8 @@ shows apart from a slope per edit or per answer.
 
     1 start and first scan   2 embedding queue to empty   3 one-file edits   4 answers without a model
     5 answers with the chat model   6 `status` and inspector graph requests   7 long idle
-    8 the cockpit's broker asked for state, status, graph and groups (#450; --repeat requests, in blocks of 50)
+    8 the cockpit's broker asked for what a workspace asks most (#450; --repeat requests, in blocks of --block; the
+      broker runs under a launcher with tracemalloc as the service does; --trace-at reads the allocation sites)
 
 Steps 2 and 5 ask the model server of the settings (an Ollama on 127.0.0.1:11434 by default): inference only,
 nothing is pulled or changed there. --no-ollama skips what needs it (2, 5) and points the service at a closed port.
@@ -73,26 +74,34 @@ def parse_args(argv=None):
     p.add_argument("--quick", action="store_true", help="3 repetitions, 5 s idle, 30 s long idle, 300 s queue wait")
     p.add_argument("--no-trace", action="store_true", help="no tracemalloc: the resident figures without its overhead")
     p.add_argument("--no-ollama", action="store_true", help="point the service at a closed port and skip steps 2 and 5")
-    p.add_argument("--routes", default="graph", help="step 6's requests, taken in turn: graph, groups, neighbors (comma separated)")
+    p.add_argument("--routes", default="graph", help="step 6's requests, taken in turn: graph, groups, neighbors, and the same "
+                   "with the main root as worktree: scoped-graph, scoped-groups, scoped-neighbors (comma separated)")
+    p.add_argument("--block", type=int, default=50, help="requests per block of the resident-memory figures of steps 6 and 8")
+    p.add_argument("--trace-at", default="", help="request numbers (comma separated) after which steps 6 and 8 read the allocation sites")
+    p.add_argument("--second-root", action="store_true", help="register a copy of the project as a second root with files of its own")
     p.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1], help="the project to copy")
     p.add_argument("--workdir", type=Path, default=Path.home() / "tmp" / "cm-measure" / "h410")
     p.add_argument("--keep", action="store_true", help="keep the working directory")
     p.add_argument("--out", type=Path, help="write the results here (JSON); the table goes to standard output")
     p.add_argument("--serve-child", type=Path, help=argparse.SUPPRESS)
+    p.add_argument("--broker-child", type=Path, help=argparse.SUPPRESS)
     p.add_argument("--index-child", type=Path, help=argparse.SUPPRESS)
     args = p.parse_args(argv)
     if args.quick:
         args.repeat, args.idle, args.long_idle, args.queue_timeout = 3, 5, 30, 300
     try:
         args.step_list = [int(part) for part in args.steps.split(",") if part]
+        args.trace_points = [int(part) for part in args.trace_at.split(",") if part]
     except ValueError:
-        p.error("--steps takes numbers, for example 1,3,5")
+        p.error("--steps and --trace-at take numbers, for example 1,3,5")
+    if args.block < 1:
+        p.error("--block must be at least 1")
     if not args.step_list or any(step not in STEP_NAMES for step in args.step_list):
         p.error("--steps takes numbers from 1 to 8")
     if args.repeat < 1:
         p.error("--repeat must be at least 1")
-    if not set(args.routes.split(",")) <= {"graph", "groups", "neighbors"}:
-        p.error("--routes takes graph, groups, neighbors")
+    if not set(args.routes.split(",")) <= {"graph", "groups", "neighbors", "scoped-graph", "scoped-groups", "scoped-neighbors"}:
+        p.error("--routes takes graph, groups, neighbors, scoped-graph, scoped-groups, scoped-neighbors")
     return args
 
 
@@ -127,11 +136,14 @@ def tree_rss(pid: int) -> tuple[float, int]:
     return total, len(found)
 
 
-def request_blocks(readings: list[float], milliseconds: list[float], size: int = 50) -> dict:
-    """Mean resident MB of each block of `size` requests, and the median and worst time of a request (#450)."""
+def request_blocks(readings: list[float], milliseconds: list[float], size: int = 50, threads: list[int] | None = None) -> dict:
+    """Mean resident MB of each block of `size` requests, the threads at the end of each, and the median and worst time (#450)."""
     blocks = [round(statistics.mean(readings[start:start + size]), 1) for start in range(0, len(readings), size)]
-    return {"request_blocks_mb": blocks, "request_ms_median": round(statistics.median(milliseconds), 1),
-            "request_ms_worst": round(max(milliseconds), 1)}
+    result = {"request_blocks_mb": blocks, "request_ms_median": round(statistics.median(milliseconds), 1),
+              "request_ms_worst": round(max(milliseconds), 1)}
+    if threads:
+        result["request_blocks_threads"] = [threads[min(start + size, len(threads)) - 1] for start in range(0, len(threads), size)]
+    return result
 
 
 def free_port() -> int:
@@ -153,13 +165,15 @@ def throwaway(workdir: Path) -> Path:
 
 # ---- the service under a launcher: tracemalloc and a way to ask the process what it holds ----
 
-def serve_child(data: Path, trace: bool) -> None:
-    """Runs `serve` of this directory with tracemalloc on. SIGUSR1 writes a short view, SIGUSR2 the allocation sites."""
+def serve_child(data: Path, trace: bool, broker: bool = False) -> None:
+    """Runs `serve` (or, for the broker, `cockpit serve`) of this directory with tracemalloc on.
+
+    SIGUSR1 writes a short view, SIGUSR2 the allocation sites."""
     import collections
     import gc
     import threading
     import tracemalloc
-    out = data / "trace"
+    out = data / ("trace-broker" if broker else "trace")
     out.mkdir(exist_ok=True)
     state = {"n": 0, "snapshot": None, "types": collections.Counter()}
     if trace:
@@ -192,7 +206,7 @@ def serve_child(data: Path, trace: bool) -> None:
     signal.signal(signal.SIGUSR1, lambda *_: write(False))
     signal.signal(signal.SIGUSR2, lambda *_: write(True))
     from cairnmind.cli import app
-    sys.argv = ["cairnmind", "--data-dir", str(data), "serve"]
+    sys.argv = ["cairnmind", "--data-dir", str(data), *(["cockpit", "serve"] if broker else ["serve"])]
     app()
 
 
@@ -213,7 +227,7 @@ class Measurement:
         self.data, self.repo = self.work / "data", self.work / "repo"
         self.child = None
         self.client = None
-        self.seq = 0
+        self.seqs: dict[str, int] = {}
         self.steps: list[dict] = []
         self.traces: list[dict] = []
 
@@ -251,7 +265,13 @@ class Measurement:
         distribution = Path(os.environ.get("CAIRNMIND_ARCADE_DIST") or os.environ.get("DEVBRAIN_ARCADE_DIST") or runtime_dir(settings))
         install_engine(settings, distribution)
         start_engine(settings)
-        Store(self.data, settings=settings).add_project("measure", self.repo)
+        store = Store(self.data, settings=settings)
+        project = store.add_project("measure", self.repo)
+        if self.args.second_root:  # a second root with files of its own, which a worktree's scope holds back
+            second = self.work / "second"
+            shutil.copytree(self.repo, second)
+            store.add_project_root(project["id"], second)
+        del store
         print(subprocess.run([sys.executable, __file__, "--index-child", str(self.data)], check=True, capture_output=True,
                              text=True, env=self.environment()).stdout.strip(), flush=True)
 
@@ -273,7 +293,7 @@ class Measurement:
     # the service
     def start_service(self):
         import httpx
-        self.seq = 0
+        self.seqs["trace"] = 0
         shutil.rmtree(self.data / "trace", ignore_errors=True)
         command = [sys.executable, __file__, "--serve-child", str(self.data)] + (["--no-trace"] if self.args.no_trace else [])
         self.child = subprocess.Popen(command, env=self.environment(), stdout=(self.work / "service.out").open("a"),
@@ -312,10 +332,10 @@ class Measurement:
                 seen, count = now, count + 1
             time.sleep(1)
 
-    def trace(self, full: bool) -> dict:
-        self.seq += 1
-        os.kill(self.child.pid, signal.SIGUSR2 if full else signal.SIGUSR1)
-        target = self.data / "trace" / f"{self.seq}.json"
+    def trace(self, full: bool, pid: int | None = None, folder: str = "trace") -> dict:
+        number = self.seqs[folder] = self.seqs.get(folder, 0) + 1
+        os.kill(pid or self.child.pid, signal.SIGUSR2 if full else signal.SIGUSR1)
+        target = self.data / folder / f"{number}.json"
         deadline = time.monotonic() + 300
         while not target.exists() and time.monotonic() < deadline:
             time.sleep(0.1)
@@ -338,7 +358,8 @@ class Measurement:
         row["rss_after_each_repetition"] = readings
         row["growth_per_repetition_mb"] = round(slope(readings[-count:] if count else readings), 3) if readings else None  # step 6: only its graph half
         if number == 6 and getattr(self, "request_ms", None):
-            row.update(request_blocks(readings[-count:], self.request_ms))
+            row.update(request_blocks(readings[-count:], self.request_ms, self.args.block, self.request_threads))
+            row["request_traces"] = self.request_traces
         self.steps.append(row)
         print(json.dumps({k: v for k, v in row.items() if k != "idle"} | {"idle_rss_mb": row["idle"]["rss_mb"]}), flush=True)
 
@@ -379,17 +400,24 @@ class Measurement:
         for _ in range(self.args.repeat):
             self.client.get("/status").raise_for_status()
             readings.append(self.rss())
-        node = self.client.get("/inspector/graph", params={"project": pid, "limit": 300}).json()["nodes"][0]["id"]
+        node = next(row["id"] for row in self.client.get("/inspector/graph", params={"project": pid, "limit": 300}).json()["nodes"]
+                    if row["kind"] != "group")
         paths = {"graph": ("/inspector/graph", {"limit": 300}), "groups": ("/inspector/graph/groups", {"limit": 100}),
                  "neighbors": (f"/inspector/graph/{node}/neighbors", {"limit": 100})}
+        scoped = {"worktree": str(self.repo)}  # the main root of a project that has another
+        paths.update({f"scoped-{name}": (path, {**params, **scoped}) for name, (path, params) in list(paths.items())})
         routes = [paths[name] for name in self.args.routes.split(",")]
-        self.request_ms = []
+        self.request_ms, self.request_threads, self.request_traces = [], [], {}
         for number in range(self.args.repeat):
             path, params = routes[number % len(routes)]
             started = time.perf_counter()
             self.client.get(path, params={"project": pid, **params}).raise_for_status()
             self.request_ms.append((time.perf_counter() - started) * 1000)
-            readings.append(self.rss())
+            figures = memory_figures(Path(f"/proc/{self.child.pid}/status").read_text())
+            readings.append(round(figures[0], 1))
+            self.request_threads.append(figures[2])
+            if number + 1 in self.args.trace_points:
+                self.request_traces[number + 1] = self.trace(True)
 
     def step8(self):
         """The cockpit's broker, started as the product starts it, asked what a workspace asks most (#450).
@@ -398,27 +426,40 @@ class Measurement:
         from cairnmind.cockpit import _runtime_file, stop_cockpit
         from cairnmind.terminal_client import BrokerClient
         pid = self.client.get("/projects").json()[0]["id"]
-        process = subprocess.Popen([sys.executable, "-I", "-m", "cairnmind", "--data-dir", str(self.data), "cockpit", "serve"],
-                                   env=self.environment(), stdout=(self.work / "cockpit.out").open("a"),
+        shutil.rmtree(self.data / "trace-broker", ignore_errors=True)
+        self.seqs["trace-broker"] = 0
+        command = [sys.executable, __file__, "--broker-child", str(self.data)] + (["--no-trace"] if self.args.no_trace else [])
+        process = subprocess.Popen(command, env=self.environment(), stdout=(self.work / "cockpit.out").open("a"),
                                    stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
         try:
             deadline = time.monotonic() + 60
             while not _runtime_file(self.settings).exists() and process.poll() is None and time.monotonic() < deadline:
                 time.sleep(0.2)
             broker = BrokerClient(self.settings)
+            node = next(row["id"] for row in broker.request("GET", "/api/inspector/graph", params={"project": pid, "limit": 300})["nodes"]
+                        if row["kind"] != "group")
+            # What a workspace sends most: its state and status, the graph, its groups and a node's neighbors.
             routes = [("/api/state", {}), ("/api/status", {}), ("/api/inspector/graph", {"project": pid, "limit": 2000}),
-                      ("/api/inspector/graph/groups", {"project": pid, "limit": 100})]
+                      ("/api/inspector/graph/groups", {"project": pid, "limit": 100}),
+                      (f"/api/inspector/graph/{node}/neighbors", {"project": pid, "limit": 100}), ("/api/brief", {"project": pid})]
             broker.request("GET", "/api/state")
-            start, readings, milliseconds = tree_rss(process.pid), [], []
+            start, readings, milliseconds, alone, threads, traces = tree_rss(process.pid), [], [], [], [], {}
             for number in range(self.args.repeat):
                 path, params = routes[number % len(routes)]
                 started = time.perf_counter()
                 broker.request("GET", path, params=params, timeout=600)
                 milliseconds.append((time.perf_counter() - started) * 1000)
                 readings.append(tree_rss(process.pid)[0])
-            row = {"step": 8, "name": "cockpit broker: state, status, graph and groups requests", "repetitions": self.args.repeat,
+                figures = memory_figures(Path(f"/proc/{process.pid}/status").read_text())
+                alone.append(figures[0])
+                threads.append(figures[2])
+                if number + 1 in self.args.trace_points:
+                    traces[number + 1] = self.trace(True, process.pid, "trace-broker")
+            row = {"step": 8, "name": "cockpit broker: state, status, graph, groups, neighbors and brief requests", "repetitions": self.args.repeat,
                    "processes_at_start": start[1], "rss_at_start_mb": round(start[0], 1), "rss_after_mb": round(readings[-1], 1),
-                   "growth_per_repetition_mb": round(slope(readings), 3), **request_blocks(readings, milliseconds)}
+                   "processes_after": tree_rss(process.pid)[1], "broker_blocks_mb": request_blocks(alone, milliseconds, self.args.block)["request_blocks_mb"],
+                   "growth_per_repetition_mb": round(slope(readings), 3), "request_traces": traces,
+                   **request_blocks(readings, milliseconds, self.args.block, threads)}
             self.cockpit = row
             print(json.dumps(row), flush=True)
         finally:
@@ -485,8 +526,8 @@ def table(result: dict) -> str:
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    if args.serve_child:
-        serve_child(args.serve_child, not args.no_trace)
+    if args.serve_child or args.broker_child:
+        serve_child(args.serve_child or args.broker_child, not args.no_trace, broker=bool(args.broker_child))
         return 0
     if args.index_child:
         index_child(args.index_child)

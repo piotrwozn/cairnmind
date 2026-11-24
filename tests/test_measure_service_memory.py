@@ -61,8 +61,20 @@ def test_the_requests_are_summed_up_in_blocks_of_fifty_with_their_median_and_wor
 
 def test_the_requests_of_step_six_are_graph_groups_and_neighbors_and_nothing_else():
     assert script.parse_args(["--routes", "graph,groups,neighbors"]).routes == "graph,groups,neighbors"
+    assert script.parse_args(["--routes", "scoped-graph,scoped-groups,scoped-neighbors"]).second_root is False
     with pytest.raises(SystemExit):
         script.parse_args(["--routes", "graph,summary"])
+
+
+def test_the_blocks_have_a_size_of_their_own_and_the_threads_at_their_ends_and_the_traces_are_asked_for_by_number():
+    blocks = script.request_blocks([float(n) for n in range(250)], [1.0] * 250, 100, [10 + n // 100 for n in range(250)])
+    assert blocks["request_blocks_mb"] == [49.5, 149.5, 224.5] and blocks["request_blocks_threads"] == [10, 11, 12]
+    args = script.parse_args(["--block", "100", "--trace-at", "200,1800", "--second-root"])
+    assert (args.block, args.trace_points, args.second_root) == (100, [200, 1800], True)
+    with pytest.raises(SystemExit):
+        script.parse_args(["--block", "0"])
+    with pytest.raises(SystemExit):
+        script.parse_args(["--trace-at", "two"])
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc")
