@@ -378,14 +378,14 @@ def stop_engines(funcargs) -> list[str]:
     return stopped
 
 
-def parse_processes(listing: str, uid: int) -> list[tuple[int, str]]:
-    """(pid, command line) of the rows of `ps -A -o pid=,uid=,command=` that belong to `uid`. procps (Linux) and
-    BSD ps (macOS) differ in the padding of the columns, not in their order: the command is the rest of the row."""
+def parse_processes(listing: str, uid: int) -> list[tuple[int, int, str]]:
+    """(pid, parent pid, command line) of the rows of `ps -A -o pid=,ppid=,uid=,command=` that belong to `uid`. procps
+    (Linux) and BSD ps (macOS) differ in the padding of the columns, not in their order: the command is the rest."""
     rows = []
     for line in listing.splitlines():
-        fields = line.split(None, 2)
-        if len(fields) == 3 and fields[0].isdigit() and fields[1] == str(uid):
-            rows.append((int(fields[0]), fields[2].strip()))
+        fields = line.split(None, 3)
+        if len(fields) == 4 and fields[0].isdigit() and fields[1].isdigit() and fields[2] == str(uid):
+            rows.append((int(fields[0]), int(fields[1]), fields[3].strip()))
     return rows
 
 
@@ -393,14 +393,15 @@ ENGINE_OPTION = "-Darcadedb.server.rootPath="  # in the command line of an engin
 
 
 def processes_under(*roots: Path, leave: str = "") -> list[tuple[int, str]]:
-    """(pid, command line) of every process of this user, other than this one and its parent, whose command
-    line names one of `roots` or a path below it, whatever its parent or session: a service the product
-    started for the test's data directory is nobody's child (#457). `ps -A -ww -o pid=,uid=,command=` is
-    understood by procps and by the BSD ps of macOS (`-U` and the keyword `args` are not on both)."""
+    """(pid, command line) of every process of this user, other than this one and its ancestors (a wrapper whose
+    command line carries the --basetemp is not a stray), whose command line names one of `roots` or a path below
+    it, whatever its parent or session: a service the product started for the test's data directory is nobody's
+    child (#457). `ps -A -ww -o pid=,ppid=,uid=,command=` is understood by procps and by the BSD ps of macOS
+    (`-U` and the keyword `args` are not on both)."""
     names = {name for root in roots for name in (str(root), str(root.resolve()))}
     pattern = re.compile("(?:" + "|".join(re.escape(name) for name in names) + r")(?=[/\s]|$)")
     try:
-        done = subprocess.run(["ps", "-A", "-ww", "-o", "pid=,uid=,command="], capture_output=True,
+        done = subprocess.run(["ps", "-A", "-ww", "-o", "pid=,ppid=,uid=,command="], capture_output=True,
                               text=True, timeout=10, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ProcessListFailed(f"the guard cannot list processes, so it cannot see a stray one: {exc}") from exc
@@ -408,7 +409,13 @@ def processes_under(*roots: Path, leave: str = "") -> list[tuple[int, str]]:
     if done.returncode or not rows:  # a user always has a process: an empty list is a failed `ps`
         raise ProcessListFailed(f"the guard cannot list processes (ps exited {done.returncode}): "
                                 f"{done.stderr.strip()[:200]}")
-    return [(pid, args) for pid, args in rows if pid not in (os.getpid(), os.getppid()) and pattern.search(args)
+    parents, mine = {pid: parent for pid, parent, _ in rows}, set()
+    pid = os.getpid()
+    while pid not in mine:  # this process and every ancestor the listing knows
+        mine.add(pid)
+        pid = parents.get(pid, 0)
+    mine.add(os.getppid())
+    return [(pid, args) for pid, _, args in rows if pid not in mine and pattern.search(args)
             and not (leave and leave in args)]
 
 
@@ -598,6 +605,8 @@ def leftover_processes_are_stopped(request):
     try:
         strays = stop_strays(test_roots(request.node, directories))
     except ProcessListFailed as exc:  # the same for every test: the run ends here, once, with the reason
+        if hasattr(request.config, "workerinput"):  # pytest.exit in a worker is an INTERNALERROR of xdist's controller
+            pytest.fail(str(exc), pytrace=False)  # and the controller's own check ends the run with exit 3
         pytest.exit(str(exc), returncode=3)
     if strays:
         pytest.fail("The test left a process of its own data directory running, with no parent to stop it "

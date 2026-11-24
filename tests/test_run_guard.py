@@ -316,7 +316,8 @@ def test_a_process_left_by_a_fixture_of_the_session_names_the_runs_folder_and_fa
             os.kill(pid, signal.SIGKILL)
 
 
-def test_a_ps_that_fails_ends_the_run_once_with_its_reason(tmp_path):
+@pytest.mark.parametrize("workers", [0, 2])
+def test_a_ps_that_fails_ends_the_run_once_with_its_reason(tmp_path, workers):
     fake = tmp_path / "bin"
     fake.mkdir()
     (fake / "ps").write_text("#!/bin/sh\necho 'ps: illegal option' >&2\nexit 1\n")
@@ -327,33 +328,50 @@ def test_a_ps_that_fails_ends_the_run_once_with_its_reason(tmp_path):
 
     def test_second(tmp_path):
         pass
-    """, env={"PATH": f"{fake}{os.pathsep}{os.environ['PATH']}"})
+    """, *(["-n", str(workers)] if workers else []), env={"PATH": f"{fake}{os.pathsep}{os.environ['PATH']}"})
     assert result.returncode == 3, result.stdout
     assert "cannot list processes (ps exited 1): ps: illegal option" in result.stdout
-    assert "test_second" not in result.stdout, result.stdout  # the second test was never run
+    assert "INTERNALERROR" not in result.stdout, result.stdout
+    if not workers:
+        assert "test_second" not in result.stdout, result.stdout  # the second test was never run
 
 
-LINUX_PS = """    1     0 /sbin/init splash
- 1234  1000 python -I -m cairnmind --data-dir /tmp/pytest-of-u/pytest-3/t/data cockpit serve
-99999  1000 sh -c  echo   two  spaces
- 4321  1001 other user's process
+LINUX_PS = """    1     0     0 /sbin/init splash
+ 1234     1  1000 python -I -m cairnmind --data-dir /tmp/pytest-of-u/pytest-3/t/data cockpit serve
+99999  1234  1000 sh -c  echo   two  spaces
+ 4321     1  1001 other user's process
 """
 MACOS_PS = """\
-  501   501 /usr/sbin/cfprefsd agent
-12345   501 /Users/runner/work/uv run pytest -n 3 -m "not arcade"
-    1     0 /sbin/launchd
- 7777   501 /private/var/folders/x/T/pytest-of-runner/pytest-0/t/python -I -m cairnmind cockpit serve
+  501     1   501 /usr/sbin/cfprefsd agent
+12345   400   501 /Users/runner/work/uv run pytest -n 3 -m "not arcade"
+    1     0     0 /sbin/launchd
+ 7777     1   501 /private/var/folders/x/T/pytest-of-runner/pytest-0/t/python -I -m cairnmind cockpit serve
 """
 
 
 def test_the_listing_of_ps_is_read_the_same_from_procps_and_from_the_ps_of_macos():
     assert run_guard.parse_processes(LINUX_PS, 1000) == [
-        (1234, "python -I -m cairnmind --data-dir /tmp/pytest-of-u/pytest-3/t/data cockpit serve"),
-        (99999, "sh -c  echo   two  spaces")]
+        (1234, 1, "python -I -m cairnmind --data-dir /tmp/pytest-of-u/pytest-3/t/data cockpit serve"),
+        (99999, 1234, "sh -c  echo   two  spaces")]
     assert run_guard.parse_processes(MACOS_PS, 501) == [
-        (501, "/usr/sbin/cfprefsd agent"), (12345, '/Users/runner/work/uv run pytest -n 3 -m "not arcade"'),
-        (7777, "/private/var/folders/x/T/pytest-of-runner/pytest-0/t/python -I -m cairnmind cockpit serve")]
+        (501, 1, "/usr/sbin/cfprefsd agent"), (12345, 400, '/Users/runner/work/uv run pytest -n 3 -m "not arcade"'),
+        (7777, 1, "/private/var/folders/x/T/pytest-of-runner/pytest-0/t/python -I -m cairnmind cockpit serve")]
     assert run_guard.parse_processes("", 501) == [] == run_guard.parse_processes("garbage\n  x y z\n", 501)
+
+
+def test_a_wrapper_above_the_run_that_names_the_folder_is_not_a_stray_but_a_sibling_is(tmp_path):
+    """`timeout 600 sh -c 'pytest --basetemp X'` has X in its command line and is an ancestor of the run."""
+    code = ("import sys; sys.path.insert(0, sys.argv[1]); import run_guard; from pathlib import Path; "
+            "print([pid for pid, _ in run_guard.processes_under(Path(sys.argv[2]))])")
+    sibling = subprocess.Popen(["sh", "-c", "sleep 30; true", "sibling", str(tmp_path)])
+    try:
+        # two wrappers: the python process is a grandchild of the outer one, which names the folder in its arguments
+        done = subprocess.run(["sh", "-c", 'sh -c \'"$@"; true\' inner "$@"; true', "outer", sys.executable, "-c", code,
+                               str(HERE), str(tmp_path)], capture_output=True, text=True, timeout=30)
+    finally:
+        sibling.kill()
+        sibling.wait()
+    assert done.stdout.strip() == str([sibling.pid]), done.stdout + done.stderr
 
 
 def test_a_guard_that_cannot_list_processes_says_so_instead_of_finding_none(tmp_path, monkeypatch):
