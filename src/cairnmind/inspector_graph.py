@@ -82,12 +82,14 @@ class Held:
     """What a request's worktree holds back, as the whole read decides it, row by row.
 
     `bad` maps (table, field) to the distinct values of root, worktree or path that name another worktree (a path only
-    for the file sources); `sources`, `records` and `nodes` are the identifiers of the rows that carry one, or, for a
-    native vertex, that belong to a held source. Nothing held: `empty`, and every condition below is empty too.
+    for the file sources); `sources` and `records` are the identifiers of the rows that carry one, `own` those of the
+    native vertices that carry one of their own, and `kept` those of the native vertices of a held source that stand
+    for a record or plan in scope. A vertex whose source is held back is held back with it. Nothing held: `empty`, and
+    every condition below is empty too.
     """
 
     def __init__(self):
-        self.bad, self.sources, self.records, self.nodes = {}, [], [], []
+        self.bad, self.sources, self.records, self.own, self.kept = {}, [], [], [], []
 
     @property
     def empty(self):
@@ -156,14 +158,15 @@ def held(inspector, scope):
         if out:
             setattr(result, table, [row["id"] for row in store.query(
                 f"SELECT id FROM {table} WHERE project_id=:project AND ({' OR '.join(out)})", {**params, **extra})])
-    parts, _, extra = _checks(result, "nodes")
-    if result.sources:
-        parts.append("source_id IN :held_sources")
-        extra["held_sources"] = result.sources
-    if parts:
-        result.nodes = [row["id"] for row in store.query(
-            f"SELECT id FROM nodes WHERE project_id=:project AND ({' OR '.join(parts)})", {**params, **extra})]
-    if len(result.sources) + len(result.records) + len(result.nodes) > HELD_LIMIT:
+    out, _, extra = _checks(result, "nodes")
+    if out:  # vertices held by their own root or worktree (a record's); those held by their source are not listed
+        result.own = [row["id"] for row in store.query(
+            f"SELECT id FROM nodes WHERE project_id=:project AND ({' OR '.join(out)})", {**params, **extra})]
+    if result.sources:  # a held vertex of a record or plan that is in scope still stands for it in the view
+        result.kept = [row["id"] for row in store.query(
+            "SELECT id FROM nodes WHERE project_id=:project AND source_id IN :held_sources AND (id LIKE 'record:%' OR id LIKE 'plan:%')",
+            {**params, "held_sources": result.sources}) if not row["id"].startswith("record:") or row["id"][7:] not in set(result.records)]
+    if len(result.sources) + len(result.records) + len(result.own) > HELD_LIMIT:
         return None
     return result
 
@@ -171,24 +174,23 @@ def held(inspector, scope):
 def dropped(store, pid, held):
     """The edges of the scope's sources that join a vertex the scope holds back: the whole read leaves them out.
 
-    A held native vertex stays in the view when the source, record or plan it stands for is in scope.
+    A vertex is held back by its own root or worktree (`own`) or by its source, unless it stands in the view for a record
+    or plan that is in scope (`kept`). The edges that join one are asked of the database by the source of their ends.
     """
     if held.empty:
         return 0
-    owners = (("source:", set(held.sources)), ("record:", set(held.records)))
-
-    def stands(identifier):
-        return next((identifier[len(prefix):] not in held_ids for prefix, held_ids in owners if identifier.startswith(prefix)),
-                    identifier.startswith("plan:"))
-
-    gone = [identifier for identifier in held.nodes if not stands(identifier)]
     where, params = inside(held, "edges")
-    found = set()
-    for start in range(0, len(gone), 2000):
+    found, kept, sources = set(), set(held.kept), set(held.sources)
+    if sources:
+        for row in store.query("SELECT id,from_id,to_id,out.source_id AS first,in.source_id AS second FROM edges WHERE project_id=:project "
+                               f"AND (out.source_id IN :held_sources OR in.source_id IN :held_sources){where}", {"project": pid, **params}):
+            if (row["first"] in sources and row["from_id"] not in kept) or (row["second"] in sources and row["to_id"] not in kept):
+                found.add(row["id"])
+    for start in range(0, len(held.own), 2000):
         for side in ("from_id", "to_id"):
             found.update(row["id"] for row in store.query(
                 f"SELECT id FROM edges WHERE project_id=:project AND {side} IN :ids{where}",
-                {"project": pid, "ids": gone[start:start + 2000], **params}))
+                {"project": pid, "ids": held.own[start:start + 2000], **params}))
     return len(found)
 
 

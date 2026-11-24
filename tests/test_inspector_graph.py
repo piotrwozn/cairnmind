@@ -328,7 +328,8 @@ def test_rows_of_two_more_roots_are_paged_with_the_same_answers(stores, tmp_path
     worktree = {None: None, "root": root, "other": other, "third": third}[which]
     held = inspector_graph.held(inspector, inspector._scope(pid, worktree))
     assert held is not None and held.empty == (worktree is None)
-    assert worktree is None or (held.sources and held.records and held.nodes)
+    assert worktree is None or (held.sources and held.records and held.own)
+    assert worktree != root or held.kept  # a record of this root rests on the other root's source: its vertex stands for it
     assert compare_graph(store, pid, worktree, limits=(3, 2000)) > 10
     compare_groups_and_neighbors(store, pid, worktree)
 
