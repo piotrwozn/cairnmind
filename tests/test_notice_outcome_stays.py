@@ -634,3 +634,10 @@ async def test_a_notice_is_counted_once_per_event_whatever_path_tells_it(tmp_pat
         now[0] += OUTCOME_HOLD + 1
         app._hold_over()
         assert line(app) == "poll says it" and count("poll says it") == [1]
+        app.notice("A")
+        background(app, "W", "info")
+        app.notice("W")  # an act tells what waits: it is on the line, nothing waits any more
+        app.notice("B")
+        now[0] += OUTCOME_HOLD + 1
+        app._hold_over()
+        assert line(app) == "B"  # the told W does not come back over the later outcome

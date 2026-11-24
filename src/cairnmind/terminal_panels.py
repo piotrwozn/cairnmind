@@ -437,6 +437,8 @@ class SidebarApp(BasePanel):
         next stage all report it, and a change of the state that does not change the text adds nothing
         to Notices. `about` is the project a press was for (see notice_for)."""
         text = self.launch_notice(value)
+        if BACKGROUND.get() and self._held is not None and self._held.text == plain(self.t(text)).plain:
+            return  # the poll tells what already waits behind an outcome: one event (#430)
         if str(self.query_one("#panel-notice", Static).render()) != self.t(text):
             self.notice_for(about, text) if about else self.notice(text)
 
