@@ -369,6 +369,30 @@ def test_a_graph_another_process_wrote_after_this_one_is_noticed(workspace):
     assert_same_as_a_full_run(store, pid)
 
 
+def test_a_record_linked_to_a_code_node_that_moves_keeps_every_later_pass_incremental(workspace):
+    # A symbol's id holds its line, so a line added above it leaves the old vertex in the store when a knowledge
+    # record's edge names it; the count of stored nodes then holds that vertex too (#426).
+    store, pid, root = workspace
+    index_project(store, pid)
+    allowed = store.query("SELECT id FROM nodes WHERE project_id=:project AND kind='symbol' AND label LIKE '%allowed%' LIMIT 1",
+                          {"project": pid})[0]["id"]
+    source = store.query("SELECT id FROM sources WHERE project_id=:project AND is_current=true LIMIT 1", {"project": pid})[0]["id"]
+    with store.transaction() as tx:
+        store.write_graph(tx, pid, [{"id": "record:linked", "project_id": pid, "kind": "decision", "label": "linked"}],
+                          [{"id": "linked-edge", "project_id": pid, "from_id": "record:linked", "to_id": allowed,
+                            "kind": "relates_to", "source_id": source, "status": "proposed", "is_current": True}])
+    limits = root / "pkg" / "limits.py"
+    limits.write_text("# moved\n" + limits.read_text())
+    moved = index_project_if_changed(store, pid)
+    assert store.query("SELECT id FROM nodes WHERE id=:id", {"id": allowed})  # kept, an edge names it
+    assert moved["graph_written"]["nodes"] < moved["nodes"]
+    for step in (4, 5, 6):
+        (root / "pkg" / f"module_{step:02d}.py").write_text(f"VALUE_{step} = {step + 40}\n")
+        later = index_project_if_changed(store, pid)
+        assert later["changed"] == 1 and later["graph_written"]["nodes"] <= 4 < later["nodes"] / 4, later
+    assert_same_as_a_full_run(store, pid)
+
+
 def test_a_pass_after_one_edit_reads_no_node_ids_and_deletes_edges_by_their_ids(workspace, monkeypatch):
     store, pid, root = workspace
     index_project(store, pid)

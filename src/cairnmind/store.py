@@ -1175,11 +1175,13 @@ class Store:
         # A transaction's rows in one request: the engine scans the project's index once per DELETE, so groups of 250
         # made it 80 times more scans for a replaced graph (#402). The count is vertices only.
         group = graph_transactions.ROWS_PER_TRANSACTION
+        kept = []  # returned: the caller counts the vertices the store still holds (#426)
         for offset in range(0, len(identifiers), group):
             part = identifiers[offset:offset + group]
             named = set()
             for row in tx.query("SELECT from_id,to_id FROM edges WHERE from_id IN :ids OR to_id IN :ids", {"ids": part}):
                 named.update((row.get("from_id"), row.get("to_id")))
+            kept.extend(identifier for identifier in part if identifier in named)
             unlinked = [identifier for identifier in part if identifier not in named]
             if not unlinked:
                 continue
@@ -1189,6 +1191,7 @@ class Store:
             count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
             if type(count) is not int or count != len(unlinked):
                 raise RuntimeError("The database did not delete every graph vertex of a group")
+        return kept
 
     def _record_graph(self, tx, record):
         node_id = f"record:{record['id']}"

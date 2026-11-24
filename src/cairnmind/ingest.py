@@ -1285,8 +1285,10 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             changed_nodes = [item for identifier, item in nodes.items() if before.get(identifier) != digests[identifier]]
             # The stored nodes are those the process wrote (counted above): the ones that go are known, not read.
             doomed = sorted(identifier for identifier in before if identifier not in digests and not identifier.startswith("source:"))
+            carried = remembered.get("kept", frozenset()) - digests.keys()  # kept before, still not computed
         else:
             doomed = None
+            carried = frozenset()
             # An edge's id names its ends, kind, source and line: a stored edge with a computed id and the marks a
             # full replace gives it is that edge, and it stays. Deleting every edge and writing the same ids again
             # left the engine's unique index holding entries of the deleted ones from about 40,000 edges on, and
@@ -1348,9 +1350,12 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             doomed = [row["id"] for row in previous_nodes if row["id"] not in digests]
         # Knowledge-record relationships referencing a removed code node must not silently
         # become dangling: such a node is retained. The rest go in groups (issue #167).
+        kept_nodes = set(carried)
         for offset in range(0, len(doomed), graph_transactions.ROWS_PER_TRANSACTION):
-            store.remove_graph_nodes(batches.tx, project_id, doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION])
+            kept_nodes.update(store.remove_graph_nodes(batches.tx, project_id, doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION]) or ())
             batches.wrote(len(doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION]))
+        # What the store holds is what was computed and what an edge keeps: the next pass counts exactly that.
+        written.update(kept=frozenset(kept_nodes), code_nodes=_code_nodes(digests) + len(kept_nodes))
         # This marker commits with the last of the vertex/edge replacement, and until it does the graph is not built.
         # An interrupted/failed graph write can never claim completion.
         batches.tx.command(
