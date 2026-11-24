@@ -10,7 +10,8 @@ from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401 
 
 from cairnmind.agent import EXCERPT_CHARS, INITIAL_HITS, KnowledgeAgent
 from cairnmind.definitions import (
-    MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, MAX_ROWS, candidate_names, definition_lines, rank_definitions,
+    MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, MAX_ROWS, candidate_names, definition_lines, find_definitions,
+    rank_definitions,
 )
 from cairnmind.ingest import index_project
 
@@ -185,13 +186,14 @@ def test_a_definition_the_question_names_as_code_ranks_first(question, first):
 
 def test_definitions_come_from_the_asked_worktree_only_and_in_a_stable_order(workspace, tmp_path):  # noqa: F811
     store, project, settings, root = _project(workspace)
-    # Another registered root that sorts first and defines the same name more often than the
-    # bound on candidate rows: a bound applied before the worktree filter would leave only these.
+    # Another registered root whose files sort before pkg/config.py (the sort is by label, then the relative path) and
+    # define the same name more often than the bound on candidate rows: a bound applied before the worktree filter
+    # would leave only these, and the main root would lose its definition.
     second = tmp_path / "a-second-worktree"
     (second / "pkg").mkdir(parents=True)
-    (second / "pkg" / "config.py").write_text(CONFIG.replace("5102", "6102"))
+    (second / "pkg" / "a_config.py").write_text(CONFIG.replace("5102", "6102"))  # sorts before its own copies
     for index in range(MAX_ROWS + 10):
-        (second / "pkg" / f"copy_{index:03d}.py").write_text(f"class Settings:\n    cockpit_port: int = {index}\n")
+        (second / "pkg" / f"aaa_{index:03d}.py").write_text(f"class Settings:\n    cockpit_port: int = {index}\n")
     store.add_project_root(project["id"], second)
     index_project(store, project["id"])
     agent = KnowledgeAgent(store, settings, FakeOllama())
@@ -205,6 +207,9 @@ def test_definitions_come_from_the_asked_worktree_only_and_in_a_stable_order(wor
     main = agent._definitions(project["id"], question, hits, {})
     assert main and all(item["uri"].startswith(str(root)) for item in main)
     assert any("5102" in item["text"] for item in main)
+    # the 200 rows of the other root, sorted first, must not take the place of this root's row of the field
+    rows = find_definitions(store, agent.retriever, project["id"], question, [hits[0]["text"]])
+    assert ("Settings.cockpit_port", "pkg/config.py") in [(row["symbol"]["name"], row["path"]) for row in rows]
 
 
 def test_files_changed_since_indexing_cost_a_bounded_number_of_checks(workspace):  # noqa: F811

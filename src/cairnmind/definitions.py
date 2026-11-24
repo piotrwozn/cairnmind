@@ -49,6 +49,7 @@ from __future__ import annotations
 import re
 from pathlib import Path, PurePosixPath
 
+from .memory_paths import memory_bindings
 from .retrieval import json_value, secondary_source, terms
 
 MAX_DEFINITIONS = 4
@@ -56,6 +57,7 @@ MAX_DEFINITIONS = 4
 MAX_DEFINITION_ATTEMPTS = 8
 MAX_NAMES = 64
 MAX_ROWS = 200  # candidate definitions read per question, after the worktree filter
+SCAN_ROWS = 1000  # rows of the read of one kind of match before the worktree filter; a wider read is made in the sources
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?")
 _KIND_ORDER = {"constant": 0, "field": 0, "parameter": 1, "function": 2, "method": 2, "class": 3}
 # Words a setting's name carries without naming what it is about (MAX_REPORTED, num_ctx).
@@ -193,7 +195,7 @@ def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
                                          _KIND_ORDER.get(row["symbol"].get("kind"), 3) >= 2,
                                          -row["file_relevance"], row["shared_by"],
                                          _KIND_ORDER.get(row["symbol"].get("kind"), 3),
-                                         row["path"], int(row["symbol"].get("line_start") or 0)))
+                                         row["path"], int(row["symbol"].get("line_start") or 0), str(row.get("node_id", ""))))
 
 
 def pattern_words(question: str) -> list[str]:
@@ -245,16 +247,43 @@ def context_patterns(question: str) -> tuple[str, str, str] | None:
             f".*{real}.*")
 
 
+def _symbol_rows(store, retriever, project_id: str, root, roots, kinds: list) -> list[list[dict]]:
+    """For each kind of match ``(condition, parameters)``, its first MAX_ROWS symbol rows of the worktree, ordered by
+    label, path and line.
+
+    A kind is read without the list of the worktree's sources, in at most SCAN_ROWS rows; their sources are read
+    together and the worktree filter is applied here, before the bound, which gives the rows the list gave. A kind
+    with more rows than that is read again in the worktree's sources, as the list is then the cheaper way.
+    """
+    out, sources, bindings, eligible = [], {}, None, None
+    for where, own in kinds:
+        select = ("SELECT id,label,source_id,metadata FROM nodes WHERE project_id=:project AND is_current=true "
+                  "AND kind='symbol' AND ")
+        order = "ORDER BY label, metadata.path, metadata.line_start, id"
+        rows = store.query(select + f"({where}) {order} LIMIT {SCAN_ROWS}", {**own, "project": project_id})
+        if len(rows) >= SCAN_ROWS:
+            eligible = sorted(retriever._source_ids(project_id, root, roots)) if eligible is None else eligible
+            out.append(store.query(select + f"source_id IN :eligible AND ({where}) {order} LIMIT {MAX_ROWS}",
+                                   {**own, "project": project_id, "eligible": eligible}))
+            continue
+        sources.update(store.get_sources({row["source_id"] for row in rows if isinstance(row.get("source_id"), str)}
+                                         - sources.keys()))
+        bindings = memory_bindings(store, project_id) if bindings is None else bindings
+        out.append([row for row in rows if row.get("source_id") in sources and retriever._in_scope(
+            sources[row["source_id"]], project_id, root, roots, bindings)][:MAX_ROWS])
+    return out
+
+
 def find_definitions(store, retriever, project_id: str, question: str, texts: list[str], worktree=None) -> list[dict]:
     """Ranked definition rows of this worktree for the names in ``question`` and ``texts``.
 
-    The worktree's current sources are read first (as search reads them), and the node queries
-    keep only symbols of those sources, ordered by label, path and line, each at most MAX_ROWS:
+    The node reads keep only symbols of the worktree's current sources (as search reads them), ordered by label, path
+    and line, each kind of match at most MAX_ROWS rows:
     the matches of code names (any kind), of word names (constants and fields), of names made
     of question words (``name_word_pattern``), and of names with one question word in a file or
     class with one (``context_patterns``). Every bound applies after the worktree filter and
     to one kind of match, so one kind cannot crowd out another, and the same index gives the same
-    rows; four queries at most. A row is
+    rows; one read for each kind (see ``_symbol_rows``). A row is
     ``{"node_id", "source_id", "symbol", "path", "named", "relevance", ...}`` with ``path``
     relative to the worktree root.
     """
@@ -262,42 +291,28 @@ def find_definitions(store, retriever, project_id: str, question: str, texts: li
     if not code and not plain:
         return []
     project_id, root, roots = retriever._scope(project_id, worktree)
-    eligible = sorted(retriever._source_ids(project_id, root, roots))
-    if not eligible:
-        return []
-    select = ("SELECT id,label,source_id,metadata FROM nodes WHERE project_id=:project AND is_current=true "
-              "AND kind='symbol' AND source_id IN :eligible AND ")
-    order = "ORDER BY label, metadata.path, metadata.line_start, id"
-    rows = store.query(
-        select + f"(label IN :names OR metadata.member IN :names) {order} LIMIT {MAX_ROWS}",
-        {"project": project_id, "eligible": eligible, "names": code}) if code else []
-    known = {row["id"] for row in rows}
+    # The kinds of match, in the order their rows are kept. Word names have their own bounded read, so that names
+    # made of question words cannot crowd them out, nor they those.
+    kinds = []
+    if code:
+        kinds.append(("(label IN :code OR metadata.member IN :code)", {"code": code}))
     if plain:
-        # Word names in their own bounded read, so that names made of question words below
-        # cannot be crowded out by them, nor they by those.
-        rows += [row for row in store.query(
-            select + f"(label IN :names OR metadata.member IN :names) AND metadata.kind IN ['constant', 'field'] "
-            f"{order} LIMIT {MAX_ROWS}",
-            {"project": project_id, "eligible": eligible, "names": plain}) if row["id"] not in known]
+        kinds.append(("(label IN :plain OR metadata.member IN :plain) AND metadata.kind IN ['constant', 'field']",
+                      {"plain": plain}))
+    if pattern := name_word_pattern(question):
+        kinds.append(("((metadata.kind IN ['field', 'parameter'] AND metadata.member.toLowerCase() MATCHES :pattern) "
+                      "OR (metadata.kind = 'constant' AND label.toLowerCase() MATCHES :pattern))",
+                      {"pattern": pattern}))
+    if context := context_patterns(question):
+        kinds.append(("((metadata.kind = 'field' AND metadata.member.toLowerCase() MATCHES :name "
+                      "AND (metadata.owner.toLowerCase() MATCHES :owner OR metadata.path.toLowerCase() MATCHES :file)) "
+                      "OR (metadata.kind = 'constant' AND label.toLowerCase() MATCHES :name "
+                      "AND metadata.path.toLowerCase() MATCHES :file))",
+                      {"name": context[0], "file": context[1], "owner": context[2]}))
+    rows, known = [], set()
+    for matched in _symbol_rows(store, retriever, project_id, root, roots, kinds):
+        rows += [row for row in matched if row["id"] not in known]
         known = {row["id"] for row in rows}
-    pattern = name_word_pattern(question)
-    if pattern:
-        rows += [row for row in store.query(
-            select + "((metadata.kind IN ['field', 'parameter'] AND metadata.member.toLowerCase() MATCHES :pattern) "
-            "OR (metadata.kind = 'constant' AND label.toLowerCase() MATCHES :pattern)) "
-            f"{order} LIMIT {MAX_ROWS}",
-            {"project": project_id, "eligible": eligible, "pattern": pattern}) if row["id"] not in known]
-        known = {row["id"] for row in rows}
-    context = context_patterns(question)
-    if context:
-        rows += [row for row in store.query(
-            select + "((metadata.kind = 'field' AND metadata.member.toLowerCase() MATCHES :name "
-            "AND (metadata.owner.toLowerCase() MATCHES :owner OR metadata.path.toLowerCase() MATCHES :file)) "
-            "OR (metadata.kind = 'constant' AND label.toLowerCase() MATCHES :name "
-            "AND metadata.path.toLowerCase() MATCHES :file)) "
-            f"{order} LIMIT {MAX_ROWS}",
-            {"project": project_id, "eligible": eligible, "name": context[0], "file": context[1],
-             "owner": context[2]}) if row["id"] not in known]
     found = []
     for row in rows:
         symbol = json_value(row.get("metadata"), {})

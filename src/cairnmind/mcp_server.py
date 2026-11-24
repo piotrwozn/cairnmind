@@ -18,7 +18,8 @@ from mcp.server.fastmcp import FastMCP
 
 from . import __version__
 from .config import Settings, env_names, session_value, tls_verify
-from . import upgrade_mark
+from . import index_mark, upgrade_mark
+from .index_mark import BRIDGE_INDEX
 from .upgrade_mark import BRIDGE_UPGRADE, CODE_REPLACED, CODE_UNREADABLE
 from .service_token import foreign_service_text, refused_token
 from .service_version import refusal as other_version
@@ -207,6 +208,8 @@ def start_service(settings: Settings) -> None:
     if role in {"reader", "lost"}:
         # A reader never runs the service (#70): nothing is spawned, and it is not told to start one (#244).
         raise RuntimeError(_service_unavailable(settings))
+    if reason := index_mark.note(settings.data_dir):  # another start is preparing the store: say so, do not spawn a second
+        raise RuntimeError(BRIDGE_INDEX.format(reason=reason))
     try:
         if ensure_service(settings):
             say_service_started(settings)  # standard error, which the client logs; stdout stays MCP's
@@ -420,6 +423,9 @@ class ServiceClient:
                 reason = setup_refusal(self.settings.data_dir) if self.external is None else None
                 if reason:  # a change of setup stopped the service on purpose (#339): `cairnmind serve` is not the answer
                     raise RuntimeError(BRIDGE_SETUP.format(reason=str(reason))) from None
+                reason = index_mark.note(self.settings.data_dir)
+                if reason:  # the store is being prepared (#425): not "unavailable", and not a refusal of the request
+                    raise RuntimeError(BRIDGE_INDEX.format(reason=reason)) from None
                 raise RuntimeError(UNAVAILABLE.format(error="ConnectError")) from None
         except (httpx.HTTPError, ValueError) as exc:
             raise RuntimeError(UNAVAILABLE.format(error=type(exc).__name__)) from None

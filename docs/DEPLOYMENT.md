@@ -417,6 +417,118 @@ Between two machines these figures exist only from before this change: the trial
 The "Now" column above is the test engine on one machine, and its 20 ms relay is the nearest thing to a
 network that this change was measured on; it is a relay on the same machine, not a network.
 
+### What one search and one answer cost in database requests
+
+Measured on 23 November 2026, code at `ffab69b` against `316e1ad` (the code before #406 and #408), on this repository
+(586 indexed files, 3,282 chunks all embedded, 88,000 graph nodes of which 14,645 are symbols), one machine (WSL 2), a
+throwaway store with its own engine on the local loopback, the embedding model of the machine's own Ollama (inference only;
+the query vectors were embedded once and given to both versions). **The machine was shared with other work** (load average
+1.6 to 13 at the start and end of the runs); so every comparison alternates the two versions run by run on the same store, 3 warm-ups
+and 20 runs each, and the hits, definitions and citation catalog of both were compared and are identical (the ten queries
+with vectors off and on, the five questions: 0 differences). Milliseconds are minimum / median / p95 / maximum.
+
+`Retriever.search`, 10 hits, medians of the ten queries (one query: 36 to 62 ms against 262 to 378 with text only, 106 to
+139 against 411 to 533 with vectors):
+
+| | before | after |
+| --- | --- | --- |
+| text only: time | 262 to 378 ms | 36 to 62 ms |
+| text only: database requests | 36 to 64 | 9 to 10 |
+| with vectors: time (the search, not the query embedding) | 411 to 533 ms | 106 to 139 ms |
+| with vectors: database requests | 71 to 99 | 14 to 15 |
+
+What was removed: a request per hit for its source (now one for all), the list of every current source of the project
+that filtered the ranking (now the hits' own rows are checked, by the same rule; only when too few of the first rows lie
+in the worktree, as with a small registered root next to a large one, the ranking is read once more, filtered by the
+list of sources as before, so that search costs the old reads plus one and is never read wider than that), a second `jobs` query for the vectors' state (see below), and the same project
+scope read three times. **The state of the vectors is one query, not remembered:** it groups the embedding jobs by state
+(pending, running, failed) and the failed ones are read only when some failed and none is left. A remembered answer was
+not chosen because a stale "vectors are ready" is worse than the 12 ms the second query cost.
+
+The stages of `ask` before the first chat call, five questions (the table is the median over the five questions of each
+stage's median; the total is the range of the five questions' median totals):
+
+| stage | before, ms (requests) | after, ms (requests) |
+| --- | --- | --- |
+| code identity (git) | 107 (5) | 105 (5) |
+| full-text search | 368 (63) | 50 (10) |
+| on-disk checks of its hits | 302 (120) | 211 (72 to 108) |
+| hybrid search (the vector given, no embedding call) | 523 (98) | 139 (15) |
+| on-disk checks of its hits | 311 (120) | 100 (24 to 72) |
+| `_definitions` | 1,792 (57) | 471 (48 to 60; the time falls through the index, not through fewer requests) |
+| the rest (`cache_stamp`, context, citation catalog) | 72 (30) | 70 (30) |
+| total | 3,435 to 3,516 (461 to 495) | 1,072 to 1,397 (212 to 264) |
+
+What `_definitions` did in its 1.8 s (named from the code, counted by step): the list of every current source (0.18 s, 4
+requests, 586 rows), then three or four reads of the code graph, one per kind of match (names written as code, word
+names, names made of question words, names with a question word in a file or class with one), each evaluating the
+metadata of every one of the 88,000 nodes, 0.3 to 0.6 s each; then at most 8 freshness checks of the files of the
+definitions, about a dozen requests each. It is now: no list of sources; the same reads, in the same order and with the same
+bounds, but over an index on `nodes.kind` (a lookup index, built at the next start of the writer like the other
+lookup indexes, in about a second at this size; a read goes from about 290 to 55 ms; what happens on an upgrade, to a reader
+and to an older client is in [UPGRADING.md](UPGRADING.md)); the rows' sources read together; and a file that an earlier pass of
+the same answer already checked on disk is not checked again. The number of requests did not fall (about 45 to 60 both
+before and after, 11 questions, medians 45 and 47); the time falls through the index, which is about four fifths of the
+gain. The code identity (git, 105 ms) is computed once per
+answer and was left alone. A file that both searches return is checked on disk once. The remaining time is the 5 to 8
+on-disk checks of the files (each about a dozen requests and a hash of the file).
+
+The index is in both columns of an interleaved comparison from the moment the new code opens the store, so the "before"
+column of the table above was measured on its own, on the store without the index, with 3 warm-ups and 20 runs; the same
+code on the store with the index took `_definitions` 631 ms and a total of 2,229 to 2,333 ms in the interleaved runs.
+
+#### The check of a hit's file on disk (#416)
+
+One check of one file took 12 database requests: the source (twice: once to check its project and worktree, once to
+refresh it), the project (twice), the registered roots (four times), the memory bindings (twice), the sources an import
+brought, and the current source of the file's address. Nine of the twelve are the same for every
+file of a question; three belong to the file. Now the scope (project, roots, bindings, folders, imported sources) is read
+once when a question starts (5 requests), the rows of the hits' sources are read together (one request for a group of
+hits), and a check of a file takes the one request that belongs to it, the current source of its address; a file of a
+definition takes two (its row, that one). The scope is made for one question and dropped with it, so a root added or
+removed meanwhile is seen by the next question; a check decides exactly as before (the same hits, in the same order,
+with the same warnings: 15 questions compared, 0 differences, and the awkward cases below). The scope is held for the
+checks before the model's first call, and again for each step of the model's own search and read calls (#423): one value
+inside a step, a new one (about 5 more requests) for each step that calls a tool, so a folder removed in the minutes
+a question lasts is not read from by the steps after it; a worktree that is no longer registered refuses that step's
+calls. The scope after the last step also serves the repair catalog; when that last refresh failed because the worktree is no longer registered, the repair has no catalog (the answer is judged as it stands). Each file is still read and hashed at its check.
+The deterministic-only `/ask` (no model) takes the scope of its question as well (#423): for 12 files and 8 matches it
+took 119 database requests before and takes 25 now, with the same matches in the same order.
+
+Measured on 23 November 2026, code at `2614d8e` against `ebe58bc`, on a clone of this repository (588 indexed files, 3,286
+chunks, no vectors, a stub in place of the model server, so the part of `ask` before its first chat call is the whole
+measurement), one machine (WSL 2) **shared with other work** (load average 12 to 19 during the runs), a throwaway store
+with its own engine; the two versions alternate run by run, 3 warm-ups and 20 runs for each of the five questions of
+the table above. Medians of the five questions' medians (milliseconds, database requests):
+
+| stage | before | after |
+| --- | --- | --- |
+| checks of the hits on disk (`_hits`, both passes) | 218 ms (36 to 96) | 97 ms (4 to 9) |
+| the citation catalog of the evidence | 47 ms (28 to 32) | 1 ms (0) |
+| `_definitions` | 479 ms (59 to 60) | 418 ms (19 to 20) |
+| search (both passes), context | 93 + 20 ms (19 + 13) | 96 + 20 ms (19 + 13) |
+| the whole of `ask` before its first chat call | 886 ms (157 to 221) | 656 ms (62 to 67) |
+
+The totals of the five questions, before and after: 899 / 680, 720 / 583, 861 / 639, 1,117 / 931 and 886 / 656 ms
+(medians; minimum to maximum before 699 to 1,155, after 561 to 997), requests 208, 157, 209, 185 and 221 against 65, 62,
+66, 64 and 67. What remains in `_definitions` is the reads of the code graph (about 400 ms), which this change does not
+touch. The hits, definitions, citation catalog, warnings and the system and project state sent to the model were
+compared for these five and ten more questions (a fixed hash seed: without it, two hits with an equal score swap places
+from one process to another, in the old code too), and for the awkward cases made by hand after indexing (a file edited on
+disk, a deleted one, a replaced source, a file outside the root, another worktree with another version of a file, a
+path that differs only in case, a symlink, in a worktree and out of it): identical.
+
+Whole answers with the chat model (one of each, old then new alternating, the model of the machine's Ollama; the model's
+own time varies from run to run and is not a claim): 13.7 / 7.0 s, 6.1 / 6.3 s, 22.3 / 18.8 s, 8.1 / 8.7 s, 25.0 / 21.9 s
+(before / after); status and cited sources were the same in all five. The differences are mostly the model's: the stages
+above, not these runs, are what the change measures.
+
+Not measured: a store with memory records (the store has none, so the record queries are the same 3), a project with
+two worktrees of many files (a small root next to a large one is covered by a test, which counts the reads, not by a
+measurement of time), a store older than this
+code with the index not yet built (the first writer start builds it; the table is the store with it), and the service
+(the figures are of the same functions in a second process).
+
 ### What a command, the bridge and a search cost in their own process
 
 Measured on 23 November 2026 on one machine (WSL 2 on an Intel Core i9-14900K, 32 threads; Python 3.12.3), against a

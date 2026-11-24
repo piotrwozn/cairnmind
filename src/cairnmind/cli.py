@@ -327,6 +327,9 @@ def _bind_failed(log: Path, since: int) -> bool:
         return False
 
 
+START_POLLS = 300  # polls of 0.2 s: the ordinary wait for a started service, 60 s
+
+
 def ensure_service(settings: Settings, *, background_inference: bool = True) -> bool:
     """True when this call started the service process, False when one already answered."""
     if service_alive(settings):
@@ -373,9 +376,23 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
 
 def _wait_for_start(settings: Settings, process, log: Path, started_at: int) -> bool:
     """ensure_service's wait for the process it spawned: True when the service answers, else it raises."""
-    from cairnmind import setup_mark, upgrade_mark
+    from cairnmind import index_mark, setup_mark, upgrade_mark
     seen = None  # an installer that began at any moment of this start, even one that has ended by the time it answers
-    for _ in range(300):
+    polls, limit, told = 0, START_POLLS, False
+    while polls < limit:
+        polls += 1
+        if polls >= START_POLLS:
+            # Past the ordinary wait the store may still be prepared (a lookup index is being built, #422): that is not
+            # a service that did not start. Said once, and the wait goes on while the builder lives, bounded by
+            # LOOKUP_INDEX_WAIT per index (13 x 600 s = 130 min; in practice the first statement that hangs ends it and
+            # the mark goes); when its mark is gone the ordinary wait starts anew.
+            building = index_mark.note(settings.data_dir)
+            if building and not told:
+                from cairnmind.store import LOOKUP_INDEX_WAIT, LOOKUP_INDEXES
+                limit, told = START_POLLS + int(LOOKUP_INDEX_WAIT * len(LOOKUP_INDEXES) / 0.2), True
+                typer.echo(f"Cairnmind: {building}", err=True)
+            elif told and not building:
+                limit, told = min(limit, polls + START_POLLS), None  # None: not said again
         seen = seen or upgrade_mark.refusal()
         if service_alive(settings):
             if seen:
@@ -520,7 +537,7 @@ def _service_unavailable(settings: Settings) -> str:
         return (f"{safe_text(role.get('reason') or '')} This command asks the running service, which only the "
                 "writer runs. Here `cairnmind store writer` and `cairnmind doctor` show this installation's role, "
                 "and the commands that only read the store work.").strip()
-    from cairnmind import upgrade_mark
+    from cairnmind import index_mark, upgrade_mark
     reason = upgrade_mark.refusal()
     if reason:
         return reason  # stopped for an upgrade: `cairnmind serve` would start the version being replaced (#298)
@@ -528,6 +545,9 @@ def _service_unavailable(settings: Settings) -> str:
     reason = setup_mark.refusal(settings.data_dir)
     if reason:
         return str(reason)  # stopped for a change of setup (#339)
+    reason = index_mark.note(settings.data_dir)
+    if reason:
+        return reason  # the service is starting and is building a lookup index (#422)
     from cairnmind.first_start import STATUS_NOT_RUNNING
     return STATUS_NOT_RUNNING
 
@@ -911,6 +931,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     from cairnmind.service_version import refusal as other_version
     from cairnmind.setup_mark import note as setup_note, unchecked as setup_unchecked
     from cairnmind.upgrade_mark import note as upgrade_note
+    from cairnmind.index_mark import note as index_note
     # Shown here and nowhere else: a hook or an MCP server must not print notes of its own.
     # The notes of a shell whose commands are refused are also listed as blockers: the summary counts them as missing.
     blockers = [
@@ -926,7 +947,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["environment_notes"] = [
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} are both set and differ; {ENV_PREFIXES[0]}{name} is used."
         for name in env_conflicts()] + blockers + [
-            str(note) for note in [data_dir_note(), upgrade_note(),
+            str(note) for note in [data_dir_note(), upgrade_note(), index_note(ctx.obj.data_dir),
                                    None if unchecked else setup_note(ctx.obj.data_dir)] if note]  # not twice
     result["environment_blockers"] = blockers
     for name, variable in (("port", "PORT"), ("cockpit_port", "COCKPIT_PORT"), ("ollama_url", "OLLAMA_URL")):

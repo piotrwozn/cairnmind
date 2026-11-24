@@ -75,6 +75,15 @@ destroy edges; update native vertex existingRID. Idempotent unique id indexes.
 Caller node fields id,project_id,kind,label,source_id,metadata; edge fields
 id,project_id,from_id,to_id,kind,source_id,status. Source IDs remain strings.
 
+Lookup indexes (`store.LOOKUP_INDEXES`, not unique, nulls skipped): by `source_id` on chunks, nodes, edges and
+embeddings, by `from_id` and `to_id` on edges, by `chunk_id` on embeddings, `sources.uri`, `record_revisions.record_id`,
+`check_runs.task_id`, `session_events.session_id`, `resume_packets.session_id` and, since set 2 (#408), `nodes.kind`.
+`devbrain_meta` `lookup_indexes` records the set the database has (`LOOKUP_INDEX_SET`; 0.12.0 wrote 1, which is also what
+0.12.0 writes back when it opens a store of set 2). Only the writer declares and builds them, at its start, with every
+statement waiting up to `LOOKUP_INDEX_WAIT` (600 s) because the engine drops a build whose client gave up; nothing is
+recorded until all exist, and a start that finds the recorded set sends no lookup-index DDL. A build that fails is printed to stderr and tried again at the next start. A reader and a 0.12.0 client build and drop
+none. A read that would use a missing index is the same read, slower.
+
 `list_records`,get_source,resolve_project return plain field dictionaries with metadata
 already decoded, source_ids list. Remember task gates/version history and leases use
 native transactions with a per-datadir process lock for coordinated local writers.

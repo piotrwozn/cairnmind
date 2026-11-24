@@ -9,6 +9,8 @@ The English sentences are the source; MESSAGES is their Polish for the terminal 
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import contextmanager
+import os
 from pathlib import Path
 import re
 import time
@@ -19,7 +21,9 @@ INSTALLER = "install-wsl.sh"
 BLOCKING = frozenset({"running", "unreadable"})
 _SHELLS = frozenset({"bash", "sh", "dash", "zsh"})
 _READS, _PAUSE = 3, 0.05
-_MARK = re.compile(rb"([0-9]{1,10})\n?")
+# The process id and, in a mark that a process of this package wrote (own_mark), a second line: the identity of that
+# process's start (process_identity.start). The installer's mark has the id alone, and so has a mark of an older version.
+_MARK = re.compile(rb"([0-9]{1,10})(?:\n([0-9.]{1,40}))?\n?")
 
 NOTE_RUNNING = ("An upgrade of Cairnmind is in progress (installer process {pid}), or that process cannot be "
                 "identified as the installer, so the knowledge service is not started until it has finished. If no "
@@ -78,10 +82,12 @@ def mark_state(path: Path, holds: Callable[[list[str]], bool], may_hold: Callabl
                ) -> tuple[str, int | None]:
     """("none" | "running" | "stale" | "unreadable", pid) of a mark file that holds one process id. `holds(arguments)`
     says whether a command line is the holder's; `may_hold(executable)` whether a process whose command line cannot be
-    read may be it. Never guesses: a running process that cannot be identified counts as the holder."""
+    read may be it. Never guesses: a running process that cannot be identified counts as the holder. A mark that names
+    the identity of its holder's start is not held by a living process with that id and another start (the id was
+    reused); one without it (an older version's, the installer's) keeps the rule above."""
     try:
         with open(path, "rb") as handle:
-            raw = handle.read(33)
+            raw = handle.read(64)
     except FileNotFoundError:
         return "none", None
     except OSError:
@@ -92,6 +98,9 @@ def mark_state(path: Path, holds: Callable[[list[str]], bool], may_hold: Callabl
     pid = int(found.group(1))
     if process_identity._pid(pid) is None:  # 0 or beyond pid_t: the holder never writes it, so the file is malformed
         return "unreadable", None
+    birth = found.group(2)
+    if birth is not None and (current := process_identity.start(pid)) is not None and current != birth.decode():
+        return "stale", pid  # the id names another process now
     for read in range(_READS):
         if read:
             time.sleep(_PAUSE)  # a read of a living process can fail once (macOS, around exec): ask again
@@ -104,6 +113,30 @@ def mark_state(path: Path, holds: Callable[[list[str]], bool], may_hold: Callabl
         if not process_identity.alive(pid):
             return "stale", pid
     return "stale", pid  # alive, its command line unreadable every time, and a readable program that cannot be the holder
+
+
+@contextmanager
+def own_mark(path: Path):
+    """Hold a mark file with this process's id for the block: written whole beside it and moved in, so a reader never
+    sees half of it; removed at the end only when it is still this process's own."""
+    birth = process_identity.start(os.getpid())
+    own = f"{os.getpid()}\n{birth}\n".encode() if birth else f"{os.getpid()}\n".encode()
+    private = path.parent / f".{path.name}.{os.getpid()}"
+    file = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    try:
+        os.write(file, own)
+        os.fsync(file)
+    finally:
+        os.close(file)
+    os.replace(private, path)
+    try:
+        yield
+    finally:
+        try:
+            if path.read_bytes() == own:
+                path.unlink()
+        except OSError:
+            pass
 
 
 def state() -> tuple[str, int | None]:

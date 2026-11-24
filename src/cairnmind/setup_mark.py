@@ -3,7 +3,7 @@
 The workspace carries such a change out through a helper process (setup_change.py). That helper stops the knowledge
 service on purpose, so nothing may start it again until the change has finished: every automatic start (a panel, the
 broker, an MCP server, a command) refuses with a sentence that names the change. The mark is one file of the data
-directory holding the helper's pid, read by upgrade_mark.mark_state like the installer's mark. It is per data directory
+directory holding the helper's pid and the start of that process, read by upgrade_mark.mark_state like the installer's mark. It is per data directory
 and not per user because the change rewrites one data directory's config.json and stops one data directory's service;
 the services of other data directories keep starting. A mark whose process is gone blocks nothing by itself and
 doctor says the change did not finish; but while the copy of config.json from before the change is there (the change
@@ -136,22 +136,7 @@ def held(data_dir):
         except BlockingIOError:
             raise ChangeBusy(Sentence(BUSY)) from None
         # The lock is held, so a mark that is there belongs to a holder that is gone: it is replaced.
-        own = f"{os.getpid()}\n".encode()
-        private = data_dir / f".{MARK}.{os.getpid()}"
-        file = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-        try:
-            os.write(file, own)
-            os.fsync(file)
-        finally:
-            os.close(file)
-        os.replace(private, mark_path(data_dir))
-        try:
+        with upgrade_mark.own_mark(mark_path(data_dir)):
             yield
-        finally:
-            try:
-                if mark_path(data_dir).read_bytes() == own:
-                    mark_path(data_dir).unlink()
-            except OSError:
-                pass
     finally:
         os.close(descriptor)

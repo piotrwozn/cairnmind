@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from cairnmind.arcade import ArcadeClient
-from cairnmind.store import LOOKUP_INDEX_SET, LOOKUP_INDEXES, SCHEMA_VERSION, Store
+from cairnmind.arcade import REQUEST_TIMEOUT, ArcadeClient
+from cairnmind.store import LOOKUP_INDEX_SET, LOOKUP_INDEX_WAIT, LOOKUP_INDEXES, SCHEMA_VERSION, Store
 
 
 def indexed(store):
@@ -65,7 +65,7 @@ def test_a_database_of_an_earlier_release_gets_them_when_it_is_opened_and_only_o
     assert not [sql for sql in commands if "CREATE INDEX" in sql or "CREATE PROPERTY" in sql]  # nothing to do the next time
 
 
-def test_an_index_that_cannot_be_built_does_not_keep_the_database_closed(tmp_path, monkeypatch):
+def test_an_index_that_cannot_be_built_does_not_keep_the_database_closed(tmp_path, monkeypatch, capsys):
     from cairnmind.arcade import ArcadeError
 
     store = Store(tmp_path / "memory")
@@ -80,7 +80,37 @@ def test_an_index_that_cannot_be_built_does_not_keep_the_database_closed(tmp_pat
         patch.setattr(ArcadeClient, "command", failing)
         opened = Store(tmp_path / "memory")  # opens, and records nothing
         assert marker(opened) == []
+    # Not silent: the person is told, and told what it costs.
+    assert "could not be built (Local ArcadeDB is unavailable (ReadTimeout))" in capsys.readouterr().err
     assert marker(Store(tmp_path / "memory")) == [LOOKUP_INDEX_SET]  # the next start finishes the work
+
+
+def as_0_12_0_left_it(store):
+    """No index on the kind of a node, and the set of indexes 0.12.0 records (1)."""
+    store.command(f"DROP INDEX `{indexed(store)[('nodes', ('kind',))]['name']}`")
+    store.command("UPDATE devbrain_meta SET value=1 WHERE name='lookup_indexes'")
+    assert ("nodes", ("kind",)) not in indexed(store) and marker(store) == [1]
+
+
+def test_the_index_of_the_kind_of_a_node_is_built_with_a_long_wait_and_declared_once(tmp_path, monkeypatch):
+    store = Store(tmp_path / "memory")
+    as_0_12_0_left_it(store)
+    sent, real = [], ArcadeClient._request
+
+    def recorded(self, method, path, **kwargs):
+        sent.append((str((kwargs.get("json") or {}).get("command", "")), kwargs.get("timeout")))
+        return real(self, method, path, **kwargs)
+    monkeypatch.setattr(ArcadeClient, "_request", recorded)
+    reopened = Store(tmp_path / "memory")
+    assert ("nodes", ("kind",)) in indexed(reopened) and marker(reopened) == [LOOKUP_INDEX_SET] == [2]
+    # The engine drops a build whose client gave up: a large store would never get its index at a request's 30 s.
+    builds = [timeout for sql, timeout in sent if sql.startswith("CREATE INDEX")]
+    assert builds and set(builds) == {LOOKUP_INDEX_WAIT} and LOOKUP_INDEX_WAIT > REQUEST_TIMEOUT
+    assert not [sql for sql, timeout in sent
+                if sql and not sql.startswith("CREATE") and timeout not in (None, REQUEST_TIMEOUT)]
+    del sent[:]
+    Store(tmp_path / "memory")  # the second start declares and builds nothing
+    assert not [sql for sql, _ in sent if sql.startswith(("CREATE INDEX", "CREATE PROPERTY", "DROP"))], sent
 
 
 def test_a_migrated_database_has_the_lookup_indexes_too(tmp_path):

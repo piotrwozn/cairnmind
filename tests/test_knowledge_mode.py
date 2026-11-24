@@ -146,7 +146,7 @@ async def test_text_matches_use_the_lexical_search_of_ask_and_ask_no_model(tmp_p
     remote = {"provider": "openai_compatible", "base_url": "https://models.example/v1", "allow_remote": True}
     model, seen = Untouched(), []
 
-    def hits(found, project_id, evidence, worktree, question, register, size):
+    def hits(found, project_id, evidence, worktree, question, register, size, scope=None):
         seen.append((found, register, size))
         shown = []
         for number in range(12):
@@ -156,7 +156,8 @@ async def test_text_matches_use_the_lexical_search_of_ask_and_ask_no_model(tmp_p
         return shown
 
     def agent_for(settings):
-        return SimpleNamespace(settings=settings, store=object(), ollama=model, retriever=Search(), _hits=hits)
+        return SimpleNamespace(settings=settings, store=object(), ollama=model, retriever=Search(), _hits=hits,
+                               _check_scope=lambda project_id, worktree: None)
 
     for settings, gate_type in ((Settings(data_dir=tmp_path, memory_chat=remote), Gate), (Settings(data_dir=tmp_path), type(None))):
         agent = agent_for(settings)

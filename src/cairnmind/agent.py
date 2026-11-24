@@ -25,6 +25,7 @@ from .memory_egress import (ASK, HELD_BACK_SOURCE, HELD_BACK_UNKNOWN, HOSTED_ASK
                             held_back_class)
 from .memory_models import answer_label, context_tokens, from_settings
 from .ollama import OllamaUnavailable
+from .question_scope import check_scope
 from .retrieval import (Retriever, json_value, last_warnings, public_metadata, public_record, public_source_metadata, terms,
                         with_source_origin)
 from .store import validate_task_state
@@ -361,7 +362,7 @@ class KnowledgeAgent:
 
     def _citation_catalog(self, project_id: str, evidence: dict, candidate: str = "", *,
                           worktree=None, budget: int = REPAIR_CATALOG_CHARS,
-                          excerpt_chars: int | None = None) -> list[dict]:
+                          excerpt_chars: int | None = None, scope=None) -> list[dict]:
         """Use model-visible excerpts, never expand hydrated source pointers into content.
 
         One entry per passage registered with ``_show``, whole by default, so a repair works from
@@ -379,7 +380,7 @@ class KnowledgeAgent:
                    if source.get("project_id") == project_id
                    and isinstance(source.get("_catalog_excerpt"), str) and source["_catalog_excerpt"].strip()
                    and (source.get("_historical_requested")
-                        or self.retriever.source_in_scope(source, project_id, worktree))}
+                        or self.retriever.source_in_scope(source, project_id, worktree, scope))}
         preferred = []
         try:
             output = parse_object(candidate)
@@ -479,20 +480,26 @@ class KnowledgeAgent:
         return {**original, "unknowns": [*original.get("unknowns", [])[:7], reason],
                 "elapsed_seconds": round(time.monotonic() - started, 3)}
 
+    def _check_scope(self, project_id: str, worktree=None):
+        """What the checks of one question share, read once (see ``question_scope``); made when the question starts."""
+        return check_scope(self.store, project_id, worktree)
+
     def _source(self, source_id: str, project_id: str, evidence: dict, current: bool = True,
-                worktree=None) -> dict:
-        source = self.store.get_source(source_id)
+                worktree=None, scope=None, row: dict | None = None) -> dict:
+        """``scope`` (made for this ``project_id`` and ``worktree``) and ``row`` (the source as ``store.get_source``
+        reads it) are what a caller that checks many files of one question has read already."""
+        source = dict(row) if row is not None else self.store.get_source(source_id)
         if source["project_id"] != project_id:
             raise ValueError("Source is outside this project")
         gate = ASK.get()
         if gate and gate.source_held(source):
             raise ValueError(HELD_BACK_SOURCE)
-        if current and not self.retriever.source_in_scope(source, project_id, worktree):
+        if current and not self.retriever.source_in_scope(source, project_id, worktree, scope):
             raise ValueError("Current source is outside the requested worktree; use explicit historical evidence")
         if current and source["kind"] in {"code", "document", "file"}:
             from .ingest import current_source
             try:
-                source = current_source(self.store, source_id)
+                source = current_source(self.store, source_id, scope, source)
             except (ValueError, OSError):
                 self.retriever.warnings.append(f"Cannot verify current source: {source['uri']}")
                 raise
@@ -522,18 +529,42 @@ class KnowledgeAgent:
         evidence[source["id"]] = source
         return source
 
+    def _checked_source(self, source_id: str, project_id: str, evidence: dict, worktree, checked: dict | None,
+                        scope=None, rows: dict | None = None) -> dict:
+        """``_source``, but once per source for one ``checked`` memo: a later call gets what the first found, the
+        source or its error, without reading the file again. Without a memo, every call checks. ``scope`` and
+        ``rows`` (source id -> row, read together for the files of a question) are handed to the check."""
+        row = (rows or {}).get(source_id)
+        if checked is None:
+            return self._source(source_id, project_id, evidence, worktree=worktree, scope=scope, row=row)
+        if source_id not in checked:
+            try:
+                checked[source_id] = self._source(source_id, project_id, evidence, worktree=worktree, scope=scope,
+                                                  row=row)
+            except (ValueError, OSError) as exc:
+                checked[source_id] = exc
+        if isinstance(checked[source_id], Exception):
+            raise checked[source_id]
+        return checked[source_id]
+
     def _hits(self, hits: list[dict], project_id: str, evidence: dict, worktree=None, query: str = "",
-              register: bool = True, size: int = EXCERPT_CHARS) -> list[dict]:
+              register: bool = True, size: int = EXCERPT_CHARS, checked: dict | None = None,
+              scope=None) -> list[dict]:
         """Model-visible hits: each text is the excerpt of its chunk that matches ``query``.
 
         ``line_start`` and ``line_end`` describe the excerpt, not the whole chunk. With
         ``register`` each excerpt is registered as shown now (a search the model asked for); the
         initial evidence is registered by ``ask`` once it is known which hits the model gets.
+        The initial passes share ``checked``, so that a file both searches return is checked on disk once, and
+        ``scope``, what the checks of the question share (``question_scope``): with it the sources of the hits
+        are read together, not one by one.
         """
+        rows = None if scope is None else self.store.get_sources(
+            [hit["source_id"] for hit in hits if checked is None or hit["source_id"] not in checked])
         result = []
         for hit in hits:
             try:
-                source = self._source(hit["source_id"], project_id, evidence, worktree=worktree)
+                source = self._checked_source(hit["source_id"], project_id, evidence, worktree, checked, scope, rows)
             except (ValueError, OSError):
                 self.retriever.warnings.append("An indexed file is missing or cannot be checked on disk")
                 continue
@@ -559,7 +590,7 @@ class KnowledgeAgent:
         return result
 
     def _definitions(self, project_id: str, question: str, hits: list[dict], evidence: dict,
-                     worktree=None) -> list[dict]:
+                     worktree=None, checked: dict | None = None, scope=None) -> list[dict]:
         """Up to MAX_DEFINITIONS model-visible definitions of names the question or the hits use.
 
         Each is shown and made citable like a hit: kind "definition", the defined name, its path
@@ -588,7 +619,7 @@ class KnowledgeAgent:
                 continue
             attempts += 1  # each costs a freshness check, accepted or not
             try:
-                source = self._source(row["source_id"], project_id, evidence, worktree=worktree)
+                source = self._checked_source(row["source_id"], project_id, evidence, worktree, checked, scope)
             except (ValueError, OSError):
                 continue
             lines = source_text(source).split("\n")
@@ -671,13 +702,14 @@ class KnowledgeAgent:
                                                 or task.get("metadata", {}).get("test_source_ids")),
                 "instruction": "Only status=fresh is current machine verification. Run passed is historical; acceptance and review are separate."}
 
-    async def _tool(self, name: str, arguments: dict, project_id: str, evidence: dict, worktree=None) -> Any:
+    async def _tool(self, name: str, arguments: dict, project_id: str, evidence: dict, worktree=None, scope=None) -> Any:
         if name == "search":
             query = arguments.get("query")
             if not isinstance(query, str) or not query.strip():
                 raise ValueError("query must be a nonempty string")
             hits = await self.retriever.asearch(project_id, query[:2000], 6, worktree=worktree)
-            refreshed = await asyncio.to_thread(self._hits, hits, project_id, evidence, worktree, query)
+            refreshed = await asyncio.to_thread(self._hits, hits, project_id, evidence, worktree, query,
+                                              scope=scope)
             return {"hits": refreshed, "warnings": last_warnings(self.retriever.warnings, 3, 10**6)}
         if name == "graph":
             query = arguments.get("query")
@@ -696,7 +728,7 @@ class KnowledgeAgent:
             source = await asyncio.to_thread(
                 self._source, source_id, project_id, evidence,
                 current=True if name == "current_code" else arguments.get("current", True),
-                worktree=worktree,
+                worktree=worktree, scope=scope,
             )
             if name == "read_source" and arguments.get("current") is False:
                 source["_historical_requested"] = True
@@ -1179,22 +1211,25 @@ class KnowledgeAgent:
         if not isinstance(question, str) or not question.strip() or len(question) > 16000:
             raise ValueError("Question must contain 1–16000 characters")
         evidence: dict = {}
+        checked: dict = {}  # the sources of the first passes, checked on disk once (see _hits)
         repair_fallback = None
         judged = None  # a validated complete answer whose support check is running
         started = time.monotonic()
         self.retriever.warnings.clear()
         try:
             async with asyncio.timeout(self.settings.ask_timeout if timeout is None else timeout):
+                # What the checks of this question's files share, read once: not kept for another question.
+                scope = await asyncio.to_thread(self._check_scope, project_id, worktree)
                 # Preserve lexical evidence even when a cold/missing embedding model times out.
                 chosen = await asyncio.to_thread(self.retriever.search, project_id, question, INITIAL_HITS,
                                                  worktree=worktree)
                 initial = await asyncio.to_thread(self._hits, chosen, project_id, evidence, worktree, question,
-                                                  False)
+                                                  False, checked=checked, scope=scope)
                 hybrid = await self.retriever.asearch(project_id, question, INITIAL_HITS, worktree=worktree)
                 if hybrid:
                     chosen = hybrid
                     initial = await asyncio.to_thread(self._hits, chosen, project_id, evidence, worktree, question,
-                                                      False)
+                                                      False, checked=checked, scope=scope)
                 # Chunks longer than their excerpt, each stretch of a file once (chunks overlap):
                 # what a second look can still show.
                 in_part, taken = [], []
@@ -1218,7 +1253,7 @@ class KnowledgeAgent:
                             - len(json.dumps(context, ensure_ascii=False)) - WHOLE_RESERVE_CHARS)
                     initial = []
                     for item in await asyncio.to_thread(self._hits, in_part, project_id, evidence, worktree,
-                                                        question, False, WHOLE_PASSAGE_CHARS):
+                                                        question, False, WHOLE_PASSAGE_CHARS, scope=scope):
                         room -= len(json.dumps(json.dumps(item, ensure_ascii=False), ensure_ascii=False))
                         if room < 0:
                             break  # in the order of the hits: the best chunks that fit
@@ -1232,7 +1267,7 @@ class KnowledgeAgent:
                     # They are shown first: the line that states a value, before the passages that
                     # use or mention it, and so also first in the short catalog of this call.
                     definitions = await asyncio.to_thread(self._definitions, project_id, question, initial,
-                                                          evidence, worktree)
+                                                          evidence, worktree, checked=checked, scope=scope)
                     if definitions:
                         initial = [*definitions, *initial[:INITIAL_HITS - len(definitions)]]
                 # Only now is it known which hits the model gets: register those, in their order.
@@ -1244,10 +1279,11 @@ class KnowledgeAgent:
                           "project_state": context, "initial_evidence": initial,
                           "citation_catalog": self._citation_catalog(
                               project_id, evidence, worktree=worktree,
-                              budget=WHOLE_CATALOG_CHARS if whole else 4000, excerpt_chars=600)}
+                              budget=WHOLE_CATALOG_CHARS if whole else 4000, excerpt_chars=600, scope=scope)}
                 if answer_schema is not None:
                     prompt["answer_schema"] = answer_schema
                 messages = [system, {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}]
+                gone = None  # set when the last refresh of the scope failed: the repair then has no catalog
                 for _step in range(self.settings.max_steps):
                     if sum(len(json.dumps(m, ensure_ascii=False)) for m in messages) > context_chars:
                         return self._result("partial", "The analysis reached the context budget; narrow the question.",
@@ -1276,7 +1312,8 @@ class KnowledgeAgent:
                             diagnostics["repair_outcome"] = "budget_exhausted"
                             return self._repair_fallback(validated, started,
                                 "No steps were left to correct the answer's format or citations.")
-                        catalog = self._citation_catalog(project_id, evidence, candidate, worktree=worktree)
+                        catalog = [] if gone is not None else self._citation_catalog(
+                            project_id, evidence, candidate, worktree=worktree, scope=scope)
                         if not catalog:
                             diagnostics["repair_outcome"] = "missing_evidence"
                             return validated
@@ -1314,6 +1351,13 @@ class KnowledgeAgent:
                                             ["The model broke the tool protocol."], started,
                                             code="tool_protocol_invalid")
                     messages.append({"role": "assistant", "content": message.get("content", ""), "tool_calls": calls})
+                    # One value for the calls of this step, a new one for each step (about 5 requests): a folder
+                    # removed since the last step is not read from. A root that is gone refuses the step's calls.
+                    gone = None
+                    try:
+                        scope = await asyncio.to_thread(self._check_scope, project_id, worktree)
+                    except ValueError as exc:
+                        gone = exc
                     for call in calls:
                         function = call.get("function", {}) if isinstance(call, dict) else {}
                         if not isinstance(function, dict):
@@ -1324,7 +1368,9 @@ class KnowledgeAgent:
                                 arguments = json.loads(arguments)
                             if not isinstance(arguments, dict):
                                 raise ValueError("Tool arguments must be an object")
-                            result = await self._tool(name, arguments, project_id, evidence, worktree)
+                            if gone is not None:
+                                raise gone
+                            result = await self._tool(name, arguments, project_id, evidence, worktree, scope)
                         except (ValueError, KeyError, TypeError, OSError) as exc:
                             result = {"error": str(exc)[:250]}
                         messages.append({"role": "tool", "tool_name": name,

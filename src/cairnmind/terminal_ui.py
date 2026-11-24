@@ -18,7 +18,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Static, TextArea
 from textual.worker import WorkerState
 
-from . import terminal_theme
+from . import index_mark, terminal_theme
 from .terminal_safe import plain, safe_text
 from .terminal_i18n import language_for, localize_bindings, tr
 from .terminal_i18n_messages import broker_error_text
@@ -612,7 +612,7 @@ class BasePanel(App):
         # A copy left on the pane by an earlier run of this panel is replaced: it lives as long as the panel.
         self.publish_notices()
         try:
-            await asyncio.to_thread(self.broker.ensure)
+            await self._ensure_broker()
             await self._poll_workspace()
             await self.ready_panel()
             if self.run_start_request:
@@ -621,6 +621,22 @@ class BasePanel(App):
                 await self._poll_workspace()
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(exc)
+
+    async def _ensure_broker(self):
+        """broker.ensure; while it runs, a build of a lookup index of the store is said once here (#422): the line the
+        waiting start itself prints goes to the stderr a running app captures, so it never reaches the pane."""
+        task = asyncio.create_task(asyncio.to_thread(self.broker.ensure))
+        told = False
+        while not (await asyncio.wait({task}, timeout=2))[0]:
+            if not told:
+                with suppress(Exception):
+                    kind, pid = index_mark.state(self.broker.settings.data_dir)
+                    if kind == "running":
+                        told = True
+                        self.notice(self.t(index_mark.NOTE_RUNNING, pid=pid))
+        await task
+        if told:
+            self.notice("")
 
     async def ready_panel(self):
         pass

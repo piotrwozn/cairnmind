@@ -231,6 +231,33 @@ def test_a_native_bridge_during_a_change_of_setup_names_it_and_does_not_advise_s
     assert "cairnmind serve" not in str(caught.value)
 
 
+def test_a_tool_call_while_an_index_is_built_says_the_store_is_prepared_not_unavailable(monkeypatch, settings, tmp_path):
+    from cairnmind import index_mark, process_identity, upgrade_mark
+    monkeypatch.setattr(upgrade_mark, "state", lambda: ("none", None))
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "cairnmind"])
+    try:
+        index_mark.mark_path(settings.data_dir).write_text(f"{child.pid}\n{process_identity.start(child.pid)}\n")
+        sentence = index_mark.BRIDGE_INDEX.format(reason=index_mark.NOTE_RUNNING.format(pid=child.pid))
+        network = Network(monkeypatch)  # nothing listens
+        monkeypatch.setattr(cli, "ensure_service", lambda s: pytest.fail("a second start while the store is prepared"))
+        for bridge in (mcp_server.ServiceClient(settings), external(settings, tmp_path)):  # native, external
+            with pytest.raises(RuntimeError) as caught:
+                ask(bridge)
+            text = str(caught.value)
+            assert text == sentence and "being prepared" in text and "again shortly" in text
+            assert "unavailable" not in text and "resume_required" not in text and "cairnmind serve" not in text
+            assert bridge.session_id is None  # the session is untouched
+        assert network.seen[:1] == ["/ask"]
+    finally:
+        child.kill()
+        child.wait()
+    # the mark is gone with its builder: the ordinary answer again
+    index_mark.mark_path(settings.data_dir).unlink()
+    with pytest.raises(RuntimeError) as caught:
+        ask(mcp_server.ServiceClient(settings))
+    assert str(caught.value) == UNAVAILABLE
+
+
 def test_ask_with_a_schema_imports_nothing_of_the_new_version_in_a_replaced_bridge(monkeypatch, settings):
     from cairnmind import __version__
     from cairnmind.upgrade_mark import CODE_REPLACED

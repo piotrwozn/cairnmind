@@ -108,6 +108,7 @@ class ArcadeClient:
         self.database = settings.arcade_database
         self.session_id = session_id
         self.transport = transport
+        self._command_timeout = REQUEST_TIMEOUT
         self._connections = _connections or _Connections(
             self._base_url, (self.settings.arcade_user, self.settings.arcade_password), transport,
             tls_context(settings) if parsed.scheme == "https" else False)
@@ -207,8 +208,18 @@ class ArcadeClient:
         return self._result(self._request("POST", f"/api/v1/query/{quote(self.database)}",
             json={"language": "sql", "command": sql, "params": params or {}, "limit": -1}))
 
+    @contextmanager
+    def patient(self, seconds: float) -> Iterator[None]:
+        """Commands wait ``seconds`` for their answer, for a statement that reads a whole table (an index build:
+        the engine drops it when the client gives up). For a client that no other thread uses yet."""
+        before, self._command_timeout = self._command_timeout, seconds
+        try:
+            yield
+        finally:
+            self._command_timeout = before
+
     def command(self, sql: str, params: dict | None = None) -> list[dict]:
-        return self._result(self._request("POST", f"/api/v1/command/{quote(self.database)}",
+        return self._result(self._request("POST", f"/api/v1/command/{quote(self.database)}", timeout=self._command_timeout,
             json={"language": "sql", "command": sql, "params": params or {}, "limit": -1}))
 
     def script(self, sql: str, params: dict | None = None) -> list[dict]:

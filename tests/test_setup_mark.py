@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from cairnmind import setup_mark
+from cairnmind import process_identity, setup_mark
 from cairnmind.service_version import Sentence
 from cairnmind.terminal_i18n import CATALOG
 
@@ -170,7 +170,8 @@ def test_the_mark_is_per_data_directory(tmp_path, children):
 
 def test_held_writes_the_mark_and_removes_only_its_own(data_dir):
     with setup_mark.held(data_dir):
-        assert setup_mark.mark_path(data_dir).read_text() == f"{os.getpid()}\n"
+        # the process id, and the identity of this process's start (#425)
+        assert setup_mark.mark_path(data_dir).read_text().split() == [str(os.getpid()), process_identity.start(os.getpid())]
         assert oct(setup_mark.mark_path(data_dir).stat().st_mode & 0o777) == "0o600"
     assert not setup_mark.mark_path(data_dir).exists()
     with setup_mark.held(data_dir):
@@ -184,7 +185,7 @@ def test_held_replaces_a_stale_mark(data_dir, children):
     child.wait()
     setup_mark.mark_path(data_dir).write_text(f"{child.pid}\n")
     with setup_mark.held(data_dir):
-        assert setup_mark.mark_path(data_dir).read_text() == f"{os.getpid()}\n"
+        assert setup_mark.mark_path(data_dir).read_text().split() == [str(os.getpid()), process_identity.start(os.getpid())]
 
 
 def test_a_second_change_is_refused_while_the_first_holds_the_lock(data_dir):

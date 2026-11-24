@@ -385,7 +385,10 @@ def test_text_matches_lists_a_record_and_its_note_once(monkeypatch):
         settings = store = None
         retriever = Retriever()
 
-        def _hits(self, hits, project_id, evidence, *args):
+        def _check_scope(self, project_id, worktree):
+            return None
+
+        def _hits(self, hits, project_id, evidence, *args, **kwargs):
             evidence["s1"] = {"uri": "manual://note/1", "kind": "note"}
             return shown
     found = asyncio.run(knowledge_mode.text_matches(Agent(), "p", "how do we deploy?"))

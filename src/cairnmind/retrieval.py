@@ -297,11 +297,16 @@ class Retriever:
                 return False
         return True
 
-    def source_in_scope(self, source, project_id, worktree=None):
-        project_id, root, roots = self._scope(project_id, worktree)
+    def source_in_scope(self, source, project_id, worktree=None, scope=None):
+        """``scope``: a ``CheckScope`` made for this question (it names the project and the worktree), instead of
+        reading them again."""
+        if scope is None:
+            project_id, root, roots = self._scope(project_id, worktree)
+        else:
+            project_id, root, roots = scope.project["id"], scope.root, scope.roots
         metadata = json_value(source.get("metadata"), {})
         return source.get("project_id") == project_id and isinstance(metadata, dict) and self._matches_scope(
-            bound_metadata(self.store, project_id, metadata), root, roots,
+            bound_metadata(self.store, project_id, metadata, bindings=None if scope is None else scope.bindings), root, roots,
             file_path=source.get("kind") in {"code", "document", "file"})
 
     def _source_ids(self, project_id, root, roots, *, include_history=False):
@@ -315,8 +320,34 @@ class Retriever:
                            bindings=bindings), root, roots,
             file_path=row.get("kind") in {"code", "document", "file"})}
 
-    def _record_ids(self, project_id, root, roots):
-        bindings = memory_bindings(self.store, project_id)
+    def _in_scope(self, source, project_id, root, roots, bindings) -> bool:
+        """Whether this source row is a current source of the project within the worktree: what `_source_ids`
+        decides from its list of every current source, decided for the one row (the same rule)."""
+        metadata = json_value(source.get("metadata"), {})
+        return (source.get("project_id") == project_id and bool(source.get("is_current")) and isinstance(metadata, dict)
+                and self._matches_scope(bound_metadata(self.store, project_id, metadata, bindings=bindings), root, roots,
+                                        file_path=source.get("kind") in {"code", "document", "file"}))
+
+    def _current_in_scope(self, fetch, wanted: int, sources: dict, project_id, root, roots, bindings) -> list[dict]:
+        """The first `wanted` rows of a ranking, in its order, whose source is current and in the worktree.
+
+        `fetch(count, eligible)` returns the best `count` rows (of the sources in `eligible` when it is given) and
+        whether the ranking holds more. The sources of the rows are read in one request into `sources`. When too few
+        rows qualify, the ranking is read once more, filtered by the list of eligible sources as before: that is the
+        one read a search with a small worktree needs, and it never widens a read over the whole project.
+        """
+        eligible = None
+        while True:
+            rows, more = fetch(wanted, eligible)
+            sources.update(self.store.get_sources([row["source_id"] for row in rows if row["source_id"] not in sources]))
+            kept = [row for row in rows if row["source_id"] in sources
+                    and self._in_scope(sources[row["source_id"]], project_id, root, roots, bindings)]
+            if len(kept) >= wanted or not more or eligible is not None:
+                return kept[:wanted]
+            eligible = sorted(self._source_ids(project_id, root, roots))
+
+    def _record_ids(self, project_id, root, roots, bindings=None):
+        bindings = memory_bindings(self.store, project_id) if bindings is None else bindings
         rows = self.store.query(
             "SELECT id,metadata.root AS root,metadata.worktree AS worktree FROM records "
             "WHERE project_id=:project AND status!='superseded'", {"project": project_id})
@@ -419,8 +450,7 @@ class Retriever:
         self._vector_indexes[type_name] = values
         return values
 
-    def _chunk_hit(self, chunk: dict) -> dict | None:
-        source = self.store.get_source(chunk["source_id"])
+    def _chunk_hit(self, chunk: dict, source: dict) -> dict | None:
         if source["project_id"] != chunk["project_id"] or not source["is_current"]:
             return None
         gate = ASK.get()
@@ -483,21 +513,27 @@ class Retriever:
         preferences at similar relevance; nothing is filtered out.
         """
         project_id, root, roots = self._scope(project_id, worktree)
-        eligible_sources = sorted(self._source_ids(project_id, root, roots))
-        eligible_records = sorted(self._record_ids(project_id, root, roots))
+        bindings = memory_bindings(self.store, project_id)
+        eligible_records = sorted(self._record_ids(project_id, root, roots, bindings))
         limit = max(1, min(limit, 30))
         words = terms(query)
         ranks: list[list[dict]] = []
+        # The rows of the sources of every hit, read together; a source is current and in the worktree, or its chunk is no hit.
+        sources: dict[str, dict] = {}
+        scope = (project_id, root, roots, bindings)
         if words:
             expression = " OR ".join(words)
-            rows = self.store.query(
-                "SELECT *, $score AS search_score FROM chunks "
-                "WHERE SEARCH_INDEX('chunks[text]', :query)=true AND project_id=:project AND is_current=true "
-                "AND source_id IN :eligible_sources "
-                f"ORDER BY $score DESC LIMIT {limit * 3}",
-                {"query": expression, "project": project_id, "eligible_sources": eligible_sources},
-            )
-            lexical = [hit for row in rows if (hit := self._chunk_hit(row)) is not None]
+
+            def text_ranking(count, eligible):
+                rows = self.store.query(
+                    "SELECT *, $score AS search_score FROM chunks "
+                    "WHERE SEARCH_INDEX('chunks[text]', :query)=true AND project_id=:project AND is_current=true "
+                    + ("" if eligible is None else "AND source_id IN :eligible ") +
+                    f"ORDER BY $score DESC, id LIMIT {count}",  # a tie is decided by the chunk id, also at the cut
+                    {"query": expression, "project": project_id} | ({} if eligible is None else {"eligible": eligible}))
+                return rows, len(rows) >= count
+            lexical = [hit for row in self._current_in_scope(text_ranking, limit * 3, sources, *scope)
+                       if (hit := self._chunk_hit(row, sources[row["source_id"]])) is not None]
             self._demote_secondary(lexical)
             ranks.append(lexical)
         if query_vector is not None:
@@ -510,16 +546,17 @@ class Retriever:
             if indexes:
                 expected = self._vector_type(project_id, namespace, len(vector))
                 index_name = f"{expected}[vector]"
-                try:
+                def vector_ranking(count, eligible):
                     neighbors = self.store.query(
                         "SELECT expand(`vector.neighbors`(:index_name, :query_vector, :count, "
                         "{efSearch: :ef_search,where: :scope,filter:(SELECT @rid FROM " + expected +
-                        " WHERE project_id=:project AND namespace=:namespace AND is_current=true "
-                        "AND source_id IN :eligible_sources)}))",
-                        {"index_name": index_name, "query_vector": vector, "count": limit * 3,
-                         "ef_search": max(200, limit * 3), "scope": {
+                        " WHERE project_id=:project AND namespace=:namespace AND is_current=true"
+                        + ("" if eligible is None else " AND source_id IN :eligible") + ")}))",
+                        {"index_name": index_name, "query_vector": vector, "count": count,
+                         "ef_search": max(200, count), "scope": {
                              "project_id": project_id, "namespace": namespace, "is_current": True,
-                         }, "project": project_id, "namespace": namespace, "eligible_sources": eligible_sources},
+                         }, "project": project_id, "namespace": namespace}
+                        | ({} if eligible is None else {"eligible": eligible}),
                     )
                     ids = [row["chunk_id"] for row in neighbors]
                     chunks = self.store.query(
@@ -527,23 +564,29 @@ class Retriever:
                         {"project": project_id, "ids": ids},
                     ) if ids else []
                     by_id = {row["id"]: row for row in chunks}
+                    # Equal distances: by chunk id, whatever order the index gave them in.
+                    neighbors = sorted(neighbors, key=lambda row: (row.get("distance") is None, row.get("distance") or 0,
+                                                                  str(row["chunk_id"])))
+                    return [{**by_id[row["chunk_id"]], "_distance": row.get("distance")}
+                            for row in neighbors if row["chunk_id"] in by_id], len(neighbors) >= count
+                try:
                     semantic = []
-                    for neighbor in neighbors:
-                        chunk = by_id.get(neighbor["chunk_id"])
-                        if chunk is not None and (hit := self._chunk_hit(chunk)) is not None:
-                            hit["distance"] = neighbor.get("distance")
+                    for chunk in self._current_in_scope(vector_ranking, limit * 3, sources, *scope):
+                        if (hit := self._chunk_hit(chunk, sources[chunk["source_id"]])) is not None:
+                            hit["distance"] = chunk["_distance"]
                             semantic.append(hit)
                     self._demote_secondary(semantic)
                     ranks.append(semantic)
                 except ArcadeError as exc:
                     self.warnings.append(f"Native vector search unavailable: {type(exc).__name__}")
                 # The registry row comes back with the first embedded chunk, long before the rebuild ends (#187).
-                left = self.store.query(
-                    "SELECT count(*) AS n FROM jobs WHERE project_id=:project AND kind='embed' "
-                    "AND state IN ['pending','running']", {"project": project_id})
-                if left and left[0].get("n"):
-                    self.warnings.append(f"{VECTORS_BUILDING}{left[0]['n']}")
-                elif failed := self._failed_vector_chunks(project_id, namespace):
+                # One query for both warnings; the failed jobs are read only when some failed and none is left.
+                states = {row["state"]: row["n"] for row in self.store.query(
+                    "SELECT state, count(*) AS n FROM jobs WHERE project_id=:project AND kind='embed' "
+                    "AND state IN ['pending','running','failed'] GROUP BY state", {"project": project_id})}
+                if left := states.get("pending", 0) + states.get("running", 0):
+                    self.warnings.append(f"{VECTORS_BUILDING}{left}")
+                elif states.get("failed") and (failed := self._failed_vector_chunks(project_id, namespace)):
                     self.warnings.append(f"{VECTORS_FAILED}{failed}")
             else:
                 # After a restore, which brings no vectors, this is the state until the rebuild ends (#187).
@@ -556,18 +599,21 @@ class Retriever:
                 "SELECT *, $score AS search_score FROM records "
                 "WHERE SEARCH_INDEX('records[content]', :query)=true AND project_id=:project AND status<>'superseded' "
                 "AND id IN :eligible_records "
-                f"ORDER BY $score DESC LIMIT {limit * 2 + margin}",
+                f"ORDER BY $score DESC, id LIMIT {limit * 2 + margin}",
                 {"query": " OR ".join(words), "project": project_id, "eligible_records": eligible_records},
             )
             # Exact keys remain useful even when a short task key is absent from its body.
             keyed = self.store.query(
                 "SELECT FROM records WHERE project_id=:project AND status<>'superseded' "
-                f"AND id IN :eligible_records AND key IN :keys LIMIT {limit}",
+                f"AND id IN :eligible_records AND key IN :keys ORDER BY id LIMIT {limit}",
                 {"project": project_id, "keys": words, "eligible_records": eligible_records},
             )
             record_hits, seen, gate = [], set(), ASK.get()
             if gate:
                 gate.prime([*records, *keyed])
+            sources.update(self.store.get_sources(
+                [ids[0] for record in [*records, *keyed]
+                 if (ids := json_value(record.get("source_ids"), [])) and ids[0] not in sources]))
             for record in [*records, *keyed]:
                 ids = json_value(record.get("source_ids"), [])
                 if record["id"] in seen or not ids:
@@ -575,7 +621,7 @@ class Retriever:
                 seen.add(record["id"])
                 if gate and gate.record_held(record):
                     continue
-                source = self.store.get_source(ids[0])
+                source = sources.get(ids[0]) or self.store.get_source(ids[0])  # raises for a source that does not exist
                 if source["project_id"] != project_id:
                     continue
                 record_hits.append({
@@ -597,6 +643,8 @@ class Retriever:
             for rank, hit in enumerate(ranking):
                 key = str(hit["id"])
                 fused.setdefault(key, {**hit, "score": 0.0})["score"] += 1.0 / (60 + rank + 1)
+        # Equal scores keep the order the hits came in: full-text chunks, vector chunks, records (the sort is stable),
+        # each ranking being ordered by id at its own ties; the cut to the limit follows the same rule.
         result = sorted(fused.values(), key=lambda hit: hit["score"], reverse=True)[:limit]
         for hit in result:
             hit.pop("_path", None)

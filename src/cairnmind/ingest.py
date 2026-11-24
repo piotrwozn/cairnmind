@@ -1764,27 +1764,34 @@ def register_default_histories(store, project_id: str, root: Path) -> dict:
     return result
 
 
-def current_source(store, source_id: str) -> dict:
-    """Refresh code/document evidence against disk; never read outside registered roots."""
-    source = store.get_source(source_id)
+def current_source(store, source_id: str, scope=None, row: dict | None = None) -> dict:
+    """Refresh code/document evidence against disk; never read outside registered roots.
+
+    ``scope`` (a ``CheckScope`` of this source's project) is what the checks of one question share: the project, its
+    folders, the memory bindings and the imported sources, read once instead of for each file. ``row`` is the source
+    as ``store.get_source`` returns it, when the caller has read it already."""
+    source = dict(row) if row is not None else store.get_source(source_id)
     metadata = _metadata(source.get("metadata"))
     if source["kind"] not in {"code", "document"} or not metadata.get("path"):
         return source
-    project = store.resolve_project(source["project_id"])
-    folders = project_folders.folder_states(store, project)  # the registered folders, as _roots lists them
+    if scope is not None and scope.project["id"] != source["project_id"]:
+        scope = None  # another project's: read its own
+    project = scope.project if scope else store.resolve_project(source["project_id"])
+    # the registered folders, as _roots lists them
+    folders = scope.folders if scope else project_folders.folder_states(store, project)
     roots = [Path(folder["root"]) for folder in folders]
     path = Path(os.path.normpath(metadata["path"]))
-    bindings = memory_bindings(store, project["id"])
+    bindings = scope.bindings if scope else memory_bindings(store, project["id"])
     local = bound_metadata(store, project["id"], metadata, bindings=bindings)
     mapped_path = Path(local["path"])
-    imported = source_id in imported_source_ids(store, project["id"])
+    imported = source_id in (scope.imported if scope else imported_source_ids(store, project["id"]))
     if imported:
         # A saved foreign URI is provenance, never a request to read that host
         # path. Only the actual local index can establish a current file source.
         latest = _source_before(store, project["id"], str(mapped_path)) if mapped_path != path or any(
             path.is_relative_to(origin) for origin, _ in bindings) else None
         if latest and latest["id"] != source_id:
-            return current_source(store, latest["id"])
+            return current_source(store, latest["id"], scope)
         return {**source, "is_current": False,
                 "freshness_warning": "Imported file snapshot is historical until the local checkout is indexed"}
     # A cited file under a folder this machine cannot read, or that belongs to another machine, is neither

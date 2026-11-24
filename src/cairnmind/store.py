@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import re
+import sys
 import threading
 import time
 from uuid import uuid4
@@ -34,8 +35,15 @@ SCHEMA_VERSION = 4
 LOOKUP_INDEXES = (("chunks", "source_id"), ("nodes", "source_id"), ("edges", "source_id"), ("edges", "from_id"),
                   ("edges", "to_id"), ("embeddings", "source_id"), ("embeddings", "chunk_id"), ("sources", "uri"),
                   ("record_revisions", "record_id"), ("check_runs", "task_id"), ("session_events", "session_id"),
-                  ("resume_packets", "session_id"))
-LOOKUP_INDEX_SET = 1
+                  ("resume_packets", "session_id"), ("nodes", "kind"))  # kind: the definitions of an answer read 17 % of the nodes (#408)
+LOOKUP_INDEX_SET = 2
+# Seconds a statement that builds a lookup index waits: the engine drops the build when the client gives up at the
+# 30 s of an ordinary request, so a store that takes longer would never get its index. 88,000 nodes take about 1 s.
+LOOKUP_INDEX_WAIT = 600
+LOOKUP_INDEX_GAVE_UP = ("A lookup index of the store could not be built ({error}). The store opens without it, some reads "
+                        "are slower, and the next start tries again.")
+MESSAGES = {LOOKUP_INDEX_GAVE_UP: ("Nie udało się zbudować indeksu wyszukiwania w bazie ({error}). Baza otwiera się bez "
+                                   "niego, część odczytów jest wolniejsza, a następny start spróbuje ponownie.")}
 # Graph rows written by one request of Store.write_graph (issue #167).
 GRAPH_ROWS_PER_REQUEST = 250
 KINDS = {"decision", "task", "fact", "constraint", "question", "preference", "checkpoint"}
@@ -693,16 +701,19 @@ class Store:
     def _lookup_indexes(self, recorded):
         """Create the lookup indexes that are missing. Called with the writer lock held; safe to repeat.
 
-        An index only makes a lookup faster. When one cannot be built now, for example because a large
-        table takes longer than a request may, the database is opened all the same and the next start
-        tries again: nothing is recorded until every index exists.
+        An index only makes a lookup faster. When one cannot be built now, for example because the engine
+        refused the statement, the database is opened all the same and the next start tries again:
+        nothing is recorded until every index exists. Each statement waits LOOKUP_INDEX_WAIT, not a request's 30 s.
         """
         from .arcade import ArcadeError
+        from .index_mark import building
         try:
-            for collection, field in LOOKUP_INDEXES:
-                self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
-                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) NOTUNIQUE NULL_STRATEGY SKIP")
-        except ArcadeError:
+            with building(self.data_dir), self.client.patient(LOOKUP_INDEX_WAIT):  # the mark tells a waiting command (#422)
+                for collection, field in LOOKUP_INDEXES:
+                    self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
+                    self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) NOTUNIQUE NULL_STRATEGY SKIP")
+        except ArcadeError as exc:
+            print("cairnmind: " + LOOKUP_INDEX_GAVE_UP.format(error=safe_text(str(exc))), file=sys.stderr)
             return
         with self.client.transaction() as tx:
             # Read again, as for schema_version: another installation may have recorded it in between.
@@ -948,6 +959,13 @@ class Store:
 
     def get_source(self, source_id):
         return one_row(self, "SELECT FROM sources WHERE id=:id", {"id": source_id})
+
+    def get_sources(self, source_ids) -> dict:
+        """The sources with these ids as `get_source` returns them, id -> row, in requests of 500 ids; an id that
+        does not exist is not in the result (`get_source` raises for it)."""
+        ids = list(dict.fromkeys(source_ids))
+        return {row["id"]: row for start in range(0, len(ids), 500) for row in (
+            clean_row(found) for found in self.query("SELECT FROM sources WHERE id IN :ids", {"ids": ids[start:start + 500]}))}
 
     @staticmethod
     def _validate_sources(tx, project_id, sources):
