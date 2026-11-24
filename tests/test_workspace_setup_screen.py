@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 import typer.main
 from textual.widgets import Button, Static
-from textual.worker import NoActiveWorker, get_current_worker
 
 from cairnmind import cli, setup_mark, setup_profiles, terminal_setup, terminal_setup_change, topology as topology_module
 from cairnmind.config import Settings
@@ -300,25 +299,37 @@ def test_nothing_starts_a_change_except_after_the_consent_dialog_agreed():
 
 
 class StatusBroker(UIBroker):
-    """Answers /api/status with `status`, or raises `refuse`; records every request in `seen`, except the reads of
-    the panel's own refresh (every 3 s, its own worker, #418): they are in `polled`. The screen's promise is about
-    what its opening causes, not about when that poll falls (#459)."""
+    """Answers /api/status with `status`, or raises `refuse`; records every request."""
 
     def __init__(self, project, status):
         super().__init__(project)
-        self.status, self.refuse, self.seen, self.polled = status, None, [], []
+        self.status, self.refuse, self.seen = status, None, []
 
     def request(self, method, path, *, params=None, json=None, timeout=20):
-        try:  # asyncio.to_thread carries the worker of the caller into this thread
-            polled = get_current_worker().group == "sidebar-refresh"
-        except NoActiveWorker:
-            polled = False
-        (self.polled if polled else self.seen).append((method, path, params, json))
+        self.seen.append((method, path, params, json))
         if path == "/api/status":
             if self.refuse:
                 raise self.refuse
             return self.status
         return super().request(method, path, params=params, json=json, timeout=timeout)
+
+
+def without_the_poll(monkeypatch):
+    """The panel reads /api/state by itself every 3 s (set_interval at mount); on a slow run a tick lands in the window
+    of a test that counts reads. Its timer starts paused, so that only what the test does reads: by order, not by a
+    clock (#459). Returns the timers it paused."""
+    original, paused = SidebarApp.set_interval, []
+
+    def set_interval(self, interval, callback=None, **kwargs):
+        if callback == self.refresh_sidebar:
+            kwargs["pause"] = True
+        timer = original(self, interval, callback, **kwargs)
+        if kwargs.get("pause"):
+            paused.append(timer)
+        return timer
+
+    monkeypatch.setattr(SidebarApp, "set_interval", set_interval)
+    return paused
 
 
 def ui(tmp_path, monkeypatch, status, language="en"):
@@ -351,10 +362,12 @@ def notice_of(app):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language,size", [("en", (80, 24)), ("en", (120, 35)), ("pl", (80, 24))])
 async def test_settings_opens_the_screen_with_one_read(tmp_path, monkeypatch, language, size):
+    paused = without_the_poll(monkeypatch)
     status = served(make(sub(tmp_path, "service")))
     app, broker = ui(tmp_path, monkeypatch, status, language)
     async with app.run_test(size=size) as pilot:
         await settle(app, pilot)
+        assert len(paused) == 1
         before = len(broker.seen)
         await choose_the_entry(app, pilot)
         await until(pilot, lambda: screen_open(app), what="the screen Storage and models")
@@ -370,24 +383,23 @@ async def test_settings_opens_the_screen_with_one_read(tmp_path, monkeypatch, la
 
 
 @pytest.mark.asyncio
-async def test_a_refresh_of_the_panel_while_the_screen_opens_is_not_a_read_of_the_screen(tmp_path, monkeypatch):
-    """The panel reads /api/state every 3 s in its own worker; on a slow run one lands between the menu and the screen.
-    It is told apart by its worker, and every other read stays counted: one made outside that worker fails the first
-    test above (#459)."""
+async def test_any_other_read_of_the_panel_while_the_screen_opens_is_counted(tmp_path, monkeypatch):
+    """Only the poll is held back: a refresh of the panel called directly (the `r` key, the end of a change) while the
+    screen opens is a read of that window, and fails the test above (#459)."""
+    paused = without_the_poll(monkeypatch)
     status = served(make(sub(tmp_path, "service")))
     app, broker = ui(tmp_path, monkeypatch, status)
     async with app.run_test(size=(120, 35)) as pilot:
         await settle(app, pilot)
-        before, polled = len(broker.seen), len(broker.polled)
+        assert len(paused) == 1
+        before = len(broker.seen)
         await choose_the_entry(app, pilot)
-        app.refresh_sidebar()  # the poll falling in the middle of the opening, by order and not by a clock
-        await until(pilot, lambda: len(broker.polled) > polled, what="the refresh's read")
+        app.refresh_sidebar()
         await until(pilot, lambda: screen_open(app), what="the screen Storage and models")
-        await app.load_state()  # a read of the panel made by anything else is a read of this window
+        await until(pilot, lambda: ("GET", "/api/state", None, None) in broker.seen[before:], what="the refresh's read")
         await pilot.press("escape")
         await until(pilot, lambda: not is_screen(app), what="the screen closed")
-    assert broker.polled[polled:] == [("GET", "/api/state", None, None)]
-    assert broker.seen[before:] == [("GET", "/api/status", None, None), ("GET", "/api/state", None, None)]
+    assert sorted(broker.seen[before:]) == [("GET", "/api/state", None, None), ("GET", "/api/status", None, None)]
 
 
 @pytest.mark.asyncio
