@@ -248,6 +248,114 @@ def test_a_process_with_no_parent_that_names_the_tests_directory_fails_the_test_
             os.kill(pid, signal.SIGKILL)
 
 
+ORPHAN = '''
+    import os
+    from pathlib import Path
+    import subprocess
+    import sys
+    import tempfile
+    import time
+    import pytest
+    import run_guard
+
+    def leave_an_orphan(folder):
+        command = f'{sys.executable} -c "import time; time.sleep(3600)" --data-dir {folder} >/dev/null 2>&1 &'
+        subprocess.run(["sh", "-c", command], check=True)
+        for _ in range(100):
+            found = run_guard.processes_under(folder)
+            if found:
+                Path(os.environ["GUARD_PID"]).write_text(str(found[0][0]))
+                return
+            time.sleep(.05)
+'''
+
+
+@pytest.mark.parametrize("form", ["short_tmp_path", "mkdtemp"])
+def test_a_process_naming_a_folder_the_test_made_outside_its_tmp_path_fails_the_test_and_is_stopped(tmp_path, form):
+    marker = tmp_path / "pid"
+    body = "short_tmp_path / 'data'" if form == "short_tmp_path" else "Path(tempfile.mkdtemp(prefix='cm457-')) / 'data'"
+    result, _ = inner_run(tmp_path, ORPHAN + f"""
+    def test_leaves_an_orphan(request{', short_tmp_path' if form == 'short_tmp_path' else ''}):
+        folder = {body}
+        request.addfinalizer(lambda: __import__("shutil").rmtree(folder.parent, ignore_errors=True))
+        folder.mkdir()
+        leave_an_orphan(folder)
+
+    def test_after_it_passes():
+        pass
+    """, env={"GUARD_PID": str(marker)})
+    pid = int(marker.read_text())
+    try:
+        assert "2 passed, 1 error" in result.stdout, result.stdout
+        assert "left a process of its own data directory" in result.stdout and str(pid) in result.stdout
+        assert gone(pid), result.stdout
+    finally:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+
+
+def test_a_process_left_by_a_fixture_of_the_session_names_the_runs_folder_and_fails_the_run(tmp_path):
+    marker = tmp_path / "pid"
+    result, _ = inner_run(tmp_path, ORPHAN + """
+    @pytest.fixture(scope="session")
+    def session_service(tmp_path_factory):
+        folder = tmp_path_factory.mktemp("service") / "data"
+        folder.mkdir()
+        leave_an_orphan(folder)  # nobody stops it at the end of the session
+
+    def test_uses_it(session_service):
+        pass
+    """, env={"GUARD_PID": str(marker)})
+    pid = int(marker.read_text())
+    try:
+        assert "1 passed" in result.stdout and result.returncode == 1, result.stdout
+        assert "left a process of its own folder running" in result.stdout and str(pid) in result.stdout
+        assert gone(pid), result.stdout
+    finally:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+
+
+def test_a_ps_that_fails_ends_the_run_once_with_its_reason(tmp_path):
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "ps").write_text("#!/bin/sh\necho 'ps: illegal option' >&2\nexit 1\n")
+    (fake / "ps").chmod(0o755)
+    result, _ = inner_run(tmp_path, """
+    def test_first(tmp_path):
+        pass
+
+    def test_second(tmp_path):
+        pass
+    """, env={"PATH": f"{fake}{os.pathsep}{os.environ['PATH']}"})
+    assert result.returncode == 3, result.stdout
+    assert "cannot list processes (ps exited 1): ps: illegal option" in result.stdout
+    assert "test_second" not in result.stdout, result.stdout  # the second test was never run
+
+
+LINUX_PS = """    1     0 /sbin/init splash
+ 1234  1000 python -I -m cairnmind --data-dir /tmp/pytest-of-u/pytest-3/t/data cockpit serve
+99999  1000 sh -c  echo   two  spaces
+ 4321  1001 other user's process
+"""
+MACOS_PS = """\
+  501   501 /usr/sbin/cfprefsd agent
+12345   501 /Users/runner/work/uv run pytest -n 3 -m "not arcade"
+    1     0 /sbin/launchd
+ 7777   501 /private/var/folders/x/T/pytest-of-runner/pytest-0/t/python -I -m cairnmind cockpit serve
+"""
+
+
+def test_the_listing_of_ps_is_read_the_same_from_procps_and_from_the_ps_of_macos():
+    assert run_guard.parse_processes(LINUX_PS, 1000) == [
+        (1234, "python -I -m cairnmind --data-dir /tmp/pytest-of-u/pytest-3/t/data cockpit serve"),
+        (99999, "sh -c  echo   two  spaces")]
+    assert run_guard.parse_processes(MACOS_PS, 501) == [
+        (501, "/usr/sbin/cfprefsd agent"), (12345, '/Users/runner/work/uv run pytest -n 3 -m "not arcade"'),
+        (7777, "/private/var/folders/x/T/pytest-of-runner/pytest-0/t/python -I -m cairnmind cockpit serve")]
+    assert run_guard.parse_processes("", 501) == [] == run_guard.parse_processes("garbage\n  x y z\n", 501)
+
+
 def test_a_guard_that_cannot_list_processes_says_so_instead_of_finding_none(tmp_path, monkeypatch):
     real = subprocess.run
     for broken in (FileNotFoundError("ps"), subprocess.CompletedProcess([], 1, "", "bad option")):

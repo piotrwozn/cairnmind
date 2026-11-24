@@ -18,9 +18,12 @@ Left running. After each test, what the test itself started and left running is 
   started in a group of its own: SIGTERM, and SIGKILL after STOP_GRACE seconds. Only a child of this
   process that has not been reaped is signalled: its pid cannot belong to anyone else.
 Then, by what the system lists (ps), every process of this user whose command line names a path under the
-test's tmp_path is stopped whatever its parent or session, and the test fails by name (#457): a service the
-product started for the test's data directory (a broker started by a panel) is nobody's child and the rest
-cannot see it.
+test's tmp_path, or under a folder the test made with tempfile (short_tmp_path, mkdtemp), is stopped whatever
+its parent or session, and the test fails by name (#457): a service the product started for the test's data
+directory (a broker started by a panel) is nobody's child and the rest cannot see it. At the end of the run
+the same is done for the run's whole base directory, where the fixtures of the session scope keep their
+folders (the engine, which its owner stops, excepted), and the run fails. When ps cannot be run, the run ends
+at once with the reason (exit code 3): every test would say the same.
 Processes that fixtures of a wider scope (module, session) start are theirs and are not touched; the
 default tmux socket, the installation's data directory and its port are never looked at. What was
 stopped is reported as a LeftRunning warning naming each process and socket.
@@ -46,6 +49,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import warnings
@@ -185,8 +189,10 @@ class Spawned:
         self.scopes: list[str] = []  # scopes of the fixtures being set up, innermost last
         self.processes: list[tuple[subprocess.Popen, bool]] = []
         self.sockets: dict[str, str] = {}
+        self.directories: list[Path] = []  # made with tempfile by the test or its function-scoped fixtures
         self.lock = threading.Lock()
         self.original_init = None
+        self.original_mkdtemp = None
 
     def recording(self) -> bool:
         if self.scopes:
@@ -195,13 +201,23 @@ class Spawned:
 
     def clear(self):
         with self.lock:
-            self.processes, self.sockets = [], {}
+            self.processes, self.sockets, self.directories = [], {}, []
 
     def install(self):
         if self.original_init is not None:
             return
         original = self.original_init = subprocess.Popen.__init__
         spawned = self
+        made = self.original_mkdtemp = tempfile.mkdtemp
+
+        def mkdtemp(*args, **kwargs):
+            path = made(*args, **kwargs)
+            if spawned.recording():
+                with spawned.lock:
+                    spawned.directories.append(Path(path))
+            return path
+
+        tempfile.mkdtemp = mkdtemp
 
         def __init__(self, *args, **kwargs):
             socket = None
@@ -224,7 +240,13 @@ class Spawned:
     def uninstall(self):
         if self.original_init is not None:
             subprocess.Popen.__init__ = self.original_init
+            tempfile.mkdtemp = self.original_mkdtemp
             self.original_init = None
+
+    def take_directories(self) -> list[Path]:
+        with self.lock:
+            directories, self.directories = self.directories, []
+        return directories
 
     def stop_all(self, node) -> list[str]:
         with self.lock:
@@ -356,49 +378,73 @@ def stop_engines(funcargs) -> list[str]:
     return stopped
 
 
-def processes_under(root: Path) -> list[tuple[int, str]]:
+def parse_processes(listing: str, uid: int) -> list[tuple[int, str]]:
+    """(pid, command line) of the rows of `ps -A -o pid=,uid=,command=` that belong to `uid`. procps (Linux) and
+    BSD ps (macOS) differ in the padding of the columns, not in their order: the command is the rest of the row."""
+    rows = []
+    for line in listing.splitlines():
+        fields = line.split(None, 2)
+        if len(fields) == 3 and fields[0].isdigit() and fields[1] == str(uid):
+            rows.append((int(fields[0]), fields[2].strip()))
+    return rows
+
+
+ENGINE_OPTION = "-Darcadedb.server.rootPath="  # in the command line of an engine: stopped by its own owner
+
+
+def processes_under(*roots: Path, leave: str = "") -> list[tuple[int, str]]:
     """(pid, command line) of every process of this user, other than this one and its parent, whose command
-    line names `root` or a path below it, whatever its parent or session: a service the product started
-    for the test's data directory is nobody's child (#457)."""
-    names = {str(root), str(root.resolve())}
+    line names one of `roots` or a path below it, whatever its parent or session: a service the product
+    started for the test's data directory is nobody's child (#457). `ps -A -ww -o pid=,uid=,command=` is
+    understood by procps and by the BSD ps of macOS (`-U` and the keyword `args` are not on both)."""
+    names = {name for root in roots for name in (str(root), str(root.resolve()))}
     pattern = re.compile("(?:" + "|".join(re.escape(name) for name in names) + r")(?=[/\s]|$)")
     try:
-        done = subprocess.run(["ps", "-U", str(os.getuid()), "-ww", "-o", "pid=,args="], capture_output=True,
+        done = subprocess.run(["ps", "-A", "-ww", "-o", "pid=,uid=,command="], capture_output=True,
                               text=True, timeout=10, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError) as exc:
-        raise RuntimeError(f"the guard cannot list processes, so it cannot see a stray one: {exc}") from exc
-    if done.returncode or not done.stdout.strip():  # a user always has a process: an empty list is a failed `ps`
-        raise RuntimeError(f"the guard cannot list processes (ps exited {done.returncode}): {done.stderr.strip()[:200]}")
-    found = []
-    for line in done.stdout.splitlines():
-        pid, _, args = line.strip().partition(" ")
-        if pid.isdigit() and int(pid) not in (os.getpid(), os.getppid()) and pattern.search(args):
-            found.append((int(pid), args.strip()))
-    return found
+        raise ProcessListFailed(f"the guard cannot list processes, so it cannot see a stray one: {exc}") from exc
+    rows = parse_processes(done.stdout, os.getuid())
+    if done.returncode or not rows:  # a user always has a process: an empty list is a failed `ps`
+        raise ProcessListFailed(f"the guard cannot list processes (ps exited {done.returncode}): "
+                                f"{done.stderr.strip()[:200]}")
+    return [(pid, args) for pid, args in rows if pid not in (os.getpid(), os.getppid()) and pattern.search(args)
+            and not (leave and leave in args)]
 
 
-def stop_strays(funcargs) -> list[str]:
-    """Stop what still runs with the test's tmp_path in its command line, after everything else was stopped."""
-    root = funcargs.get("tmp_path")
-    if not isinstance(root, Path) or not root.is_dir():
+class ProcessListFailed(RuntimeError):
+    """`ps` failed: the run cannot be guarded, and it ends once with the reason instead of failing every test."""
+
+
+def stop_strays(roots: list[Path], leave: str = "") -> list[str]:
+    """Stop what still runs with one of `roots` in its command line, after everything else was stopped."""
+    if not roots:
         return []
-    found = processes_under(root)
+    found = processes_under(*roots, leave=leave)
     # A server the test stopped (tmux kill-server) takes a moment to end: only what outlives that is left.
     deadline = time.monotonic() + STOP_GRACE
     while found and time.monotonic() < deadline:
         time.sleep(.1)
-        found = [row for row in processes_under(root) if row[0] in {pid for pid, _ in found}]
+        found = [row for row in processes_under(*roots, leave=leave) if row[0] in {pid for pid, _ in found}]
     left = found
     for number in (signal.SIGTERM, signal.SIGKILL):
         # The identity is read again before each signal: a pid that ended, or was reused, gets none.
-        found = [row for row in processes_under(root) if row[0] in {pid for pid, _ in found}]
+        found = [row for row in processes_under(*roots, leave=leave) if row[0] in {pid for pid, _ in found}]
         for pid, _ in found:
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.kill(pid, number)
         deadline = time.monotonic() + (STOP_GRACE if number == signal.SIGTERM else 0)
-        while time.monotonic() < deadline and {pid for pid, _ in processes_under(root)} & {pid for pid, _ in found}:
+        while time.monotonic() < deadline and ({pid for pid, _ in processes_under(*roots, leave=leave)}
+                                               & {pid for pid, _ in found}):
             time.sleep(.05)
     return [f"process {pid} ({args[:160]})" for pid, args in left]
+
+
+def test_roots(node, directories: list[Path]) -> list[Path]:
+    """The folders a test's own processes may name: its tmp_path, and every folder it made with tempfile (a
+    short_tmp_path, a mkdtemp of its own), which may be gone by now while a process still names it."""
+    root = node.funcargs.get("tmp_path") if hasattr(node, "funcargs") else None
+    return ([root] if isinstance(root, Path) and root.is_dir() else []) + directories
 
 
 def socket_directories() -> set[str]:
@@ -458,6 +504,26 @@ def pytest_unconfigure(config):
     CLOCK.uninstall()
     if SOCKETS_BEFORE is not None:
         remove_socket_directories(SOCKETS_BEFORE)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    """What a fixture of the session (or module) scope started and left running names a folder of the run's own base
+    directory: after every fixture is torn down, nothing of this user may still run with that folder in its command
+    line, the shared engine (which the controller stops last, and has its own check of identity) excepted (#457)."""
+    factory = getattr(session.config, "_tmp_path_factory", None)
+    if hasattr(session.config, "workerinput") or factory is None:  # a worker: the controller ends the run
+        return
+    try:
+        left = stop_strays([factory.getbasetemp()], leave=ENGINE_OPTION)
+    except ProcessListFailed as exc:
+        print(f"\n{exc}", file=sys.stderr)
+        session.exitstatus = 3
+        return
+    if left:
+        print("\nThe run left a process of its own folder running, with no test to name (stopped now): "
+              + "; ".join(left), file=sys.stderr)
+        session.exitstatus = 1
 
 
 def pytest_collection_finish(session):
@@ -525,10 +591,14 @@ def leftover_processes_are_stopped(request):
     # Its own bound, which each step keeps to (STOP_GRACE, then a few seconds per kind), so that a short
     # limit does not cut it off; what is torn down after it (fixtures of a wider scope) has it too.
     CLOCK.restart(max(CLOCK.limit, 120.0) if CLOCK.limit > 0 else 0, "stopping what the test left running")
+    directories = SPAWNED.take_directories()
     stopped = SPAWNED.stop_all(request.node)
     if stopped:
         warnings.warn(LeftRunning("The test left running, and it was stopped: " + "; ".join(stopped)))
-    strays = stop_strays(request.node.funcargs)
+    try:
+        strays = stop_strays(test_roots(request.node, directories))
+    except ProcessListFailed as exc:  # the same for every test: the run ends here, once, with the reason
+        pytest.exit(str(exc), returncode=3)
     if strays:
         pytest.fail("The test left a process of its own data directory running, with no parent to stop it "
                     "(stopped now): " + "; ".join(strays), pytrace=False)
