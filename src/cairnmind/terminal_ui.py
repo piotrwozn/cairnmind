@@ -451,8 +451,9 @@ class BasePanel(App):
 
     def _outcome_holds(self) -> bool:
         entry = self.notice_history.on_line()
-        return bool(self._outcome and entry is not None and entry.seq == self._outcome[0]
-                    and _clock() < self._outcome[1])
+        # the line shows the outcome while one is set: every other way onto the line (a notice, a release) resets
+        # _outcome, so only a cleared line (no entry) can part them
+        return bool(self._outcome and entry is not None and _clock() < self._outcome[1])
 
     def _hold_over(self) -> None:  # the timer set with the outcome; an earlier outcome's timer finds a later deadline
         if self._outcome is not None and _clock() >= self._outcome[1]:
@@ -463,7 +464,7 @@ class BasePanel(App):
         a source that tells once (a journal that ended) would otherwise never reach the person."""
         held, self._held = self._held, None
         entry = self.notice_history.on_line()
-        stands = self._outcome is not None and entry is not None and entry.seq == self._outcome[0]
+        stands = self._outcome is not None and entry is not None
         self._outcome = None
         if held is None or not stands:
             return
