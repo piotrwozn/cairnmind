@@ -381,6 +381,11 @@ def stop_strays(funcargs) -> list[str]:
     if not isinstance(root, Path) or not root.is_dir():
         return []
     found = processes_under(root)
+    # A server the test stopped (tmux kill-server) takes a moment to end: only what outlives that is left.
+    deadline = time.monotonic() + STOP_GRACE
+    while found and time.monotonic() < deadline:
+        time.sleep(.1)
+        found = [row for row in processes_under(root) if row[0] in {pid for pid, _ in found}]
     for number in (signal.SIGTERM, signal.SIGKILL):
         for pid, _ in found:
             with contextlib.suppress(ProcessLookupError, PermissionError):
