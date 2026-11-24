@@ -268,12 +268,12 @@ def compare_graph(store, pid, worktree, limits=(1, 3, 2000)):
     return checked
 
 
-def test_the_fixture_is_read_by_pages_when_nothing_is_held_back(stores):
+def test_the_fixture_holds_nothing_back(stores):
     store, project, root, other = stores
     inspector = Inspector(store)
     from cairnmind import inspector_graph
-    assert inspector_graph.keeps_everything(inspector, inspector._scope(project["id"], None))
-    assert inspector_graph.keeps_everything(inspector, inspector._scope(project["id"], root))
+    assert inspector_graph.held(inspector, inspector._scope(project["id"], None)).empty
+    assert inspector_graph.held(inspector, inspector._scope(project["id"], root)).empty
 
 
 @pytest.mark.parametrize("scoped", [False, True])
@@ -282,27 +282,59 @@ def test_every_page_of_the_graph_route_is_what_the_whole_read_gave(stores, scope
     assert compare_graph(store, project["id"], root if scoped else None) > 40
 
 
-def test_a_second_worktrees_rows_keep_the_whole_read_and_the_same_answers(stores, tmp_path):
+def add_roots(stores, tmp_path):
+    """Two more roots that hold rows of their own: a file every root has, one moved between roots, records, plans and
+    revisions of each, a record of this root that rests on the other root's source, and edges across roots both ways."""
+    store, project, root, other = stores
+    pid, third = project["id"], tmp_path / "third"
+    third.mkdir()
+    for path in (other, third):
+        store.add_project_root(pid, path)
+    code, nodes, edges = {}, [], []
+    for tag, base in (("o", other), ("t", third)):
+        for name in ("x.py", "a.py", "moved.py"):
+            code[tag + name] = store.snapshot(pid, str(base / name), f"{tag} = 1", "code", {"path": str(base / name), "root": str(base)})
+        store.snapshot(pid, str(base / "x.py"), f"{tag} = 2", "code", {"path": str(base / "x.py"), "root": str(base)})  # history
+        nodes += [{"id": f"file:{tag}:{name}", "project_id": pid, "kind": "file", "label": name, "source_id": code[tag + name]["id"],
+                   "metadata": {"path": str(base / name), "root": str(base)}} for name in ("x.py", "a.py", "moved.py")]
+        nodes += [{"id": f"symbol:{tag}:{n}", "project_id": pid, "kind": "function", "label": f"{tag}::f{n}", "source_id": code[tag + "x.py"]["id"],
+                   "metadata": {"path": str(base / "x.py"), "root": str(base)}} for n in range(3)]
+        edges += [{"id": f"edge:{tag}:{n}", "project_id": pid, "from_id": f"file:{tag}:x.py", "to_id": f"symbol:{tag}:{n}", "kind": "defines",
+                   "source_id": code[tag + "x.py"]["id"]} for n in range(3)]
+        made = store.remember(pid, {"kind": "decision", "content": f"Of {base.name}.", "metadata": {"root": str(base)}}, [code[tag + "x.py"]["id"]])
+        store.remember(pid, {"id": made["id"], "expected_version": 1, "content": f"Changed {base.name}.", "metadata": {"root": str(base)}},
+                       [code[tag + "x.py"]["id"]])
+    PlanManager(store).save(pid, {"title": "Other plan", "goal": "Goal"}, [{"key": "a", "content": "Step"}], "other plan", worktree=other)
+    store.remember(pid, {"kind": "fact", "content": "Of this root, on the other's file.", "metadata": {"root": str(root)}}, [code["ox.py"]["id"]])
+    store.remember(pid, {"kind": "fact", "content": "Of the other root.", "metadata": {"root": str(other)}}, [code["tx.py"]["id"]])
+    edges += [{"id": "edge:cross:o-to-root", "project_id": pid, "from_id": "file:o:x.py", "to_id": "file:a.py", "kind": "imports",
+               "source_id": code["ox.py"]["id"]},
+              {"id": "edge:cross:root-to-o", "project_id": pid, "from_id": "file:a.py", "to_id": "file:o:x.py", "kind": "imports",
+               "source_id": store.query("SELECT id FROM sources WHERE project_id=:p AND uri=:u AND is_current=true", {"p": pid, "u": str(root / "a.py")})[0]["id"]},
+              {"id": "edge:cross:t-to-o", "project_id": pid, "from_id": "file:t:x.py", "to_id": "file:o:x.py", "kind": "imports",
+               "source_id": code["tx.py"]["id"]}]
+    with store.transaction() as tx:
+        store.write_graph(tx, pid, nodes, edges)
+    return third
+
+
+@pytest.mark.parametrize("which", [None, "root", "other", "third"])
+def test_rows_of_two_more_roots_are_paged_with_the_same_answers(stores, tmp_path, which):
     from cairnmind import inspector_graph
     store, project, root, other = stores
     pid = project["id"]
-    store.add_project_root(pid, other)
-    foreign = store.snapshot(pid, str(other / "x.py"), "other = 1", "code", {"path": str(other / "x.py"), "root": str(other)})
-    store.upsert_node({"id": "file:x.py", "project_id": pid, "kind": "file", "label": "x.py", "source_id": foreign["id"],
-                       "metadata": {"path": str(other / "x.py"), "root": str(other)}})
-    store.upsert_edge({"id": "edge:cross", "project_id": pid, "from_id": "file:x.py", "to_id": "file:a.py", "kind": "calls",
-                       "source_id": foreign["id"]})
+    third = add_roots(stores, tmp_path)
     inspector = Inspector(store)
-    assert inspector_graph.keeps_everything(inspector, inspector._scope(pid, None))
-    assert not inspector_graph.keeps_everything(inspector, inspector._scope(pid, root))
-    assert not inspector_graph.keeps_everything(inspector, inspector._scope(pid, other))
-    for worktree in (None, root, other):
-        assert compare_graph(store, pid, worktree, limits=(3, 2000)) > 10
-        compare_groups_and_neighbors(store, pid, worktree)
+    worktree = {None: None, "root": root, "other": other, "third": third}[which]
+    held = inspector_graph.held(inspector, inspector._scope(pid, worktree))
+    assert held is not None and held.empty == (worktree is None)
+    assert worktree is None or (held.sources and held.records and held.nodes)
+    assert compare_graph(store, pid, worktree, limits=(3, 2000)) > 10
+    compare_groups_and_neighbors(store, pid, worktree)
 
 
 def hold_back(stores, how):
-    """One row of the project that only `how` shows to belong elsewhere: the scope check must see it and read the whole graph."""
+    """One row of the project that only `how` shows to belong elsewhere: the scope check must see it and hold it back."""
     from cairnmind import inspector_graph
     store, project, root, other = stores
     pid = project["id"]
@@ -320,14 +352,14 @@ def hold_back(stores, how):
         made = store.remember(pid, {"kind": "fact", "content": "Quote.", "metadata": {"root": str(other)}}, [source["id"]])
         store.remember(pid, {"id": made["id"], "expected_version": 1, "content": "Quote.", "metadata": {"root": str(root)}}, [source["id"]])
     inspector = Inspector(store)
-    assert inspector_graph.keeps_everything(inspector, inspector._scope(pid, None))
-    assert not inspector_graph.keeps_everything(inspector, inspector._scope(pid, root))
+    assert inspector_graph.held(inspector, inspector._scope(pid, None)).empty
+    assert not inspector_graph.held(inspector, inspector._scope(pid, root)).empty
     assert compare_graph(store, pid, root, limits=(3, 2000)) > 10
     compare_groups_and_neighbors(store, pid, root)
 
 
 @pytest.mark.parametrize("how", ["path", "worktree", "revision"])
-def test_one_row_that_belongs_elsewhere_keeps_the_whole_read_however_it_shows_it(stores, how):
+def test_one_row_that_belongs_elsewhere_is_held_back_however_it_shows_it(stores, how):
     hold_back(stores, how)
 
 
@@ -393,6 +425,14 @@ def test_a_request_reads_the_rows_of_its_page_not_the_project(tmp_path):
               "metadata": {"path": str(root / "big.py"), "root": str(root)}} for n in range(900)]
     edges = [{"id": f"edge:{n:05d}", "project_id": pid, "from_id": f"symbol:{n:05d}", "to_id": f"symbol:{(n + 1) % 900:05d}", "kind": "calls",
               "source_id": source["id"]} for n in range(900)]
+    other = tmp_path / "other"  # a second root with rows of its own: the worktree's scope holds them back
+    other.mkdir()
+    store.add_project_root(pid, other)
+    foreign = store.snapshot(pid, str(other / "x.py"), "y = 1", "code", {"path": str(other / "x.py"), "root": str(other)})
+    nodes += [{"id": f"foreign:{n:02d}", "project_id": pid, "kind": "function", "label": f"g{n}", "source_id": foreign["id"],
+               "metadata": {"path": str(other / "x.py"), "root": str(other)}} for n in range(10)]
+    edges += [{"id": f"edge:foreign:{n:02d}", "project_id": pid, "from_id": f"foreign:{n:02d}", "to_id": f"symbol:{n:05d}", "kind": "calls",
+               "source_id": foreign["id"]} for n in range(10)]
     with store.transaction() as tx:
         store.write_graph(tx, pid, nodes, edges)
     inspector = Inspector(store)
@@ -407,9 +447,60 @@ def test_a_request_reads_the_rows_of_its_page_not_the_project(tmp_path):
     store.query = counting
     limit = 20
     for call in (lambda: inspector.graph(pid, limit=limit), lambda: inspector.graph(pid, worktree=root, limit=limit),
-                 lambda: inspector.groups(pid, limit=limit), lambda: inspector.neighbors(pid, "symbol:00450", limit=limit)):
+                 lambda: inspector.graph(pid, worktree=root, limit=limit, group="group:native:function"),
+                 lambda: inspector.groups(pid, worktree=root, limit=limit), lambda: inspector.neighbors(pid, "symbol:00450", limit=limit),
+                 lambda: inspector.neighbors(pid, "symbol:00005", worktree=root, limit=limit)):
         seen.clear()
         call()
         assert sum(count for _, count in seen) < 6 * limit, [(sql[:60], count) for sql, count in seen if count > 5]
         assert len(seen) < 40
         assert all(count <= limit + 1 or "GROUP BY" in sql for sql, count in seen), [(sql[:80], count) for sql, count in seen if count > limit + 1]
+
+
+def test_the_project_row_counts_the_code_graph_only_so_the_counts_come_from_the_tables(tmp_path):
+    """graph_nodes and graph_edges are what the indexer wrote (its vertices, its six kinds of edge): a record, a plan and
+    the vertices kept for them are in the tables and not in the row, so the totals of the whole graph cannot come from it."""
+    from cairnmind import ingest, inspector_graph
+    from cairnmind.store import Store
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "a.py").write_text("def a():\n    return 1\n")
+    (root / "b.py").write_text("import a\n\n\ndef b():\n    return a.a()\n")
+    store = Store(tmp_path / "database")
+    pid = store.add_project("counts", root)["id"]
+    ingest.index_project(store, pid)
+
+    def read():
+        row = store.query("SELECT graph_fingerprint,graph_nodes,graph_edges FROM projects WHERE id=:project", {"project": pid})[0]
+        return row, inspector_graph.totals(store, pid)[0]
+
+    row, counts = read()
+    assert row["graph_fingerprint"] and row["graph_nodes"] and row["graph_edges"]
+    assert (counts["nodes"], counts["edges"]) == (row["graph_nodes"], row["graph_edges"])
+    note = store.snapshot(pid, "note://a", "A note.", "manual")
+    store.remember(pid, {"kind": "fact", "content": "A fact."}, [note["id"]])
+    after, counts = read()
+    assert (after["graph_nodes"], after["graph_edges"]) == (row["graph_nodes"], row["graph_edges"])
+    assert counts["nodes"] > row["graph_nodes"] and counts["edges"] > row["graph_edges"]
+
+
+# ---- a vertex of a record, plan or source has its row (the paged read shows rows, not such vertices) ----
+
+def test_no_path_leaves_a_vertex_of_a_record_plan_or_source_without_its_row(stores, tmp_path):
+    """The writers of such a vertex (a record's graph, a plan's, the indexer's source nodes, a restore) write the row in the
+    same transaction, no path deletes a source, record or plan while its vertex stays, and a package that carries one is refused."""
+    from cairnmind.memory import TABLES, _validate
+    store, project, root, other = stores
+    add_roots(stores, tmp_path)
+    pid = project["id"]
+    owners = {"record:": "records", "plan:": "plans", "source:": "sources"}
+    vertices = store.query("SELECT id FROM nodes WHERE project_id=:project", {"project": pid})
+    assert any(row["id"].startswith(prefix) for row in vertices for prefix in owners)
+    for row in vertices:
+        for prefix, table in owners.items():
+            if row["id"].startswith(prefix):
+                assert store.query(f"SELECT id FROM {table} WHERE id=:id AND project_id=:project", {"id": row["id"][len(prefix):], "project": pid}), row["id"]
+    payload = {table: [] for table in TABLES}
+    for prefix in owners:
+        with pytest.raises(ValueError, match="without its record, plan or source"):
+            _validate({**payload, "nodes": [{"id": prefix + "ghost", "project_id": pid, "kind": "plan", "label": "x", "metadata": {}}]}, pid)

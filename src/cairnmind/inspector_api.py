@@ -155,8 +155,8 @@ def create_inspector_router(store, settings):
             raise HTTPException(status_code=503, detail="Memory storage is unavailable") from None
 
     async def whole_graph(method, *args, **kwargs):
-        # These ask the database for a page; a worktree that holds back rows still reads the whole graph (#450).
-        # What a read took goes back to the system either way (#410).
+        # These ask the database for a page, and read the whole graph only for a scope that holds back more than
+        # inspector_graph.HELD_LIMIT rows (#450). What a read took goes back to the system either way (#410).
         try:
             return await call(method, *args, **kwargs)
         finally:
