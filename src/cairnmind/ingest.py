@@ -190,19 +190,21 @@ class _NestedMemory:
         return is_reserved_below(Path(*parts), self._bases)
 
 
-def _walk_args(store, root: Path, errors: list[OSError]):
-    """(excluded, errors, nested) for _files: what a walk of a root leaves out besides its own reserved
+def _walk_args(store, root: Path, errors: list[OSError], links: list | None = None):
+    """(excluded, errors, nested, links) for _files: what a walk of a root leaves out besides its own reserved
     memory, the data directory and the memory directories of the projects registered below it (#174)."""
-    return (store.data_dir,), errors, _NestedMemory(store, root)
+    return (store.data_dir,), errors, _NestedMemory(store, root), links
 
 
 def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | None = None,
-           nested: _NestedMemory | None = None):
+           nested: _NestedMemory | None = None, links: list | None = None):
     """Walk with nested gitignore rules. Symlinks are deliberately not followed.
 
     A directory that cannot be listed is appended to `errors`: the walk is then incomplete,
     and its caller must not treat the files it did not see as deleted. `nested`: the memory
-    directories of projects registered below the root (#174), also left out.
+    directories of projects registered below the root (#174), also left out. `links` receives
+    (path, what it says) of every symlink in the directories the walk lists and leaves out: resolving an import follows
+    them, so a link that is moved, added or removed moves an import (#451).
     """
     rules: dict[Path, pathspec.GitIgnoreSpec] = {}
     # Also by identity: on a file system that ignores case the root may be registered with other letter
@@ -212,6 +214,15 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
     def left_out(path: Path) -> bool:
         return (any(path.is_relative_to(base) for base in excluded) or (nested is not None and nested.covers(path))
                 or (bool(excluded_ids) and path_identity(path) in excluded_ids))
+
+    def link(item: Path) -> bool:
+        if not item.is_symlink():
+            return False
+        if links is not None:
+            # What the link says, one call: a chain, a loop and a broken link need no more, as every link inside the
+            # root is noted too. (A link outside the root that leads back in is not: it is treated as today.)
+            links.append((str(item), os.readlink(item)))
+        return True
 
     for directory, dirs, names in os.walk(root, followlinks=False,
                                           onerror=errors.append if errors is not None else None):
@@ -237,9 +248,8 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
             return answer
 
         dirs[:] = sorted(
-            name for name in dirs
-            if not excluded_directory(name) and not (folder / name).is_symlink()
-            and not is_memory_path(folder / name, root)
+            name for name in sorted(dirs)  # sorted before the links are noted: the same order every round
+            if not excluded_directory(name) and not link(folder / name) and not is_memory_path(folder / name, root)
             # A memory package kept deeper in the tree, such as a sample, is somebody's stored memory
             # and not text of this project: its rows are not indexed as sources.
             and not (folder.name.casefold() == ".memory" and name.casefold() in ("cairnmind", "devbrain"))
@@ -248,7 +258,7 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
         )
         for name in sorted(names):
             path = folder / name
-            if path.is_symlink() or _is_secret(path) or ignored(path):
+            if link(path) or _is_secret(path) or ignored(path):
                 continue
             yield path
 
@@ -585,8 +595,9 @@ def _tree_state(store, project_id: str, listing: dict | None = None) -> tuple[st
     project = store.resolve_project(project_id)
     entries: list[Any] = [parser_identity()]
     newest, errors, away = 0, [], []
+    links: list[tuple[str, str]] = []
     if listing is not None:
-        listing.update(files={}, errors=errors)
+        listing.update(files={}, errors=errors, links=links)
     for folder in project_folders.folder_states(store, project):
         root = Path(folder["root"])
         if folder["state"] != "available":
@@ -594,7 +605,7 @@ def _tree_state(store, project_id: str, listing: dict | None = None) -> tuple[st
             away.append(folder)
             continue
         walked = [] if listing is None else listing["files"].setdefault(folder["root"], [])
-        for path in _files(root, *_walk_args(store, root, errors)):
+        for path in _files(root, *_walk_args(store, root, errors, links)):
             walked.append(path)
             try:
                 status = os.stat(path, follow_symlinks=False)
@@ -603,6 +614,7 @@ def _tree_state(store, project_id: str, listing: dict | None = None) -> tuple[st
                 continue
             entries.append([str(path), status.st_size, status.st_mtime_ns, status.st_ctime_ns])
             newest = max(newest, status.st_mtime_ns, status.st_ctime_ns)
+    entries.extend(links)  # a link moved, added or removed alone changes the signature, so a pass runs (#451)
     return hashlib.sha256(_json(entries).encode()).hexdigest(), newest, not errors, away
 
 
@@ -719,6 +731,7 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                               "read": 0}
     indexed: dict[Path, dict] = {}
     walk_errors: list[OSError] = list((listing or {}).get("errors", []))
+    links: list[tuple[str, str]] = list((listing or {}).get("links", []))
     folders = project_folders.folder_states(store, project)
     registered_roots = [Path(folder["root"]) for folder in folders]
     away = {folder["root"] for folder in folders if folder["state"] != "available"}
@@ -811,7 +824,7 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
         if folder["adopt"]:
             walked.append(folder["row_id"])
         walked_here = (listing or {}).get("files", {}).get(folder["root"])
-        for path in walked_here if walked_here is not None else _files(root, *_walk_args(store, root, walk_errors)):
+        for path in walked_here if walked_here is not None else _files(root, *_walk_args(store, root, walk_errors, links)):
             name = str(path)
             try:
                 # Before the file is opened: an edit made while it is read then shows as a new identity.
@@ -951,7 +964,8 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
             indexed[Path(row["path"])] = {
                 "source": {"id": row["id"], "uri": row["uri"], "kind": row["kind"]}, "analysis": analyses[row["id"]],
                 "root": Path(row.get("root") or project["root"])}
-        counts.update(_build_graph(store, project_id, indexed, previous.get("graph") if previous else None, graph))
+        counts.update(_build_graph(store, project_id, indexed, previous.get("graph") if previous else None, graph,
+                                    links=tuple(links)))
     if away:
         counts["unavailable"] = [project_folders.entry(project, folder) for folder in folders
                                  if folder["root"] in away]
@@ -1004,7 +1018,12 @@ def _resolve_import(path: Path, root: Path, module: str, indexed: dict[Path, dic
         # TypeScript often names emitted .js while the source is .ts.
         if target.suffix == ".js":
             candidates.extend([target.with_suffix(".ts"), target.with_suffix(".tsx")])
-    return next((p.resolve() for p in candidates if p.resolve() in indexed), None)
+    def reached(candidate: Path) -> Path | None:
+        try:
+            return candidate.resolve()
+        except (RuntimeError, OSError):  # a loop of symlinks leads nowhere: the import stays unresolved (#451)
+            return None
+    return next((found for found in map(reached, candidates) if found in indexed), None)
 
 
 def _node_digest(item: dict) -> bytes:
@@ -1229,12 +1248,13 @@ def _stored_graph_is(store, project_id: str, nodes: dict[str, dict], edges: dict
 
 
 def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: dict | None = None,
-                 state: dict | None = None, retried: bool = False) -> dict:
+                 state: dict | None = None, retried: bool = False, links: tuple = ()) -> dict:
     """Write the graph that follows from `indexed`.
 
     With `remembered`, the graph this process wrote last, only rows that differ are written,
     provided the database still holds exactly that graph. Otherwise every row is replaced.
-    `state` receives what was written, for the next call.
+    `state` receives what was written, for the next call. `links` are the symlinks the walk saw and where they
+    lead: resolving an import follows them, and the fingerprint, which holds only files, does not (#451).
     """
     fingerprint = _identifier(parser_identity(), *[
         f"{path}:{indexed[path]['source']['id']}" for path in sorted(indexed)
@@ -1244,7 +1264,8 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         {"project": project_id},
     )
     unchanged = bool(markers) and markers[0].get("graph_fingerprint") == fingerprint
-    if unchanged and (state is None or (remembered and remembered["fingerprint"] == fingerprint)):
+    ours = unchanged and bool(remembered) and remembered["fingerprint"] == fingerprint  # the stored graph is this process's
+    if unchanged and (state is None or (ours and remembered.get("links", ()) == links)):
         if state is not None:
             state.update(remembered)
         return {"nodes": int(markers[0].get("graph_nodes") or 0),
@@ -1253,13 +1274,15 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
     # is not already ours (a graph that another writer made is compared row by row below).
     last = remembered or {}
     reuse = last.get("parts") or {}
-    if unchanged or last.get("parser") != parser_identity() or reuse.keys() != indexed.keys():
+    if (unchanged and not ours) or last.get("parser") != parser_identity() or reuse.keys() != indexed.keys():
         reuse = {}
     parts, nodes, edges = _graph_parts(project_id, indexed, reuse)
     digests, edge_ids = _union(parts)
-    written = {"fingerprint": fingerprint, "parser": parser_identity(), "parts": parts,
+    written = {"fingerprint": fingerprint, "parser": parser_identity(), "parts": parts, "links": links,
                "counts": (len(digests), len(edge_ids)), "code_nodes": _code_nodes(digests)}
-    if unchanged and _stored_graph_is(store, project_id, nodes, edges):
+    # Not for a graph that is ours and only a link moved: the write below checks it against the remembered one
+    # by counts, and writes the rows that differ, as after a changed file.
+    if unchanged and not ours and _stored_graph_is(store, project_id, nodes, edges):
         # The fingerprint said that the stored graph follows from these sources, and this
         # process has now seen that it does, row for row. Otherwise it is replaced in full below.
         state.update(written)
@@ -1381,7 +1404,7 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
                                f"shortly before, {graph_transactions.DUPLICATE_WAIT:g} s after the first refusal ({str(exc)[:300]}); "
                                f"{left} and the next indexing writes the graph again") from exc
         time.sleep(graph_transactions.DUPLICATE_WAIT)
-        return {**_build_graph(store, project_id, indexed, remembered, state, True), "graph_written_again": True}
+        return {**_build_graph(store, project_id, indexed, remembered, state, True, links), "graph_written_again": True}
     if state is not None:
         state.update(written)
     return {"nodes": len(digests), "edges": len(edge_ids), "graph_unchanged": False,

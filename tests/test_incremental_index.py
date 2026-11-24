@@ -487,3 +487,96 @@ def test_a_memory_package_kept_deeper_in_the_tree_is_not_indexed_as_project_text
     (root / "docs/.memory/other/note.md").write_text("an ordinary file\n")
     found = sorted(path.relative_to(root).as_posix() for path in ingest._files(root))
     assert found == ["docs/.memory/other/note.md", "examples/sample/src/app.py"]
+
+
+def relink(path, target):
+    if path.is_symlink():
+        path.unlink()
+    path.symlink_to(target)
+
+
+def lead_to_user(root):
+    (root / "pkg2").mkdir()
+    (root / "pkg2" / "limits.py").write_text("LIMIT = 5\n")
+    (root / "user.py").write_text(
+        "from pkg.alias import LIMIT\nfrom lib.limits import LIMIT as OTHER\n\n\ndef use():\n    return LIMIT + OTHER\n")
+
+
+# A symlink is left out of the walk and an import is resolved through it, so a link that is moved, added or removed
+# moves an import though no file changed (#451). (what is done first, what is done alone, whether the graph moves)
+LINKS = {
+    "retargeted": (lambda root: relink(root / "pkg" / "alias.py", "limits.py"),
+                   lambda root: relink(root / "pkg" / "alias.py", "module_00.py"), True),
+    "added": (lambda root: None, lambda root: relink(root / "pkg" / "alias.py", "limits.py"), True),
+    "removed": (lambda root: relink(root / "pkg" / "alias.py", "limits.py"),
+                lambda root: (root / "pkg" / "alias.py").unlink(), True),
+    "to a directory, retargeted": (lambda root: relink(root / "lib", "pkg"), lambda root: relink(root / "lib", "pkg2"), True),
+    "to a directory, removed": (lambda root: relink(root / "lib", "pkg"), lambda root: (root / "lib").unlink(), True),
+    "in a chain, its second link retargeted": (
+        lambda root: (relink(root / "pkg" / "via.py", "limits.py"), relink(root / "pkg" / "alias.py", "via.py")),
+        lambda root: relink(root / "pkg" / "via.py", "module_00.py"), True),
+    "broken, then broken elsewhere": (lambda root: relink(root / "pkg" / "alias.py", "gone.py"),
+                                      lambda root: relink(root / "pkg" / "alias.py", "gone_too.py"), False),
+    "to a file outside the root, retargeted": (
+        lambda root: (root.parent.joinpath("one.py").write_text("ONE = 1\n"), root.parent.joinpath("two.py").write_text("TWO = 2\n"),
+                      relink(root / "pkg" / "alias.py", root.parent / "one.py")),
+        lambda root: relink(root / "pkg" / "alias.py", root.parent / "two.py"), False),
+    "into a loop": (lambda root: relink(root / "pkg" / "alias.py", "limits.py"),
+                    lambda root: (relink(root / "pkg" / "alias.py", "loop.py"), relink(root / "pkg" / "loop.py", "alias.py")), True),
+}
+
+
+@pytest.mark.parametrize("name", list(LINKS))
+def test_a_link_changed_alone_is_noticed_by_a_running_indexer(workspace, monkeypatch, name):
+    store, pid, root = workspace
+    first, change, moves = LINKS[name]
+    lead_to_user(root)
+    first(root)
+    index_project(store, pid)
+    before = index_state(store, pid)
+    change(root)  # nothing else: no file is written
+    passes = []
+    original = ingest._index_project_locked
+    monkeypatch.setattr(ingest, "_index_project_locked", lambda *a: passes.append(1) or original(*a))
+    result = index_project_if_changed(store, pid)
+    monkeypatch.undo()
+    assert passes == [1] and "skipped" not in result and not result["errors"]
+    assert result["changed"] == 0 and result["read"] == 0
+    # Where the imports lead is written from the remembered graph, the rows that moved: not the whole graph.
+    assert (index_state(store, pid) != before) is moves
+    assert not moves or 0 < result["graph_written"]["edges"] < result["edges"] / 4
+    assert_same_as_a_full_run(store, pid)
+
+
+def test_a_round_in_which_nothing_changed_does_no_pass_and_no_write_though_links_are_there(workspace, monkeypatch):
+    store, pid, root = workspace
+    lead_to_user(root)
+    relink(root / "lib", "pkg")
+    relink(root / "pkg" / "alias.py", "limits.py")
+    index_project(store, pid)
+    asked = []
+    original = ArcadeClient._request
+    monkeypatch.setattr(ArcadeClient, "_request", lambda self, method, path, **kw: asked.append(path) or original(self, method, path, **kw))
+    monkeypatch.setattr(ingest, "_index_project_locked", lambda *a: pytest.fail("An unchanged tree was indexed"))
+    assert index_project_if_changed(store, pid)["skipped"] is True
+    assert asked and all("/query/" in path for path in asked) and len(asked) <= 4, asked  # the project is looked up, nothing written
+
+
+def test_the_walk_notes_the_symlinks_it_leaves_out_and_where_they_lead(tmp_path):
+    root = tmp_path / "repo"
+    (root / "pkg").mkdir(parents=True)
+    (root / "node_modules" / "dep").mkdir(parents=True)
+    (root / "pkg" / "real.py").write_text("X = 1\n")
+    (tmp_path / "outside.py").write_text("Y = 1\n")
+    (root / ".gitignore").write_text("ignored.py\n")
+    for name, target in (("pkg/file_link.py", "real.py"), ("lib", "pkg"), ("pkg/broken.py", "gone.py"),
+                         ("pkg/out.py", tmp_path / "outside.py"), ("pkg/a.py", "b.py"), ("pkg/b.py", "a.py"),
+                         ("ignored.py", "pkg/real.py"), ("node_modules/dep/link.py", "../../pkg/real.py")):
+        (root / name).symlink_to(target)
+    links: list = []
+    found = sorted(path.relative_to(root).as_posix() for path in ingest._files(root, links=links))
+    assert found == [".gitignore", "pkg/real.py"]  # as before: no link is a file of the project
+    assert sorted(links) == sorted((str(root / name), target) for name, target in (
+        ("lib", "pkg"), ("pkg/a.py", "b.py"), ("pkg/b.py", "a.py"), ("pkg/broken.py", "gone.py"),
+        ("pkg/file_link.py", "real.py"), ("pkg/out.py", str(tmp_path / "outside.py")),
+        ("ignored.py", "pkg/real.py"))), links  # one in a directory the walk leaves out (node_modules) is not noted
