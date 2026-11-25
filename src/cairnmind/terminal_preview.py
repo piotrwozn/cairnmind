@@ -72,7 +72,7 @@ def preview_settings(root: Path, *, create=False, scenario="normal"):
     else:
         if marker.is_symlink() or not marker.is_file():
             raise ValueError("Not an owned synthetic preview directory.")
-        if json.loads(marker.read_text()).get("kind") != "cairnmind-synthetic-terminal-preview":
+        if json.loads(marker.read_text(encoding="utf-8")).get("kind") != "cairnmind-synthetic-terminal-preview":
             raise ValueError("Invalid preview ownership marker.")
         settings = Settings.load(root)
     return settings
@@ -214,7 +214,7 @@ def create_preview_app(settings, scenario="normal", *, fixture=None):
             app.state.operational_writes_accepted += 1
         if len(app.state.audit) > 1000:
             del app.state.audit[:500]
-        with (settings.data_dir / "requests.jsonl").open("a") as stream:
+        with (settings.data_dir / "requests.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(entry) + "\n")
         return response
 
@@ -368,11 +368,11 @@ def capture_workspace(manager, target, label):
         size = manager.tmux("display-message", "-p", "-t", pane, "#{pane_width} #{pane_height} #{pane_dead}").stdout.split()
         frames[role] = {"pane": pane, "width": int(size[0]), "height": int(size[1]), "dead": size[2] == "1",
                         "sha256": hashlib.sha256(raw.encode()).hexdigest()}
-        (target / f"{label}-{role}.ansi").write_text(raw)
+        (target / f"{label}-{role}.ansi").write_text(raw, encoding="utf-8")
         console = Console(record=True, width=int(size[0]), file=io.StringIO(), force_terminal=True)
         console.print(Text.from_ansi(raw), end="")
         console.save_svg(str(target / f"{label}-{role}.svg"), title=f"Cairnmind preview · {role}")
-    (target / f"{label}.json").write_text(json.dumps(frames, indent=2))
+    (target / f"{label}.json").write_text(json.dumps(frames, indent=2), encoding="utf-8")
     return frames
 
 

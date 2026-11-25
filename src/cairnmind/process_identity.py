@@ -50,7 +50,7 @@ def start(pid, *, running: bool = False) -> str | None:
     if system.startswith("linux"):
         try:
             # comm may contain spaces, closing parentheses and cut UTF-8; state follows it, starttime is field 22.
-            fields = Path(f"/proc/{pid}/stat").read_text(errors="replace").rsplit(")", 1)[1].split()
+            fields = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace").rsplit(")", 1)[1].split()
             return None if running and fields[0] == "Z" else fields[19]
         except (OSError, IndexError):
             return None

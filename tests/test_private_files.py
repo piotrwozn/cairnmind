@@ -118,3 +118,49 @@ def test_windows_dacl_checker_rejects_non_owner_sids(tmp_path, monkeypatch):
     assert check_sddl(f"O:{me}D:P(A;;FA;;;{me})(A;;GR;;;AU)") is False
     # Foreign owner: rejected
     assert check_sddl(f"O:S-1-5-32-545D:P(A;;FA;;;{me})") is False
+    # BUILTIN\Administrators-only ACE: accepted only when current token is in Administrators
+    monkeypatch.setattr(private_files, "_current_token_is_admin", lambda: True)
+    assert check_sddl("O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)") is True
+    monkeypatch.setattr(private_files, "_current_token_is_admin", lambda: False)
+    assert check_sddl("O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)") is False
+
+
+def test_current_user_sid_is_always_importable_and_typed():
+    sid = private_files.current_user_sid()
+    if sys.platform == "win32":
+        assert isinstance(sid, str) and sid.startswith("S-1-")
+    else:
+        assert sid is None
+
+
+def test_write_durable_private_creates_private_file_atomically(tmp_path):
+    target = tmp_path / "secret.json"
+    private_files.write_durable_private(target, '{"secret": true}\n')
+    assert target.read_text(encoding="utf-8") == '{"secret": true}\n'
+    assert private_files.is_private_stat(target.lstat(), target, directory=False)
+
+
+def test_product_secret_files_have_real_private_permissions(tmp_path):
+    """Verify real ACL/mode on config.json, engine root-password, installation.json, and API credentials (#436)."""
+    from cairnmind.api_credentials import CredentialStore
+    from cairnmind.config import Settings
+    from cairnmind.engine import write_root_password
+    from cairnmind.store_writer import installation
+
+    data_dir = tmp_path / "data"
+    settings = Settings.load(data_dir, create=True)
+    cfg = data_dir / "config.json"
+    assert private_files.is_private_stat(data_dir.lstat(), data_dir, directory=True)
+    assert private_files.is_private_stat(cfg.lstat(), cfg, directory=False)
+
+    private_files.ensure_private_dir(data_dir / "arcade")
+    pw = write_root_password(settings)
+    assert private_files.is_private_stat(pw.lstat(), pw, directory=False)
+
+    assert installation(data_dir).id
+    inst = data_dir / "installation.json"
+    assert private_files.is_private_stat(inst.lstat(), inst, directory=False)
+
+    creds = CredentialStore(settings)
+    creds.set("openai", "sk-test-1234567890", persist=True)
+    assert private_files.is_private_stat(creds.path.lstat(), creds.path, directory=False)

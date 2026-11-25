@@ -84,8 +84,9 @@ NO_ARCADE_MODULES = frozenset({
     "test_setup_mark", "test_setup_change", "test_terminal_setup_change", "test_project_forget_workspace",
     "test_server_mode", "test_restore_messages", "test_command_start",
     "test_model_client_kept", "test_no_process_wide_time_patch",
-    "test_file_locks", "test_private_files", "test_process_control",
+    "test_file_locks", "test_private_files", "test_process_control", "test_windows_guards",
     "test_ci_windows_job", "test_install_windows", "test_person_pipe", "test_terminal_standalone",
+    "test_service_autostart",
 })
 
 TMUX_MODULES = frozenset({
@@ -532,6 +533,10 @@ def record_owner(root: Path, pid: int) -> None:
 
 def prepare_engine(root: Path, owner_pid: int) -> Settings:
     """Configure, install and start an owned test engine in ``root`` (idempotent)."""
+    if not root.exists():
+        private_files.ensure_private_dir(root)
+    else:
+        private_files.make_private(root, directory=True)
     settings = Settings.load(root, create=True)
     if not (root / "owner.json").exists():
         with socket.socket() as sock:

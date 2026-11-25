@@ -285,7 +285,7 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
                 root.mkdir(parents=True)
             for root in roots[:2]:
                 _git(root, "init", "--quiet")
-                (root / "README.md").write_text("Portable memory synthetic fixture.\n")
+                (root / "README.md").write_text("Portable memory synthetic fixture.\n", encoding="utf-8")
                 _git(root, "add", "README.md")
                 _git(root, "-c", "user.name=Cairnmind Evaluation", "-c", "user.email=eval@localhost",
                      "commit", "--quiet", "-m", "Portable memory fixture")

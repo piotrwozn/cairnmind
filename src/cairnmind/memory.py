@@ -20,7 +20,7 @@ from uuid import UUID, uuid4
 
 from .code_graph import code_graph_pending
 from .file_locks import lock_exclusive
-from .private_files import fsync_directory, is_reparse_point, open_no_follow
+from .private_files import atomic_replace, fsync_directory, is_reparse_point, make_private, open_no_follow
 from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
 from .memory_size import WARN_FRACTION, package_size
 from .store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
@@ -592,8 +592,8 @@ def _write_whole(path, data):
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, path)
+        make_private(temporary)
+        atomic_replace(temporary, path)
     finally:
         Path(temporary).unlink(missing_ok=True)
 

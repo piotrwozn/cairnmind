@@ -19,7 +19,7 @@ from .file_locks import lock_exclusive
 from .mcp_servers import apply_project_edit, validate_project_mcp_servers
 from .private_files import (
     atomic_replace, ensure_private_dir, fsync_directory,
-    is_private_stat, make_private, open_no_follow,
+    is_private_stat, is_reparse_point, make_private, open_no_follow,
 )
 from .stages import validate_project_stages
 
@@ -99,7 +99,7 @@ class CockpitState:
             return defaults
         if self.path.is_symlink():
             raise ValueError("The cockpit settings file must not be a link.")
-        value = json.loads(self.path.read_text())
+        value = json.loads(self.path.read_text(encoding="utf-8"))
         if not isinstance(value, dict) or value.get("version") not in {1, 2}:
             raise ValueError("Unsupported version of the cockpit settings.")
         defaults.update(value)
@@ -276,7 +276,7 @@ class ProjectDiscovery:
                             "memory_snapshot": _snapshot(path)}
                     with self._lock:
                         self._state["projects"].append(item)
-                dirs[:] = [name for name in sorted(dirs) if name not in _EXCLUDED and not (path / name).is_symlink()]
+                dirs[:] = [name for name in sorted(dirs) if name not in _EXCLUDED and not is_reparse_point(path / name)]
             if self._cancel.is_set():
                 break
         with self._lock:

@@ -4,14 +4,13 @@ from __future__ import annotations
 import json
 import os
 import secrets
-import tempfile
 import hashlib
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .file_locks import lock_exclusive
-from .private_files import atomic_replace, make_private
+from .private_files import ensure_private_dir, write_durable_private
 
 
 # Environment variables are spelled CAIRNMIND_<NAME>. The earlier spelling DEVBRAIN_<NAME> is
@@ -63,7 +62,7 @@ def derived_database(root: Path) -> str:
     earlier = "devbrain_" + digest
     config = root / "config.json"
     try:
-        stored = json.loads(config.read_text()).get("arcade_database") if config.exists() else "new"
+        stored = json.loads(config.read_text(encoding="utf-8")).get("arcade_database") if config.exists() else "new"
     except (OSError, ValueError, AttributeError):
         stored = ""
     if not stored or stored == earlier or (root / "arcade" / "databases" / earlier).exists():
@@ -267,7 +266,8 @@ class Settings:
         root = (data_dir or default_data_dir()).expanduser().resolve()
         path = root / "config.json"
         if create:
-            root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if not root.exists():
+                ensure_private_dir(root)
             with (root / "config.lock").open("a", encoding="utf-8") as lock:
                 lock_exclusive(lock)
                 obj = cls.load(root, create=False)
@@ -380,7 +380,8 @@ class Settings:
         return obj
 
     def save(self) -> None:
-        self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not self.data_dir.exists():
+            ensure_private_dir(self.data_dir)
         values = asdict(self)
         values.pop("_origin", None)
         values["data_dir"] = str(self.data_dir)
@@ -394,15 +395,5 @@ class Settings:
                     values[name] = stored
         path = self.data_dir / "config.json"
         # Atomic, owner-readable configuration, including the local bearer token.
-        fd, name = tempfile.mkstemp(prefix=".config-", dir=self.data_dir)
-        tmp = Path(name)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-                json.dump(values, handle, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            make_private(tmp)
-            atomic_replace(tmp, path)
-        finally:
-            tmp.unlink(missing_ok=True)
+        write_durable_private(path, json.dumps(values, indent=2), prefix=".config-")
 

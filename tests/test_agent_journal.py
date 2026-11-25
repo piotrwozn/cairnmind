@@ -158,7 +158,8 @@ def test_refuses_symlinked_storage_and_insecure_existing_file(journal, tmp_path)
 
 
 def test_refuses_symlinked_parent_without_creating_inside_target(journal, tmp_path):
-    journal.settings.data_dir.joinpath("runtime").mkdir(mode=0o700)
+    from cairnmind import private_files
+    private_files.ensure_private_dir(journal.settings.data_dir.joinpath("runtime"))
     target = tmp_path / "outside"
     target.mkdir(mode=0o700)
     make_symlink_or_skip(journal.settings.data_dir.joinpath("runtime", "agents"), target, target_is_directory=True)

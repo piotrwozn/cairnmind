@@ -431,16 +431,19 @@ async def test_probe_requires_actual_model_tool_call(tmp_path):
 
 
 def make_receipt(settings):
+    from cairnmind import private_files
     directory = module._runtime_root(settings)
     bundle = directory / module.RUNTIME_VERSION
     binary = bundle / "prebuilds/linux-x64/copilot"
     binary.parent.mkdir(parents=True, mode=0o700)
-    binary.write_text("#!/bin/sh\nexit 0\n")
+    private_files.make_private(directory, directory=True)
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     binary.chmod(0o700)
     receipt = directory / "receipt.json"
     receipt.write_text(json.dumps({"sdk_version": module.SDK_VERSION, "runtime_version": module.RUNTIME_VERSION,
-                                  "entrypoint": binary.relative_to(bundle).as_posix(), "files": module._tree_manifest(bundle)}))
-    receipt.chmod(0o600)
+                                  "entrypoint": binary.relative_to(bundle).as_posix(), "files": module._tree_manifest(bundle)}),
+                       encoding="utf-8")
+    private_files.make_private(receipt)
     return binary, receipt
 
 

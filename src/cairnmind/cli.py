@@ -69,6 +69,9 @@ workspace_app = typer.Typer(help="The terminal workspace: status, detaching and 
 store_app = typer.Typer(help="How large the store is, which installation writes it, and removing rows that nothing reads.")
 db_app = typer.Typer(help="Access to a database on another host: its own user (#72).")
 answers_app = typer.Typer(help="The opt-in log of ask answers and the evidence they cited.")
+service_app = typer.Typer(help="Background knowledge service autostart management.")
+autostart_app = typer.Typer(help="Per-user service autostart at logon (Windows Task Scheduler).")
+service_app.add_typer(autostart_app, name="autostart")
 app.add_typer(projects_app, name="project")
 app.add_typer(tasks_app, name="task")
 app.add_typer(models_app, name="models")
@@ -85,6 +88,7 @@ app.add_typer(workspace_app, name="workspace")
 app.add_typer(store_app, name="store")
 app.add_typer(db_app, name="db")
 app.add_typer(answers_app, name="answers")
+app.add_typer(service_app, name="service")
 
 
 def output(value) -> None:
@@ -292,7 +296,7 @@ def _service_stopped(settings: Settings, held: str, running: str):
     reason = setup_mark.refusal(settings.data_dir)
     if reason:
         refuse(str(reason))  # a change of setup holds this data directory (#339)
-    with (settings.data_dir / "service.lock").open("a") as lock:
+    with (settings.data_dir / "service.lock").open("a", encoding="utf-8") as lock:
         try:
             lock_exclusive(lock, blocking=False)
         except BlockingIOError:
@@ -1058,7 +1062,7 @@ def serve(ctx: typer.Context, defer_background_inference: bool = False):
     import uvicorn
     from cairnmind.service import create_app
     settings = ctx.obj
-    with (settings.data_dir / "service.lock").open("a") as lock:
+    with (settings.data_dir / "service.lock").open("a", encoding="utf-8") as lock:
         try:
             lock_exclusive(lock, blocking=False)
         except BlockingIOError:
@@ -2748,3 +2752,30 @@ def benchmark(ctx: typer.Context, project: ProjectArg, question: QuestionArg):
     except (OSError, subprocess.TimeoutExpired):
         gpu = "nvidia-smi unavailable"
     output({"runs": runs, "gpu": gpu})
+
+
+@autostart_app.command("status")
+def service_autostart_status(ctx: typer.Context):
+    """Show whether per-user logon autostart is registered for this data directory."""
+    from cairnmind.service_autostart import status as autostart_status
+    output(autostart_status(ctx.obj))
+
+
+@autostart_app.command("install")
+def service_autostart_install(ctx: typer.Context):
+    """Register per-user Windows Task Scheduler autostart (LogonTrigger + RestartOnFailure)."""
+    from cairnmind.service_autostart import install as autostart_install
+    try:
+        output(autostart_install(ctx.obj))
+    except ValueError as exc:
+        refuse(str(exc))
+
+
+@autostart_app.command("remove")
+def service_autostart_remove(ctx: typer.Context):
+    """Remove per-user Windows Task Scheduler autostart for this data directory."""
+    from cairnmind.service_autostart import remove as autostart_remove
+    try:
+        output(autostart_remove(ctx.obj))
+    except ValueError as exc:
+        refuse(str(exc))

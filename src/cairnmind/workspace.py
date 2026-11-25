@@ -517,7 +517,7 @@ class WorkspaceManager:
         try:
             if path.is_symlink():
                 return None
-            info = json.loads(path.read_text())
+            info = json.loads(path.read_text(encoding="utf-8"))
             if (info.get("workspace_id") == self.workspace_id and info.get("birth")
                     and process_start(info["pid"]) == info["birth"]):
                 return info

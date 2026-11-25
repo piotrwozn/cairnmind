@@ -35,15 +35,25 @@ def no_database_environment(monkeypatch):
 
 
 def config(root: Path, **values) -> Path:
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    (root / "config.json").write_text(json.dumps({"token": "t" * 43, **values}))
-    os.chmod(root / "config.json", 0o600)
+    from cairnmind import private_files
+    if not root.exists():
+        private_files.ensure_private_dir(root)
+    (root / "config.json").write_text(json.dumps({"token": "t" * 43, **values}), encoding="utf-8")
+    private_files.make_private(root / "config.json")
     return root
 
 
 def private_file(path: Path, text: str, mode: int = 0o600) -> Path:
-    path.write_text(text)
-    os.chmod(path, mode)
+    from cairnmind import private_files
+    from conftest import make_world_readable
+    path.write_text(text, encoding="utf-8")
+    if sys.platform == "win32":
+        if (mode & 0o077) == 0:
+            private_files.make_private(path)
+        else:
+            make_world_readable(path)
+    else:
+        os.chmod(path, mode)
     return path
 
 

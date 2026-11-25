@@ -311,6 +311,30 @@ def test_nonpassing_process_outcomes_and_bounded_output(workspace, case):
     assert verification_status(store, record)["status"] == "stale"
 
 
+def test_timeout_kills_grandchild_process_tree(workspace, tmp_path):
+    """When a verification check spawns a grandchild and times out, both child and grandchild die (#442)."""
+    from cairnmind import process_identity
+    store, project, root, settings = workspace
+    pid_file = tmp_path / "grandchild.pid"
+    script = (
+        "import subprocess, sys, time\n"
+        "from pathlib import Path\n"
+        "gc = subprocess.Popen([sys.executable, '-c', 'import os, sys, time; from pathlib import Path; "
+        "Path(sys.argv[1]).write_text(str(os.getpid()), encoding=\"utf-8\"); time.sleep(60)', sys.argv[1]])\n"
+        "time.sleep(60)\n"
+    )
+    profile(root, script, args=[str(pid_file)], timeout=0.8)
+    record = task(store, project)
+    result = run_check(store, settings, project["id"], "unit", record["id"])
+    assert result["outcome"] == "timeout" and not result["passed"]
+    if pid_file.exists():
+        gc_pid = int(pid_file.read_text(encoding="utf-8").strip())
+        deadline = time.monotonic() + 3.0
+        while process_identity.alive(gc_pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not process_identity.alive(gc_pid), f"Grandchild {gc_pid} survived check timeout"
+
+
 def test_timeout_terminates_process_group(workspace, tmp_path):
     store, project, root, settings = workspace
     child = root / "child.py"

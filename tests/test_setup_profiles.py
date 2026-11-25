@@ -184,9 +184,10 @@ def config(tmp_path) -> dict:
 
 
 def private(tmp_path, name, text):
+    from cairnmind import private_files
     path = tmp_path / name
-    path.write_text(text + "\n")
-    path.chmod(0o600)
+    path.write_text(text + "\n", encoding="utf-8")
+    private_files.make_private(path)
     return str(path)
 
 

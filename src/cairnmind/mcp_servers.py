@@ -61,8 +61,10 @@ def _text(value) -> bool:
 
 
 def _is_absolute_command(command: str) -> bool:
+    if ".." in re.split(r"[\\/]", command):
+        return False
     if command.startswith("/"):
-        return True
+        return not command.startswith("//")
     if sys.platform == "win32":
         return bool(re.match(r"^[A-Za-z]:[\\/]", command))
     return False

@@ -87,7 +87,7 @@ class AgentJournal:
     def _initialize(self):
         root = Path(self.settings.data_dir)
         if not root.exists():
-            root.mkdir(parents=True, mode=0o700)
+            _private_dir(root)
         if is_reparse_point(root):
             raise JournalError("Agent data directory cannot be a symbolic link")
         for path in (root / "runtime", root / "runtime" / "agents", self.directory):

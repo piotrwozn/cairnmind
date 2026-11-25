@@ -111,7 +111,7 @@ pwsh -File scripts/install-windows.ps1
 powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1
 ```
 
-Pass `-PullModels` to also download the local Ollama models after installation. Data is stored in `%LOCALAPPDATA%\cairnmind` (override with `CAIRNMIND_HOME` or `--data-dir`), and `cairnmind` launches the standalone Textual workspace without needing tmux.
+Pass `-PullModels` to also download the local Ollama models after installation, or `-Autostart` to register per-user logon autostart (with automatic restart on failure) in Windows Task Scheduler without requiring Administrator rights (you can also manage it later via `cairnmind service autostart install|status|remove`, and `cairnmind doctor --json` reports `service_autostart`). Data is stored in `%LOCALAPPDATA%\cairnmind` (override with `CAIRNMIND_HOME` or `--data-dir`), and `cairnmind` launches the standalone Textual workspace without needing tmux. When Java 21 is absent and Docker Desktop is running, `cairnmind engine start --docker` runs the pinned ArcadeDB container directly via `--mount type=bind` (verified on Windows 11 with Docker Desktop 4.100.0: 3.1 s start, `init` + `project add` + `index` + `backup`, 1.2 s stop).
 
 ## 3. Get Cairnmind
 

@@ -108,11 +108,19 @@ def test_yes_applies_and_the_json_in_a_pipe_is_the_result(remove_world, run):
 
 def registry(tmp_path, rows, mode=0o600):
     """A real run registry of the workspace in a temporary data directory, and the settings that name it."""
-    directory = tmp_path / "runtime"
-    directory.mkdir()
+    import sys
+    from cairnmind import private_files
+    from conftest import make_world_readable
+    directory = private_files.ensure_private_dir(tmp_path / "runtime")
     path = directory / "runs.json"
-    path.write_text(json.dumps({"version": 1, "runs": rows}))
-    path.chmod(mode)
+    path.write_text(json.dumps({"version": 1, "runs": rows}), encoding="utf-8")
+    if sys.platform == "win32":
+        if (mode & 0o077) == 0:
+            private_files.make_private(path)
+        else:
+            make_world_readable(path)
+    else:
+        path.chmod(mode)
     return path, SimpleNamespace(data_dir=tmp_path)
 
 

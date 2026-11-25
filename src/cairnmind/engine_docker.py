@@ -318,7 +318,7 @@ def container_recorded(settings) -> bool:
 def _check_record(settings, name: str) -> None:
     path = _state(settings) / "container.json"
     try:
-        recorded = json.loads(path.read_text()).get("name")
+        recorded = json.loads(path.read_text(encoding="utf-8")).get("name")
     except (OSError, ValueError, AttributeError):
         recorded = None
     if recorded != name:
@@ -466,9 +466,14 @@ def _start_locked(settings, image: str, local_image: bool, context: Path | None,
         if done.returncode != 0:
             raise ArcadeError(PULL_FAILED.format(image=image, code=done.returncode))
     state = _state(settings)
-    state.mkdir(exist_ok=True, mode=0o700)  # they must belong to this user before the mount, or Docker makes them root's
+    if not state.exists():
+        from .private_files import ensure_private_dir
+        ensure_private_dir(state)
     for folder in ("config", "databases", "backups", "log"):
-        (state / folder).mkdir(exist_ok=True, mode=0o700)
+        sub = state / folder
+        if not sub.exists():
+            from .private_files import ensure_private_dir
+            ensure_private_dir(sub)
     password_file = write_root_password(settings)
     host, port = _publish_address(settings)
     held = labels(settings)

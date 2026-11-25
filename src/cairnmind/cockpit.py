@@ -953,7 +953,7 @@ def cockpit_status(settings):
     try:
         if path.is_symlink():
             return result
-        info = json.loads(path.read_text())
+        info = json.loads(path.read_text(encoding="utf-8"))
         if (info.get("instance") != result["instance"] or not info.get("birth")
                 or info.get("birth") != _birth(info.get("pid"))):
             return result
@@ -1094,7 +1094,7 @@ def _serve_locked(settings, folder, port):
             listener.close()
             path = _runtime_file(settings)
             try:
-                if json.loads(path.read_text()).get("pid") == os.getpid():
+                if json.loads(path.read_text(encoding="utf-8")).get("pid") == os.getpid():
                     path.unlink()
             except (OSError, ValueError):
                 pass

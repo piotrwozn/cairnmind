@@ -39,7 +39,7 @@ from uuid import uuid4
 
 from .file_locks import lock_exclusive
 from .private_files import (
-    atomic_replace, ensure_private_dir, is_private_stat, is_reparse_point, open_no_follow,
+    atomic_replace, ensure_private_dir, is_private_stat, is_reparse_point, open_no_follow, pread_at,
 )
 
 FORMAT_VERSION = 1
@@ -162,14 +162,7 @@ def _rewrite(folder: Path, lines: list[bytes]) -> None:
 
 
 def _last_byte(fd: int, size: int) -> bytes:
-    if hasattr(os, "pread"):
-        return os.pread(fd, 1, size - 1)
-    pos = os.lseek(fd, 0, os.SEEK_CUR)
-    try:
-        os.lseek(fd, size - 1, os.SEEK_SET)
-        return os.read(fd, 1)
-    finally:
-        os.lseek(fd, pos, os.SEEK_SET)
+    return pread_at(fd, 1, size - 1)
 
 
 def append(settings, entry: dict) -> bool:
@@ -330,9 +323,10 @@ def replay(settings, project_id: str, ask, *, limit: int = 20, report_dir: Path 
               "compared": "the status and the set of cited source addresses; the wording is not compared",
               "answers": rows, "elapsed_seconds": round(time.monotonic() - started, 1)}
     output = Path(report_dir or Path(settings.data_dir) / "evaluations").expanduser().resolve()
-    output.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not output.exists():
+        ensure_private_dir(output)
     path = output / ("replay-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid4().hex[:8] + ".json")
-    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as handle:
+    with os.fdopen(open_no_follow(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
     report["report_path"] = str(path)

@@ -230,8 +230,10 @@ def doctor(settings: Settings) -> dict[str, Any]:
         del result["wsl"]  # a flag that can only be False here, and the word the report should not carry
     result["java"] = {"on_path": bool(shutil.which("java")), "minimum_major": 21}
     if on_windows:
+        from .service_autostart import status as autostart_status
         result["workspace"] = {"mode": "standalone", "available": True, "transport": "named_pipe"}
         result["tmux"] = {"available": False, "code": "standalone_windows", "mode": "standalone"}
+        result["service_autostart"] = autostart_status(settings)
     else:
         result["tmux"] = NativeRuntime(settings).diagnostics()
     from .first_start import cockpit_status
@@ -997,9 +999,10 @@ def _transcript_watermark(path: Path) -> dict[str, Any]:
         if len(tail) != pending:
             raise ValueError("Client transcript changed during watermark capture")
         after = os.fstat(descriptor)
+        from .private_files import encode_file_id
         return {"size": complete_size, "observed_size": observed_size, "pending_tail_bytes": pending,
                 "pending_tail_sha256": hashlib.sha256(tail).hexdigest() if pending else None,
-                "device": before.st_dev, "inode": before.st_ino,
+                "device": encode_file_id(before.st_dev), "inode": encode_file_id(before.st_ino),
                 "mtime_ns": before.st_mtime_ns, "head_sha256": hashlib.sha256(head).hexdigest(),
                 "head_bytes": len(head),
                 "stable": (before.st_size, before.st_mtime_ns) == (after.st_size, after.st_mtime_ns)}

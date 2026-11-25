@@ -27,7 +27,7 @@ from .database_mode import (address, connect_only, describe, engine_mode, is_man
                             server_version, supported_versions, version_problem)
 from .private_files import (
     IS_WINDOWS, atomic_replace, ensure_private_dir, is_reparse_point,
-    make_private, make_private_best_effort, open_no_follow,
+    make_private, make_private_best_effort, make_private_fd, open_no_follow,
 )
 from .process_control import detached_popen_kwargs, terminate_pid
 
@@ -116,7 +116,7 @@ def resolve_java(settings: Settings) -> str | None:
     # replace a working Java 21.
     home = os.environ.get("JAVA_HOME", "") if sys.platform in ("darwin", "win32") else ""
     if home and Path(home).is_absolute():
-        candidate = Path(home) / "bin" / ("java.exe" if IS_WINDOWS else "java")
+        candidate = Path(home) / "bin" / ("java.exe" if sys.platform == "win32" else "java")
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate.resolve())
     candidate = shutil.which("java")
@@ -339,9 +339,11 @@ def start_engine(settings: Settings) -> dict:
             found = f"Java {major}" if major else f"the version of {java} could not be read"
             raise ArcadeError(JAVA_NEEDED.format(found=found, hint=hint("java")))
         state = settings.data_dir / "arcade"
-        state.mkdir(exist_ok=True, mode=0o700)
+        if not state.exists():
+            ensure_private_dir(state)
         for name in ("config", "databases", "backups", "log"):
-            (state / name).mkdir(exist_ok=True, mode=0o700)
+            if not (state / name).exists():
+                ensure_private_dir(state / name)
         for source in (home / "config").glob("*"):
             target = state / "config" / source.name
             if source.is_file() and not target.exists():
@@ -376,10 +378,7 @@ def start_engine(settings: Settings) -> dict:
         # Private like the other files of the data directory, whatever the umask (#238); a link is not followed.
         log_path = state / "engine.log"
         fd = open_no_follow(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        if not IS_WINDOWS:
-            os.fchmod(fd, 0o600)
-        else:
-            make_private(log_path)
+        make_private_fd(fd, log_path)
         with os.fdopen(fd, "ab") as log:
             if note:
                 log.write(note)
@@ -479,7 +478,7 @@ def own_engine_recorded(settings: Settings) -> bool:
         # ours can ever publish another port than the one this data directory names.
         return info is not None and is_ours(info, settings) and _running(info)
     try:
-        recorded = json.loads((settings.data_dir / "arcade" / "process.json").read_text())
+        recorded = json.loads((settings.data_dir / "arcade" / "process.json").read_text(encoding="utf-8"))
         return recorded.get("url") == settings.arcade_url and native_engine_pid(settings) is not None
     except (OSError, ValueError, AttributeError, ArcadeError):
         return False
@@ -505,7 +504,7 @@ def stop_engine(settings: Settings) -> dict:
         if connect_only(settings):
             raise ConnectOnly(refusal(settings, "stop an engine"))
         return {"stopping": False, "reason": "No managed process for this data directory"}
-    info = json.loads(file.read_text())
+    info = json.loads(file.read_text(encoding="utf-8"))
     pid = int(info["pid"])
     # The command line proves the process is this directory's engine: an unrelated reused PID is never killed,
     # and one whose command line cannot be read is not either (#226). A process that is gone is already stopped.

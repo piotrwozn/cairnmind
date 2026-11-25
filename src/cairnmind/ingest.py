@@ -237,7 +237,7 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
         ignore = folder / ".gitignore"
         if ignore.is_file() and not ignore.is_symlink():
             try:
-                rules[folder] = pathspec.GitIgnoreSpec.from_lines(ignore.read_text(errors="replace").splitlines())
+                rules[folder] = pathspec.GitIgnoreSpec.from_lines(ignore.read_text(encoding="utf-8", errors="replace").splitlines())
             except OSError:
                 pass
 

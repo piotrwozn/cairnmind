@@ -22,6 +22,7 @@ Show this help message.
 [CmdletBinding()]
 param(
     [switch]$PullModels,
+    [switch]$Autostart,
     [switch]$Help
 )
 
@@ -45,6 +46,7 @@ directory, so later commands need no variable to stay connect-only.
 Does not download models or the Copilot runtime by default; prepare Copilot in the terminal UI.
 
   -PullModels  Download both models after installation (several GB; Ollama must be running).
+  -Autostart   Register per-user logon autostart in Windows Task Scheduler (RestartOnFailure).
   -Help        Show this help.
 "@
     exit 0
@@ -409,6 +411,15 @@ if marks:
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 
+    if ($Autostart) {
+        Write-Output ""
+        Write-Output "Registering per-user Windows Task Scheduler autostart..."
+        & $cairnmindBin service autostart install | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "Warning: could not register Task Scheduler autostart (run 'cairnmind service autostart install' later)."
+        }
+    }
+
     Write-Output ""
     Write-Output "Cairnmind installed: $cairnmindBin"
     $pathEntries = ($env:PATH -split ";") | ForEach-Object { $_.TrimEnd("\").ToLowerInvariant() }
@@ -416,6 +427,7 @@ if marks:
         Write-Output "Add this directory to PATH: $toolBinDir (or run: uv tool update-shell), then open a new terminal."
     }
     Write-Output "Open the terminal workspace: cairnmind"
+    Write-Output "Optional logon autostart: cairnmind service autostart install"
     Write-Output "Projects, memory, conflicts, plans, impact, graph and settings are available in the terminal UI."
 
     Write-Output ""

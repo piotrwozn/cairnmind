@@ -77,7 +77,8 @@ def test_java_home_comes_before_path_and_after_the_setting_on_macos(tmp_path, mo
 def test_a_java_home_without_a_java_leaves_path_as_it_was(tmp_path, monkeypatch, value):
     monkeypatch.setattr(engine.sys, "platform", "darwin")
     if value == "no-java":
-        if sys.platform == "win32":
+        import os
+        if os.name == "nt":
             pytest.skip("POSIX non-executable file check (os.X_OK) is always True on Windows")
         (tmp_path / "jdk" / "bin").mkdir(parents=True)
         (tmp_path / "jdk" / "bin" / "java").write_text("not executable")

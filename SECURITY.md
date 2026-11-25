@@ -23,6 +23,15 @@ Cairnmind runs locally and keeps sensitive material on your machine. Reports are
 - leaks of API keys, tokens or conversation content into logs, snapshots or exports;
 - access to the local service or broker from outside the loopback interface.
 
+## Private files and folders on Windows
+
+On POSIX systems Cairnmind keeps private files at mode `0600` and private folders at mode `0700`, owned by the current user, and rejects symlinks via `O_NOFOLLOW`. Because Windows ignores POSIX permission bits in `os.chmod` and `mkdir(mode=...)`, Cairnmind enforces equivalent fail-closed privacy on Windows through NTFS Protected DACLs (`src/cairnmind/private_files.py`):
+
+- **Zero-window creation:** New private files and folders are created directly with `CreateFileW` (`FILE_FLAG_OPEN_REPARSE_POINT`, non-inheritable handles) and `CreateDirectoryW` using `SECURITY_ATTRIBUTES` set to a Protected DACL (`D:P`, inheritance disabled). There is no window between creation and permission hardening.
+- **Definition of a private DACL:** Ownership must belong to the current user SID (or `NT AUTHORITY\SYSTEM` / `BUILTIN\Administrators` when created under an elevated administrator token, equivalent to `root` on POSIX). Every `ACCESS_ALLOWED` ACE in the DACL must target only the current user SID, `OWNER RIGHTS` (`S-1-3-4`), `NT AUTHORITY\SYSTEM` (`S-1-5-18`), `BUILTIN\Administrators` (`S-1-5-32-544`), or the current process AppContainer SID if running in an AppContainer, and the current token must have an effective ACE.
+- **Fail-closed refusal:** Any file or directory that grants access to `Everyone` (`S-1-1-0`), `BUILTIN\Users` (`S-1-5-32-545`), `Authenticated Users` (`S-1-5-11`), or any other account — or that is a symlink, directory junction, or reparse point — is refused with the same error contract as a world-readable file or symlink on Linux.
+- **Covered state:** The data directory, `config.json` (bearer token and managed root password), `arcade/config/root-password`, `installation.json`, API credential files, `arcade_password_file`, cockpit preferences, agent journals, and the Windows Named Pipe (`person_pipe.py`) all enforce this DACL policy.
+
 ## Database access
 
 The managed local engine listens on loopback and Cairnmind signs in to it as `root`, with a password generated at installation and kept in `config.json` (mode `0600` on POSIX, owner-only NTFS DACL on Windows) in the data directory. An installation from an earlier version keeps working this way; `cairnmind doctor --json` says where the password comes from (`password_source`).

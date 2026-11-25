@@ -147,7 +147,7 @@ class NativeRuntime:
         if self.config.is_symlink():
             raise ValueError("Native runtime configuration cannot be a symlink")
         if not self.config.exists():
-            self.config.write_text(_CONFIG)
+            self.config.write_text(_CONFIG, encoding="utf-8")
             self.config.chmod(0o600)
         elif self.config.stat().st_uid != os.getuid() or stat.S_IMODE(self.config.stat().st_mode) != 0o600:
             raise ValueError("Native runtime configuration must be owner-only")
@@ -448,7 +448,7 @@ class NativeRuntime:
             while not marker.exists() and time.monotonic() < deadline:
                 time.sleep(.01)
             if marker.exists():
-                identity = json.loads(marker.read_text())
+                identity = json.loads(marker.read_text(encoding="utf-8"))
                 row.update(pid=identity["pid"], process_start=identity["start"], pgid=identity["pgid"])
                 marker.unlink()
             self._refresh(row)

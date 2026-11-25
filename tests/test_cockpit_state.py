@@ -105,9 +105,11 @@ def test_plan_stage_map_is_a_validated_owner_preference(tmp_path):
     settings = Settings.load(tmp_path / "data")
     state = CockpitState(settings)
     assert state.load()["project_stages"] == {}
-    state.path.parent.mkdir(parents=True, mode=0o700)
+    from cairnmind import private_files
+    private_files.ensure_private_dir(state.path.parent)
     # A preferences file written before stages existed still loads and keeps working.
-    state.path.write_text('{"version": 2, "language": "pl"}')
+    state.path.write_text('{"version": 2, "language": "pl"}', encoding="utf-8")
+    private_files.make_private(state.path)
     assert state.load()["project_stages"] == {} and state.load()["language"] == "pl"
     stages = {"project": {"implement": "codex", "review": "claude", "test": "unit tests"}}
     saved = state.update({"project_stages": stages})
