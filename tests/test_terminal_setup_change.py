@@ -254,7 +254,7 @@ def test_a_typed_form_becomes_a_request_with_the_consent_of_the_dialog_for_remot
     values = {"url": DB, "user": "u", "database": "d", "password_file": "~/p", "ca_file": "", "admin_password_file": ""}
     request = terminal_setup_change._request("remote-db", values)
     assert request.ca_file is None and request.admin_password_file is None and request.allow_remote is False
-    assert request.password_file.endswith("/p") and not request.password_file.startswith("~")
+    assert request.password_file.replace("\\", "/").endswith("/p") and not request.password_file.startswith("~")
     assert terminal_setup_change._request("remote", values).allow_remote is True
     assert terminal_setup_change._request("local", {}, empty=True).empty is True
 

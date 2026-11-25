@@ -8,11 +8,13 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 from copy import deepcopy
+import errno
 import hashlib
 import inspect
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import signal
 import stat
 import sys
@@ -22,6 +24,8 @@ from .agent_journal import AgentJournal, JournalError
 from .agent_write_guard import ChangeLedger, change_of, change_preview, configures_execution
 from .config import ENV_PREFIXES
 from .path_spelling import entry_identity, identity, is_alias
+from .private_files import IS_WINDOWS, atomic_replace, is_reparse_point, open_no_follow
+from .process_control import ProcessJob, group_popen_kwargs
 from .process_identity import group_running, recorded, start as process_start
 
 
@@ -37,7 +41,9 @@ TERM_GRACE_SECONDS = 0.5
 KILL_WAIT_SECONDS = 1.0
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _SECRET_ENV = re.compile(r"(?:TOKEN|PASSWORD|SECRET|API_?KEY|AUTHORIZATION|CREDENTIAL)", re.I)
-_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+_FLAGS = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+          | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+_USE_DIR_FD = not IS_WINDOWS and os.open in os.supports_dir_fd
 _MEMORY_NAMES = ("cairnmind", "devbrain", "cairnmind-published")
 _MEMORY_PAIRS = tuple((".memory", name) for name in _MEMORY_NAMES)
 # A command's first step: enter the verified directory by its descriptor, close
@@ -139,8 +145,19 @@ def _parts(value, *, allow_root=False):
     return parts
 
 
+def _windows_shell() -> list[str]:
+    """Native Windows shell for approved agent commands (PowerShell 7 if present, else Windows PowerShell)."""
+    pwsh = shutil.which("pwsh")
+    if pwsh:
+        return [pwsh, "-NoProfile", "-NonInteractive", "-Command"]
+    ps = shutil.which("powershell") or r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+    return [ps, "-NoProfile", "-NonInteractive", "-Command"]
+
+
 def _group_exists(pgid):
     """False only when the kernel says no process (not even a zombie) has group pgid."""
+    if IS_WINDOWS:
+        return False
     try:
         os.killpg(pgid, 0)
     except ProcessLookupError:
@@ -209,6 +226,7 @@ class ToolExecutor:
         self.command_timeout_seconds = command_timeout_seconds
         self.current_tool_call_id = None
         self._running = {}
+        self._jobs = {}
         self._starting = {}
         self._stopping = {}
         self._left_running = set()  # cancelled actions whose processes were not confirmed gone
@@ -226,6 +244,14 @@ class ToolExecutor:
 
     @contextmanager
     def _root(self):
+        if not _USE_DIR_FD:
+            if is_reparse_point(self.worktree):
+                raise ToolError("worktree_changed", "The selected worktree identity changed")
+            info = self.worktree.stat()
+            if (info.st_dev, info.st_ino) != self._root_identity:
+                raise ToolError("worktree_changed", "The selected worktree identity changed")
+            yield self.worktree
+            return
         fd = os.open(self.worktree, _FLAGS)
         try:
             info = os.fstat(fd)
@@ -251,6 +277,31 @@ class ToolExecutor:
     @contextmanager
     def _directory(self, parts, *, create=False, leaf=None):
         with self._root() as root:
+            if not _USE_DIR_FD:
+                current = root
+                in_memory = False
+                for part in parts:
+                    self._spelled(current, part)
+                    nxt = current / part
+                    if not nxt.exists() and not is_reparse_point(nxt):
+                        if not create:
+                            raise FileNotFoundError(nxt)
+                        nxt.mkdir(mode=0o755)
+                    if is_reparse_point(nxt):
+                        raise OSError(errno.ELOOP if hasattr(errno, "ELOOP") else 40, "Symlink not followed", str(nxt))
+                    if not nxt.is_dir():
+                        raise NotADirectoryError(str(nxt))
+                    found = identity(os.stat(nxt, follow_symlinks=False))
+                    self._not_protected(current, found, in_memory)
+                    in_memory = found == entry_identity(".memory", current)
+                    current = nxt
+                if leaf is not None:
+                    self._spelled(current, leaf)
+                    self._not_protected(current, entry_identity(leaf, current), in_memory)
+                if not current.resolve().is_relative_to(self.worktree):
+                    raise ToolError("outside_worktree", "Path escaped the selected worktree")
+                yield current
+                return
             current = os.dup(root)
             in_memory = False
             try:
@@ -287,7 +338,11 @@ class ToolExecutor:
 
     @staticmethod
     def _bytes_at(parent, leaf):
-        fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=parent)
+        if not _USE_DIR_FD:
+            target = Path(parent) / leaf
+            fd = open_no_follow(target, os.O_RDONLY, private_on_create=False)
+        else:
+            fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=parent)
         with os.fdopen(fd, "rb") as handle:
             info = os.fstat(handle.fileno())
             if not stat.S_ISREG(info.st_mode):
@@ -328,33 +383,58 @@ class ToolExecutor:
                 previous, info = self._bytes_at(parent, leaf)
                 self._check_hash(previous, expected)
             temporary = ".cairnmind-api-" + uuid4().hex
-            fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
-                         stat.S_IMODE(info.st_mode) if info else 0o644, dir_fd=parent)
-            try:
-                with os.fdopen(fd, "wb") as stream:
-                    if info is not None:
-                        os.fchmod(stream.fileno(), stat.S_IMODE(info.st_mode))
-                    stream.write(raw)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                if expected is None:
-                    # link() provides exclusive publication without clobbering a
-                    # file another process created after the initial request.
-                    os.link(temporary, leaf, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
-                else:
-                    current, current_info = self._bytes_at(parent, leaf)
-                    self._check_hash(current, expected)
-                    if (info.st_dev, info.st_ino, info.st_mode) != (
-                        current_info.st_dev, current_info.st_ino, current_info.st_mode
-                    ):
-                        raise ToolError("file_changed", "File identity changed while preparing the edit")
-                    os.replace(temporary, leaf, src_dir_fd=parent, dst_dir_fd=parent)
-                os.fsync(parent)
-            finally:
+            if not _USE_DIR_FD:
+                temp_path = Path(parent) / temporary
+                target_path = Path(parent) / leaf
+                fd = open_no_follow(temp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644, private_on_create=False)
                 try:
-                    os.unlink(temporary, dir_fd=parent)
-                except FileNotFoundError:
-                    pass
+                    with os.fdopen(fd, "wb") as stream:
+                        stream.write(raw)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    if expected is None:
+                        if target_path.exists() or is_reparse_point(target_path):
+                            raise FileExistsError(str(target_path))
+                        # On Windows os.rename (MoveFileW) refuses to overwrite an existing destination.
+                        os.rename(temp_path, target_path)
+                    else:
+                        current, current_info = self._bytes_at(parent, leaf)
+                        self._check_hash(current, expected)
+                        if (info.st_dev, info.st_ino, info.st_mode) != (
+                            current_info.st_dev, current_info.st_ino, current_info.st_mode
+                        ):
+                            raise ToolError("file_changed", "File identity changed while preparing the edit")
+                        atomic_replace(temp_path, target_path)
+                finally:
+                    temp_path.unlink(missing_ok=True)
+            else:
+                fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                             stat.S_IMODE(info.st_mode) if info else 0o644, dir_fd=parent)
+                try:
+                    with os.fdopen(fd, "wb") as stream:
+                        if info is not None:
+                            os.fchmod(stream.fileno(), stat.S_IMODE(info.st_mode))
+                        stream.write(raw)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    if expected is None:
+                        # link() provides exclusive publication without clobbering a
+                        # file another process created after the initial request.
+                        os.link(temporary, leaf, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
+                    else:
+                        current, current_info = self._bytes_at(parent, leaf)
+                        self._check_hash(current, expected)
+                        if (info.st_dev, info.st_ino, info.st_mode) != (
+                            current_info.st_dev, current_info.st_ino, current_info.st_mode
+                        ):
+                            raise ToolError("file_changed", "File identity changed while preparing the edit")
+                        os.replace(temporary, leaf, src_dir_fd=parent, dst_dir_fd=parent)
+                    os.fsync(parent)
+                finally:
+                    try:
+                        os.unlink(temporary, dir_fd=parent)
+                    except FileNotFoundError:
+                        pass
         return {"ok": True, "path": relative, "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw),
                 "created": expected is None, "previous_sha256": expected}
 
@@ -387,24 +467,33 @@ class ToolExecutor:
                     budget["truncated"] = True
                     return
                 try:
-                    info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                    if not _USE_DIR_FD:
+                        entry_path = Path(fd) / name
+                        info = os.stat(entry_path, follow_symlinks=False)
+                        is_link = is_reparse_point(entry_path)
+                    else:
+                        info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                        is_link = stat.S_ISLNK(info.st_mode)
                 except FileNotFoundError:
                     continue
-                kind = "symlink" if stat.S_ISLNK(info.st_mode) else "directory" if stat.S_ISDIR(info.st_mode) else "file"
+                kind = "symlink" if is_link else "directory" if stat.S_ISDIR(info.st_mode) else "file"
                 yield {"path": "/".join(relative), "type": kind, "bytes": info.st_size}
                 if recursive and kind == "directory":
                     if depth >= 32:
                         budget["truncated"] = True
                         continue
-                    try:
-                        child = os.open(name, _FLAGS, dir_fd=fd)
-                    except (FileNotFoundError, NotADirectoryError, OSError):
-                        budget["truncated"] = True
-                        continue
-                    try:
-                        yield from descend(child, relative, depth + 1)
-                    finally:
-                        os.close(child)
+                    if not _USE_DIR_FD:
+                        yield from descend(Path(fd) / name, relative, depth + 1)
+                    else:
+                        try:
+                            child = os.open(name, _FLAGS, dir_fd=fd)
+                        except (FileNotFoundError, NotADirectoryError, OSError):
+                            budget["truncated"] = True
+                            continue
+                        try:
+                            yield from descend(child, relative, depth + 1)
+                        finally:
+                            os.close(child)
                     if budget["count"] > MAX_WALK_ENTRIES:
                         return
 
@@ -517,8 +606,11 @@ class ToolExecutor:
         with self._parent(relative) as (parent, leaf, _):
             current, _ = self._bytes_at(parent, leaf)
             self._check_hash(current, args["expected_sha256"])
-            os.unlink(leaf, dir_fd=parent)
-            os.fsync(parent)
+            if not _USE_DIR_FD:
+                (Path(parent) / leaf).unlink()
+            else:
+                os.unlink(leaf, dir_fd=parent)
+                os.fsync(parent)
         return {"ok": True, "path": relative, "deleted": True, "previous_sha256": args["expected_sha256"]}
 
     def _clean_environment(self):
@@ -552,6 +644,33 @@ class ToolExecutor:
         stop itself is cancelled (the event loop ending), SIGKILL is still sent
         before the cancellation propagates.
         """
+        if IS_WINDOWS:
+            job = self._jobs.get(process.pid)
+            try:
+                if job is not None:
+                    job.terminate()
+                    loop = asyncio.get_running_loop()
+                    deadline = loop.time() + KILL_WAIT_SECONDS
+                    while await asyncio.to_thread(job.running) is not False:
+                        if loop.time() >= deadline:
+                            return False
+                        await asyncio.sleep(0.02)
+                    return True
+                if recorded(process.pid, birth) is True:
+                    process.kill()
+                try:
+                    await asyncio.wait_for(process.wait(), KILL_WAIT_SECONDS)
+                    return True
+                except asyncio.TimeoutError:
+                    return False
+            except asyncio.CancelledError:
+                if job is not None:
+                    job.terminate()
+                raise
+            except Exception:
+                if job is not None:
+                    job.terminate()
+                return False
         try:
             return await self._signal_group(process.pid, process, birth)
         except asyncio.CancelledError:
@@ -565,7 +684,10 @@ class ToolExecutor:
     def _kill_group(process, birth):
         try:  # best effort, unless the leader id now names another process
             if recorded(process.pid, birth) is True:
-                os.killpg(process.pid, signal.SIGKILL)
+                if IS_WINDOWS:
+                    process.kill()
+                else:
+                    os.killpg(process.pid, signal.SIGKILL)
         except Exception:
             pass
 
@@ -668,12 +790,19 @@ class ToolExecutor:
             environment = self._clean_environment()
             # The host supplies the callback; model arguments cannot grant this.
             self.journal.append("action_started", self._action(action_id, "run_command", args, call_id))
-            spawn = asyncio.create_task(asyncio.create_subprocess_exec(
-                sys.executable, "-I", "-S", "-c", _ENTER_DIRECTORY, str(directory),
-                "/bin/bash", "--noprofile", "--norc", "-c", command,
-                pass_fds=(directory,), env=environment,
-                stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                start_new_session=True))
+            if IS_WINDOWS:
+                shell_argv = [*_windows_shell(), command]
+                spawn = asyncio.create_task(asyncio.create_subprocess_exec(
+                    *shell_argv, cwd=cwd, env=environment,
+                    stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    **group_popen_kwargs()))
+            else:
+                spawn = asyncio.create_task(asyncio.create_subprocess_exec(
+                    sys.executable, "-I", "-S", "-c", _ENTER_DIRECTORY, str(directory),
+                    "/bin/bash", "--noprofile", "--norc", "-c", command,
+                    pass_fds=(directory,), env=environment,
+                    stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    start_new_session=True))
             self._starting[action_id] = spawn
             try:
                 process = await asyncio.shield(spawn)
@@ -684,14 +813,26 @@ class ToolExecutor:
                 if spawn.cancelled() or spawn.exception() is not None:
                     raise  # no process was started: the cancellation is what the caller must see
                 process = spawn.result()
+                if IS_WINDOWS:
+                    job = ProcessJob()
+                    job.attach(process.pid)
+                    self._jobs[process.pid] = job
                 stop = asyncio.ensure_future(self._terminate(process, process_start(process.pid)))
                 await _settle(stop)
+                if IS_WINDOWS:
+                    closed = self._jobs.pop(process.pid, None)
+                    if closed is not None:
+                        closed.close()
                 if not _stopped(stop):
                     self._left_running.add(action_id)
                 raise
             finally:
                 self._starting.pop(action_id, None)
         birth = process_start(process.pid)
+        if IS_WINDOWS:
+            job = ProcessJob()
+            job.attach(process.pid)
+            self._jobs[process.pid] = job
         self._running[process.pid] = (process, birth)
         counts, buffers = [0, 0], [bytearray(), bytearray()]
 
@@ -765,6 +906,9 @@ class ToolExecutor:
             raise
         finally:
             self._running.pop(process.pid, None)
+            job = self._jobs.pop(process.pid, None)
+            if job is not None:
+                job.close()
             if self._stopping.get(process.pid, (None,))[0] is process:
                 del self._stopping[process.pid]
             self._interrupted.discard(process.pid)

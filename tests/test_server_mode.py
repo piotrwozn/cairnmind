@@ -38,13 +38,14 @@ def test_server_mode_needs_the_address_and_the_password_file_together(monkeypatc
     monkeypatch.setenv("CAIRNMIND_TEST_ARCADE_SERVER_URL", "http://127.0.0.1:1")
     with pytest.raises(pytest.UsageError):
         server_under_test()
+    from conftest import make_world_readable
     secret = tmp_path / "root-password"
     secret.write_text("a-long-enough-secret\n")
     secret.chmod(0o600)
     monkeypatch.setenv("CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE", str(secret))
     assert server_under_test() == ("http://127.0.0.1:1", "a-long-enough-secret")
-    secret.chmod(0o644)
-    with pytest.raises(pytest.UsageError, match="0600"):
+    make_world_readable(secret)
+    with pytest.raises(pytest.UsageError, match="0600|owner-only"):
         server_under_test()
 
 

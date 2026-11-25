@@ -6,7 +6,6 @@ to be called records it, so a test can say that nothing was.
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import string
@@ -18,9 +17,9 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from conftest import plain_words
-from cairnmind import (backup_reader, cli, database_credentials, engine, engine_docker, memory_models, person_proof,
-                       setup_profiles, store_writer)
+from conftest import make_symlink_or_skip, make_world_readable, plain_words
+from cairnmind import (backup_reader, cli, database_credentials, engine, engine_docker, file_locks, memory_models,
+                       person_proof, setup_profiles, store_writer)
 from cairnmind import topology as topology_module
 from cairnmind.arcade import ArcadeError
 from cairnmind.config import Settings, derived_database, is_own_variable
@@ -221,8 +220,7 @@ def refused(result, *words):
 def test_a_profile_is_refused_while_the_service_runs(tmp_path, world, monkeypatch):
     make(tmp_path)
     before = config_bytes(tmp_path)
-    with (tmp_path / "data" / "service.lock").open("a") as held:
-        fcntl.flock(held, fcntl.LOCK_EX)
+    with file_locks.locked_path(tmp_path / "data" / "service.lock"):
         locked = invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path), "--yes")
     refused(locked, "The knowledge service of this data directory is running; run `cairnmind stop` first")
     monkeypatch.setattr(cli, "service_alive", lambda settings: True)
@@ -315,9 +313,9 @@ def test_a_password_file_that_is_not_private_is_refused_before_any_request(tmp_p
     before = config_bytes(tmp_path)
     path = private(tmp_path, "db-password", "PRIVATE_DB_MARKER")
     if how == "mode":
-        os.chmod(path, 0o644)
+        make_world_readable(Path(path))
     elif how == "link":
-        os.symlink(path, tmp_path / "linked")
+        make_symlink_or_skip(tmp_path / "linked", Path(path))
         path = str(tmp_path / "linked")
     else:
         path = str(tmp_path / "none")
@@ -363,7 +361,7 @@ def test_the_admin_password_file_creates_the_user_only_with_yes(tmp_path, world)
     before = config_bytes(tmp_path)
     admin = private(tmp_path, "root-password", "PRIVATE_ADMIN_MARKER")
     weak = private(tmp_path, "weak-password", "PRIVATE_ADMIN_MARKER")
-    os.chmod(weak, 0o644)
+    make_world_readable(Path(weak))
     refused(invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path), "--admin-password-file", weak),
             "--admin-password-file names")
     assert world.log == []
@@ -569,7 +567,7 @@ def connect_only_installation(tmp_path, **fields):
          arcade_password_file=private(tmp_path, "db-password", "PRIVATE_DB_MARKER"), **fields)
     stored = config(tmp_path)
     stored.pop("arcade_password", None)
-    (tmp_path / "data" / "config.json").write_text(json.dumps(stored, indent=2))
+    (tmp_path / "data" / "config.json").write_text(json.dumps(stored, indent=2), encoding="utf-8", newline="\n")
     return stored
 
 

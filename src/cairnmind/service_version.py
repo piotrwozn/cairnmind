@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-import shlex
 import time
 
 import httpx
@@ -65,7 +64,8 @@ class Sentence(str):
 
 def _command(settings, verb: str) -> str:
     from .cli import _data_dir_arguments  # only when refusing: an MCP server does not import the command line otherwise
-    return shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), verb])
+    from .process_control import format_command
+    return format_command(["cairnmind", *_data_dir_arguments(settings.data_dir), verb])
 
 
 _SEEN: dict = {}  # (url, data directory) -> (when, /health answer) of the answer cli.service_alive just took

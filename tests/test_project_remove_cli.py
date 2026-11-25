@@ -162,7 +162,9 @@ def test_without_tmux_a_live_row_refuses_instead_of_being_marked_ended(monkeypat
 
 
 def test_an_unreadable_run_registry_refuses(monkeypatch, tmp_path):
-    path, settings = registry(tmp_path, [], mode=0o644)
+    from conftest import make_world_readable
+    path, settings = registry(tmp_path, [], mode=0o600)
+    make_world_readable(path)
     monkeypatch.setattr(client_runtime, "resolve_tmux", lambda *a, **k: "tmux")
     with pytest.raises(removal.Refused, match=r"could not be read \(Native runtime registry must be owner-only\)"):
         removal.require_idle(settings, FakeStore(), PROJECT)
@@ -177,18 +179,28 @@ def test_a_reader_installation_refuses_in_one_line(monkeypatch, run):
     assert "Another installation writes this store" in str(said.exception)
 
 
-def test_root_refusals_name_the_main_folder_and_the_known_folders():
-    store = FakeStore()
-    with pytest.raises(removal.Refused, match=r"/src/demo is the main folder of demo; .*project remove demo removes"):
-        removal.plan(None, store, PROJECT, Path("/src/demo"))
-    with pytest.raises(removal.Refused, match=r"/elsewhere is not a folder of demo; its folders are: "
-                                              r"/src/demo, /src/demo-wt\."):
-        removal.plan(None, store, PROJECT, Path("/elsewhere"))
-    with pytest.raises(removal.Refused, match=r"scheduled snapshot of demo writes into /src/demo-wt; .*memory auto"):
-        removal.plan(None, FakeStore(scheduled=True), PROJECT, Path("/src/demo-wt"))
-    assert removal.plan(None, store, PROJECT, Path("/src/demo-wt")) == {
-        "project": PROJECT, "root": "/src/demo-wt", "applied": False,
-        "bring_back": "cairnmind project root demo /src/demo-wt"}
+def test_root_refusals_name_the_main_folder_and_the_known_folders(monkeypatch):
+    import re
+    main, wt, other = str(Path("/src/demo")), str(Path("/src/demo-wt")), str(Path("/elsewhere"))
+    project = {**PROJECT, "root": main}
+
+    class LocalStore(FakeStore):
+        def query(self, sql, params=None):
+            if "FROM project_roots WHERE project_id" in sql:
+                return [{"path": main}, {"path": wt}]
+            return super().query(sql, params)
+
+    store = LocalStore()
+    with pytest.raises(removal.Refused, match=re.escape(main) + r" is the main folder of demo; .*project remove demo removes"):
+        removal.plan(None, store, project, Path("/src/demo"))
+    with pytest.raises(removal.Refused, match=re.escape(other) + r" is not a folder of demo; its folders are: "
+                                              + re.escape(f"{main}, {wt}.")):
+        removal.plan(None, store, project, Path("/elsewhere"))
+    with pytest.raises(removal.Refused, match=r"scheduled snapshot of demo writes into " + re.escape(wt) + r"; .*memory auto"):
+        removal.plan(None, LocalStore(scheduled=True), project, Path("/src/demo-wt"))
+    planned = removal.plan(None, store, project, Path("/src/demo-wt"))
+    assert planned["project"] == project and planned["root"] == wt and planned["applied"] is False
+    assert "cairnmind project root demo" in planned["bring_back"] and wt in planned["bring_back"]
 
 
 def test_a_root_removal_says_the_effect_and_the_way_back(monkeypatch, remove_world, run):
@@ -204,12 +216,13 @@ def test_a_root_removal_says_the_effect_and_the_way_back(monkeypatch, remove_wor
 
 
 def test_folder_files_are_named_only_when_they_mention_cairnmind(tmp_path):
+    from conftest import make_symlink_or_skip
     (tmp_path / "CLAUDE.md").write_text("notes\n<!-- BEGIN cairnmind -->\nresume\n")
     (tmp_path / "AGENTS.md").write_text("our own rules\n")
     (tmp_path / ".memory" / "cairnmind").mkdir(parents=True)
     outside = tmp_path / "elsewhere.json"
     outside.write_text('{"cairnmind": true}')
-    (tmp_path / ".mcp.json").symlink_to(outside)
+    make_symlink_or_skip(tmp_path / ".mcp.json", outside)
     assert removal._folder_files(str(tmp_path)) == [str(tmp_path / "CLAUDE.md"), str(tmp_path / ".memory" / "cairnmind")]
 
 

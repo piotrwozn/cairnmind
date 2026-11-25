@@ -21,10 +21,15 @@ import socket
 import struct
 import subprocess
 import sys
-import termios
 import threading
 import time
-import fcntl
+
+try:
+    import fcntl
+    import termios
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
+    termios = None  # type: ignore[assignment]
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse

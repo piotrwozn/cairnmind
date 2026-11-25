@@ -245,6 +245,7 @@ def test_taken_ids_accepts_ids_and_file_names_and_refuses_the_rest():
     assert folder_error("~/published") is None
 
 
+@pytest.mark.skipif(__import__("sys").platform == "win32", reason="WSL wslpath conversion is not used on native Windows")
 def test_a_typed_windows_drive_path_is_a_full_path_and_is_sent_translated(monkeypatch):
     from cairnmind import cockpit_state
     monkeypatch.setattr(cockpit_state.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError("no wslpath")))

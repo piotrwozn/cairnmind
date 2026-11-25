@@ -2,7 +2,7 @@
 
 This guide takes you from a clean machine to a working Cairnmind workspace. It takes about 15 minutes plus the model download.
 
-Cairnmind runs on Linux and on macOS with Apple silicon (tested on an M3 Pro with macOS 27). On Windows it runs inside WSL2 Ubuntu, together with Ollama and the coding clients you use with it. On a Mac, follow the macOS parts of steps 2 and 4.
+Cairnmind runs on Linux, native Windows 10/11, Windows WSL2 Ubuntu and macOS with Apple silicon (tested on an M3 Pro with macOS 27). On native Windows, run the PowerShell steps below (`scripts/install-windows.ps1`); for WSL2 Ubuntu, follow the WSL2 steps; on a Mac, follow the macOS parts of steps 2 and 4.
 
 ## What gets installed
 
@@ -19,10 +19,10 @@ The installer never changes your Codex or Claude Code configuration, never downl
 
 | Requirement | Version | Notes |
 | --- | --- | --- |
-| Linux, or Windows 11 with WSL2 Ubuntu | Ubuntu 24.04 tested | Commands below run inside Ubuntu |
+| Linux, native Windows 10/11, or Windows WSL2 Ubuntu | Windows 10/11 & Ubuntu 24.04 tested | Native Windows uses PowerShell and stores data in `%LOCALAPPDATA%\cairnmind` |
 | or macOS on Apple silicon | macOS 27 tested | The commands run in Terminal |
 | Java | 21 or newer, or Docker | Runs the ArcadeDB engine; without Java 21, the engine runs in Docker |
-| tmux | 3.4 or newer, optional | Only for the terminal workspace (`cairnmind`); the service, `run`, `mcp`, `brief` and the other commands work without it |
+| tmux | 3.4 or newer, optional (POSIX only) | Only for the POSIX terminal workspace (`cairnmind`); native Windows uses the standalone Textual workspace without tmux |
 | uv | current | Installs Cairnmind with Python 3.12 |
 | Ollama | current, optional | Runs the knowledge agent's local models; without models Cairnmind works in deterministic-only mode |
 | GPU | optional | The 9B model needs roughly 7 GB of GPU memory; on CPU it works, but answers are slow; on an Apple M3 Pro, in one measured run, an extraction call took up to 52 s ([measurement](evaluation/RESULTS.md#extraction-on-apple-silicon-266)) |
@@ -94,6 +94,24 @@ ollama --version
 ```
 
 A JDK installed from a package instead (Temurin, Zulu, Oracle) goes to `/Library/Java/JavaVirtualMachines` by itself and needs no link.
+
+### Native Windows (PowerShell)
+
+On Windows 10/11 without WSL2, install Git, `uv` and Java 21 (or Docker Desktop) in PowerShell:
+
+```powershell
+winget install Git.Git astral-sh.uv EclipseAdoptium.Temurin.21.JDK
+```
+
+Open a new Windows Terminal or PowerShell window, clone or unpack Cairnmind, and run the native Windows installer:
+
+```powershell
+pwsh -File scripts/install-windows.ps1
+# or with Windows PowerShell 5.1:
+powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1
+```
+
+Pass `-PullModels` to also download the local Ollama models after installation. Data is stored in `%LOCALAPPDATA%\cairnmind` (override with `CAIRNMIND_HOME` or `--data-dir`), and `cairnmind` launches the standalone Textual workspace without needing tmux.
 
 ## 3. Get Cairnmind
 

@@ -1,6 +1,6 @@
 # Cairnmind 0.12.0 terminal workspace
 
-`cairnmind` starts the workspace in the current terminal. `cairnmind tui` is an alias for the same interface. tmux manages panes and detaching, and Textual renders projects, settings, the inspector and the graph. The Codex and Claude panes contain the real native CLIs, with their own screens, keyboard handling, sign-in and approvals. Ollama and API profiles use Cairnmind's own agent, and Copilot uses a separate adapter built on the official SDK.
+`cairnmind` starts the workspace in the current terminal. `cairnmind tui` is an alias for the same interface. On Linux, WSL2 and macOS, tmux manages panes and detaching, and Textual renders projects, settings, the inspector and the graph. On native Windows, `cairnmind` launches the standalone Textual workspace (`Projects`, `Memory`, `Activity`, `Graph` and `Settings` tabs, switched with keys `1`–`5`, quick finding with `f`, quit with `q`) without requiring tmux, holding the in-memory person key on an owner-only Windows Named Pipe. On POSIX, the Codex and Claude panes contain the real native CLIs, with their own screens, keyboard handling, sign-in and approvals. Ollama and API profiles use Cairnmind's own agent, and Copilot uses a separate adapter built on the official SDK.
 
 The default language is English. To switch the Cairnmind interface to Polish, choose **More → Settings → Language → Polski**. The language setting applies to the Cairnmind interface only; project content and the native client interfaces keep their own language.
 

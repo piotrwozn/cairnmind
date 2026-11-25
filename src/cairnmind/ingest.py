@@ -6,7 +6,6 @@ syntax, never from filename resemblance or generated answers.
 from __future__ import annotations
 
 import hashlib
-import fcntl
 import json
 import math
 import os
@@ -20,6 +19,8 @@ from typing import Any
 from uuid import UUID
 
 import pathspec
+
+from cairnmind.file_locks import lock_exclusive, unlock
 
 from cairnmind.parsing import analyze_code, parser_identity
 from cairnmind.arcade import ArcadeError
@@ -124,23 +125,23 @@ def _ingestion_lock(store, category: str, identity: str, *, deadline: float | No
     try:
         if deadline is None:
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_exclusive(descriptor, blocking=False)
             except BlockingIOError:
                 if waited is not None:
                     waited.append(True)  # whoever held it may have changed what was read before
-                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                lock_exclusive(descriptor, blocking=True)
         else:
             while True:
                 if time.monotonic() >= deadline:
                     raise TimeoutError("Transcript reparse deadline exceeded")
                 try:
-                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_exclusive(descriptor, blocking=False)
                     break
                 except BlockingIOError:
                     time.sleep(min(0.01, max(0, deadline - time.monotonic())))
         yield
     finally:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        unlock(descriptor)
         os.close(descriptor)
 
 
@@ -1916,9 +1917,13 @@ def register_default_histories(store, project_id: str, root: Path) -> dict:
     locations = [(codex_home / "sessions", "codex"), (codex_home / "archived_sessions", "codex"), (claude_home / "projects", "claude")]
     result = {"discovered": 0, "registered": 0, "archived": 0, "errors": []}
     for base, client in locations:
-        if not base.is_dir():
+        try:
+            if not base.is_dir():
+                continue
+            candidates = sorted(base.rglob("*.jsonl"))
+        except OSError:
             continue
-        for path in sorted(base.rglob("*.jsonl")):
+        for path in candidates:
             if path.is_symlink():
                 continue
             result["discovered"] += 1

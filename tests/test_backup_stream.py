@@ -81,7 +81,8 @@ def test_streamed_backup_has_the_bytes_of_the_in_memory_envelope(store, tmp_path
     # The store holds vectors, the backup does not carry them (#187): no row of embeddings, of the registry or of an index type.
     assert store.query("SELECT count(*) AS n FROM embeddings")[0]["n"] > 0
     assert [envelope["payload"][name] for name in ("embeddings", "vector_indexes", "vector_data")] == [[], [], {}]
-    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    from conftest import assert_private
+    assert_private(path)
 
 
 def test_payload_chunks_join_to_the_canonical_text():
@@ -303,8 +304,11 @@ def test_backup_killed_midway_leaves_nothing_restore_accepts(store, tmp_path):
             time.sleep(0.02)
     finally:
         try:
-            os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError:
+            if sys.platform == "win32":
+                child.kill()
+            else:
+                os.killpg(child.pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
             pass  # it already ended; the assertion above says how
         child.wait(timeout=30)
         child.stdout.close()

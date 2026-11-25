@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
 import gzip
 import hashlib
 import json
@@ -16,6 +15,7 @@ import time
 from uuid import uuid4
 
 from . import graph_transactions
+from .file_locks import lock_exclusive, unlock
 from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
 from .first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN, UNKNOWN_PROJECT_NEXT
 from .terminal_safe import safe_text
@@ -368,12 +368,12 @@ class Store:
         if getattr(self._local, "lock_held", False):
             yield  # this thread holds it already; a second flock on a new handle would wait for itself
             return
-        with (self.data_dir / "database-writer.lock").open("a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+        with (self.data_dir / "database-writer.lock").open("a", encoding="utf-8") as handle:
+            lock_exclusive(handle)
             try:
                 yield
             finally:
-                fcntl.flock(handle, fcntl.LOCK_UN)
+                unlock(handle)
 
     def query(self, sql, params=None):
         return (getattr(self._local, "transaction", None) or self.client).query(sql, params)

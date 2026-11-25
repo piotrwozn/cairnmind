@@ -9,17 +9,18 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
-import fcntl
 import hashlib
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import tempfile
 from uuid import UUID, uuid4
 
 from .code_graph import code_graph_pending
+from .file_locks import lock_exclusive
+from .private_files import fsync_directory, is_reparse_point, open_no_follow
 from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
 from .memory_size import WARN_FRACTION, package_size
 from .store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
@@ -427,6 +428,11 @@ def _strip_local_marks(table, row):
                 _without_local_mark(task)
 
 
+def _is_portable_absolute(value: str) -> bool:
+    """Accept absolute paths from either POSIX (/...) or Windows (C:\\... / C:/...) in portable manifests."""
+    return PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute()
+
+
 def _check_manifest(path):
     """The manifest alone, checked for format, identity, ancestry and its own checksum; no object is read."""
     path = Path(path).expanduser().absolute()
@@ -450,10 +456,10 @@ def _check_manifest(path):
         raise ValueError("Invalid memory project identity") from exc
     _text(project.get("name"), "project name")
     _text(manifest.get("origin_root"), "origin root")
-    if not Path(manifest["origin_root"]).is_absolute():
+    if not _is_portable_absolute(manifest["origin_root"]):
         raise ValueError("Memory origin root must be absolute")
     aliases = manifest.get("root_aliases", [])
-    if not isinstance(aliases, list) or not all(isinstance(r, str) and Path(r).is_absolute() for r in aliases):
+    if not isinstance(aliases, list) or not all(isinstance(r, str) and _is_portable_absolute(r) for r in aliases):
         raise ValueError("Invalid memory root bindings")
     ancestors = manifest.get("ancestors", [])
     if (not isinstance(ancestors, list) or len(ancestors) > 4096
@@ -563,11 +569,7 @@ def manifest_summary(path):
 
 
 def _sync_directory(directory):
-    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    fsync_directory(directory)
 
 
 def _atomic_write(path, data):
@@ -636,12 +638,12 @@ class MemoryManager:
         from .project_folders import require_here
         require_here(self.store, project, root)  # never a package into a same-path folder of another machine (#371)
         folder = self._path(root).parent
-        if not root.is_dir() or any(p.is_symlink() for p in (root / ".memory", folder)):
+        if not root.is_dir() or any(is_reparse_point(p) for p in (root / ".memory", folder)):
             raise ValueError("Memory publication needs a real project directory")
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-        descriptor = os.open(folder / ".publish.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(descriptor, "a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+        descriptor = open_no_follow(folder / ".publish.lock", os.O_CREAT | os.O_RDWR, 0o600)
+        with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+            lock_exclusive(handle)
             yield
 
     def _capture(self, project_id, worktree=None, reader=None, authorize=None):

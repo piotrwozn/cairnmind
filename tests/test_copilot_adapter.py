@@ -462,13 +462,14 @@ def test_status_and_login_command_are_nonmutating_and_do_not_download(tmp_path, 
 
 
 def test_runtime_receipt_rejects_symlinks_and_escaping_paths(tmp_path, monkeypatch):
+    from conftest import make_symlink_or_skip
     monkeypatch.setattr(module.importlib.metadata, "version", lambda name: module.SDK_VERSION)
     settings = Settings(data_dir=tmp_path / "data")
     binary, receipt = make_receipt(settings)
     outside = tmp_path / "outside"
     outside.write_text("fake")
     binary.unlink()
-    binary.symlink_to(outside)
+    make_symlink_or_skip(binary, outside)
     assert module.runtime_status(settings)["code"] == "copilot_runtime_invalid"
     binary.unlink()
     binary.write_text("#!/bin/sh\nexit 0\n")

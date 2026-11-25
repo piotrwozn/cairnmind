@@ -433,7 +433,7 @@ def _version(found: dict) -> str:
 
 def cockpit_status(tmux: dict) -> str | None:
     """What doctor says about the workspace for a tmux block of NativeRuntime.diagnostics; None when ready."""
-    if tmux.get("code") == "ready":
+    if tmux.get("code") in ("ready", "standalone_windows"):
         return None
     version = _version(tmux)
     if version:

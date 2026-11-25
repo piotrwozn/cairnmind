@@ -5,7 +5,6 @@ an installation that only reads the store is told what it can do, once; help nam
 """
 from __future__ import annotations
 
-import fcntl
 import inspect
 import json
 from pathlib import Path
@@ -19,7 +18,7 @@ from typer.testing import CliRunner
 
 from conftest import plain_words, own_time
 
-from cairnmind import __version__, cli
+from cairnmind import __version__, cli, file_locks
 from cairnmind.config import Settings
 from cairnmind.store import Store
 
@@ -118,8 +117,7 @@ def test_restore_and_engine_stop_with_the_service_running_are_refusals(tmp_path,
     monkeypatch.setattr(cli, "store_for", lambda *args, **kwargs: pytest.fail("the store was opened"))
     said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "restore", str(backup)]))
     assert "restoring requires a stopped service" in said
-    with (settings.data_dir / "service.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with file_locks.locked_path(settings.data_dir / "service.lock", blocking=False):
         held = runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "restore", str(backup)])
         assert "still holds the store lock" in no_usage_frame(held)
         served = runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "serve"])

@@ -7,10 +7,10 @@ import json
 import os
 from pathlib import Path
 import re
-import stat
 from uuid import uuid4
 
 from .cockpit_state import _atomic, _private_directory, _private_lock, normalize_path
+from .private_files import is_private_stat, is_reparse_point, open_no_follow
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 _PANES = {"sidebar", "client1", "client2", "inspector", "graph"}
@@ -50,13 +50,12 @@ class WorkspaceState:
                 "requested_slot_ids": [], "command_request": None, "assistant_selections": []}
 
     def read(self):
-        if not self.path.exists() and not self.path.is_symlink():
+        if not self.path.exists() and not is_reparse_point(self.path):
             return self.defaults()
-        fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(fd) as handle:
+        fd = open_no_follow(self.path, os.O_RDONLY, private_on_create=False)
+        with os.fdopen(fd, encoding="utf-8") as handle:
             info = os.fstat(handle.fileno())
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 2 * 1024 * 1024):
+            if not is_private_stat(info, self.path, directory=False) or info.st_size > 2 * 1024 * 1024:
                 raise ValueError("The workspace state must be a private file of the user.")
             value = json.load(handle)
         if (not isinstance(value, dict) or value.get("version") != 1

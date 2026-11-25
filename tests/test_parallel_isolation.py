@@ -36,6 +36,7 @@ def group_of(process: subprocess.Popen) -> set[int]:
     return members
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX ps(1) fallback")
 def test_the_processes_of_the_machine_are_listed_without_procfs():
     # The ps(1) path of macOS, taken here on Linux too: it sees this process and a new one.
     with subprocess.Popen(["sleep", "30"]) as sleeper:
@@ -51,7 +52,8 @@ def test_the_processes_of_the_machine_are_listed_without_procfs():
 def test_an_engine_owner_whose_command_line_cannot_be_read_counts_as_alive(monkeypatch):
     # The orphan reaper must not stop the engine of a live run it cannot identify.
     monkeypatch.setattr(conftest.process_identity, "command_line", lambda pid: None)
-    with subprocess.Popen(["sleep", "30"]) as sleeper:
+    cmd = [sys.executable, "-c", "import time; time.sleep(30)"] if sys.platform == "win32" else ["sleep", "30"]
+    with subprocess.Popen(cmd) as sleeper:
         try:
             assert conftest._pytest_alive(sleeper.pid)
         finally:
@@ -59,6 +61,7 @@ def test_an_engine_owner_whose_command_line_cannot_be_read_counts_as_alive(monke
     assert not conftest._pytest_alive(sleeper.pid)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX process-group isolation (os.getpgid/os.killpg)")
 def test_the_fixture_servers_of_another_worker_are_not_this_workers(tmp_path):
     other_copy = tmp_path / "popen-gw9" / "mcp-fixture" / Path(conftest.MCP_FIXTURE).name
     other_copy.parent.mkdir(parents=True)

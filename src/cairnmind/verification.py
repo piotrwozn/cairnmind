@@ -12,7 +12,7 @@ import json
 import math
 import os
 from pathlib import Path
-import selectors
+import queue
 import signal
 import stat
 import subprocess
@@ -22,6 +22,8 @@ import threading
 from uuid import UUID, uuid4
 
 from .check_profile_messages import unknown_profile_message
+from .private_files import atomic_replace, fsync_directory, make_private
+from .process_control import ProcessJob, group_popen_kwargs, terminate_group
 from .sql import clean_row, insert_document, json_text, unregistered_root, utc_now
 from .memory_paths import git_pathspec, is_reserved_below, is_reserved_memory, nested_reserved
 from .path_spelling import lies_in
@@ -336,9 +338,17 @@ def declared_check_names(root) -> list[str] | None:
     return [name for name in checks if isinstance(name, str)] if isinstance(checks, dict) else None
 
 
-def _stop_group(process):
+def _stop_group(process, job: ProcessJob | None = None):
+    if job is not None:
+        job.terminate(grace_seconds=0.3)
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=3)
+        return
     try:
-        os.killpg(process.pid, signal.SIGTERM)
+        terminate_group(process.pid, force=False)
     except ProcessLookupError:
         pass
     try:
@@ -347,7 +357,7 @@ def _stop_group(process):
         pass
     # A parent may already have exited while its children still hold the pipes.
     try:
-        os.killpg(process.pid, signal.SIGKILL)
+        terminate_group(process.pid, force=True)
     except ProcessLookupError:
         pass
     process.wait(timeout=3)
@@ -356,10 +366,11 @@ def _stop_group(process):
 def _execute(profile, root, output_dir, on_start=None):
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     process = None
+    job = None
     outcome, error, code = "completed", None, None
     started = time.monotonic()
     old_term = None
-    if threading.current_thread() is threading.main_thread():
+    if threading.current_thread() is threading.main_thread() and hasattr(signal, "SIGTERM"):
         old_term = signal.getsignal(signal.SIGTERM)
 
         def cancelled(signum, frame):
@@ -367,57 +378,82 @@ def _execute(profile, root, output_dir, on_start=None):
 
         signal.signal(signal.SIGTERM, cancelled)
     logs = {}
+    readers = []
     try:
         for name in buffers:
-            logs[name] = (output_dir / name).open("wb", buffering=0)
-            (output_dir / name).chmod(0o600)
+            log_path = output_dir / name
+            logs[name] = log_path.open("wb", buffering=0)
+            make_private(log_path)
         cwd = (root / profile["cwd"]).resolve()
         if not cwd.is_relative_to(root):
             raise ValueError("Check cwd escaped its worktree")
+        job = ProcessJob()
         process = subprocess.Popen(profile["argv"], cwd=cwd, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, shell=False)
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   shell=False, **group_popen_kwargs())
+        job.attach(process.pid)
         if on_start is not None:
             on_start(process.pid)
-        with selectors.DefaultSelector() as selector:
-            for name in buffers:
-                selector.register(getattr(process, name), selectors.EVENT_READ, name)
-            while selector.get_map():
-                if time.monotonic() - started >= profile["timeout_seconds"]:
-                    outcome = "timeout"
-                    break
-                for key, _ in selector.select(timeout=min(0.05, profile["timeout_seconds"])):
-                    chunk = os.read(key.fileobj.fileno(), 65536)
-                    if not chunk:
-                        selector.unregister(key.fileobj)
-                        continue
-                    remaining = profile["output_limit_bytes"] - sum(len(b) for b in buffers.values())
-                    bounded = chunk[:remaining]
-                    buffers[key.data].extend(bounded)
-                    logs[key.data].write(bounded)
-                    if len(chunk) > remaining:
-                        outcome = "output_limit"
+        chunks: queue.Queue = queue.Queue()
+        open_streams = set(buffers)
+
+        def pump(stream_name, stream):
+            try:
+                while True:
+                    data = stream.read(65536)
+                    if not data:
                         break
-                if outcome != "completed":
-                    break
-            if outcome != "completed":
-                _stop_group(process)
-            else:
-                remaining_time = max(0.001, profile["timeout_seconds"] - (time.monotonic() - started))
-                try:
-                    process.wait(timeout=remaining_time)
-                except subprocess.TimeoutExpired:
-                    outcome = "timeout"
-                    _stop_group(process)
+                    chunks.put((stream_name, data))
+            except OSError:
+                pass
+            finally:
+                chunks.put((stream_name, None))
+
+        for name in buffers:
+            reader = threading.Thread(target=pump, args=(name, getattr(process, name)), daemon=True)
+            reader.start()
+            readers.append(reader)
+
+        while open_streams:
+            elapsed = time.monotonic() - started
+            if elapsed >= profile["timeout_seconds"]:
+                outcome = "timeout"
+                break
+            wait_step = min(0.05, max(0.001, profile["timeout_seconds"] - elapsed))
+            try:
+                stream_name, chunk = chunks.get(timeout=wait_step)
+            except queue.Empty:
+                continue
+            if chunk is None:
+                open_streams.discard(stream_name)
+                continue
+            remaining = profile["output_limit_bytes"] - sum(len(b) for b in buffers.values())
+            bounded = chunk[:remaining]
+            buffers[stream_name].extend(bounded)
+            logs[stream_name].write(bounded)
+            if len(chunk) > remaining:
+                outcome = "output_limit"
+                break
+
+        if outcome != "completed":
+            _stop_group(process, job)
+        else:
+            remaining_time = max(0.001, profile["timeout_seconds"] - (time.monotonic() - started))
+            try:
+                process.wait(timeout=remaining_time)
+            except subprocess.TimeoutExpired:
+                outcome = "timeout"
+                _stop_group(process, job)
         code = process.returncode
     except KeyboardInterrupt:
         outcome = "cancelled"
         if process is not None:
-            _stop_group(process)
+            _stop_group(process, job)
             code = process.returncode
     except (OSError, ValueError) as exc:
         outcome, error = "error", str(exc)
         if process is not None:
-            _stop_group(process)
+            _stop_group(process, job)
             code = process.returncode
     finally:
         if old_term is not None:
@@ -425,6 +461,10 @@ def _execute(profile, root, output_dir, on_start=None):
         if process is not None:
             for name in buffers:
                 getattr(process, name).close()
+        for reader in readers:
+            reader.join(timeout=1.0)
+        if job is not None:
+            job.close()
         for handle in logs.values():
             os.fsync(handle.fileno())
             handle.close()
@@ -495,23 +535,19 @@ def _process_identity(pid):
 
 def _write_active(path, state):
     temporary = path.with_suffix(".tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
+    with temporary.open("w", encoding="utf-8", newline="\n") as handle:
         json.dump(state, handle, ensure_ascii=True)
         handle.flush()
         os.fsync(handle.fileno())
-    temporary.chmod(0o600)
-    temporary.replace(path)
-    descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    make_private(temporary)
+    atomic_replace(temporary, path)
+    fsync_directory(path.parent)
 
 
 def _output_source(store, project_id, run_id, name, data, remaining, **metadata):
     # Invalid UTF-8 expands when replaced.  Bound the persisted UTF-8 text too,
     # rather than accidentally storing up to three times the raw-output limit.
-    rendered = bytes(data).decode("utf-8", errors="replace").encode("utf-8")
+    rendered = bytes(data).decode("utf-8", errors="replace").replace("\r\n", "\n").encode("utf-8")
     text = rendered[:remaining].decode("utf-8", errors="ignore")
     source = store.snapshot(project_id, f"check://{run_id}/{name}", text, "check_output",
         {"run_id": run_id, "stream": name, "raw_bytes": len(data),
@@ -546,8 +582,8 @@ def recover_interrupted_runs(store, settings) -> list[dict]:
                     and _process_identity(process_pid) == active["process_identity"]):
                 # This is the original group leader; do not signal a reused PID.
                 try:
-                    os.killpg(process_pid, signal.SIGTERM)
-                    os.killpg(process_pid, signal.SIGKILL)
+                    terminate_group(process_pid, force=False)
+                    terminate_group(process_pid, force=True)
                 except ProcessLookupError:
                     pass
             source_ids, total, rendered_total = {}, 0, 0

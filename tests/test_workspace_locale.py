@@ -2,19 +2,23 @@
 from __future__ import annotations
 
 import errno
-import fcntl
 import os
 import select
 import struct
 import subprocess
 import sys
-import termios
 import threading
 import time
+
+if sys.platform != "win32":
+    import fcntl
+    import termios
 
 import pytest
 
 from test_workspace import manager as manager
+
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX tmux/PTY locale handling")
 
 
 def _drain_pty(master, stopped, output, output_lock, errors):

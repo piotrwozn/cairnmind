@@ -4,12 +4,14 @@ from __future__ import annotations
 import json
 import os
 import secrets
-import fcntl
 import tempfile
 import hashlib
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+from .file_locks import lock_exclusive
+from .private_files import atomic_replace, make_private
 
 
 # Environment variables are spelled CAIRNMIND_<NAME>. The earlier spelling DEVBRAIN_<NAME> is
@@ -149,6 +151,17 @@ def _holds_a_store(path: Path) -> bool:
         return False
 
 
+def _default_data_base(environ=None) -> Path:
+    """Base directory for the default data directory: %LOCALAPPDATA% on Windows, ~/.local/share on POSIX."""
+    if sys.platform == "win32":
+        env = os.environ if environ is None else environ
+        local = env.get("LOCALAPPDATA")
+        if local:
+            return Path(local)
+        return Path.home() / "AppData" / "Local"
+    return Path("~/.local/share").expanduser()
+
+
 def default_data_dir(environ=None) -> Path:
     """Where this installation keeps its data when no --data-dir is given.
 
@@ -160,7 +173,7 @@ def default_data_dir(environ=None) -> Path:
     chosen = _home_override(environ)
     if chosen:
         return Path(chosen).expanduser().resolve()
-    base = Path("~/.local/share").expanduser()
+    base = _default_data_base(environ)
     current, earlier = (base / name for name in DATA_DIR_NAMES)
     if _holds_a_store(earlier):
         return earlier.resolve()
@@ -171,7 +184,7 @@ def data_dir_note() -> str | None:
     """What a user should know about the directory chosen by default, or None."""
     if _home_override():
         return None
-    base = Path("~/.local/share").expanduser()
+    base = _default_data_base()
     current, earlier = (base / name for name in DATA_DIR_NAMES)
     if _holds_a_store(earlier) and (current / "config.json").is_file():
         return (f"Both {earlier} and {current} hold data; {earlier} is used. "
@@ -255,8 +268,8 @@ class Settings:
         path = root / "config.json"
         if create:
             root.mkdir(parents=True, exist_ok=True, mode=0o700)
-            with (root / "config.lock").open("a") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX)
+            with (root / "config.lock").open("a", encoding="utf-8") as lock:
+                lock_exclusive(lock)
                 obj = cls.load(root, create=False)
                 changed = False
                 if not obj.token:
@@ -286,7 +299,7 @@ class Settings:
                 if changed:
                     obj.save()
                 return obj
-        values = json.loads(path.read_text()) if path.exists() else {}
+        values = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         values.pop("data_dir", None)
         values = {k: v for k, v in values.items() if k in cls.__dataclass_fields__ and not k.startswith("_")}
         if path.exists():
@@ -384,12 +397,12 @@ class Settings:
         fd, name = tempfile.mkstemp(prefix=".config-", dir=self.data_dir)
         tmp = Path(name)
         try:
-            with os.fdopen(fd, "w") as handle:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
                 json.dump(values, handle, indent=2)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.chmod(tmp, 0o600)
-            tmp.replace(path)
+            make_private(tmp)
+            atomic_replace(tmp, path)
         finally:
             tmp.unlink(missing_ok=True)
 

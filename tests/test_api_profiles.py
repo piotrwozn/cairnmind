@@ -110,9 +110,10 @@ def test_preferences_v1_read_is_nonmutating_and_migration_has_exact_backup(tmp_p
     native = state.load()["profiles"]
     saved = state.update({"profiles": native + [api(), {"id": "local", "client": "api", "provider": "ollama",
                                                          "model": "qwen3.5:9b", "label": "Local"}]})
+    from conftest import assert_private
     backups = list(state.root.glob("preferences-v1-backup-*.json"))
     assert len(backups) == 1 and backups[0].read_bytes() == original
-    assert backups[0].stat().st_mode & 0o777 == 0o600
+    assert_private(backups[0])
     assert saved == state.load()
     assert saved["version"] == 2
     assert saved["profiles"][:2] == native

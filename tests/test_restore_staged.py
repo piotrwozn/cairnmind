@@ -3,7 +3,6 @@
 The store holds the backup, or what it held before; between those two, while a process runs or after it was
 killed, it carries a mark, and nothing uses it until a restore finishes.
 """
-import fcntl
 import gzip
 import json
 import os
@@ -16,7 +15,7 @@ import pytest
 from typer.testing import CliRunner
 
 from conftest import counted_waits
-from cairnmind import api_runtime, arcade, cli, integrations, restore_staged, store_writer
+from cairnmind import api_runtime, arcade, cli, file_locks, integrations, restore_staged, store_writer
 from cairnmind.journal import Journal, JournalTransaction
 from cairnmind.memory import MemoryManager
 from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
@@ -526,19 +525,19 @@ def test_the_writer_lock_is_held_between_the_transactions_of_a_restore(tmp_path,
         commit(self)  # the transaction is over: another command of this installation could commit now, if it could lock
         with lock.open("a") as handle:
             try:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                file_locks.lock_exclusive(handle, blocking=False)
             except BlockingIOError:
                 free.append(False)
             else:
                 free.append(True)
-                fcntl.flock(handle, fcntl.LOCK_UN)
+                file_locks.unlock(handle)
 
     monkeypatch.setattr(restore_staged.Batches, "commit", watching)
     store.restore(path)
     monkeypatch.undo()
     assert len(free) > 3 and not any(free), free
-    with lock.open("a") as handle:  # and it is released at the end
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with file_locks.locked_path(lock, blocking=False):  # and it is released at the end
+        pass
     assert not Store(store.data_dir).read_only
 
 

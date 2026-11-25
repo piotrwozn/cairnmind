@@ -4,6 +4,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -75,7 +76,8 @@ def test_content_fingerprint_full_files_ignored_inputs_and_modes(workspace):
     assert changed["fingerprint"] != first["fingerprint"]
     (root / "app.py").chmod(0o755)
     executable = capture_code_state(store, project["id"])
-    assert executable["fingerprint"] != changed["fingerprint"]
+    if sys.platform != "win32":
+        assert executable["fingerprint"] != changed["fingerprint"]
     (root / "app.py").unlink()
     assert capture_code_state(store, project["id"])["fingerprint"] != executable["fingerprint"]
     extra = capture_code_state(store, project["id"], extra_inputs=["cache/*.log"])
@@ -85,9 +87,10 @@ def test_content_fingerprint_full_files_ignored_inputs_and_modes(workspace):
 
 def test_unknown_external_symlink_submodule_missing_and_unstable_inputs(workspace, tmp_path, monkeypatch):
     store, project, root, _ = workspace
+    from conftest import make_symlink_or_skip
     outside = tmp_path / "external.py"
     outside.write_text("outside")
-    (root / "link.py").symlink_to(outside)
+    make_symlink_or_skip(root / "link.py", outside)
     unknown = capture_code_state(store, project["id"])
     assert unknown["status"] == "unknown"
     assert any("external symlink" in reason for reason in unknown["unknowns"])
@@ -119,9 +122,10 @@ def test_unknown_external_symlink_submodule_missing_and_unstable_inputs(workspac
 def test_internal_symlink_targets_and_commit_identity_are_hashed(workspace):
     store, project, root, _ = workspace
     (root / "ignored").mkdir()
+    from conftest import make_symlink_or_skip
     target = root / "ignored/input"
     target.write_text("input one")
-    (root / "link").symlink_to("ignored/input")
+    make_symlink_or_skip(root / "link", Path("ignored/input"))
     first = capture_code_state(store, project["id"])
     assert first["status"] == "fresh"
     target.write_text("input two")
@@ -157,10 +161,11 @@ def test_profile_arrays_scope_and_literals(workspace):
     failed = run_check(store, settings, project["id"], "unit", record["id"])
     assert failed["outcome"] == "error" and not failed["passed"]
     assert [event["state"] for event in failed["events"]] == ["started", "error"]
+    from conftest import make_symlink_or_skip
     alternate = Settings(data_dir=root.parent / "alternate-memory")
     alternate.data_dir.mkdir()
     (root / "cache").mkdir()
-    (alternate.data_dir / "checks").symlink_to(root / "cache")
+    make_symlink_or_skip(alternate.data_dir / "checks", root / "cache", target_is_directory=True)
     with pytest.raises(ValueError, match="outside the working tree"):
         run_check(store, alternate, project["id"], "unit", record["id"])
 
@@ -254,10 +259,11 @@ def test_profile_change_and_sigterm_cancellation_are_ineligible(workspace):
     record = task(store, project)
     changed = run_check(store, settings, project["id"], "unit", record["id"])
     assert not changed["passed"] and "profile changed during check" in changed["reasons"]
-    (root / ".devbrain/checks.toml").unlink()
-    profile(root, "import os, signal, time\nos.kill(os.getppid(), signal.SIGTERM)\ntime.sleep(10)\n")
-    cancelled = run_check(store, settings, project["id"], "unit", record["id"])
-    assert cancelled["outcome"] == "cancelled" and not cancelled["passed"]
+    if sys.platform != "win32":
+        (root / ".devbrain/checks.toml").unlink()
+        profile(root, "import os, signal, time\nos.kill(os.getppid(), signal.SIGTERM)\ntime.sleep(10)\n")
+        cancelled = run_check(store, settings, project["id"], "unit", record["id"])
+        assert cancelled["outcome"] == "cancelled" and not cancelled["passed"]
 
 
 def test_code_and_task_changes_during_check_prevent_success(workspace, tmp_path):
@@ -456,7 +462,8 @@ def test_deleted_project_recovery_cleans_own_logs_without_killing_or_deleting_us
     def no_arbitrary_kill(*args):
         raise AssertionError("deleted-project recovery must not signal arbitrary PIDs")
 
-    monkeypatch.setattr(verification.os, "killpg", no_arbitrary_kill)
+    monkeypatch.setattr(verification.os, "killpg", no_arbitrary_kill, raising=False)
+    monkeypatch.setattr(verification, "terminate_pid", no_arbitrary_kill, raising=False)
     recovered = recover_interrupted_runs(store, settings)
     assert len(recovered) == 1 and recovered[0]["outcome"] == "cancelled"
     assert not recovered[0]["passed"] and not recovered[0]["recorded"]

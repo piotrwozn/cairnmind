@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from conftest import assert_private, make_private_again, make_symlink_or_skip, make_world_readable
 from cairnmind.api_credentials import CredentialStore, credential_environment_names
 from cairnmind.config import Settings
 
@@ -31,8 +32,8 @@ def test_opt_in_persistence_private_modes_replacement_and_deletion(tmp_path):
     settings = Settings.load(tmp_path / "data")
     store = CredentialStore(settings)
     store.set("code", "PRIVATE_OLD_MARKER", persist=True)
-    assert store.root.stat().st_mode & 0o777 == 0o700
-    assert store.path.stat().st_mode & 0o777 == 0o600
+    assert_private(store.root, directory=True)
+    assert_private(store.path)
     assert CredentialStore(settings).resolve(profile()) == "PRIVATE_OLD_MARKER"
     assert store.status(profile())["storage"] == "local"
     store.set("code", "PRIVATE_NEW_SESSION_MARKER", persist=False)
@@ -85,14 +86,14 @@ def test_credential_store_rejects_symlinks_and_shared_file_permissions(tmp_path)
     settings = Settings.load(tmp_path / "data")
     store = CredentialStore(settings)
     store.set("code", "SAFE_MARKER", persist=True)
-    store.path.chmod(0o644)
+    make_world_readable(store.path)
     with pytest.raises(ValueError):
         store.resolve(profile())
-    store.path.chmod(0o600)
+    make_private_again(store.path)
     outside = tmp_path / "outside"
     outside.write_text("PRIVATE_OUTSIDE")
     store.path.unlink()
-    store.path.symlink_to(outside)
+    make_symlink_or_skip(store.path, outside)
     with pytest.raises(ValueError):
         store.set("code", "ANOTHER", persist=True)
     assert outside.read_text() == "PRIVATE_OUTSIDE"

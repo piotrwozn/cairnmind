@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import sys
 import time
 
 import pytest
 
+from conftest import assert_private, make_symlink_or_skip, make_world_readable
 from cairnmind.cockpit_state import CockpitState, ProjectDiscovery, normalize_path
 from cairnmind.config import Settings
 
@@ -21,7 +23,7 @@ def test_preferences_are_local_private_and_validate_native_profiles(tmp_path):
         "project_slots": {"project": [{"id": "first", "profile_id": "codex"},
                                       {"id": "second", "profile_id": "codex"}]}})
     assert saved == state.load()
-    assert state.path.stat().st_mode & 0o777 == 0o600
+    assert_private(state.path)
     assert saved["project_slots"]["project"][1]["id"] == "second"
     before = state.path.read_bytes()
     for changes in ({"api_key": "secret"}, {"default_slots": [{"id": "x", "profile_id": []}]},
@@ -43,7 +45,7 @@ def test_selected_roots_only_discovery_ignores_dependency_and_symlink_trees(tmp_
     (root / "node_modules" / "not-project" / ".git").mkdir(parents=True)
     outside = tmp_path / "outside"
     (outside / ".git").mkdir(parents=True)
-    (root / "linked").symlink_to(outside, target_is_directory=True)
+    make_symlink_or_skip(root / "linked", outside, target_is_directory=True)
     scanner = ProjectDiscovery()
     scanner.start([str(root)])
     deadline = time.monotonic() + 3
@@ -69,6 +71,7 @@ def test_discovery_budget_reports_incomplete_scan(tmp_path):
     assert scanner.status()["state"] == "cancelled"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="WSL wslpath conversion is not used on native Windows")
 def test_explicit_windows_path_conversion_uses_no_shell(monkeypatch):
     def missing(*args, **kwargs):
         assert args[0] == ["wslpath", "-u", r"C:\Users\piotr\My Projects"]
@@ -84,13 +87,16 @@ def test_preferences_refuse_symlink_or_shared_runtime_directory(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir(mode=0o700)
     directory = settings.data_dir / "cockpit"
-    directory.symlink_to(outside, target_is_directory=True)
+    make_symlink_or_skip(directory, outside, target_is_directory=True)
     with pytest.raises(ValueError):
         CockpitState(settings).update({"last_project": None})
     assert not list(outside.iterdir())
-    directory.unlink()
+    if sys.platform == "win32" and not directory.is_symlink():
+        directory.rmdir()
+    else:
+        directory.unlink()
     directory.mkdir(mode=0o755)
-    directory.chmod(0o755)
+    make_world_readable(directory, directory=True)
     with pytest.raises(ValueError):
         CockpitState(settings).update({"last_project": None})
 

@@ -8,14 +8,15 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
-import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
-import stat
 from uuid import uuid4
+
+from .file_locks import lock_exclusive
+from .private_files import ensure_private_dir, fsync_directory, is_private_stat, is_reparse_point, open_no_follow
 
 
 MAX_EVENT_BYTES = 4 * 1024 * 1024
@@ -38,11 +39,10 @@ class JournalError(ValueError):
 
 
 def _private_dir(path: Path):
-    path.mkdir(mode=0o700, parents=False, exist_ok=True)
-    info = path.lstat()
-    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
-            or stat.S_IMODE(info.st_mode) != 0o700):
-        raise JournalError("Agent journal directories must be private and owned by this user")
+    try:
+        ensure_private_dir(path, error="Agent journal directories must be private and owned by this user")
+    except ValueError as exc:
+        raise JournalError(str(exc)) from None
 
 
 def redact_secrets(value, secrets):
@@ -88,7 +88,7 @@ class AgentJournal:
         root = Path(self.settings.data_dir)
         if not root.exists():
             root.mkdir(parents=True, mode=0o700)
-        if root.is_symlink():
+        if is_reparse_point(root):
             raise JournalError("Agent data directory cannot be a symbolic link")
         for path in (root / "runtime", root / "runtime" / "agents", self.directory):
             _private_dir(path)
@@ -96,26 +96,24 @@ class AgentJournal:
     @contextmanager
     def lock(self):
         self._initialize()
-        fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        fd = open_no_follow(self.lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
             info = os.fstat(fd)
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                    or stat.S_IMODE(info.st_mode) != 0o600):
+            if not is_private_stat(info, self.lock_path, directory=False):
                 raise JournalError("Agent journal lock must be private")
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            lock_exclusive(fd)
             yield
         finally:
             os.close(fd)
 
     def _read_locked(self) -> list[dict]:
         try:
-            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+            fd = open_no_follow(self.path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0), private_on_create=False)
         except FileNotFoundError:
             return []
         with os.fdopen(fd, "rb") as handle:
             info = os.fstat(handle.fileno())
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > MAX_JOURNAL_BYTES):
+            if not is_private_stat(info, self.path, directory=False) or info.st_size > MAX_JOURNAL_BYTES:
                 raise JournalError("Agent journal is not a private bounded regular file")
             raw = handle.read(MAX_JOURNAL_BYTES + 1)
         if len(raw) > MAX_JOURNAL_BYTES or raw and not raw.endswith(b"\n"):
@@ -170,12 +168,12 @@ class AgentJournal:
             raw = canonical(event) + b"\n"
             if len(raw) > MAX_EVENT_BYTES:
                 raise JournalError("Agent event exceeds its byte budget")
-            fd = os.open(self.path, os.O_CREAT | os.O_APPEND | os.O_WRONLY | os.O_NOFOLLOW
-                         | os.O_CLOEXEC | os.O_NONBLOCK, 0o600)
+            fd = open_no_follow(
+                self.path, os.O_CREAT | os.O_APPEND | os.O_WRONLY | getattr(os, "O_NONBLOCK", 0), 0o600
+            )
             try:
                 info = os.fstat(fd)
-                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                        or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size + len(raw) > MAX_JOURNAL_BYTES):
+                if not is_private_stat(info, self.path, directory=False) or info.st_size + len(raw) > MAX_JOURNAL_BYTES:
                     raise JournalError("Agent journal is not private or its byte budget is exhausted")
                 remaining = memoryview(raw)
                 while remaining:
@@ -186,11 +184,7 @@ class AgentJournal:
                 os.fsync(fd)
             finally:
                 os.close(fd)
-            directory = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+            fsync_directory(self.directory)
             return event
 
     def messages(self) -> list[dict]:

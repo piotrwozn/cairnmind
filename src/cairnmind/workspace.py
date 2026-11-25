@@ -1012,12 +1012,27 @@ class WorkspaceManager:
 
 
 def workspace_status(settings):
+    if sys.platform == "win32":
+        from . import person_pipe
+        pipe_name = person_pipe.pipe_name_for(settings.data_dir)
+        kind, _ = person_pipe.read_pipe_key(settings, pipe_name)
+        return {
+            "available": kind == "key",
+            "mode": "standalone",
+            "workspace_id": "default",
+            "pipe": pipe_name,
+            "person_key": "present" if kind == "key" else "unavailable",
+            "state": WorkspaceState(settings).read(),
+        }
     return WorkspaceManager(settings).status()
 
 
 def launch_workspace(settings, takeover=False):
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise ValueError("Cairnmind needs an interactive terminal. Use `cairnmind workspace status` to diagnose.")
+    if sys.platform == "win32":
+        from .terminal_standalone import run_standalone
+        return run_standalone(settings)
     manager = WorkspaceManager(settings)
     found = manager.diagnostics()
     if not found["available"]:

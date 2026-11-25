@@ -1,7 +1,6 @@
 """Cairnmind CLI; native coding clients retain their own terminal and permissions."""
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 from contextlib import contextmanager
@@ -25,8 +24,10 @@ from cairnmind.cli_arguments import (
     SessionClientArg, SessionIdArg, SnapshotArg, SourceIdArg, StateArg, StateFileArg, TaskIdArg, TitleArg,
     TranscriptArg)
 from cairnmind.config import SERVICE_NAMES, Settings, drop_env, session_value, tls_verify
+from cairnmind.file_locks import lock_exclusive, unlock
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.arcade import ArcadeError
+from cairnmind.process_control import detached_popen_kwargs
 
 class _ProjectFirstGroup(TyperGroup):
     """A command whose first argument is the project and that is given only one: the error says the project comes
@@ -293,12 +294,18 @@ def _service_stopped(settings: Settings, held: str, running: str):
         refuse(str(reason))  # a change of setup holds this data directory (#339)
     with (settings.data_dir / "service.lock").open("a") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_exclusive(lock, blocking=False)
         except BlockingIOError:
             refuse(held)
-        if service_alive(settings):
-            refuse(running)
-        yield
+        try:
+            if service_alive(settings):
+                refuse(running)
+            yield
+        finally:
+            try:
+                unlock(lock)
+            except OSError:
+                pass
 
 
 def last_log_line(path: Path) -> str:
@@ -359,7 +366,8 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
         if not background_inference:
             command.append("--defer-background-inference")
         process = subprocess.Popen(command,
-                                   stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True, env=env)
+                                   stdin=subprocess.DEVNULL, stdout=handle, stderr=handle,
+                                   env=env, **detached_popen_kwargs())
     try:
         return _wait_for_start(settings, process, log, started_at)
     except KeyboardInterrupt:
@@ -420,8 +428,8 @@ def _stop_started(settings: Settings) -> None:
             client.post(settings.url + "/shutdown",
                         headers={"Authorization": f"Bearer {settings.token}"}).raise_for_status()
     except httpx.HTTPError:
-        import shlex
-        command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "stop"])
+        from cairnmind.process_control import format_command
+        command = format_command(["cairnmind", *_data_dir_arguments(settings.data_dir), "stop"])
         raise UpgradeInProgress(upgrade_mark.UPGRADE_STOP_FAILED.format(command=command)) from None
     raise UpgradeInProgress(upgrade_mark.refusal() or upgrade_mark.UPGRADE_ENDED)
 
@@ -1052,13 +1060,19 @@ def serve(ctx: typer.Context, defer_background_inference: bool = False):
     settings = ctx.obj
     with (settings.data_dir / "service.lock").open("a") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_exclusive(lock, blocking=False)
         except BlockingIOError:
             refuse("The service is already running for this store.")
-        api = create_app(settings, background_inference=not defer_background_inference)
-        server = uvicorn.Server(uvicorn.Config(api, host=settings.host, port=settings.port, log_level="info"))
-        api.state.shutdown = lambda: setattr(server, "should_exit", True)
-        server.run()
+        try:
+            api = create_app(settings, background_inference=not defer_background_inference)
+            server = uvicorn.Server(uvicorn.Config(api, host=settings.host, port=settings.port, log_level="info"))
+            api.state.shutdown = lambda: setattr(server, "should_exit", True)
+            server.run()
+        finally:
+            try:
+                unlock(lock)
+            except OSError:
+                pass
 
 
 @app.command()

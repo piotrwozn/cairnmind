@@ -67,7 +67,8 @@ def _on_disk(root, name):
         if not path.is_file():
             return "not-a-file", None
         digest = hashlib.sha256()
-        with os.fdopen(os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)), "rb") as handle:
+        from .private_files import open_no_follow
+        with os.fdopen(open_no_follow(path, os.O_RDONLY, private_on_create=False), "rb") as handle:
             for block in iter(lambda: handle.read(1 << 20), b""):
                 digest.update(block)
     except OSError:

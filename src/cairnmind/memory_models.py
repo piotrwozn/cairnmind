@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-import fcntl
 import hashlib
 import ipaddress
 import json
@@ -31,8 +30,10 @@ import httpx
 
 from .api_profiles import MODEL_ID, _credential_ref, normalize_base_url
 from .config import Settings, tls_verify
+from .file_locks import lock_exclusive
 from .memory_openai import OpenAICompatible, server_tag
 from .ollama import Ollama, OllamaUnavailable
+from .private_files import atomic_replace, make_private
 
 ROLES = ("chat", "embedding")
 PROVIDERS = ("ollama", "openai_compatible")
@@ -353,12 +354,12 @@ def _write_json(path: Path, document: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, name = tempfile.mkstemp(prefix="." + path.stem + "-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(document, handle, indent=2)
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(name, 0o600)
-        os.replace(name, path)
+        make_private(name)
+        atomic_replace(name, path)
     finally:
         Path(name).unlink(missing_ok=True)
 
@@ -573,9 +574,9 @@ def save_role(data_dir: Path, role: str, row: dict | None, model: str) -> None:
     """
     path = data_dir / "config.json"
     data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with (data_dir / "config.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        values = json.loads(path.read_text()) if path.exists() else {}
+    with (data_dir / "config.lock").open("a", encoding="utf-8") as lock:
+        lock_exclusive(lock)
+        values = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         if not isinstance(values, dict):
             raise ValueError("config.json is not a settings object; nothing was saved.")
         values[FIELDS[role]] = row

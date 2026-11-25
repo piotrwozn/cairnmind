@@ -5,9 +5,11 @@ import json
 import os
 from pathlib import Path
 import stat
+import sys
 
 import pytest
 
+from conftest import assert_private, make_private_again, make_symlink_or_skip, make_world_readable
 from cairnmind.agent_journal import AgentJournal, JournalError, ZERO_HASH, canonical
 from cairnmind.config import Settings
 
@@ -34,8 +36,8 @@ def test_durable_canonical_chain_reopens_with_exact_messages(journal):
     assert reopened.events() == [one, two]
     assert reopened.messages() == [one["data"], two["data"]]
     assert journal.path.read_bytes() == canonical(one) + b"\n" + canonical(two) + b"\n"
-    assert stat.S_IMODE(journal.path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(journal.directory.stat().st_mode) == 0o700
+    assert_private(journal.path)
+    assert_private(journal.directory, directory=True)
 
 
 def test_concurrent_instances_serialize_without_missing_events(journal):
@@ -142,14 +144,14 @@ def test_session_identifiers_cannot_escape_storage(tmp_path, bad):
 
 def test_refuses_symlinked_storage_and_insecure_existing_file(journal, tmp_path):
     journal.append("message", {"content": "one"})
-    journal.path.chmod(0o644)
+    make_world_readable(journal.path)
     with pytest.raises(JournalError):
         journal.events()
-    journal.path.chmod(0o600)
+    make_private_again(journal.path)
     target = tmp_path / "outside"
     target.write_text("outside")
     journal.path.unlink()
-    journal.path.symlink_to(target)
+    make_symlink_or_skip(journal.path, target)
     with pytest.raises(OSError):
         journal.append("message", {"content": "bad"})
     assert target.read_text() == "outside"
@@ -159,7 +161,7 @@ def test_refuses_symlinked_parent_without_creating_inside_target(journal, tmp_pa
     journal.settings.data_dir.joinpath("runtime").mkdir(mode=0o700)
     target = tmp_path / "outside"
     target.mkdir(mode=0o700)
-    journal.settings.data_dir.joinpath("runtime", "agents").symlink_to(target, target_is_directory=True)
+    make_symlink_or_skip(journal.settings.data_dir.joinpath("runtime", "agents"), target, target_is_directory=True)
     with pytest.raises(JournalError):
         journal.events()
     assert list(target.iterdir()) == []
@@ -173,7 +175,7 @@ def test_lock_and_events_are_fsynced_before_success(journal, monkeypatch):
         return real(fd)
     monkeypatch.setattr(os, "fsync", fsync)
     journal.append("message", {"content": "durable"})
-    assert False in calls and True in calls
+    assert False in calls and (sys.platform == "win32" or True in calls)
 
 
 def test_rejects_nan_and_non_json_before_touching_disk(journal):
@@ -184,6 +186,7 @@ def test_rejects_nan_and_non_json_before_touching_disk(journal):
     assert not journal.path.exists()
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFOs are POSIX-only")
 def test_existing_fifo_is_refused_without_blocking(journal):
     journal.append("message", {"content": "one"})
     journal.path.unlink()

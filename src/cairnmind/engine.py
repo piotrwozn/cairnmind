@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-import errno
-import fcntl
 import hashlib
 import json
 import os
@@ -11,7 +9,6 @@ from pathlib import Path
 import re
 import shutil
 import signal
-import stat
 import subprocess
 import sys
 import tarfile
@@ -23,10 +20,16 @@ import urllib.request
 from . import process_identity
 from .arcade import ArcadeClient, ArcadeError
 from .config import Settings
+from .file_locks import locked_path
 from .first_start import (
     ENGINE_EXITED, ENGINE_NOT_INSTALLED, ENGINE_STARTED, ENGINE_STARTING, ENGINE_TIMED_OUT, JAVA_NEEDED)
 from .database_mode import (address, connect_only, describe, engine_mode, is_managed_url, refusal,  # noqa: F401
                             server_version, supported_versions, version_problem)
+from .private_files import (
+    IS_WINDOWS, atomic_replace, ensure_private_dir, is_reparse_point,
+    make_private, make_private_best_effort, open_no_follow,
+)
+from .process_control import detached_popen_kwargs, terminate_pid
 
 
 def runtime_dir(settings: Settings) -> Path:
@@ -60,7 +63,7 @@ def rotate_log(path: Path, limit, copies) -> bool:
         info = os.lstat(path)
     except FileNotFoundError:
         return False
-    if info.st_size < limit and not path.is_symlink():
+    if info.st_size < limit and not path.is_symlink() and not is_reparse_point(path):
         return False
     numbered = [path.with_name(f"{path.name}.{number}") for number in range(1, max(copies, MAX_LOG_COPIES) + 1)]
     for old in numbered[max(copies, 1) - 1:]:
@@ -70,34 +73,20 @@ def rotate_log(path: Path, limit, copies) -> bool:
         _make_private(kept)
     for number in range(copies - 1, 0, -1):
         if os.path.lexists(numbered[number - 1]):
-            os.replace(numbered[number - 1], numbered[number])
+            atomic_replace(numbered[number - 1], numbered[number])
     if copies:
-        os.replace(path, numbered[0])
+        atomic_replace(path, numbered[0])
     else:
         path.unlink()
     return True
 
 
 def _make_private(path: Path) -> None:
-    """Mode 0600 for a regular file; a link (not followed), a missing file or anything else is left as it is.
+    """Mode 0600 (or owner-only NTFS DACL) for a regular file; links or missing files are left as they are.
 
     Best effort: a file the owner may not open or chmod (mode 0000, or owned by another user after a run under
     sudo) keeps its mode, because moving it needs only the folder and the size bound matters more (#238)."""
-    try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
-    except (FileNotFoundError, PermissionError):
-        return
-    except OSError as exc:
-        if exc.errno == errno.ELOOP:
-            return
-        raise
-    try:
-        if stat.S_ISREG(os.fstat(fd).st_mode):
-            os.fchmod(fd, 0o600)
-    except PermissionError:
-        pass
-    finally:
-        os.close(fd)
+    make_private_best_effort(path)
 
 
 def log_settings_problems(settings: Settings) -> list[str]:
@@ -122,28 +111,43 @@ def resolve_java(settings: Settings) -> str | None:
         if not candidate.is_file() or not os.access(candidate, os.X_OK):
             raise ArcadeError("Configured java_executable is unavailable or not executable")
         return str(candidate.resolve())
-    # On macOS JAVA_HOME before PATH (#232), as /usr/bin/java there does too. One without bin/java is passed over.
-    # Linux keeps PATH only: a JAVA_HOME exported for another project must not replace a working Java 21.
-    home = os.environ.get("JAVA_HOME", "") if sys.platform == "darwin" else ""
+    # On macOS and Windows JAVA_HOME before PATH (#232), as /usr/bin/java on macOS does too. One without
+    # bin/java(.exe) is passed over. Linux keeps PATH only: a JAVA_HOME exported for another project must not
+    # replace a working Java 21.
+    home = os.environ.get("JAVA_HOME", "") if sys.platform in ("darwin", "win32") else ""
     if home and Path(home).is_absolute():
-        candidate = Path(home) / "bin" / "java"
+        candidate = Path(home) / "bin" / ("java.exe" if IS_WINDOWS else "java")
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate.resolve())
     candidate = shutil.which("java")
     return str(Path(candidate).resolve()) if candidate else None
 
 
+def _matches_engine_state(command: list[str], state: Path, *, exact_flag: bool = False) -> bool:
+    """Whether argv belongs to an ArcadeDB server running on ``state``."""
+    if "com.arcadedb.server.ArcadeDBServer" not in command:
+        return False
+    expected = f"-Darcadedb.server.rootPath={state}"
+    if IS_WINDOWS:
+        needle = os.path.normcase(expected if exact_flag else str(state))
+        if exact_flag:
+            return any(os.path.normcase(part) == needle for part in command)
+        return needle in os.path.normcase("\0".join(command))
+    if exact_flag:
+        return expected in command
+    return str(state) in "\0".join(command)
+
+
 def managed_java_executable(settings: Settings) -> str | None:
     """Observe the managed process, rather than infer its binary from today's PATH."""
     state = settings.data_dir / "arcade"
     try:
-        record = json.loads((state / "process.json").read_text())
+        record = json.loads((state / "process.json").read_text(encoding="utf-8"))
         pid = int(record["pid"])
         if pid <= 0:
             return None
         command = process_identity.command_line(pid) or []
-        if ("com.arcadedb.server.ArcadeDBServer" not in command
-                or f"-Darcadedb.server.rootPath={state}" not in command):
+        if not _matches_engine_state(command, state, exact_flag=True):
             return None
         return process_identity.executable(pid)
     except (OSError, ValueError, KeyError, TypeError):
@@ -160,9 +164,8 @@ def install_engine(settings: Settings, distribution: Path | None = None) -> Path
     destination = runtime_dir(settings)
     if (destination / "lib").is_dir():
         return destination
-    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with (destination.parent / "install.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    ensure_private_dir(destination.parent)
+    with locked_path(destination.parent / "install.lock"):
         if (destination / "lib").is_dir():
             return destination
         if distribution is not None:
@@ -194,7 +197,7 @@ def install_engine(settings: Settings, distribution: Path | None = None) -> Path
             extracted = temp / "unpacked" / f"arcadedb-{version}"
             if not (extracted / "lib").is_dir():
                 raise ArcadeError("ArcadeDB release has no server libraries")
-            extracted.replace(destination)
+            atomic_replace(extracted, destination)
     return destination
 
 
@@ -278,13 +281,13 @@ def java_major(java: str) -> int | None:
 
 
 def write_root_password(settings: Settings) -> Path:
-    """arcade/root-password, mode 0600: read by the native engine (rootPasswordPath) and mounted into the
-    container (#272)."""
+    """arcade/root-password, mode 0600 (or owner-only NTFS DACL): read by the native engine (rootPasswordPath)
+    and mounted into the container (#272)."""
     password_file = settings.data_dir / "arcade" / "root-password"
-    fd = os.open(password_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as handle:
+    fd = open_no_follow(password_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(settings.arcade_password)
-    os.chmod(password_file, 0o600)
+    make_private(password_file)
     return password_file
 
 
@@ -295,7 +298,7 @@ def native_engine_pid(settings: Settings) -> int | None:
     from .engine_docker import NATIVE_UNKNOWN
     state = settings.data_dir / "arcade"
     try:
-        pid = int(json.loads((state / "process.json").read_text())["pid"])
+        pid = int(json.loads((state / "process.json").read_text(encoding="utf-8"))["pid"])
     except FileNotFoundError:
         return None
     except (OSError, ValueError, KeyError, TypeError):
@@ -305,8 +308,7 @@ def native_engine_pid(settings: Settings) -> int | None:
         if not process_identity.alive(pid):
             return None
         raise ArcadeError(NATIVE_UNKNOWN.format(pid=pid))
-    joined = "\0".join(command)
-    return pid if "com.arcadedb.server.ArcadeDBServer" in joined and str(state) in joined else None
+    return pid if _matches_engine_state(command, state) else None
 
 
 def start_engine(settings: Settings) -> dict:
@@ -314,9 +316,8 @@ def start_engine(settings: Settings) -> dict:
     # arcade_connect_url names: never started here, its password never written to this data directory.
     if connect_only(settings):
         raise ConnectOnly(refusal(settings, "start an engine"))
-    settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with (settings.data_dir / "engine.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    ensure_private_dir(settings.data_dir)
+    with locked_path(settings.data_dir / "engine.lock"):
         from .engine_docker import refuse_if_container_runs
         refuse_if_container_runs(settings)  # never two engines on one data directory (#272)
         existing = engine_status(settings)
@@ -373,18 +374,22 @@ def start_engine(settings: Settings) -> dict:
             note += (f"cairnmind: engine.log was not rotated ({type(exc).__name__}: {exc.strerror or exc}); "
                      "appending to it\n").encode()
         # Private like the other files of the data directory, whatever the umask (#238); a link is not followed.
-        fd = os.open(state / "engine.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
-        os.fchmod(fd, 0o600)
+        log_path = state / "engine.log"
+        fd = open_no_follow(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        if not IS_WINDOWS:
+            os.fchmod(fd, 0o600)
+        else:
+            make_private(log_path)
         with os.fdopen(fd, "ab") as log:
             if note:
                 log.write(note)
                 log.flush()
             process = subprocess.Popen(command, cwd=state, stdin=subprocess.DEVNULL,
-                                       stdout=log, stderr=log, start_new_session=True)
+                                       stdout=log, stderr=log, **detached_popen_kwargs())
         pid_file = state / "process.json"
         pid_file.write_text(json.dumps({"pid": process.pid, "url": settings.arcade_url,
                                        "root": str(state), "java_executable": java,
-                                       "started_at": time.time()}))
+                                       "started_at": time.time()}), encoding="utf-8")
         for _ in range(120):
             if process.poll() is not None:
                 pid_file.unlink(missing_ok=True)
@@ -508,10 +513,12 @@ def stop_engine(settings: Settings) -> dict:
         argv = process_identity.command_line(pid)
         if argv is None and not process_identity.alive(pid):
             raise ProcessLookupError
-        command = "\0".join(argv or [])
-        if "com.arcadedb.server.ArcadeDBServer" not in command or str(state) not in command:
+        if not _matches_engine_state(argv or [], state):
             raise ArcadeError("Managed ArcadeDB PID no longer belongs to this environment")
-        os.kill(pid, signal.SIGTERM)
+        if IS_WINDOWS:
+            terminate_pid(pid, force=True)
+        else:
+            os.kill(pid, signal.SIGTERM)
         for _ in range(100):
             if not process_identity.alive(pid) or not engine_status(settings)["available"]:
                 break

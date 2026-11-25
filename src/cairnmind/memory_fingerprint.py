@@ -21,13 +21,13 @@ The local Ollama (and an Ollama profile) reports a digest: that is the identity 
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import math
 from pathlib import Path
 import time
 from typing import Any
 
+from .file_locks import lock_exclusive
 from .ollama import OllamaUnavailable
 
 FINGERPRINT_TEXT = "Cairnmind embedding fingerprint: a fixed sentence that is the same on every computer."
@@ -131,8 +131,8 @@ async def check(client, *, accept: bool = False) -> dict:
     path = Path(client.fingerprint_dir)
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    with (path / LOCK).open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with (path / LOCK).open("a", encoding="utf-8") as lock:
+        lock_exclusive(lock)
         _cache.pop(path / FILE, None)
         records = dict(_read(path))
         record = records.get(base)

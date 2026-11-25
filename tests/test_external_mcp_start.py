@@ -6,7 +6,6 @@ owner's service. No test starts a real process: ensure_service is replaced, or P
 import asyncio
 import errno
 import json
-import shlex
 import subprocess
 import sys
 
@@ -71,7 +70,8 @@ def test_an_external_bridge_starts_the_service_when_nothing_listens(monkeypatch,
 
 def test_a_service_that_cannot_start_is_named_with_the_command(monkeypatch, settings, tmp_path, data):
     Network(monkeypatch)
-    command = f"cairnmind --data-dir {shlex.quote(str(data))} serve"
+    from cairnmind.process_control import format_command
+    command = format_command(["cairnmind", "--data-dir", str(data), "serve"])
     for failure, reason in ((cli.ServiceDidNotStart("The service stopped at start: port 1 is in use"),
                              "The service stopped at start: port 1 is in use."),
                             (OSError(errno.EACCES, "Permission denied", str(data / "service.log")), "Permission denied")):
@@ -139,7 +139,10 @@ def test_the_service_is_started_as_ask_starts_it(monkeypatch, settings, data):
     mcp_server.start_service(settings)
     (command, kwargs), = spawned
     assert command == [sys.executable, "-m", "cairnmind", "--data-dir", str(settings.data_dir), "serve"]
-    assert kwargs["start_new_session"] is True and kwargs["stdin"] == subprocess.DEVNULL
+    from cairnmind.process_control import detached_popen_kwargs
+    for key, expected in detached_popen_kwargs().items():
+        assert kwargs[key] == expected
+    assert kwargs["stdin"] == subprocess.DEVNULL
     assert kwargs["stdout"].name == str(data / "service.log")
     assert "CAIRNMIND_SESSION_ID" not in kwargs["env"]
 

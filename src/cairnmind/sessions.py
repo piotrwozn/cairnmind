@@ -10,7 +10,6 @@ import hashlib
 import json
 import math
 import os
-import shlex
 import time
 import tomllib
 from pathlib import Path
@@ -161,8 +160,9 @@ def _managed_command_file(relative: str, text: str, settings, _command) -> bool:
                    for key, forwarded, begin, end in shapes for wait in waits)
     client = "codex" if relative == ".codex/hooks.json" else "claude"
     hooks = {}
+    from .process_control import format_command
     for event in ("SessionStart", "PreCompact", "Stop", "SessionEnd"):
-        handler = {"type": "command", "command": shlex.join(_command(settings, "hook", "--client", client)),
+        handler = {"type": "command", "command": format_command(_command(settings, "hook", "--client", client)),
                    "timeout": 10 if event == "SessionStart" else 3}
         if client == "codex" and event == "SessionStart":
             handler["additionalContextLimit"] = 0
@@ -563,7 +563,8 @@ class SessionManager:
                             amount = smaller.get("size")
                             if type(amount) is not int or not 0 <= amount <= 64 * 1024 * 1024:
                                 continue
-                            fd = os.open(smaller["path"], os.O_RDONLY | os.O_NOFOLLOW)
+                            from .private_files import open_no_follow
+                            fd = open_no_follow(smaller["path"], os.O_RDONLY, private_on_create=False)
                             with os.fdopen(fd, "rb") as handle:
                                 prefix = handle.read(amount)
                             if len(prefix) != amount or hashlib.sha256(prefix).hexdigest() != smaller.get("sha256"):

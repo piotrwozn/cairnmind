@@ -11,10 +11,25 @@ import time
 
 import pytest
 
-from cairnmind import agent_tools
+from conftest import make_symlink_or_skip
+from cairnmind import agent_tools, process_identity
 from cairnmind.agent_journal import AgentJournal, JournalError
 from cairnmind.agent_tools import MAX_COMMAND_OUTPUT_BYTES, ToolExecutor
 from cairnmind.config import Settings
+
+IS_WINDOWS = sys.platform == "win32"
+posix_only = pytest.mark.skipif(IS_WINDOWS, reason="POSIX shell/signal/dir_fd semantics")
+
+
+def _ps_child_sleeper() -> str:
+    py = sys.executable.replace("'", "''")
+    script = (
+        "import subprocess, sys, time; from pathlib import Path; "
+        "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+        "Path('child.pid').write_text(str(p.pid), encoding='utf-8'); "
+        "p.wait()"
+    )
+    return f'& \'{py}\' -c "{script}"'
 
 
 @pytest.fixture
@@ -31,6 +46,8 @@ def digest(value):
 
 
 def live(pid):
+    if IS_WINDOWS:
+        return process_identity.alive(pid)
     if sys.platform != "linux":  # no /proc: a zombie counts as live here, which the tests below do not leave
         try:
             os.kill(pid, 0)
@@ -83,7 +100,7 @@ async def test_read_file_names_the_last_line_it_delivered_whole(executor):
     # #157: a result cut by characters must not let a reader think it holds the line it ends in.
     from cairnmind.agent_tools import MAX_TEXT_CHARS
     line = "x" * 999 + "\n"
-    (executor.worktree / "big.txt").write_text(line * (MAX_TEXT_CHARS // 1000 + 5))
+    (executor.worktree / "big.txt").write_text(line * (MAX_TEXT_CHARS // 1000 + 5), encoding="utf-8", newline="\n")
     whole = MAX_TEXT_CHARS // 1000
     read = await executor.execute("read_file", {"path": "big.txt"})
     assert read["truncated"] and read["end_line"] == whole and len(read["content"]) == MAX_TEXT_CHARS
@@ -100,7 +117,7 @@ async def test_existing_file_requires_exact_hash_and_preserves_mode(executor):
     bad = await executor.execute("write_file", {"path": "run.sh", "content": "bad", "expected_sha256": "0" * 64})
     assert not bad["ok"] and bad["error_code"] == "file_changed" and file.read_text() == "old"
     good = await executor.execute("write_file", {"path": "run.sh", "content": "new", "expected_sha256": digest("old")})
-    assert good["ok"] and stat.S_IMODE(file.stat().st_mode) == 0o751
+    assert good["ok"] and (IS_WINDOWS or stat.S_IMODE(file.stat().st_mode) == 0o751)
     assert not list(executor.worktree.glob(".cairnmind-api-*"))
 
 
@@ -135,8 +152,8 @@ async def test_symlink_file_and_directory_are_not_followed(executor, tmp_path):
     outside.mkdir()
     secret = outside / "secret"
     secret.write_text("private")
-    (executor.worktree / "link").symlink_to(outside, target_is_directory=True)
-    (executor.worktree / "file-link").symlink_to(secret)
+    make_symlink_or_skip(executor.worktree / "link", outside, target_is_directory=True)
+    make_symlink_or_skip(executor.worktree / "file-link", secret)
     for name, args in [("read_file", {"path": "link/secret"}), ("read_file", {"path": "file-link"}),
                        ("write_file", {"path": "link/new", "content": "bad", "expected_sha256": None}),
                        ("delete_file", {"path": "file-link", "expected_sha256": digest("private")})]:
@@ -165,15 +182,15 @@ async def test_managed_snapshot_is_excluded_but_other_memory_is_normal(executor)
 
 async def test_line_slice_still_returns_hash_of_complete_file(executor):
     file = executor.worktree / "lines"
-    file.write_text("one\ntwo\nthree\n")
+    file.write_text("one\ntwo\nthree\n", encoding="utf-8", newline="\n")
     result = await executor.execute("read_file", {"path": "lines", "start_line": 2, "max_lines": 1})
-    assert result["content"] == "two\n" and result["sha256"] == digest(file.read_text())
+    assert result["content"] == "two\n" and result["sha256"] == digest("one\ntwo\nthree\n")
     assert result["truncated"] and result["total_lines"] == 3
 
 
 async def test_a_slice_that_reaches_the_last_line_is_not_truncated(executor):
     # #169: start_line 6 to the end of a file was reported as cut, and a small model fell back to 10-line slices.
-    (executor.worktree / "lines").write_text("one\ntwo\nthree\nfour\n")
+    (executor.worktree / "lines").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8", newline="\n")
     rest = await executor.execute("read_file", {"path": "lines", "start_line": 3, "max_lines": 50})
     assert rest["content"] == "three\nfour\n" and rest["end_line"] == 4 and not rest["truncated"]
     exact = await executor.execute("read_file", {"path": "lines", "start_line": 3, "max_lines": 2})
@@ -216,12 +233,15 @@ async def test_exact_approval_is_one_use_and_durable_start_precedes_shell(execut
         return True
     executor.approve = approve
     executor.current_tool_call_id = "call-shell"
-    result = await executor.execute("run_command", {"command": "printf 'hello'; printf 'error' >&2; exit 7"})
+    first_cmd = ("[Console]::Out.Write('hello'); [Console]::Error.Write('error'); exit 7"
+                 if IS_WINDOWS else "printf 'hello'; printf 'error' >&2; exit 7")
+    second_cmd = "[Console]::Out.Write('second')" if IS_WINDOWS else "printf 'second'"
+    result = await executor.execute("run_command", {"command": first_cmd})
     assert not result["ok"] and result["exit_code"] == 7
     assert result["stdout"] == "hello" and result["stderr"] == "error"
-    assert requests[0]["command"] == "printf 'hello'; printf 'error' >&2; exit 7"
+    assert requests[0]["command"] == first_cmd
     assert requests[0]["tool_call_id"] == "call-shell"
-    result = await executor.execute("run_command", {"command": "printf 'second'"})
+    result = await executor.execute("run_command", {"command": second_cmd})
     assert result["ok"] and len(requests) == 2 and requests[0]["action_id"] != requests[1]["action_id"]
     types = [e["type"] for e in executor.journal.events()]
     assert types == ["approval_requested", "approval_decided", "action_started", "action_completed"] * 2
@@ -230,11 +250,12 @@ async def test_exact_approval_is_one_use_and_durable_start_precedes_shell(execut
 
 async def test_approval_callback_cannot_mutate_the_executed_command(executor):
     def approve(request):
-        request["command"] = "touch tampered"
+        request["command"] = "New-Item tampered" if IS_WINDOWS else "touch tampered"
         request["generation"] = 1000
         return True
     executor.approve = approve
-    result = await executor.execute("run_command", {"command": "printf original"})
+    cmd = "[Console]::Out.Write('original')" if IS_WINDOWS else "printf original"
+    result = await executor.execute("run_command", {"command": cmd})
     assert result["stdout"] == "original" and not (executor.worktree / "tampered").exists()
 
 
@@ -247,10 +268,12 @@ async def test_concurrent_sdk_tool_calls_keep_independent_recovery_ids(executor)
         return True
     executor.approve = approve
     executor.current_tool_call_id = "first"
-    first = asyncio.create_task(executor.execute("run_command", {"command": "printf first"}))
+    cmd_first = "[Console]::Out.Write('first')" if IS_WINDOWS else "printf first"
+    cmd_second = "[Console]::Out.Write('second')" if IS_WINDOWS else "printf second"
+    first = asyncio.create_task(executor.execute("run_command", {"command": cmd_first}))
     await first_waiting.wait()
     executor.current_tool_call_id = "second"
-    second = await executor.execute("run_command", {"command": "printf second"})
+    second = await executor.execute("run_command", {"command": cmd_second})
     executor.current_tool_call_id = None
     release.set()
     first_result = await first
@@ -265,12 +288,18 @@ async def test_shell_directory_is_scoped_and_credential_env_is_removed(executor,
     monkeypatch.setenv("OTHER_API_KEY", "also-private")
     executor.journal.add_secrets("private-key-for-provider")
     executor.approve = lambda request: True
-    result = await executor.execute("run_command", {"cwd": "nested", "command":
-        "printf '%s|%s|' \"${CUSTOM_MODEL_VALUE:-absent}\" \"${OTHER_API_KEY:-absent}\"; pwd"})
+    if IS_WINDOWS:
+        cmd = ("$a = if ($env:CUSTOM_MODEL_VALUE) { $env:CUSTOM_MODEL_VALUE } else { 'absent' }; "
+               "$b = if ($env:OTHER_API_KEY) { $env:OTHER_API_KEY } else { 'absent' }; "
+               "[Console]::Out.Write(\"$a|$b|\" + (Get-Location).Path + \"`n\")")
+    else:
+        cmd = "printf '%s|%s|' \"${CUSTOM_MODEL_VALUE:-absent}\" \"${OTHER_API_KEY:-absent}\"; pwd"
+    result = await executor.execute("run_command", {"cwd": "nested", "command": cmd})
     assert result["ok"] and result["stdout"] == "absent|absent|" + str(executor.worktree / "nested") + "\n"
-    assert not (await executor.execute("run_command", {"cwd": "..", "command": "true"}))["ok"]
+    assert not (await executor.execute("run_command", {"cwd": "..", "command": "exit 0" if IS_WINDOWS else "true"}))["ok"]
 
 
+@posix_only
 async def test_command_enters_its_directory_without_a_proc_path(executor, monkeypatch):
     # macOS has no /proc and cannot use /dev/fd/N as a working directory (#227):
     # the child changes into the verified directory by its descriptor instead.
@@ -292,6 +321,7 @@ async def test_command_enters_its_directory_without_a_proc_path(executor, monkey
     assert not cwd.startswith(("/proc/", "/dev/fd/")), cwd
 
 
+@posix_only
 async def test_command_gets_default_pipe_and_file_size_signals(executor):
     # The step into the directory is Python, which ignores SIGPIPE and SIGXFSZ;
     # the shell must get them back at their defaults, as with a direct exec.
@@ -302,6 +332,7 @@ async def test_command_gets_default_pipe_and_file_size_signals(executor):
     assert result["stdout"] == f"{128 + signal.SIGPIPE} 0\n{128 + signal.SIGXFSZ}\n", result
 
 
+@posix_only
 async def test_command_runs_in_the_verified_directory_after_its_path_is_swapped(executor, tmp_path):
     # The path is swapped while the person approves, after the check: the
     # command still runs in the directory that was verified, never outside.
@@ -331,7 +362,9 @@ async def test_other_profile_custom_credential_env_never_reaches_shell(executor,
                                             "credential_ref": "env:ACME_VALUE"}]})
     monkeypatch.setenv("ACME_VALUE", "another-profiles-private-value")
     executor.approve = lambda request: True
-    result = await executor.execute("run_command", {"command": "printf '%s' \"${ACME_VALUE:-absent}\""})
+    cmd = ("$v = if ($env:ACME_VALUE) { $env:ACME_VALUE } else { 'absent' }; [Console]::Out.Write($v)"
+           if IS_WINDOWS else "printf '%s' \"${ACME_VALUE:-absent}\"")
+    result = await executor.execute("run_command", {"command": cmd})
     assert result["ok"] and result["stdout"] == "absent"
     assert "another-profiles-private-value" not in executor.journal.path.read_text()
 
@@ -341,7 +374,8 @@ async def test_shell_output_and_journal_redact_known_keys(executor):
     executor.journal.add_secrets(secret)
     executor.approve = lambda request: True
     (executor.worktree / "secret.txt").write_text(secret)
-    result = await executor.execute("run_command", {"command": "cat secret.txt"})
+    cmd = "[Console]::Out.Write((Get-Content -Raw secret.txt))" if IS_WINDOWS else "cat secret.txt"
+    result = await executor.execute("run_command", {"command": cmd})
     assert result["stdout"] == "[REDACTED]" and secret not in executor.journal.path.read_text()
 
 
@@ -356,8 +390,12 @@ async def test_known_credentials_cannot_enter_shell_argv(executor):
 
 async def test_large_shell_output_is_drained_without_deadlock(executor):
     executor.approve = lambda request: True
-    result = await executor.execute("run_command", {"command":
-        "python3 -c \"import sys; sys.stdout.write('x'*2000000); sys.stderr.write('err')\""})
+    if IS_WINDOWS:
+        py = sys.executable.replace("'", "''")
+        cmd = f"& '{py}' -c \"import sys; sys.stdout.write('x'*2000000); sys.stderr.write('err')\""
+    else:
+        cmd = "python3 -c \"import sys; sys.stdout.write('x'*2000000); sys.stderr.write('err')\""
+    result = await executor.execute("run_command", {"command": cmd})
     assert result["ok"] and result["truncated"]
     assert len(result["stdout"]) == MAX_COMMAND_OUTPUT_BYTES and result["stdout_bytes"] == 2000000
     assert result["stderr"] == "err"
@@ -365,18 +403,22 @@ async def test_large_shell_output_is_drained_without_deadlock(executor):
 
 async def test_timeout_terminates_background_group_and_is_not_replayed(executor):
     executor.approve = lambda request: True
-    executor.command_timeout_seconds = .15
+    executor.command_timeout_seconds = 2.0 if IS_WINDOWS else .15
     started = time.monotonic()
-    result = await executor.execute("run_command", {"command": "sleep 30 & echo $! > child.pid; wait", "timeout_seconds": 5})
-    pid = int((executor.worktree / "child.pid").read_text())
+    cmd = _ps_child_sleeper() if IS_WINDOWS else "sleep 30 & echo $! > child.pid; wait"
+    result = await executor.execute("run_command", {"command": cmd, "timeout_seconds": 5})
     assert not result["ok"] and result["error_code"] == "command_timeout"
-    assert time.monotonic() - started < 3 and not live(pid)
+    assert time.monotonic() - started < (6 if IS_WINDOWS else 3)
+    if (executor.worktree / "child.pid").exists():
+        pid = int((executor.worktree / "child.pid").read_text())
+        assert not live(pid)
     assert not executor.journal.pending_actions()
 
 
 async def test_cancellation_kills_owned_group_and_preserves_uncertainty(executor):
     executor.approve = lambda request: True
-    task = asyncio.create_task(executor.execute("run_command", {"command": "sleep 30 & echo $! > child.pid; wait"}))
+    cmd = _ps_child_sleeper() if IS_WINDOWS else "sleep 30 & echo $! > child.pid; wait"
+    task = asyncio.create_task(executor.execute("run_command", {"command": cmd}))
     await wait_for(executor.worktree / "child.pid")
     pid = int((executor.worktree / "child.pid").read_text())
     task.cancel()
@@ -390,9 +432,13 @@ async def test_cancellation_kills_owned_group_and_preserves_uncertainty(executor
 
 async def test_explicit_interrupt_stops_owned_group_and_unrelated_process_survives(executor):
     executor.approve = lambda request: True
-    unrelated = await asyncio.create_subprocess_exec("sleep", "30", start_new_session=True)
+    if IS_WINDOWS:
+        unrelated = await asyncio.create_subprocess_exec(sys.executable, "-c", "import time; time.sleep(30)")
+    else:
+        unrelated = await asyncio.create_subprocess_exec("sleep", "30", start_new_session=True)
     try:
-        task = asyncio.create_task(executor.execute("run_command", {"command": "sleep 30 & echo $! > child.pid; wait"}))
+        cmd = _ps_child_sleeper() if IS_WINDOWS else "sleep 30 & echo $! > child.pid; wait"
+        task = asyncio.create_task(executor.execute("run_command", {"command": cmd}))
         await wait_for(executor.worktree / "child.pid")
         child = int((executor.worktree / "child.pid").read_text())
         await executor.interrupt()
@@ -406,6 +452,7 @@ async def test_explicit_interrupt_stops_owned_group_and_unrelated_process_surviv
         await unrelated.wait()
 
 
+@posix_only
 @pytest.mark.parametrize("operation", ["interrupt", "cancel"])
 async def test_stopped_command_does_not_return_while_a_child_ignoring_sigterm_runs(executor, operation):
     # The child ignores SIGTERM and does not hold the command's output, so the
@@ -444,6 +491,7 @@ async def test_stopped_command_does_not_return_while_a_child_ignoring_sigterm_ru
             os.kill(pid, signal.SIGKILL)
 
 
+@posix_only
 @pytest.mark.parametrize("operation", ["timeout", "cancel"])
 async def test_processes_still_running_after_the_kill_bound_are_reported(executor, monkeypatch, operation):
     # When the group cannot be confirmed gone within the bound, the result and
@@ -491,6 +539,7 @@ async def test_worktree_replacement_is_refused(executor):
     assert result["error_code"] == "worktree_changed" and not (executor.worktree / "file").exists()
 
 
+@posix_only
 @pytest.mark.parametrize("operation", ["interrupt", "cancel"])
 async def test_interrupt_during_subprocess_startup_cannot_lose_owned_child(executor, monkeypatch, operation):
     real = asyncio.create_subprocess_exec
@@ -502,7 +551,8 @@ async def test_interrupt_during_subprocess_startup_cannot_lose_owned_child(execu
         return process
     monkeypatch.setattr(asyncio, "create_subprocess_exec", delayed_spawn)
     executor.approve = lambda request: True
-    task = asyncio.create_task(executor.execute("run_command", {"command": "sleep 30 & echo $! > child.pid; wait"}))
+    cmd = _ps_child_sleeper() if IS_WINDOWS else "sleep 30 & echo $! > child.pid; wait"
+    task = asyncio.create_task(executor.execute("run_command", {"command": cmd}))
     await asyncio.wait_for(created.wait(), 3)
     await wait_for(executor.worktree / "child.pid")
     pid = int((executor.worktree / "child.pid").read_text())
