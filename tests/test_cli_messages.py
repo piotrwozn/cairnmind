@@ -246,11 +246,12 @@ def test_a_missing_file_or_a_too_long_path_is_a_sentence(tmp_path, monkeypatch, 
     assert (code, shown.err) == (1, "Cairnmind: " + PROJECT_FOLDER_MISSING.format(root=nope, quoted=quote_arg(nope)) + "\n")
     import os
     import sys
-    long_base = tmp_path.resolve() if sys.platform == "win32" else Path("/tmp").resolve()
-    long_arg = str(tmp_path / ("a" * 5000)) if sys.platform == "win32" else "/tmp/" + "a" * 5000
+    long_base = Path(tmp_path.drive + "\\") if sys.platform == "win32" else Path("/tmp").resolve()
+    long_arg = str(long_base / ("a" * 5000)) if sys.platform == "win32" else "/tmp/" + "a" * 5000
     code, shown = entry(monkeypatch, capsys, "--data-dir", str(data), "project", "add", "x", long_arg)
     # The path is resolved, and /tmp is /private/tmp on macOS.
-    assert code == 1 and shown.err.startswith(f"Cairnmind: The path is too long for this system: {long_base}{os.sep}aaa")
+    prefix = str(long_base).rstrip(os.sep) + os.sep + "aaa"
+    assert code == 1 and shown.err.startswith(f"Cairnmind: The path is too long for this system: {prefix}")
     assert len(shown.err) < 300 and "…" in shown.err and "Errno" not in shown.err
 
 
@@ -601,7 +602,7 @@ def test_the_menu_help_and_the_guide_do_not_say_the_menu_holds_every_command():
     text = "".join(re.findall(r'"((?:[^"\\]|\\.)*)"', english)).encode().decode("unicode_escape")
     polish = tr(text, "pl")
     assert polish != text and "głównych poleceń" in polish
-    guide = (Path(__file__).resolve().parents[1] / "docs" / "TERMINAL.md").read_text()
+    guide = (Path(__file__).resolve().parents[1] / "docs" / "TERMINAL.md").read_text(encoding="utf-8")
     assert "menu of all commands" not in guide and "the activity panel has its own key, `a`" in guide
 
 

@@ -391,7 +391,8 @@ async def test_the_screen_fits_and_scrolls_at_80_by_24(tmp_path, monkeypatch):
         body = app.screen.query_one(".cm-dialog-body")
         assert body.max_scroll_y > 0
         body.scroll_end(animate=False)
-        await pilot.pause()
+        await pilot.pause(0.1)
+        await until(pilot, lambda: body.scroll_y == body.max_scroll_y, what="body scrolled to bottom")
         assert body.scroll_y == body.max_scroll_y and plain_words(OPTIONAL_KEY).endswith("or saved.")
         await until(pilot, lambda: "or saved." in screen_text(app), what="the last words of the screen")  # the last words of the last paragraph; the rows are wrapped inside the frame
         for page in range(body.max_scroll_y + 1):  # nothing is cut: no rendered row of the body ends in an ellipsis

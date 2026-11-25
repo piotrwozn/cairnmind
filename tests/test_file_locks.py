@@ -171,7 +171,7 @@ def test_child_process_does_not_inherit_lock_handle(tmp_path):
         "with file_locks.locked_path(Path(sys.argv[1]), blocking=False):\n"
         "    gc = subprocess.Popen([sys.executable, '-c', sys.argv[2]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)\n"
         "    assert gc.stdout.readline().strip() == 'CHILD_UP'\n"
-        "    print(f'GC_PID={gc.pid}', flush=True)\n"
+        "print(f'GC_PID={gc.pid}', flush=True)\n"
         "sys.stdin.readline()\n"
         "gc.stdin.close(); gc.wait(timeout=10)\n"
     )
