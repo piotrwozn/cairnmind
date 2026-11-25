@@ -225,7 +225,9 @@ def test_backup_to_a_path_ending_in_a_slash_creates_the_folder_and_names_the_fil
     assert code in (0, None), shown.err
     written = Path(json.loads(shown.out)["backup"])
     assert written.parent == folder.resolve() and written.name.startswith("cairnmind-")
-    assert written.name.endswith(".json.gz") and folder.stat().st_mode & 0o777 == 0o700
+    from conftest import assert_private
+    assert written.name.endswith(".json.gz")
+    assert_private(folder, directory=True)
 
 
 # --- Operating-system errors and missing rows --------------------------------------------------------------------
@@ -239,10 +241,16 @@ def test_a_missing_file_or_a_too_long_path_is_a_sentence(tmp_path, monkeypatch, 
     monkeypatch.setattr(cli, "store_for", lambda *args, **kwargs: pytest.fail("the store was opened"))
     code, shown = entry(monkeypatch, capsys, "--data-dir", str(data), "project", "add", "x", "/nope")
     from cairnmind.first_start import PROJECT_FOLDER_MISSING  # the sentence of #313: how to go on
-    assert (code, shown.err) == (1, "Cairnmind: " + PROJECT_FOLDER_MISSING.format(root="/nope", quoted="/nope") + "\n")
-    code, shown = entry(monkeypatch, capsys, "--data-dir", str(data), "project", "add", "x", "/tmp/" + "a" * 5000)
+    from cairnmind.process_control import quote_arg
+    nope = str(Path("/nope").expanduser().absolute())
+    assert (code, shown.err) == (1, "Cairnmind: " + PROJECT_FOLDER_MISSING.format(root=nope, quoted=quote_arg(nope)) + "\n")
+    import os
+    import sys
+    long_base = tmp_path.resolve() if sys.platform == "win32" else Path("/tmp").resolve()
+    long_arg = str(tmp_path / ("a" * 5000)) if sys.platform == "win32" else "/tmp/" + "a" * 5000
+    code, shown = entry(monkeypatch, capsys, "--data-dir", str(data), "project", "add", "x", long_arg)
     # The path is resolved, and /tmp is /private/tmp on macOS.
-    assert code == 1 and shown.err.startswith(f"Cairnmind: The path is too long for this system: {Path('/tmp').resolve()}/aaa")
+    assert code == 1 and shown.err.startswith(f"Cairnmind: The path is too long for this system: {long_base}{os.sep}aaa")
     assert len(shown.err) < 300 and "…" in shown.err and "Errno" not in shown.err
 
 
@@ -319,8 +327,9 @@ def test_an_unregistered_folder_is_refused_with_the_command_that_registers_it(tm
     project = store.add_project("my team", root)
     folder = (tmp_path / "scratch dir").resolve()
     folder.mkdir()
+    from cairnmind.process_control import quote_arg
     said = (f"{folder} is not a registered project root of my team; register it with "
-            f"`cairnmind project root 'my team' '{folder}'`.")
+            f"`cairnmind project root {quote_arg('my team')} {quote_arg(str(folder))}`.")
     for refused in (lambda: MemoryManager(store)._scope(project["id"], folder),
                     lambda: Retriever(store, store.settings, ollama=object())._scope(project["id"], folder),
                     lambda: Inspector(store)._scope(project["id"], folder),
@@ -585,7 +594,7 @@ def test_the_menu_help_and_the_guide_do_not_say_the_menu_holds_every_command():
     from cairnmind.terminal_commands import COMMANDS
     from cairnmind.terminal_i18n import tr
     assert "activ" not in " ".join(title.lower() for title, *_ in COMMANDS)
-    source = (Path(__file__).resolve().parents[1] / "src" / "cairnmind" / "terminal_commands.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "src" / "cairnmind" / "terminal_commands.py").read_text(encoding="utf-8")
     assert "search all commands" not in source and "Ctrl+B, then Space: search the main commands" in source
     assert "Ctrl+B, then a: activity panel" in source
     english = source.split("help_text(self.translate(")[1].split("))")[0]

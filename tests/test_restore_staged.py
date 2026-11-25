@@ -622,7 +622,11 @@ def test_a_restore_killed_midway_is_refused_at_the_next_start_and_finishes_when_
             time.sleep(0.05)
     finally:
         try:
-            os.killpg(child.pid, signal.SIGKILL)
+            if sys.platform == "win32":
+                from cairnmind import process_control
+                process_control.terminate_pid(child.pid, force=True)
+            else:
+                os.killpg(child.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass  # it already ended; the assertion above says how
         child.wait(timeout=30)

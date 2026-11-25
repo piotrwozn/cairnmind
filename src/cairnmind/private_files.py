@@ -142,6 +142,19 @@ if IS_WINDOWS:
     _kernel32.CloseHandle.restype = wintypes.BOOL
     _kernel32.LocalFree.argtypes = [ctypes.c_void_p]
     _kernel32.LocalFree.restype = ctypes.c_void_p
+    _kernel32.GetFileInformationByHandleEx.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+    ]
+    _kernel32.GetFileInformationByHandleEx.restype = wintypes.BOOL
+
+    class _FILE_BASIC_INFO(ctypes.Structure):
+        _fields_ = [
+            ("CreationTime", ctypes.c_int64),
+            ("LastAccessTime", ctypes.c_int64),
+            ("LastWriteTime", ctypes.c_int64),
+            ("ChangeTime", ctypes.c_int64),
+            ("FileAttributes", wintypes.DWORD),
+        ]
 
     _advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
     _advapi32.OpenProcessToken.restype = wintypes.BOOL
@@ -446,7 +459,10 @@ def ensure_private_dir(path: Path | str, *, error: str = "Directory must belong 
     """Create a private directory atomically if absent, and verify ownership and permissions."""
     target = Path(path)
     if not IS_WINDOWS:
-        target.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            target.mkdir(parents=True, exist_ok=True, mode=0o700)
+        except FileExistsError:
+            raise ValueError(error) from None
         info = target.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
             raise ValueError(error)
@@ -658,3 +674,25 @@ def encode_file_id(value: int | str) -> int | str:
     if parsed is None:
         raise ValueError("Invalid file identity value")
     return str(parsed) if parsed > _MAX_INT64 else parsed
+
+
+def change_time_ns(path: Path | str, status: os.stat_result) -> int:
+    """Inode/metadata change time in Unix nanoseconds: st_ctime_ns on POSIX, NTFS ChangeTime on Windows."""
+    if not IS_WINDOWS:
+        return status.st_ctime_ns
+    handle = _kernel32.CreateFileW(
+        str(path), 0x80,  # FILE_READ_ATTRIBUTES
+        _FILE_SHARE_READ | _FILE_SHARE_WRITE | _FILE_SHARE_DELETE,
+        None, _OPEN_EXISTING, 0x02200000,  # FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT
+        None,
+    )
+    if handle == _INVALID_HANDLE_VALUE:
+        return status.st_ctime_ns
+    try:
+        info = _FILE_BASIC_INFO()
+        if not _kernel32.GetFileInformationByHandleEx(handle, 0, ctypes.byref(info), ctypes.sizeof(info)):
+            return status.st_ctime_ns
+        # Windows FILETIME: 100ns ticks since 1601-01-01; Unix epoch offset is 11644473600s.
+        return (info.ChangeTime - 116444736000000000) * 100
+    finally:
+        _kernel32.CloseHandle(handle)

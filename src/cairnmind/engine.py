@@ -316,7 +316,10 @@ def start_engine(settings: Settings) -> dict:
     # arcade_connect_url names: never started here, its password never written to this data directory.
     if connect_only(settings):
         raise ConnectOnly(refusal(settings, "start an engine"))
-    ensure_private_dir(settings.data_dir)
+    if is_reparse_point(settings.data_dir):
+        raise ValueError("Directory must belong to the user and be private.")
+    if not settings.data_dir.exists():
+        ensure_private_dir(settings.data_dir)
     with locked_path(settings.data_dir / "engine.lock"):
         from .engine_docker import refuse_if_container_runs
         refuse_if_container_runs(settings)  # never two engines on one data directory (#272)

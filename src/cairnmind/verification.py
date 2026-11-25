@@ -271,8 +271,8 @@ def _config_document(root) -> dict | None:
     # One file reached through two names (a directory linked to the other) is one declaration.
     if len({path.resolve() for path in present}) > 1:
         # Two declarations of the same checks would let a run pass under one and be required under the other.
-        raise ValueError(f"Check profiles are declared in both {_PROFILE_PATHS[0]} and {_PROFILE_PATHS[1]}; "
-                         "keep one of them")
+        raise ValueError(f"Check profiles are declared in both {_PROFILE_PATHS[0].as_posix()} and "
+                         f"{_PROFILE_PATHS[1].as_posix()}; keep one of them")
     config_path = present[0]
     if not config_path.resolve().is_relative_to(root):
         raise ValueError("Check profile configuration must stay inside its worktree")

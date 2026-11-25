@@ -117,7 +117,7 @@ def _managed_empty_file(relative: str, raw: bytes, settings, project: dict) -> b
     from .integrations import BEGIN, END, _command, _earlier_command, _instructions
 
     try:
-        text = raw.decode("utf-8")
+        text = raw.decode("utf-8").replace("\r\n", "\n")
         if relative == RECORDER_PATH:
             return text == agent_file(settings, project)
         if relative in {"AGENTS.md", "CLAUDE.md"}:
@@ -468,6 +468,18 @@ class SessionManager:
     @staticmethod
     def _newer_count(state: dict, packet: dict) -> int:
         return sum(created > packet["created_at"] for created in state["automatic_created"])
+
+    @staticmethod
+    def _encode_watermark(watermark):
+        """Encode 64-bit unsigned device/inode values for ArcadeDB JSON storage (#441)."""
+        if not isinstance(watermark, dict):
+            return watermark
+        from .private_files import decode_file_id, encode_file_id
+        encoded = dict(watermark)
+        for key in ("device", "inode"):
+            if key in encoded and decode_file_id(encoded[key]) is not None:
+                encoded[key] = encode_file_id(encoded[key])
+        return encoded
 
     @staticmethod
     def _target(path: str, client: str, watermark: dict | None = None) -> dict:
@@ -1475,7 +1487,7 @@ class SessionManager:
                                            "session_id": session["id"], "native_session_id": native_id,
                                            "client": client, "hook_event_name": event,
                                            "resume_reason": reason, "transcript_path": payload.get("transcript_path"),
-                                           "transcript_watermark": payload.get("transcript_watermark"),
+                                           "transcript_watermark": self._encode_watermark(payload.get("transcript_watermark")),
                                            "applied_epoch": session["epoch"], "created_at": utc_now()})
             session.update(updated_at=utc_now())
             update_document(tx, "sessions", session, "id=:id", {"id": session["id"]})

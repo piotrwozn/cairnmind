@@ -223,7 +223,10 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
             # What the link says, one call: a chain, a loop and a broken link need no more, as every link inside the
             # root is noted too. (A link outside the root that leads back in is not: it is treated as today.)
             try:
-                links.append((str(item), os.readlink(item)))
+                target = os.readlink(item)
+                if os.name == "nt" and target.startswith("\\\\?\\") and not target.startswith("\\\\?\\UNC\\"):
+                    target = target[4:]
+                links.append((str(item), target))
             except OSError:  # replaced under the walk: noted as gone, the signature differs and a pass resolves again
                 links.append((str(item), None))
         return True
@@ -273,7 +276,7 @@ MANAGED_FILES = frozenset({"AGENTS.md", "CLAUDE.md", "cairnmind-recorder.md"})  
 def _indexed_spans(lines: list[str], uri: str) -> list[tuple[int, int]]:
     """The [first, end) line ranges that are indexed: all of a file, except, in the managed files (AGENTS.md, CLAUDE.md and the recorder subagent's file), the lines of
     Cairnmind's own block (#313), found as extraction finds it. An unclosed block is indexed as it is."""
-    if PurePosixPath(uri).name not in MANAGED_FILES:
+    if PurePosixPath(uri.replace("\\", "/")).name not in MANAGED_FILES:
         return [(0, len(lines))]
     from cairnmind.extraction_input import OWN_BLOCK
     text, spans, start = "\n".join(lines), [], 0
@@ -324,7 +327,7 @@ def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: d
                 return 0  # replaced meanwhile: its chunks were deleted with it and are not written again (#186)
             existing = tx.query("SELECT id,line_start,line_end FROM chunks WHERE source_id=:source", {"source": source_id})
             uri = sources[0]["uri"]
-            if existing and PurePosixPath(uri).name in MANAGED_FILES and (
+            if existing and PurePosixPath(uri.replace("\\", "/")).name in MANAGED_FILES and (
                     {(row["line_start"], row["line_end"]) for row in existing}
                     != {(first, last) for _, first, last in _chunks(text, uri)}):
                 # A block indexed before #313 leaves the index here, the next time the project is indexed.
@@ -588,14 +591,16 @@ RACY_WINDOW_NS = 2_000_000_000
 _REMEMBERED: dict[tuple[str, str], dict] = {}
 
 
-def _file_identity(status: os.stat_result) -> tuple:
-    return (status.st_dev, status.st_ino, status.st_mode, status.st_size, status.st_mtime_ns, status.st_ctime_ns)
+def _file_identity(status: os.stat_result, ctime_ns: int | None = None) -> tuple:
+    return (status.st_dev, status.st_ino, status.st_mode, status.st_size,
+            status.st_mtime_ns, status.st_ctime_ns if ctime_ns is None else ctime_ns)
 
 
 def _tree_state(store, project_id: str, listing: dict | None = None) -> tuple[str, int, bool, list[dict]]:
     """The signature, the newest file time seen, whether every directory could be listed, and the folders
     that are not available on this machine (#371): those are named in the signature and never walked.
     `listing` receives what the walk found, so that the indexing that follows does not walk again (#409)."""
+    from .private_files import change_time_ns
     project = store.resolve_project(project_id)
     entries: list[Any] = [parser_identity()]
     newest, errors, away = 0, [], []
@@ -616,8 +621,9 @@ def _tree_state(store, project_id: str, listing: dict | None = None) -> tuple[st
             except OSError:
                 entries.append([str(path), None])
                 continue
-            entries.append([str(path), status.st_size, status.st_mtime_ns, status.st_ctime_ns])
-            newest = max(newest, status.st_mtime_ns, status.st_ctime_ns)
+            ctime_ns = change_time_ns(path, status)
+            entries.append([str(path), status.st_size, status.st_mtime_ns, ctime_ns])
+            newest = max(newest, status.st_mtime_ns, ctime_ns)
     entries.extend(links)  # a link moved, added or removed alone changes the signature, so a pass runs (#451)
     return hashlib.sha256(_json(entries).encode()).hexdigest(), newest, not errors, away
 
@@ -813,8 +819,8 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
         if lies_in(root, store.data_dir):
             # Registered by 0.12.0, before #295 refused it: the walk leaves the data directory out, so it
             # would report 0 files. Named, not removed.
-            import shlex
-            quoted = shlex.quote(safe_text(project["name"]))
+            from .process_control import quote_arg
+            quoted = quote_arg(safe_text(project["name"]))
             head = (f"Project {project['name']!r} has a folder inside the data directory, which Cairnmind never "
                     f"indexes: {root}; this registration is left as it is. Move the files to a folder outside it, ")
             counts["errors"].append(head + (
@@ -822,7 +828,7 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                 f"`cairnmind project add {quoted} NEWFOLDER` registers the new folder as a new project"
                 if root == registered_roots[0] else
                 f"add that with `cairnmind project root {quoted} NEWFOLDER`, and remove this one with "
-                f"`cairnmind project remove {quoted} --root {shlex.quote(safe_text(str(root)))} --yes`"))
+                f"`cairnmind project remove {quoted} --root {quote_arg(safe_text(str(root)))} --yes`"))
             continue
         commit = _git(root, "rev-parse", "HEAD") or None
         if folder["adopt"]:
@@ -836,9 +842,11 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
             except OSError as exc:
                 counts["errors"].append(f"{path}: {exc}")
                 continue
-            identity = _file_identity(status)
+            from .private_files import change_time_ns
+            ctime_ns = change_time_ns(path, status)
+            identity = _file_identity(status, ctime_ns)
             # A file touched this recently can change again without its times moving (see RACY_WINDOW_NS).
-            settled = max(status.st_mtime_ns, status.st_ctime_ns) < started - RACY_WINDOW_NS
+            settled = max(status.st_mtime_ns, ctime_ns) < started - RACY_WINDOW_NS
             remembered = known.get(name)
             if remembered and remembered["identity"] == identity and remembered["root"] == root:
                 entry = remembered["entry"]

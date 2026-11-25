@@ -191,6 +191,8 @@ def test_an_unknown_or_unsafe_commit_is_refused(workspace, since, message):
 
 
 def test_text_from_the_repository_cannot_forge_report_lines(workspace):
+    if sys.platform == "win32":
+        pytest.skip("NTFS forbids ESC/CR control characters in filenames")
     store, pid, root, records = workspace
     hostile = "evil\x1b[2K\rname.py"
     (root / "src" / hostile).write_text("def refresh_token(token):\n    return token\n")
@@ -264,6 +266,8 @@ def test_a_renamed_file_still_points_at_the_records_that_name_its_definitions(wo
 
 
 def test_the_other_name_of_a_rename_cannot_forge_report_lines(workspace):
+    if sys.platform == "win32":
+        pytest.skip("NTFS forbids ESC/CR/LF control characters in filenames")
     store, pid, root, records = workspace
     git(root, "mv", "src/billing.py", "src/pay\x1b[2K\rments\nFAKE: line.py")
     report = build_impact(store, pid, "HEAD")
@@ -323,8 +327,9 @@ def test_a_definition_does_not_absorb_the_decorator_of_its_neighbour(workspace):
 @pytest.mark.parametrize("attributes", [None, "*.py text eol=crlf\n"])
 def test_carriage_returns_do_not_make_untouched_definitions_look_changed(workspace, attributes):
     store, pid, root, records = workspace
+    git(root, "config", "core.autocrlf", "false")
     if attributes:
-        (root / ".gitattributes").write_text(attributes)
+        (root / ".gitattributes").write_text(attributes, encoding="utf-8", newline="\n")
     (root / "src" / "auth.py").write_bytes(AUTH.replace("\n", "\r\n").encode())
     git(root, "add", ".")
     git(root, "commit", "-qm", "crlf")
@@ -529,7 +534,7 @@ def test_files_that_were_not_read_are_counted_and_said_even_when_no_page_is_list
     store, pid, root, records = workspace
     (root / "docs" / "login.md").unlink()  # a tracked page that is gone is not a skipped one
     (root / "docs" / "link.md").symlink_to(root / "README-missing.md")
-    (root / "docs" / "nul.txt").write_bytes(b"refresh_token\0")
+    (root / "docs" / "nullbyte.txt").write_bytes(b"refresh_token\0")
     commit_files(root, {"docs/big.md": b"refresh_token\n" * 100000})
     touch_auth(root)
     report = build_impact(store, pid, "HEAD")
@@ -714,7 +719,7 @@ def test_fences_need_to_start_a_line_after_at_most_three_spaces_and_code_spans_e
 def test_a_file_name_with_a_leading_blank_or_bytes_that_are_not_utf8_is_still_read(workspace):
     store, pid, root, records = workspace
     (root / " lead.md").write_text("refresh_token\n")
-    not_utf8 = sys.platform != "darwin"  # APFS refuses a file name that is not UTF-8 (EILSEQ)
+    not_utf8 = sys.platform not in {"darwin", "win32"}  # APFS and NTFS refuse a file name that is not valid UTF-8/UTF-16
     if not_utf8:
         (root / "docs" / os.fsdecode(b"caf\xe9.md")).write_text("refresh_token\n")
     touch_auth(root)

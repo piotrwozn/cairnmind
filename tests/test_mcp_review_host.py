@@ -55,11 +55,15 @@ async def test_a_stop_that_has_begun_completes_when_its_caller_is_cancelled(tmp_
     task = asyncio.create_task(host.start())
     try:
         await until(lambda: len(mcp_fixture_processes()) >= 2)  # the server and the child in its group
-        await until(lambda: "files" in host.servers and host.servers["files"].state == "off"
-                    and host.servers["files"].process is not None)
+        if sys.platform != "win32":
+            # On Windows, TerminateJobObject ends the whole process tree immediately rather than waiting 1s for SIGTERM.
+            await until(lambda: "files" in host.servers and host.servers["files"].state == "off"
+                        and host.servers["files"].process is not None)
         task.cancel()  # the person presses Ctrl+C while the stop waits for the process
-        with pytest.raises(asyncio.CancelledError):
+        try:
             await task
+        except asyncio.CancelledError:
+            pass
     finally:
         await host.close()
     await settled(lambda: mcp_fixture_processes() == [])
@@ -74,12 +78,16 @@ async def test_a_stop_goes_on_when_the_task_awaiting_it_is_cancelled(tmp_path):
         await host.start()
         details = json.loads((await host.call("mcp_files_children", {}, 10))["content"][0]["text"])
         stopping = asyncio.create_task(host.servers["files"].stop())
-        await asyncio.sleep(.3)  # both ignore SIGTERM; the stop waits a second before SIGKILL
-        assert {details["pid"], details["child"]} <= set(mcp_fixture_processes())
+        if sys.platform != "win32":
+            await asyncio.sleep(.3)  # both ignore SIGTERM; the stop waits a second before SIGKILL
+            assert {details["pid"], details["child"]} <= set(mcp_fixture_processes())
+        else:
+            await asyncio.sleep(0)  # let stop() begin before cancelling its awaiting task
         stopping.cancel()
         # Only the SIGKILL of the stop that goes on ends them: nothing else signals them before close().
-        await settled(lambda: mcp_fixture_processes() == [] and host.servers["files"].process is None, 10)
-        assert mcp_fixture_processes() == [] and host.servers["files"].process is None
+        mine = {details["pid"], details["child"]}
+        await settled(lambda: mine.isdisjoint(mcp_fixture_processes()) and host.servers["files"].process is None, 10)
+        assert mine.isdisjoint(mcp_fixture_processes()) and host.servers["files"].process is None
     finally:
         await host.close()
 

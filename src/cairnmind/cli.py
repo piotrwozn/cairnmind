@@ -158,12 +158,12 @@ def _pasteable(message: str) -> str:
     arguments = _data_dir_arguments(_INVOCATION.get("data_dir"))
     if not arguments:
         return message
-    import shlex
+    from cairnmind.process_control import format_command
     from cairnmind.terminal_safe import safe_text
     # `cairnmind restore` (the refusal of an unfinished restore, #362) and `cairnmind store takeover` replace or take
     # over a whole store: pasted bare they would act on the default installation.
     for command in ("project root ", "restore ", "store takeover "):
-        message = message.replace(f"`cairnmind {command}", f"`cairnmind {safe_text(shlex.join(arguments))} {command}")
+        message = message.replace(f"`cairnmind {command}", f"`cairnmind {safe_text(format_command(arguments))} {command}")
     return message
 
 
@@ -189,10 +189,13 @@ def _os_error_text(exc: OSError) -> str:
         return str(exc)
     import os
     path = _shortened(os.fsdecode(exc.filename) if isinstance(exc.filename, bytes) else str(exc.filename))
+    if (exc.errno == errno.ENAMETOOLONG
+            or getattr(exc, "winerror", None) == 206
+            or (getattr(exc, "winerror", None) == 123
+                and any(len(part) > 255 for part in Path(os.fsdecode(exc.filename)).parts))):
+        return f"The path is too long for this system: {path}"
     if exc.errno == errno.ENOENT:
         return f"{path} does not exist."
-    if exc.errno == errno.ENAMETOOLONG:
-        return f"The path is too long for this system: {path}"
     return f"{exc.strerror or 'The path cannot be used'}: {path}"
 
 
@@ -1112,9 +1115,12 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
     from cairnmind.terminal_safe import safe_text
     try:
         root = root.expanduser().resolve(strict=True)  # the folder is checked before the store is opened
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        if getattr(exc, "winerror", None) == 206:
+            raise
+        from cairnmind.process_control import quote_arg
         given = safe_text(str(root.expanduser().absolute()))
-        raise ValueError(first_start.PROJECT_FOLDER_MISSING.format(root=given, quoted=shlex.quote(given))) from None
+        raise ValueError(first_start.PROJECT_FOLDER_MISSING.format(root=given, quoted=quote_arg(given))) from None
     if not root.is_dir():
         raise typer.BadParameter("The path must be a folder, not a file")
     store = store_for(ctx.obj)
@@ -1946,7 +1952,6 @@ def _project_handle(store, project: dict) -> str:
 def stage_next(ctx: typer.Context, project: ProjectArg, plan_id: str | None = None, worktree: Path | None = None,
                as_json: Annotated[bool, typer.Option("--json", help="Print the decision as JSON.")] = False):
     """Show the next plan step's stage and what is mapped to it. Changes no task and starts nothing."""
-    import shlex
     from cairnmind.api_runtime import cli_stage_readiness
     from cairnmind.cockpit_state import CockpitState
     from cairnmind.plans import PlanManager
@@ -1974,7 +1979,8 @@ def stage_next(ctx: typer.Context, project: ProjectArg, plan_id: str | None = No
         return
     typer.echo(safe_text(describe(decision)))
     if decision["command"]:
-        typer.echo("Next: " + safe_text(shlex.join(decision["command"])))
+        from cairnmind.process_control import format_command
+        typer.echo("Next: " + safe_text(format_command(decision["command"])))
     elif decision["command_reason"]:
         typer.echo(FROM_WORKSPACE)
     from cairnmind.workspace_stage import MAP_HINT, MAP_PROBLEMS
@@ -2415,7 +2421,7 @@ def install(ctx: typer.Context, project: ProjectArg, as_json: JSON_FLAG = False,
     from cairnmind import first_start
     from cairnmind.terminal_safe import safe_text
     root = Path(selected["root"]).resolve()
-    files = ", ".join(safe_text(os.path.relpath(path, root)) for path in result["changed"]) or first_start.NOTHING_WRITTEN
+    files = ", ".join(safe_text(Path(os.path.relpath(path, root)).as_posix()) for path in result["changed"]) or first_start.NOTHING_WRITTEN
     from cairnmind.integrations import missing_parts
     installed = {client: info for client, info in result["clients"].items() if info.get("installed")}
     # Connected is the rule a verified launch uses; an installed client that fails it is named with what it lacks.

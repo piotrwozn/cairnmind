@@ -36,6 +36,7 @@ def test_install_status_remove_lifecycle_with_mocked_schtasks(tmp_path, monkeypa
     settings = Settings(data_dir=tmp_path / "data")
     monkeypatch.setattr(service_autostart.sys, "platform", "win32")
     monkeypatch.setattr(service_autostart, "_schtasks_path", lambda: "schtasks.exe")
+    monkeypatch.setattr(service_autostart.shutil, "which", lambda name: r"C:\Tools\cairnmind.exe")
 
     registered = {}
 

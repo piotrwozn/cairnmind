@@ -117,9 +117,10 @@ def test_twenty_real_storage_cases_measure_usage_and_leave_user_database_untouch
     before.pop("exported_at", None)
     after.pop("exported_at", None)
     assert after == before
+    from conftest import assert_private
     path = Path(report["report_path"])
     assert path.is_file()
-    assert path.stat().st_mode & 0o777 == 0o600
+    assert_private(path)
     serialized = path.read_text()
     assert settings.arcade_password not in serialized
     assert settings.token not in serialized

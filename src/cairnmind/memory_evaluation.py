@@ -278,7 +278,7 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
         asyncio.run(preflight())
         preflight_complete = True
         with tempfile.TemporaryDirectory(prefix="cairnmind-memory-eval-") as name:
-            temporary = Path(name)
+            temporary = Path(name).resolve()
             roots = [temporary / "computer-a" / "project", temporary / "computer-b" / "project",
                      temporary / "computer-b" / "neighbor"]
             for root in roots:
@@ -313,10 +313,11 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
         if cleanup_errors:
             report.update(status="failed", cleanup_errors=cleanup_errors)
     report["elapsed_seconds"] = round(time.monotonic() - started, 4)
+    from .private_files import ensure_private_dir, open_no_follow
     output = Path(report_dir or settings.data_dir / "evaluations").expanduser().resolve()
-    output.mkdir(parents=True, exist_ok=True, mode=0o700)
+    ensure_private_dir(output)
     path = output / ("memory-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid4().hex[:8] + ".json")
-    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
+    with os.fdopen(open_no_follow(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
     report["report_path"] = str(path)

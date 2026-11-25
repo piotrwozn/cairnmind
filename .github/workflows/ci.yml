@@ -96,9 +96,14 @@ jobs:
           retention-days: 7
 
   windows-arcade-tests:
-    # Real pinned ArcadeDB on Java 21 on native Windows (excluding tmux-only modules).
+    # Real pinned ArcadeDB on Java 21 on native Windows (excluding tmux-only modules), sharded in 4 parts.
+    name: windows-arcade-tests (${{ matrix.shard }} of 4)
     runs-on: windows-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -129,12 +134,12 @@ jobs:
         timeout-minutes: 35
         run: |
           $ErrorActionPreference = "Continue"
-          uv run pytest -n 4 -m "arcade and not tmux" -q -ra --junitxml=windows-arcade-junit.xml 2>&1 | Tee-Object -FilePath windows-arcade-pytest.txt
+          uv run pytest -n 4 -m "arcade and not tmux" -q -ra --shard ${{ matrix.shard }}/4 --junitxml=windows-arcade-junit.xml 2>&1 | Tee-Object -FilePath windows-arcade-pytest.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v7
         if: ${{ always() }}
         with:
-          name: windows-arcade-tests-report
+          name: windows-arcade-tests-report-${{ matrix.shard }}
           path: |
             windows-arcade-junit.xml
             windows-arcade-pytest.txt

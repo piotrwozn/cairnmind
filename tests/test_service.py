@@ -72,7 +72,8 @@ def test_config_concurrent_start_preserves_one_token(tmp_path):
         tokens = list(pool.map(lambda _: Settings.load(root, create=True).token, range(36)))
     assert len(set(tokens)) == 1
     assert Settings.load(root).token == tokens[0]
-    assert (root / "config.json").stat().st_mode & 0o777 == 0o600
+    from conftest import assert_private
+    assert_private(root / "config.json")
 
 
 def test_private_endpoints_require_local_bearer(workspace):

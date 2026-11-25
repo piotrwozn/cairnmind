@@ -131,9 +131,10 @@ def test_internal_symlink_targets_and_commit_identity_are_hashed(workspace):
     target.write_text("input two")
     changed = capture_code_state(store, project["id"])
     assert changed["fingerprint"] != first["fingerprint"]
-    target.chmod(0o755)
-    executable = capture_code_state(store, project["id"])
-    assert executable["fingerprint"] != changed["fingerprint"]
+    if sys.platform != "win32":
+        target.chmod(0o755)
+        executable = capture_code_state(store, project["id"])
+        assert executable["fingerprint"] != changed["fingerprint"]
     git(root, "add", "link")
     git(root, "commit", "-qm", "track link")
     assert capture_code_state(store, project["id"])["head"] != first["head"]

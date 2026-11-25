@@ -85,6 +85,12 @@ if IS_WINDOWS:
     _kernel32.CloseHandle.restype = wintypes.BOOL
 
 
+def quote_arg(value) -> str:
+    """Quote a single CLI argument for display or command execution (Windows cmd/PS vs POSIX sh)."""
+    text = str(value)
+    return subprocess.list2cmdline([text]) if sys.platform == "win32" else shlex.quote(text)
+
+
 def format_command(argv) -> str:
     """Format argv for display or command execution (list2cmdline on Windows, shlex.join on POSIX)."""
     items = [str(part) for part in argv]
@@ -95,11 +101,9 @@ def detached_popen_kwargs() -> dict:
     """Keyword arguments for spawning a long-lived background process (service, engine, broker)."""
     if not IS_WINDOWS:
         return {"start_new_session": True}
-    flags = (
-        subprocess.CREATE_NEW_PROCESS_GROUP
-        | subprocess.DETACHED_PROCESS
-        | subprocess.CREATE_NO_WINDOW
-    )
+    # Win32 CreateProcessW forbids combining DETACHED_PROCESS with CREATE_NO_WINDOW;
+    # CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW runs headless and detaches Ctrl+C.
+    flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
     return {"creationflags": flags}
 
 

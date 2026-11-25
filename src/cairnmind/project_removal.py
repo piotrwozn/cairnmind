@@ -8,7 +8,6 @@ terminal catalog.
 """
 from __future__ import annotations
 
-import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -214,7 +213,8 @@ class ProjectRemoved(ValueError):
 
 
 def _q(text) -> str:
-    return shlex.quote(safe_text(str(text)))
+    from .process_control import quote_arg
+    return quote_arg(safe_text(str(text)))
 
 
 def when(text: str | None) -> str:
@@ -369,7 +369,7 @@ def plan(settings, store, project: dict, root: Path | None = None) -> dict:
                        {"id": pid, "root": folder}):
             raise Refused(ROOT_SCHEDULED.format(project=name, root=safe_text(folder)))
         return {"project": head, "root": folder, "applied": False,
-                "bring_back": f"cairnmind project root {name} {shlex.quote(safe_text(folder))}"}
+                "bring_back": f"cairnmind project root {name} {_q(folder)}"}
     counts = store.status(pid)
     log = answer_log.log_path(settings, pid)
     names = {r["id"]: r["name"] for r in store.query("SELECT id,name FROM projects WHERE removed_at IS NULL")}
@@ -427,7 +427,7 @@ def apply(store, result: dict) -> dict:
 def sentences(result: dict) -> list[str]:
     name, applied = _q(result["project"]["name"]), result["applied"]
     if result["root"] is not None:
-        shown, quoted = safe_text(result["root"]), shlex.quote(safe_text(result["root"]))
+        shown, quoted = safe_text(result["root"]), _q(result["root"])
         return [(ROOT_REMOVED.format(project=name, root=shown) if applied
                  else ROOT_DRY_RUN.format(project=name, root=quoted)),
                 ROOT_EFFECT, ROOT_KEPT.format(project=name, root=shown),

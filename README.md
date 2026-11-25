@@ -11,7 +11,7 @@ Cairnmind is a local workspace for Codex CLI, Claude Code, GitHub Copilot and AP
 
 ## Quick start
 
-Cairnmind runs on Linux, on Windows (natively on Windows 10/11 or inside WSL2 Ubuntu; Ubuntu 24.04 is the tested platform) and on macOS with Apple silicon (tested on an M3 Pro with macOS 27; installed with Homebrew).
+Cairnmind runs on Linux, on Windows (natively on Windows 10/11 or inside WSL2 Ubuntu via `wsl --install -d Ubuntu`; Ubuntu 24.04 is the tested platform) and on macOS with Apple silicon (tested on an M3 Pro with macOS 27; installed with Homebrew).
 
 **What you need**
 

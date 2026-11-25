@@ -329,13 +329,15 @@ def test_the_cockpit_state_carries_the_report_to_the_project_shown(runtime):  # 
 async def test_nothing_the_server_printed_reaches_the_broker_the_notice_or_a_log(tmp_path, monkeypatch, caplog, runtime):  # noqa: F811
     caplog.set_level(logging.DEBUG)
     runner, _, project, _, _ = runtime
-    noisy = {"id": "noisy", "command": "/bin/sh",
-             "args": ["-c", f"echo {SECRET}; echo {SECRET} >&2; echo '{{\"jsonrpc\": \"2.0\", \"error\": \"{SECRET}\"}}'; exit 3"]}
+    import sys
+    noisy = {"id": "noisy", "command": sys.executable,
+             "args": ["-c", f"import sys; print({SECRET!r}); print({SECRET!r}, file=sys.stderr); "
+                      f"print('{{\"jsonrpc\": \"2.0\", \"error\": \"{SECRET}\"}}'); sys.exit(3)"]}
     host = McpHost([noisy], worktree=tmp_path / "w", reserved=set())
     (tmp_path / "w").mkdir()
     events = await host.start()
     assert events == [("mcp_server_failed", {"server_id": "noisy", "code": "start_failed"})]
-    run = started_run(runner, project, [mcp_server("noisy", command="/bin/sh", args=())])
+    run = started_run(runner, project, [mcp_server("noisy", command=sys.executable, args=())])
     assert post_report(runner, run, events[0][1]).status_code == 200
     assert SECRET not in runner.registry.read_text()
     app, shown = await sidebar_with(tmp_path, monkeypatch, lambda: as_shown(runner.list_runs(), shown))
