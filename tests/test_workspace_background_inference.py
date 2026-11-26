@@ -314,11 +314,39 @@ async def test_cancellation_after_launch_keeps_idempotency_and_unconfirmed_warni
         assert result.json()["errors"][0]["code"] == "background_inference_deferred"
 
 
+async def _wait_for_modal(app, pilot, kind, *, button_id=None, seconds=6.0):
+    from textual.css.query import NoMatches
+    from textual.widgets import Button
+    from cairnmind.terminal_ui import ChoiceModal
+
+    for _ in range(int(seconds / .02)):
+        await pilot.pause(.02)
+        screen = app.screen
+        if not isinstance(screen, kind) or not screen.is_attached:
+            continue
+        try:
+            if isinstance(screen, ChoiceModal):
+                table = screen.query_one("#choices")
+                if table.row_count == len(screen.choices) and app.focused is table:
+                    return screen
+                continue
+            if button_id is not None:
+                button = screen.query_one(button_id, Button)
+                if button.region.area and button.region in screen.size.region:
+                    return screen
+                continue
+        except NoMatches:
+            continue
+        return screen
+    raise AssertionError(f"modal {kind.__name__} not ready; top screen is {type(app.screen).__name__}")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["process", "cancel", "scope_changed"])
 async def test_queue_button_is_explicit_scoped_localized_and_never_starts_an_assistant(tmp_path, monkeypatch, action):
     from textual.widgets import Button, Static
-    from cairnmind.terminal_panels import SidebarApp
+    from cairnmind.terminal_panels import ConfirmModal, SidebarApp
+    from cairnmind.terminal_ui import ChoiceModal
     from test_terminal_panels import setup, settle
 
     settings, broker, workspace = setup(tmp_path, monkeypatch)
@@ -341,14 +369,15 @@ async def test_queue_button_is_explicit_scoped_localized_and_never_starts_an_ass
         assert "Asystent został uruchomiony" in notice
         assert "Więcej → Kolejka → Przetwórz pamięć" in notice
         await pilot.click("#more-open")
-        await pilot.pause()
+        await _wait_for_modal(app, pilot, ChoiceModal)
         await pilot.press("down", "down", "down", "enter")
-        await pilot.pause()
+        button_id = "#confirm-no" if action == "cancel" else "#confirm-yes"
+        await _wait_for_modal(app, pilot, ConfirmModal, button_id=button_id)
         assert app.screen.query_one("#confirm-yes", Button).label.plain == "Przetwórz pamięć"
         assert not [row for row in broker.calls if row[1] == "/api/background-inference/enable"]
         if action == "scope_changed":
             workspace.update({"project_id": "project-b", "worktree": "/other-project"})
-        await pilot.click("#confirm-no" if action == "cancel" else "#confirm-yes")
+        await pilot.click(button_id)
         await settle(app, pilot)
         enabled = [row for row in broker.calls if row[1] == "/api/background-inference/enable"]
         assert len(enabled) == (1 if action == "process" else 0)
@@ -368,7 +397,8 @@ async def test_process_memory_without_models_shows_the_way_on_the_real_24_column
     import textwrap
     from textual.widgets import Static
     from cairnmind import first_start
-    from cairnmind.terminal_panels import SidebarApp
+    from cairnmind.terminal_panels import ConfirmModal, SidebarApp
+    from cairnmind.terminal_ui import ChoiceModal
     from test_terminal_panels import setup, settle
 
     notice = getattr(first_start, which)
@@ -388,9 +418,9 @@ async def test_process_memory_without_models_shows_the_way_on_the_real_24_column
     async with app.run_test(size=(24, 45)) as pilot:
         await settle(app, pilot)
         await pilot.click("#more-open")
-        await pilot.pause()
+        await _wait_for_modal(app, pilot, ChoiceModal)
         await pilot.press("down", "down", "down", "enter")
-        await pilot.pause()
+        await _wait_for_modal(app, pilot, ConfirmModal, button_id="#confirm-yes")
         await pilot.click("#confirm-yes")
         await settle(app, pilot)
         line = app.query_one("#panel-notice", Static)
@@ -410,6 +440,7 @@ async def test_process_memory_without_models_asks_no_consent_and_shows_the_notic
     from textual.widgets import Static
     from cairnmind import first_start
     from cairnmind.terminal_panels import ConfirmModal, SidebarApp
+    from cairnmind.terminal_ui import ChoiceModal
     from test_terminal_panels import setup, settle
 
     settings, broker, workspace = setup(tmp_path, monkeypatch)
@@ -428,7 +459,7 @@ async def test_process_memory_without_models_asks_no_consent_and_shows_the_notic
     async with app.run_test(size=size) as pilot:
         await settle(app, pilot)
         await pilot.click("#more-open")
-        await pilot.pause()
+        await _wait_for_modal(app, pilot, ChoiceModal)
         await pilot.press("down", "down", "down", "enter")
         await asyncio.wait_for(settle(app, pilot), 5)  # a consent dialog would wait for an answer forever
         assert not isinstance(app.screen, ConfirmModal)

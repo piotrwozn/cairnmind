@@ -55,9 +55,11 @@ jobs:
       - name: Fast tier
         shell: bash
         timeout-minutes: 25
+        env:
+          COVERAGE_FILE: .coverage.macos-fast
         run: |
           set -o pipefail
-          uv run pytest -n 3 -m "not arcade and not tmux" -q -ra --junitxml=macos-junit.xml 2>&1 | tee macos-pytest.txt
+          uv run pytest -n 3 -m "not arcade and not tmux" -q -ra --cov --cov-report= --junitxml=macos-junit.xml 2>&1 | tee macos-pytest.txt
       - uses: actions/upload-artifact@v7
         if: ${{ always() }}
         with:
@@ -67,6 +69,14 @@ jobs:
             macos-pytest.txt
           if-no-files-found: warn
           retention-days: 7
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-part-macos-fast
+          path: .coverage.macos-fast
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 3
 
   windows-fast-tests:
     # The fast tier on native Windows (Python 3.12+). Bounded so a hang cannot burn runner minutes;
@@ -81,9 +91,11 @@ jobs:
       - name: Fast tier
         shell: pwsh
         timeout-minutes: 25
+        env:
+          COVERAGE_FILE: .coverage.windows-fast
         run: |
           $ErrorActionPreference = "Continue"
-          uv run pytest -n 4 -m "not arcade and not tmux" -q -ra --junitxml=windows-junit.xml 2>&1 | Tee-Object -FilePath windows-pytest.txt
+          uv run pytest -n 4 -m "not arcade and not tmux" -q -ra --cov --cov-report= --junitxml=windows-junit.xml 2>&1 | Tee-Object -FilePath windows-pytest.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v7
         if: ${{ always() }}
@@ -94,6 +106,14 @@ jobs:
             windows-pytest.txt
           if-no-files-found: warn
           retention-days: 7
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-part-windows-fast
+          path: .coverage.windows-fast
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 3
 
   windows-arcade-tests:
     # Real pinned ArcadeDB on Java 21 on native Windows (excluding tmux-only modules), sharded in 4 parts.
@@ -251,11 +271,12 @@ jobs:
           retention-days: 3
 
   coverage:
-    # Coverage of the whole suite, combined from the four parts. Not a required check: it may go red
-    # without blocking anything. Reported in the log and the job summary; on a push to main its
-    # `badge` output goes to coverage-badge, which publishes it to the public `badges` branch for the
-    # README badge. No threshold fails the job.
-    needs: coverage-tests
+    # Coverage of the whole suite, combined from the four Linux parts plus the Windows and macOS fast tiers
+    # (so platform-specific code such as Win32 DACLs/pipes/Job Objects is measured where it actually runs).
+    # Not a required check: it may go red without blocking anything. Reported in the log and the job summary;
+    # on a push to main its `badge` output goes to coverage-badge, which publishes it to the public `badges`
+    # branch for the README badge. No threshold fails the job.
+    needs: [coverage-tests, windows-fast-tests, macos-fast-tests]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -275,8 +296,8 @@ jobs:
           merge-multiple: true
       - name: Combine the parts
         run: |
-          ls -la .coverage.part* || true
-          uv run coverage combine --keep .coverage.part*
+          ls -la .coverage.* || true
+          uv run coverage combine --keep .coverage.*
           uv run coverage xml
       - name: Coverage summary
         id: summary

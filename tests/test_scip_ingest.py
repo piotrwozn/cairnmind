@@ -6,6 +6,7 @@ from pathlib import Path
 import time
 
 from fastapi.testclient import TestClient
+import pytest
 from typer.testing import CliRunner
 
 from cairnmind.cli import app as cli_app
@@ -294,3 +295,111 @@ def test_service_scip_worker_processes_queued_job_in_background(tmp_path, monkey
         for n in store.query("SELECT label FROM nodes WHERE project_id=:p AND kind='symbol' AND is_current=true", {"p": pid})
     }
     assert "BillingEngine.Compute" in sym_labels
+
+
+def test_index_project_scip_paths_cli_install_index_and_edge_cases(tmp_path, monkeypatch):
+    from cairnmind import scip_ingest as si
+    from cairnmind.scip_manager import InstalledIndexer, ScipRunError
+
+    settings = Settings.load(tmp_path / "data", create=True)
+    store = Store(settings.data_dir)
+    repo = _make_sample_go_project(tmp_path / "go_full")
+    proj = store.add_project("go-full", repo)
+    pid = proj["id"]
+    index_project(store, pid)
+
+    scip_file = tmp_path / "real.scip"
+    scip_file.write_bytes(_build_go_scip_bytes())
+
+    # 1. Helper unit paths: is_scip_analysis_version, _normalize_language aliases, scip_to_file_analyses edge cases
+    assert si.is_scip_analysis_version("scip-v1:test") is True
+    assert si.is_scip_analysis_version("tree-sitter") is False
+    assert si._normalize_language("golang", Path("a.go")) == "go"
+    assert si._normalize_language("c++", Path("a.cpp")) == "cpp"
+    assert si._normalize_language("c#", Path("a.cs")) == "csharp"
+    assert si._normalize_language("", Path("a.rb")) == "ruby"
+
+    # Forward definition + external_symbols + escaping root path skipped
+    fwd_sym = "scip-clang . . . core/Foo()."
+    ext_sym = "scip-clang . . . std/println()."
+    idx = ScipIndex(
+        external_symbols=[ScipSymbolInfo(symbol=ext_sym, kind=17, display_name="println")],
+        documents=[
+            ScipDocument(
+                relative_path="pkg/engine.go",
+                language="golang",
+                occurrences=[
+                    ScipOccurrence(0, 0, 0, 3, fwd_sym, 0x40),  # ROLE_FORWARD_DEFINITION
+                    ScipOccurrence(0, 0, 0, 3, fwd_sym, ROLE_READ_ACCESS),  # self-edge on decl line skipped
+                    ScipOccurrence(1, 0, 1, 7, ext_sym, ROLE_IMPORT),
+                ],
+            )
+        ],
+    )
+    analyses = si.scip_to_file_analyses(idx, repo)
+    assert len(analyses) == 1
+    only = next(iter(analyses.values()))
+    assert only["language"] == "go"
+    assert only["symbols"][0]["name"] == "Foo"
+    assert only["external_imports"][0]["module"] == "std"
+
+    # 2. index_project_scip: success, missing_toolchain, install_failed, ScipRunError, scip_languages filter
+    fake_exe = tmp_path / "scip-go"
+    fake_exe.write_bytes(b"bin")
+    monkeypatch.setattr(si, "ensure_indexer", lambda cfg, iid, allow_download=True: InstalledIndexer(iid, "v0.2.10", "ready", "native", fake_exe))
+
+    def fake_run_indexer(cfg, iid, root, *, installed=None, timeout=None):
+        copy = tmp_path / "tmp_run" / "index.scip"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_bytes(scip_file.read_bytes())
+        return copy
+
+    monkeypatch.setattr(si, "run_indexer", fake_run_indexer)
+    res_ok = si.index_project_scip(store, settings, pid)
+    assert res_ok["errors"] == []
+    assert res_ok["indexers"][0]["status"] == "indexed"
+    assert res_ok["indexers"][0]["files_updated"] == 3
+    # Second run on unchanged SCIP reports files_unchanged == 3
+    res_again = si.index_project_scip(store, settings, pid, languages=["go"])
+    assert res_again["indexers"][0]["files_unchanged"] == 3
+
+    # Settings.scip_languages filtering excludes 'go' when restricted to ['rust']
+    settings.scip_languages = ["rust"]
+    assert si.index_project_scip(store, settings, pid)["indexers"] == []
+    assert si.enqueue_project_scip(store, settings, pid, repo)["queued"] is False
+    settings.scip_languages = []
+
+    # missing_toolchain path (not treated as fatal error)
+    monkeypatch.setattr(si, "ensure_indexer", lambda cfg, iid, allow_download=True: InstalledIndexer(iid, "v0.2.10", "missing_toolchain", "native", missing_tools=["go"], detail="no go"))
+    res_miss = si.index_project_scip(store, settings, pid)
+    assert res_miss["errors"] == [] and res_miss["indexers"][0]["status"] == "missing_toolchain"
+
+    # install_failed path
+    monkeypatch.setattr(si, "ensure_indexer", lambda cfg, iid, allow_download=True: (_ for _ in ()).throw(RuntimeError("net down")))
+    res_inst_err = si.index_project_scip(store, settings, pid)
+    assert res_inst_err["indexers"][0]["status"] == "install_failed" and res_inst_err["errors"]
+
+    # run_indexer failure path
+    monkeypatch.setattr(si, "ensure_indexer", lambda cfg, iid, allow_download=True: InstalledIndexer(iid, "v0.2.10", "ready", "native", fake_exe))
+    monkeypatch.setattr(si, "run_indexer", lambda *a, **k: (_ for _ in ()).throw(ScipRunError("compile failed")))
+    res_run_err = si.index_project_scip(store, settings, pid)
+    assert res_run_err["indexers"][0]["status"] == "failed" and "compile failed" in res_run_err["errors"][0]
+
+    # Unregistered root refused
+    with pytest.raises(ValueError, match="not registered"):
+        si.index_project_scip(store, settings, pid, worktree=tmp_path)
+
+    # 3. CLI scip install & scip index commands
+    runner = CliRunner()
+    monkeypatch.setattr("cairnmind.scip_manager.ensure_indexer", lambda cfg, iid, allow_download=True: InstalledIndexer(iid, "1", "ready", "native", fake_exe))
+    cli_inst = runner.invoke(cli_app, ["--data-dir", str(settings.data_dir), "scip", "install", "go", "rust"])
+    assert cli_inst.exit_code == 0, cli_inst.output
+    assert set(json.loads(cli_inst.output)["indexers"].keys()) == {"scip-go", "rust-analyzer"}
+
+    cli_bad = runner.invoke(cli_app, ["--data-dir", str(settings.data_dir), "scip", "install", "brainfuck"])
+    assert cli_bad.exit_code != 0
+
+    monkeypatch.setattr(si, "run_indexer", fake_run_indexer)
+    cli_idx = runner.invoke(cli_app, ["--data-dir", str(settings.data_dir), "scip", "index", "go-full", "--lang", "go"])
+    assert cli_idx.exit_code == 0, cli_idx.output
+    assert json.loads(cli_idx.output)["indexers"][0]["status"] == "indexed"

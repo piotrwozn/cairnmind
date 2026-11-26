@@ -90,6 +90,16 @@ NO_ARCADE_MODULES = frozenset({
     "test_file_locks", "test_private_files", "test_process_control", "test_windows_guards",
     "test_ci_windows_job", "test_install_windows", "test_person_pipe", "test_terminal_standalone",
     "test_service_autostart", "test_scip_proto", "test_scip_manager",
+    "test_api_providers_edges", "test_memory_published_parse_edges", "test_copilot_adapter_edges",
+    "test_agent_tools_edges", "test_api_runtime_edges", "test_terminal_preview_edges", "test_cockpit_edges",
+    "test_terminal_panels_edges", "test_terminal_inspector_edges", "test_terminal_graph_edges",
+    "test_api_worker_edges", "test_api_agent_edges", "test_workspace_edges", "test_cli_edges",
+    "test_agent_memory_edges", "test_engine_and_db_creds_edges", "test_verification_and_tools_edges",
+    "test_service_and_bridge_edges", "test_memory_validate_edges",
+    "test_inspector_and_process_control_edges", "test_client_runtime_and_scip_edges",
+    "test_cockpit_routes_edges", "test_memory_manifest_and_mcp_host_edges",
+    "test_ingest_and_service_routes_edges", "test_eval_retrieval_integrations_edges",
+    "test_sessions_and_published_edges", "test_published_ui_agent_edges",
 })
 
 TMUX_MODULES = frozenset({

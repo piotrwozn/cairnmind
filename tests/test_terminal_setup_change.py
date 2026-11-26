@@ -675,10 +675,13 @@ async def test_the_flow_fits_at_80_by_24(ui):
         inside(app, "#choice-cancel")
         await until(pilot, lambda: "(remote)" in screen_text(app), what="the choice of profiles")
         await pilot.press("down", "down", "enter")  # remote: the longest form
-        await until(pilot, on_screen(app, FormModal))
+        await form_ready(app, pilot)
+        await pilot.pause()  # let FormModal.on_mount's call_after_refresh(scroll_home) complete before scrolling
         inside(app, "#form-submit", "#form-cancel")
         last = app.screen.query_one("#field-credential_ref", Input)
-        app.screen.query_one("#form-fields").scroll_end(animate=False)
+        fields = app.screen.query_one("#form-fields")
+        await until(pilot, lambda: fields.max_scroll_y > 0, what="the form fields to be scrollable")
+        fields.scroll_end(animate=False)
         await until(pilot, lambda: 0 <= last.region.y and last.region.bottom <= 24, what="the last field scrolled into view")
         for name, value in remote(tmp).items():
             app.screen.query_one("#field-" + name, Input).value = value

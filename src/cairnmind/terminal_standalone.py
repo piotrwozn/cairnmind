@@ -396,7 +396,8 @@ class StandaloneWorkspaceApp(App[int]):
             return
         try:
             if decision in {"confirmed", "disputed"}:
-                prompt = review_text(row, decision, self.language)
+                action = "confirm" if decision == "confirmed" else "dispute"
+                prompt = review_text(row, action, None, "", self.t)
                 title = self.t("Confirm record?") if decision == "confirmed" else self.t("Dispute record?")
                 if not await agreed(self, title, prompt, self.t("Confirm" if decision == "confirmed" else "Dispute")):
                     return
