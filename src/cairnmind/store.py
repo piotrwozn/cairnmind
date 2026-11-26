@@ -1194,41 +1194,114 @@ class Store:
                 raise RuntimeError("The database did not delete every graph vertex of a group")
         return kept
 
-    def _record_graph(self, tx, record):
+    @staticmethod
+    def _load_checked_sources(tx, project_id, sources):
+        if not isinstance(sources, list) or not sources or not all(isinstance(item, str) for item in sources):
+            raise ValueError("A memory record requires at least one source ID: cite a source you read, "
+                             "or the source_ids a checkpoint returns")
+        unique_ids = list(dict.fromkeys(sources))
+        loaded = {}
+        for start in range(0, len(unique_ids), 500):
+            for row in tx.query("SELECT FROM sources WHERE id IN :ids", {"ids": unique_ids[start:start + 500]}):
+                cleaned = clean_row(row)
+                loaded[cleaned["id"]] = cleaned
+        if len(loaded) != len(unique_ids) or any(row.get("project_id") != project_id for row in loaded.values()):
+            raise ValueError("Sources must exist and belong to the same project")
+        return loaded
+
+    def _record_graph(self, tx, record, *, source_rows=None):
+        resolved_sources = {}
+        missing_source_ids = []
+        for source_id in dict.fromkeys(record["source_ids"]):
+            if source_rows is not None and source_id in source_rows:
+                resolved_sources[source_id] = source_rows[source_id]
+            else:
+                missing_source_ids.append(source_id)
+        for start in range(0, len(missing_source_ids), 500):
+            for row in tx.query("SELECT FROM sources WHERE id IN :ids", {"ids": missing_source_ids[start:start + 500]}):
+                cleaned = clean_row(row)
+                resolved_sources[cleaned["id"]] = cleaned
+        for source_id in missing_source_ids:
+            if source_id not in resolved_sources:
+                resolved_sources[source_id] = one_row(tx, "SELECT FROM sources WHERE id=:id", {"id": source_id})
+
         node_id = f"record:{record['id']}"
-        self.upsert_node({"id": node_id, "project_id": record["project_id"], "kind": record["kind"],
-                          "label": record["content"][:1000], "source_id": record["source_ids"][0],
-                          "is_current": record["status"] != "superseded",
-                          "metadata": {**record["metadata"], "record_id": record["id"], "status": record["status"]}}, tx)
-        tx.command("DELETE FROM edges WHERE from_id=:id AND kind IN ['supported_by','depends_on','supersedes']", {"id": node_id})
+        dep_ids = [f"record:{dependency}" for dependency in (record["metadata"].get("depends_on") or [])]
+        sup_ids = [f"record:{record['supersedes']}"] if record.get("supersedes") else []
+        source_node_ids = [f"source:{source_id}" for source_id in resolved_sources]
+        candidate_ids = list(dict.fromkeys([node_id, *source_node_ids, *dep_ids, *sup_ids]))
+        existing_nodes = {}
+        for start in range(0, len(candidate_ids), 500):
+            for row in tx.query("SELECT FROM nodes WHERE id IN :ids", {"ids": candidate_ids[start:start + 500]}):
+                cleaned = clean_row(row)
+                existing_nodes[cleaned["id"]] = cleaned
 
-        def edge(target, kind, source_id):
-            eid = hashlib.sha256(f"{node_id}\0{kind}\0{target}".encode()).hexdigest()
-            self.upsert_edge({"id": eid, "project_id": record["project_id"], "from_id": node_id, "to_id": target,
-                              "kind": kind, "source_id": source_id, "is_current": record["status"] != "superseded"}, tx)
+        has_known = hasattr(tx, "known")
+        prior_known = tx.known if has_known else None
+        try:
+            if has_known:
+                if tx.known is None:
+                    tx.known = {"projects": set(), "sources": {}, "nodes": {}, "edges": {}}
+                tx.known["projects"].add(record["project_id"])
+                for sid, src in resolved_sources.items():
+                    tx.known["sources"][sid] = {"id": sid, "project_id": src.get("project_id"), "is_current": src.get("is_current")}
+                for nid in candidate_ids:
+                    tx.known["nodes"][nid] = existing_nodes.get(nid)
 
-        for source_id in record["source_ids"]:
-            source = one_row(tx, "SELECT FROM sources WHERE id=:id", {"id": source_id})
-            target = f"source:{source_id}"
-            self.upsert_node({"id": target, "project_id": record["project_id"], "kind": "source", "label": source["uri"],
-                              "source_id": source_id, "metadata": {"source_id": source_id, "source_kind": source["kind"]}}, tx)
-            edge(target, "supported_by", source_id)
-        for dependency in record["metadata"].get("depends_on") or []:
-            target = f"record:{dependency}"
-            if tx.query("SELECT id FROM nodes WHERE id=:id", {"id": target}):
-                edge(target, "depends_on", record["source_ids"][0])
-        # As for a dependency: a replacement written before the record it replaces (an import in ID order)
-        # gets its edge when its graph is written again after that record's (#239).
-        if record.get("supersedes") and tx.query("SELECT id FROM nodes WHERE id=:id",
-                                                 {"id": f"record:{record['supersedes']}"}):
-            edge(f"record:{record['supersedes']}", "supersedes", record["source_ids"][0])
+            had_record_node = node_id in existing_nodes
+            self.upsert_node({"id": node_id, "project_id": record["project_id"], "kind": record["kind"],
+                              "label": record["content"][:1000], "source_id": record["source_ids"][0],
+                              "is_current": record["status"] != "superseded",
+                              "metadata": {**record["metadata"], "record_id": record["id"], "status": record["status"]}}, tx)
+            if had_record_node:
+                with self._keeping(tx):
+                    tx.command("DELETE FROM edges WHERE from_id=:id AND kind IN ['supported_by','depends_on','supersedes']",
+                               {"id": node_id})
 
-    def _revision(self, tx, record):
+            def edge(target, kind, source_id):
+                eid = hashlib.sha256(f"{node_id}\0{kind}\0{target}".encode()).hexdigest()
+                if has_known and tx.known is not None:
+                    tx.known["edges"][eid] = None
+                self.upsert_edge({"id": eid, "project_id": record["project_id"], "from_id": node_id, "to_id": target,
+                                  "kind": kind, "source_id": source_id, "is_current": record["status"] != "superseded"}, tx)
+
+            for source_id in record["source_ids"]:
+                source = resolved_sources[source_id]
+                target = f"source:{source_id}"
+                desired = {"id": target, "project_id": record["project_id"], "kind": "source", "label": source["uri"],
+                           "source_id": source_id, "is_current": True,
+                           "metadata": {"source_id": source_id, "source_kind": source["kind"]}}
+                existing_src = existing_nodes.get(target)
+                if not (existing_src is not None
+                        and existing_src.get("project_id") == desired["project_id"]
+                        and existing_src.get("kind") == "source"
+                        and existing_src.get("label") == desired["label"]
+                        and existing_src.get("source_id") == source_id
+                        and existing_src.get("is_current") is True
+                        and existing_src.get("metadata") == desired["metadata"]):
+                    self.upsert_node(desired, tx)
+                    existing_nodes[target] = desired
+                edge(target, "supported_by", source_id)
+            for dependency in record["metadata"].get("depends_on") or []:
+                target = f"record:{dependency}"
+                if target in existing_nodes:
+                    edge(target, "depends_on", record["source_ids"][0])
+            # As for a dependency: a replacement written before the record it replaces (an import in ID order)
+            # gets its edge when its graph is written again after that record's (#239).
+            if record.get("supersedes"):
+                sup_target = f"record:{record['supersedes']}"
+                if sup_target in existing_nodes:
+                    edge(sup_target, "supersedes", record["source_ids"][0])
+        finally:
+            if has_known and prior_known is None:
+                tx.known = None
+
+    def _revision(self, tx, record, *, source_rows=None):
         insert_document(tx, "record_revisions", {"id": f"{record['id']}:{record['version']}", "project_id": record["project_id"],
                                         "record_id": record["id"], "version": record["version"], "snapshot": record, "recorded_at": utc_now()})
-        self._record_graph(tx, record)
+        self._record_graph(tx, record, source_rows=source_rows)
 
-    def _derive_symbol_anchor(self, tx, project_id, sources, metadata):
+    def _derive_symbol_anchor(self, tx, project_id, sources, metadata, *, source_rows=None):
         """Derive a cross-OS symbol anchor from cited code sources when metadata names a symbol or quote."""
         from .parsing import analyze_code
         from .symbol_anchor import posix_path, resolve_symbol_anchor
@@ -1236,10 +1309,14 @@ class Store:
         quote = metadata.get("evidence") if isinstance(metadata.get("evidence"), str) else None
         if not (symbol_name and symbol_name.strip()) and not (quote and quote.strip()):
             return None
-        code_sources = tx.query(
-            "SELECT id,uri,kind,content,metadata FROM sources WHERE project_id=:project AND id IN :ids AND kind='code'",
-            {"project": project_id, "ids": list(dict.fromkeys(sources))},
-        )
+        if source_rows is not None:
+            code_sources = [source_rows[sid] for sid in dict.fromkeys(sources)
+                            if sid in source_rows and source_rows[sid].get("kind") == "code"]
+        else:
+            code_sources = tx.query(
+                "SELECT id,uri,kind,content,metadata FROM sources WHERE project_id=:project AND id IN :ids AND kind='code'",
+                {"project": project_id, "ids": list(dict.fromkeys(sources))},
+            )
         if not code_sources:
             return None
         by_id = {row["id"]: row for row in code_sources}
@@ -1300,7 +1377,7 @@ class Store:
         extractor: that record's extractor stamp (EXTRACTOR_STAMP), only together with extracted_from.
         """
         self._require_project(tx, project_id)
-        self._validate_sources(tx, project_id, sources)
+        source_rows = self._load_checked_sources(tx, project_id, sources)
         if not isinstance(record, dict):
             raise RecordRefused("record must be an object")
         old = None
@@ -1323,6 +1400,11 @@ class Store:
         if kept:
             held = old.get("source_ids") or []
             sources = list(dict.fromkeys([*(json.loads(held) if isinstance(held, str) else held), *sources]))
+            extra_sources = [sid for sid in sources if sid not in source_rows]
+            for start in range(0, len(extra_sources), 500):
+                for row in tx.query("SELECT FROM sources WHERE id IN :ids", {"ids": extra_sources[start:start + 500]}):
+                    cleaned = clean_row(row)
+                    source_rows[cleaned["id"]] = cleaned
         kind, status = record.get("kind", old["kind"] if old else None), record.get("status", old["status"] if old else "proposed")
         content = record.get("content", old["content"] if old else None)
         if not isinstance(kind, str) or not isinstance(status, str) or kind not in KINDS or status not in STATUSES:
@@ -1360,7 +1442,7 @@ class Store:
             # something else under this name stays writable, and is simply never compared.
             if "scope" in updates and updates["scope"] != (old or {}).get("metadata", {}).get("scope"):
                 validate_scope(updates["scope"])
-        evidence = evidence_time(tx, sources)
+        evidence = evidence_time(tx, sources, source_rows=source_rows)
         metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
                         evidence_basis=evidence["basis"])
         if symbol_anchor is not None:
@@ -1370,7 +1452,7 @@ class Store:
                 raise ValueError("Invalid symbol_anchor")
             metadata["symbol_anchor"] = validated_anchor
         elif "symbol_anchor" not in metadata or any(field in updates for field in ("symbol", "evidence")):
-            derived_anchor = self._derive_symbol_anchor(tx, project_id, sources, metadata)
+            derived_anchor = self._derive_symbol_anchor(tx, project_id, sources, metadata, source_rows=source_rows)
             if derived_anchor is not None:
                 metadata["symbol_anchor"] = derived_anchor
         if comment_anchor is not None:
@@ -1514,7 +1596,7 @@ class Store:
             update_document(tx, "records", result, "id=:id AND version=:version", {"id": record_id, "version": old["version"]})
         else:
             insert_document(tx, "records", result)
-        self._revision(tx, result)
+        self._revision(tx, result, source_rows=source_rows)
         if managed and not managed_batch:
             from .plans import note_task_mutation
             note_task_mutation(self, tx, result, record["expected_plan_version"])

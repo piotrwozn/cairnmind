@@ -29,7 +29,7 @@ def parse_utc(value):
 ACT_NOTE_ORIGINS = ("local_user_review", "publication_review", "cli_person", "evaluation_seed")
 
 
-def evidence_time(tx, source_ids):
+def evidence_time(tx, source_ids, *, source_rows: dict | None = None):
     """When the record's evidence existed, from its immutable sources.
 
     A transcript's own timestamp is when the statement was made (`stated`). Any other
@@ -39,8 +39,15 @@ def evidence_time(tx, source_ids):
     """
     times, bases = [], set()
     for source_id in dict.fromkeys(source_ids):
-        row = one_row(tx, "SELECT created_at, metadata.source_timestamp AS stated, metadata.origin AS origin "
-                         "FROM sources WHERE id=:id", {"id": source_id}, False) or {}
+        cached = source_rows.get(source_id) if source_rows is not None else None
+        if cached is not None:
+            meta = cached.get("metadata") if isinstance(cached.get("metadata"), dict) else {}
+            row = {"created_at": cached.get("created_at"),
+                   "stated": meta.get("source_timestamp"),
+                   "origin": meta.get("origin")}
+        else:
+            row = one_row(tx, "SELECT created_at, metadata.source_timestamp AS stated, metadata.origin AS origin "
+                             "FROM sources WHERE id=:id", {"id": source_id}, False) or {}
         if row.get("origin") in ACT_NOTE_ORIGINS:
             continue  # Also a review published elsewhere (#170): when someone judged, not when evidence existed.
         stated = parse_utc(row.get("stated"))
