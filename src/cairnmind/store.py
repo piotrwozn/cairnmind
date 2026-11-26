@@ -1690,7 +1690,7 @@ class Store:
                                           for event in history[-20:] if isinstance(event, dict)]
             result["attempt_history_omitted"] = max(0, len(history) - 20) + pruned
         payload = job.get("payload") or {}
-        result["target"] = ({key: payload[key][:1024] for key in ("path", "client", "source_id", "chunk_id", "origin_event_id")
+        result["target"] = ({key: payload[key][:1024] for key in ("path", "root", "client", "source_id", "chunk_id", "origin_event_id")
                              if isinstance(payload.get(key), str)} if isinstance(payload, dict) else {})
         if job["kind"] == "import":
             result["coverage"] = self._import_job_coverage(job, packets)

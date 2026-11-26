@@ -417,6 +417,17 @@ def make_private(path: Path | str, *, directory: bool = False) -> None:
     _set_private_dacl(target, directory=directory)
 
 
+def make_executable(path: Path | str) -> None:
+    """Restrict a downloaded runtime binary to owner-only executable (0700 on POSIX, Protected DACL on Windows)."""
+    target = Path(path)
+    if is_reparse_point(target):
+        raise OSError(errno.ELOOP, "Refusing to change permissions on a symbolic link", str(target))
+    if not IS_WINDOWS:
+        os.chmod(target, 0o700)
+        return
+    _set_private_dacl(target, directory=False)
+
+
 def make_private_fd(fd: int, path: Path | str, *, directory: bool = False) -> None:
     """Apply owner-only permissions to an already-open descriptor (fchmod on POSIX, DACL on Windows)."""
     if not IS_WINDOWS:

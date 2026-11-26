@@ -49,6 +49,9 @@ from cairnmind.config import SESSION_NAMES, Settings, env_names, env_value
 from cairnmind.engine import install_engine, start_engine, stop_engine
 import stall_watch
 
+# Keep existing test suites completely offline/deterministic unless a SCIP test opts in.
+os.environ.setdefault("CAIRNMIND_SCIP_MODE", "off")
+
 # A time limit for every test, and a stop for what a test left running (#236).
 pytest_plugins = ("run_guard",)
 
@@ -86,7 +89,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_model_client_kept", "test_no_process_wide_time_patch",
     "test_file_locks", "test_private_files", "test_process_control", "test_windows_guards",
     "test_ci_windows_job", "test_install_windows", "test_person_pipe", "test_terminal_standalone",
-    "test_service_autostart",
+    "test_service_autostart", "test_scip_proto", "test_scip_manager",
 })
 
 TMUX_MODULES = frozenset({

@@ -326,6 +326,8 @@ def doctor(settings: Settings) -> dict[str, Any]:
             result["gpu"] = {"available": False, "error": type(exc).__name__}
     else:
         result["gpu"] = {"available": False, "note": platform_hints.hint("gpu_missing")}
+    from .scip_manager import scip_status
+    result["scip"] = scip_status(settings)
     return result
 
 
