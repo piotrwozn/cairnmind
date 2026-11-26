@@ -1423,4 +1423,6 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     from cairnmind.inspector_api import attach_inspector_routes
     attach_inspector_routes(app, store, settings)
+    from cairnmind.ui_server import attach_ui_routes
+    attach_ui_routes(app, store, settings, dependencies=auth)
     return app

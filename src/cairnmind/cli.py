@@ -1061,6 +1061,47 @@ def setup(ctx: typer.Context,
 
 
 @app.command()
+def ui(
+    ctx: typer.Context,
+    port: Annotated[int, typer.Option("--port", help="Loopback TCP port for the Cairnmind UI inspector.")] = 4310,
+    host: Annotated[str, typer.Option("--host", help="Loopback bind host (127.0.0.1, localhost, or ::1).")] = "127.0.0.1",
+    project: Annotated[str | None, typer.Option("--project", help="Default project id, name, or folder.")] = None,
+    mock: Annotated[bool, typer.Option("--mock", help="Serve the deterministic mock dataset without ArcadeDB.")] = False,
+    no_open: Annotated[bool, typer.Option("--no-open", help="Do not open a browser tab automatically.")] = False,
+):
+    """Serve the local State, Provenance & Concurrency Inspector web UI on localhost."""
+    import threading
+    import uvicorn
+    import webbrowser
+    from cairnmind.ui_server import create_ui_app
+
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        refuse("Cairnmind UI must bind to a loopback host (127.0.0.1, localhost, or ::1).")
+    if not 1 <= port <= 65535:
+        refuse("Port must be between 1 and 65535.")
+
+    store = None
+    settings = ctx.obj
+    if not mock:
+        if settings is None or not settings.token:
+            refuse("Initialize Cairnmind first (`cairnmind init`), or pass `--mock` to preview with sample data.")
+        store = store_for(settings)
+
+    api = create_ui_app(
+        store=store,
+        settings=settings,
+        default_project=project,
+        default_mock=mock,
+    )
+    url = f"http://{host}:{port}" + ("/?mock=1" if mock else "/")
+    typer.echo(f"Cairnmind UI serving on {url}")
+    if not no_open:
+        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    server = uvicorn.Server(uvicorn.Config(api, host=host, port=port, log_level="info"))
+    server.run()
+
+
+@app.command()
 @initialized
 def serve(ctx: typer.Context, defer_background_inference: bool = False):
     """Run the local service (the single owner of the GPU and the queue)."""
