@@ -71,6 +71,22 @@ cairnmind stop                   # the service reads the choice when it starts; 
 
 **The terminal workspace.** On Linux, WSL2 and macOS, with tmux 3.4+ (`sudo apt install tmux`, or `brew install tmux` on macOS), `cairnmind` opens the multi-pane workspace: Codex and Claude Code run in panes beside the projects, the memory inspector and the graph ([docs/TERMINAL.md](docs/TERMINAL.md)). On native Windows, `cairnmind` opens the standalone Textual workspace directly in Windows Terminal or PowerShell without requiring tmux, backed by an owner-only Windows Named Pipe for person-confirmed actions. In the POSIX workspace, Ctrl+B then i opens the memory inspector, where you confirm or dispute proposed findings (view Proposed); in the native Windows standalone workspace, press `2` for Memory. The default Focus layout works at 80 × 24; the full Cockpit layout needs at least 140 × 42. On POSIX without tmux 3.4+, opening the workspace prints what is missing and the commands that work without it, and exits with code 1.
 
+**The local web UI inspector (`cairnmind ui`).** An optional loopback-only browser inspector (`http://127.0.0.1:4310`) for viewing OCC session alignment, task test gates, verbatim quote provenance with SHA-256 fingerprint diffs, the 4-column dependency & blast-radius graph, and the MCP guardrail audit log alongside a running Cairnmind workspace or service. Build the static frontend bundle once (requires Node.js 20+):
+
+```bash
+cd ui && npm install && npm run build
+```
+
+Then run `cairnmind ui` in a separate terminal alongside Cairnmind:
+
+```bash
+cairnmind ui --port 4310                    # live mode against your local Cairnmind store (latest project)
+cairnmind ui --port 4310 --project my-app   # inspect a specific registered project
+cairnmind ui --port 4310 --mock             # preview all states with deterministic sample data (no database needed)
+```
+
+Pass `--no-open` to skip opening a browser tab automatically. The server binds strictly to loopback (`127.0.0.1`, `localhost`, or `::1`), streams live updates over SSE (`/api/ui/events`), and provides `Ctrl+K` search and `j`/`k`/`1`–`4`/`Esc` keyboard navigation.
+
 ## What sets it apart
 
 What sets it apart from a `CLAUDE.md` file or a generic memory layer is that Cairnmind treats memory as evidence, not as notes:
