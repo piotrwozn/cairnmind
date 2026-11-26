@@ -154,7 +154,7 @@ through, and it holds for every route:
   metadata field. A field is covered unless it is named as not covered, so a
   summary, a next step or any other text a writer puts beside a confirmed record
   counts like a changed text does. Not covered are the fields the
-  store derives, the bookkeeping of conflict decisions, and on a task its
+  store derives (including `symbol_anchor`, `comment_anchor`, `adr_anchor` and `trailer_anchor`, which use POSIX relative paths and cross-OS normalised hashes so they travel unchanged in portable packages), the bookkeeping of conflict decisions, and on a task its
   progress: `metadata.state`, reported evidence, check runs, a declared scope, a
   proposed command and its placement in a plan. Of these only the path patterns
   of a task's scope are text a writer chooses.

@@ -238,7 +238,8 @@ _PROMPT_SHA = re.compile(r"[0-9a-f]{16}")
 # person's act it checked itself, an importer sets it for what a package brings, and no client can.
 DERIVED_RECORD_METADATA = ("evidence_earliest", "evidence_latest", "evidence_basis",
                            "supersede_warning", "supersede_replaced_evidence_latest", EXTRACTION_MARK,
-                           EXTRACTOR_STAMP, *ORIGIN_METADATA, "publication", "confirmation")
+                           EXTRACTOR_STAMP, *ORIGIN_METADATA, "publication", "confirmation",
+                           "symbol_anchor", "comment_anchor", "adr_anchor", "trailer_anchor")
 
 
 def validate_extractor_stamp(value) -> dict:
@@ -1227,9 +1228,62 @@ class Store:
                                         "record_id": record["id"], "version": record["version"], "snapshot": record, "recorded_at": utc_now()})
         self._record_graph(tx, record)
 
+    def _derive_symbol_anchor(self, tx, project_id, sources, metadata):
+        """Derive a cross-OS symbol anchor from cited code sources when metadata names a symbol or quote."""
+        from .parsing import analyze_code
+        from .symbol_anchor import posix_path, resolve_symbol_anchor
+        symbol_name = metadata.get("symbol") if isinstance(metadata.get("symbol"), str) else None
+        quote = metadata.get("evidence") if isinstance(metadata.get("evidence"), str) else None
+        if not (symbol_name and symbol_name.strip()) and not (quote and quote.strip()):
+            return None
+        code_sources = tx.query(
+            "SELECT id,uri,kind,content,metadata FROM sources WHERE project_id=:project AND id IN :ids AND kind='code'",
+            {"project": project_id, "ids": list(dict.fromkeys(sources))},
+        )
+        if not code_sources:
+            return None
+        by_id = {row["id"]: row for row in code_sources}
+        for source_id in sources:
+            src = by_id.get(source_id)
+            if not src:
+                continue
+            src_meta = src.get("metadata") if isinstance(src.get("metadata"), dict) else {}
+            rel = src_meta.get("relative_path")
+            if not isinstance(rel, str) or not rel.strip():
+                raw_path = src_meta.get("path") or src.get("uri") or ""
+                raw_root = src_meta.get("root")
+                if isinstance(raw_path, str) and isinstance(raw_root, str) and raw_path and raw_root:
+                    try:
+                        rel = Path(raw_path).relative_to(Path(raw_root)).as_posix()
+                    except ValueError:
+                        rel = Path(raw_path).name
+                else:
+                    rel = Path(str(raw_path)).name
+            rel = posix_path(rel)
+            if not rel:
+                continue
+            analysis = src_meta.get("analysis") if isinstance(src_meta.get("analysis"), dict) else None
+            has_hashes = bool(
+                analysis
+                and any(isinstance(sym.get("body_hash"), str) for sym in (analysis.get("symbols") or []))
+            )
+            if not has_hashes:
+                analysis = analyze_code(Path(rel), str(src.get("content") or ""))
+            resolved = resolve_symbol_anchor(
+                rel,
+                str(src.get("content") or ""),
+                analysis,
+                quote=quote,
+                symbol_name=symbol_name,
+            )
+            if resolved is not None:
+                return resolved
+        return None
+
     def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False,
                   replace_origin=False, replace_metadata=False, mark_only_changes=False, extracted_from=None,
-                  extractor=None, slot=False, new_id=None):
+                  extractor=None, slot=False, new_id=None, symbol_anchor=None, comment_anchor=None,
+                  adr_anchor=None, trailer_anchor=None):
         """Write one record version.
 
         new_id: the ID of a new record, chosen by a person's act whose audit names it before the write (#222).
@@ -1309,6 +1363,28 @@ class Store:
         evidence = evidence_time(tx, sources)
         metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
                         evidence_basis=evidence["basis"])
+        if symbol_anchor is not None:
+            from .symbol_anchor import validate_symbol_anchor
+            validated_anchor = validate_symbol_anchor(symbol_anchor)
+            if validated_anchor is None:
+                raise ValueError("Invalid symbol_anchor")
+            metadata["symbol_anchor"] = validated_anchor
+        elif "symbol_anchor" not in metadata or any(field in updates for field in ("symbol", "evidence")):
+            derived_anchor = self._derive_symbol_anchor(tx, project_id, sources, metadata)
+            if derived_anchor is not None:
+                metadata["symbol_anchor"] = derived_anchor
+        if comment_anchor is not None:
+            if not isinstance(comment_anchor, dict) or not comment_anchor.get("tag") or not comment_anchor.get("text_sha256"):
+                raise ValueError("Invalid comment_anchor")
+            metadata["comment_anchor"] = dict(comment_anchor)
+        if adr_anchor is not None:
+            if not isinstance(adr_anchor, dict) or not adr_anchor.get("path") or not adr_anchor.get("text_sha256"):
+                raise ValueError("Invalid adr_anchor")
+            metadata["adr_anchor"] = dict(adr_anchor)
+        if trailer_anchor is not None:
+            if not isinstance(trailer_anchor, dict) or not trailer_anchor.get("commit") or not trailer_anchor.get("text_sha256"):
+                raise ValueError("Invalid trailer_anchor")
+            metadata["trailer_anchor"] = dict(trailer_anchor)
         # Set after the client's metadata, which can neither forge nor clear it; kept from the old version,
         # except when a checkpoint replaces the checkpoint record: it replaces its content and its only source,
         # so there the mark follows the writer of the current checkpoint.
@@ -1463,10 +1539,13 @@ class Store:
         if pending is not None:
             pending.append(call)
 
-    def remember(self, project_id, record, sources, *, conflict_review=False, extracted_from=None, extractor=None):
+    def remember(self, project_id, record, sources, *, conflict_review=False, extracted_from=None, extractor=None,
+                 symbol_anchor=None, comment_anchor=None, adr_anchor=None, trailer_anchor=None):
         with self.transaction() as tx:
             return self._remember(tx, project_id, record, sources, conflict_review=conflict_review,
-                                  extracted_from=extracted_from, extractor=extractor)
+                                  extracted_from=extracted_from, extractor=extractor,
+                                  symbol_anchor=symbol_anchor, comment_anchor=comment_anchor,
+                                  adr_anchor=adr_anchor, trailer_anchor=trailer_anchor)
 
     def checkpoint(self, project_id, state):
         if not isinstance(state, dict):

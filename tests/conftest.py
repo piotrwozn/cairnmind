@@ -89,7 +89,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_model_client_kept", "test_no_process_wide_time_patch",
     "test_file_locks", "test_private_files", "test_process_control", "test_windows_guards",
     "test_ci_windows_job", "test_install_windows", "test_person_pipe", "test_terminal_standalone",
-    "test_service_autostart", "test_scip_proto", "test_scip_manager",
+    "test_service_autostart", "test_scip_proto", "test_scip_manager", "test_symbol_anchor",
     "test_api_providers_edges", "test_memory_published_parse_edges", "test_copilot_adapter_edges",
     "test_agent_tools_edges", "test_api_runtime_edges", "test_terminal_preview_edges", "test_cockpit_edges",
     "test_terminal_panels_edges", "test_terminal_inspector_edges", "test_terminal_graph_edges",

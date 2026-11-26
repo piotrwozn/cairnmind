@@ -199,6 +199,19 @@ CATALOG = {
         "{letter} zapisano później, ale czas jego dowodów to tylko górna granica.",
     "The order of the evidence cannot be compared.": "Kolejności dowodów nie da się porównać.",
     "Evidence": "Dowody",
+    "Symbol": "Symbol",
+    "Comment tag": "Tag komentarza",
+    "unchanged ({symbol} in {path})": "bez zmian ({symbol} w {path})",
+    "needs review: {symbol} changed in commit {commit} ({date})":
+        "wymaga przeglądu: {symbol} zmienił się w commicie {commit} ({date})",
+    "needs review: {symbol} changed in commit {commit}":
+        "wymaga przeglądu: {symbol} zmienił się w commicie {commit}",
+    "needs review: {symbol} changed ({date})":
+        "wymaga przeglądu: {symbol} zmienił się ({date})",
+    "needs review: {symbol} changed in {path}":
+        "wymaga przeglądu: {symbol} zmienił się w {path}",
+    "{symbol} is gone from {path}": "{symbol} nie istnieje już w {path}",
+    "the {tag}: comment was removed from {path}": "komentarz {tag}: został usunięty z {path}",
     "at least one supporting source still stands": "co najmniej jedno źródło nadal obowiązuje",
     "imported file evidence has not been compared with local files yet":
         "zaimportowanych dowodów z plików nie porównano jeszcze z lokalnymi plikami",

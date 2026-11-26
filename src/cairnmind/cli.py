@@ -240,7 +240,9 @@ READ_KINDS = {
     "check profiles": _RESOLVE,
     "memory orphans": _RESOLVE | {"record", "source", "memory"},
     "memory extraction-stats": _RESOLVE | {"record"},
+    "memory decisions": _RESOLVE | {"memory"},
     "impact": _RESOLVE | {"record", "source", "memory", "node", "edge", "graph"},
+    "scan": _RESOLVE | {"record", "source", "memory", "node", "edge", "graph"},
     "usage": _RESOLVE,
     "proposed": _RESOLVE | {"record", "source", "memory"},
 }
@@ -1420,6 +1422,49 @@ def impact(ctx: typer.Context, project: ProjectArg,
         typer.echo(result["text"])
 
 
+@app.command()
+def scan(
+    ctx: typer.Context,
+    project: Annotated[
+        str | None,
+        typer.Argument(metavar="[PROJECT]", help="Project name, id or folder (default: current working directory)."),
+    ] = None,
+    diff: Annotated[
+        str,
+        typer.Option("--diff", help="Git commit, branch, tag or range (e.g. origin/main or origin/main...HEAD)."),
+    ] = ...,
+    worktree: Annotated[
+        Path | None,
+        typer.Option("--worktree", help="Registered worktree path to compare."),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the scan report as JSON.")] = False,
+):
+    """Check anchored records against a Git diff without a running service. Read-only; writes nothing.
+
+    Exit codes: 0 when clean, 1 when any anchored symbol changed or is gone, 2 on error or unready store.
+    """
+    from cairnmind.scan import scan_diff
+
+    target = project if project is not None else str((worktree or Path.cwd()).expanduser().resolve())
+    try:
+        store = store_for_read(ctx.obj)
+
+        def read():
+            pid = store.resolve_project(target)["id"]
+            return pid, scan_diff(store, pid, diff, actor_scope(store, pid, worktree))
+
+        result = store.read_consistently(read, READ_KINDS["scan"])
+    except (ValueError, RuntimeError, OSError, ArcadeError) as exc:
+        typer.echo(_pasteable(f"Cairnmind: {_os_error_text(exc) if isinstance(exc, OSError) else exc}"), err=True)
+        raise typer.Exit(2) from None
+    if as_json:
+        output(result)
+    else:
+        typer.echo(result["text"])
+    if result["exit_code"]:
+        raise typer.Exit(result["exit_code"])
+
+
 @app.command("impact-verdict")
 @initialized
 def impact_verdict(ctx: typer.Context, project: ProjectArg, record_id: RecordIdArg,
@@ -2338,6 +2383,49 @@ def memory_show(ctx: typer.Context, path: SnapshotArg,
                            json={"path": selected})["snapshot_id"]
     typer.echo(show_snapshot(selected, kind=kind, status=status, grep=grep, sources_text=sources,
                              expected_snapshot_id=expected))
+
+
+@memory_app.command("decisions")
+def memory_decisions(
+    ctx: typer.Context,
+    project: ProjectArg,
+    source: Annotated[
+        str | None,
+        typer.Argument(
+            metavar="[SOURCE]",
+            help="Single per-project decision source: off, comments, adr, or trailers. Omit to inspect.",
+        ),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the setting as JSON.")] = False,
+):
+    """Show or set the single per-project code decision source (off by default: off | comments | adr | trailers)."""
+    from cairnmind.code_decisions import DECISION_SOURCES, get_decision_source, set_decision_source
+
+    if source is None:
+        store = store_for_read(ctx.obj)
+
+        def read():
+            selected = store.resolve_project(project)
+            current = get_decision_source(store, selected["id"])
+            return selected["id"], {
+                "project_id": selected["id"],
+                "project": selected["name"],
+                "decision_source": current,
+                "allowed_sources": list(DECISION_SOURCES),
+            }
+
+        result = store.read_consistently(read, READ_KINDS["memory decisions"])
+    else:
+        ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
+        store = store_for(ctx.obj)
+        result = {**set_decision_source(store, project, source), "allowed_sources": list(DECISION_SOURCES)}
+    if as_json:
+        output(result)
+    else:
+        typer.echo(
+            f"Decision source for {result['project']}: {result['decision_source']} "
+            f"(allowed: {', '.join(DECISION_SOURCES)})"
+        )
 
 
 @memory_app.command("orphans")

@@ -148,8 +148,8 @@ Version 0.12.0 is the current release, the first that runs on macOS with Apple s
 - [docs/INSTALL.md](docs/INSTALL.md): step-by-step installation, the engine natively or in Docker, the models, verification, uninstalling and troubleshooting.
 - [docs/TERMINAL.md](docs/TERMINAL.md): the terminal workspace, layout, navigation and diagnostics, and the commands to use without it.
 - [docs/EXTERNAL_CLIENTS.md](docs/EXTERNAL_CLIENTS.md): Cursor, Cline, Zed and other MCP clients in an evidence-degraded session.
-- [docs/WORKFLOW.md](docs/WORKFLOW.md): plan format, check profiles, plan stages, evidence states, MCP calls, the code fingerprint, `brief`, `usage`, the plan contract, the scope of a step and `impact`.
-- [docs/MEMORY.md](docs/MEMORY.md): portable snapshots, `memory show`, evidence states, the review of conflicts and proposed findings, and team memory.
+- [docs/WORKFLOW.md](docs/WORKFLOW.md): plan format, check profiles, plan stages, evidence states, MCP calls, the code fingerprint, `brief`, `usage`, the plan contract, the scope of a step, `impact`, [symbol-anchored evidence](docs/WORKFLOW.md#symbol-anchored-evidence), [opt-in code decisions](docs/WORKFLOW.md#opt-in-decisions-from-code-comments-adr-trailers) and [serverless CI `scan`](docs/WORKFLOW.md#serverless-ci-check-cairnmind-scan).
+- [docs/MEMORY.md](docs/MEMORY.md): portable snapshots, `memory show`, evidence and symbol states, opt-in `memory decisions`, the review of conflicts and proposed findings, and team memory.
 - [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md): the portable and published memory formats and the import rules.
 - [docs/STORAGE_AND_MAINTENANCE.md](docs/STORAGE_AND_MAINTENANCE.md): the data directory, backups, the single writer, `store size`, removing replaced chunks, pruning safety backups and rotating the engine log.
 - [docs/API.md](docs/API.md): API, Ollama and Copilot connections, the knowledge agent's models, permissions and third-party MCP tools.
