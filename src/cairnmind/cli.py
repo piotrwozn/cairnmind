@@ -1340,8 +1340,28 @@ def index(ctx: typer.Context, project: ProjectArg):
 
 @app.command("import")
 @initialized
-def import_command(ctx: typer.Context, path: TranscriptArg, project: str | None = None, client: str = "auto"):
-    """Import a client's JSONL; without a project, keep the history in the import inbox."""
+def import_command(
+    ctx: typer.Context,
+    path: TranscriptArg,
+    project: str | None = None,
+    client: str = "auto",
+    via: Annotated[
+        str | None,
+        typer.Option("--via", help="Registered external transcript converter name; runs outside any coding session."),
+    ] = None,
+):
+    """Import a client's JSONL; with --via, run a registered converter and archive as degraded history."""
+    if via is not None:
+        if client != "auto":
+            refuse("--via cannot be combined with --client.")
+        from cairnmind.importers import ImporterExecutionError, ImporterRefused, require_outside_session, run_converter_import
+        try:
+            require_outside_session()
+            store = store_for(ctx.obj)
+            output(run_converter_import(store, ctx.obj, path, via, project=project))
+        except (ImporterRefused, ImporterExecutionError) as exc:
+            refuse(str(exc))
+        return
     output(request(ctx.obj, "POST", "/import", json={"path": str(path.expanduser().resolve()),
                                                     "project": project, "client": client}))
 
@@ -2551,6 +2571,11 @@ _register_published(memory_app, initialized)
 from cairnmind.cli_record_kinds import register as _register_record_kinds  # noqa: E402
 
 _register_record_kinds(app, initialized)
+
+# Out-of-process external transcript converter registry (#127).
+from cairnmind.cli_importers import register as _register_importers  # noqa: E402
+
+_register_importers(app)
 
 
 @app.command()

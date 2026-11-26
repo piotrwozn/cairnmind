@@ -1,0 +1,367 @@
+{
+  "chunks": {
+    "kinds": [
+      {
+        "current": {
+          "bytes": 0,
+          "rows": 1
+        },
+        "kind": "code",
+        "replaced": {
+          "bytes": 0,
+          "rows": 0
+        },
+        "source_found": true
+      },
+      {
+        "current": {
+          "bytes": 0,
+          "rows": 1
+        },
+        "kind": "document",
+        "replaced": {
+          "bytes": 0,
+          "rows": 0
+        },
+        "source_found": true
+      }
+    ],
+    "sampled": false
+  },
+  "collections": [
+    {
+      "bytes": 0,
+      "name": "projects",
+      "rows": 1,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "project_roots",
+      "rows": 1,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "sources",
+      "rows": 4,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "chunks",
+      "rows": 2,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "records",
+      "rows": 2,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "record_revisions",
+      "rows": 2,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "jobs",
+      "rows": 3,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "embeddings",
+      "rows": 0,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "import_cursors",
+      "rows": 0,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": null,
+      "name": "ingestion_inbox",
+      "rows": null,
+      "sampled": false,
+      "store_wide": true
+    },
+    {
+      "bytes": 0,
+      "name": "vector_indexes",
+      "rows": 0,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "plans",
+      "rows": 1,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "plan_revisions",
+      "rows": 1,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "plan_requests",
+      "rows": 1,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "worktree_states",
+      "rows": 1,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "sessions",
+      "rows": 1,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "resume_packets",
+      "rows": 1,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "resume_acks",
+      "rows": 1,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "session_events",
+      "rows": 0,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "check_runs",
+      "rows": 0,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "memory_settings",
+      "rows": 0,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "memory_snapshots",
+      "rows": 1,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "memory_imports",
+      "rows": 0,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "memory_bindings",
+      "rows": 0,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": null,
+      "name": "journal_state",
+      "rows": null,
+      "sampled": false,
+      "store_wide": true
+    },
+    {
+      "bytes": 0,
+      "name": "journal_events",
+      "rows": 34,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "nodes",
+      "rows": 10,
+      "sampled": false,
+      "store_wide": false
+    },
+    {
+      "bytes": 0,
+      "name": "edges",
+      "rows": 8,
+      "sampled": false,
+      "store_wide": false
+    }
+  ],
+  "disk": {
+    "agent_journals": {
+      "bytes": 0,
+      "exists": false,
+      "files": 0,
+      "path": "<DATA_DIR>/runtime/agents",
+      "sessions": 0
+    },
+    "backups": {
+      "before_restore": {
+        "bytes": 0,
+        "count": 0
+      },
+      "before_schema": {
+        "bytes": 0,
+        "count": 0
+      },
+      "other": {
+        "bytes": 0,
+        "count": 0
+      },
+      "path": "<DATA_DIR>/backups",
+      "safety": [],
+      "scheduled": {
+        "bytes": 0,
+        "count": 0
+      }
+    },
+    "data_dir": {
+      "bytes": 0,
+      "exists": true,
+      "files": 8,
+      "path": "<DATA_DIR>"
+    },
+    "database": {
+      "bytes": 0,
+      "exists": false,
+      "files": 0,
+      "path": "<DATA_DIR>/arcade/databases/<ARCADE_DB>"
+    },
+    "databases": {
+      "bytes": 0,
+      "exists": false,
+      "files": 0,
+      "path": "<DATA_DIR>/arcade/databases"
+    },
+    "engine_log": {
+      "bytes": 0,
+      "exists": false,
+      "files": 0,
+      "path": "<DATA_DIR>/arcade/engine.log"
+    },
+    "engine_logs": {
+      "bytes": 0,
+      "exists": false,
+      "files": 0,
+      "path": "<DATA_DIR>/arcade/log"
+    },
+    "old_engine_logs": {
+      "bytes": 0,
+      "exists": false,
+      "files": 0,
+      "path": "<DATA_DIR>/arcade"
+    },
+    "storage": {
+      "engine": "native",
+      "host": "<HOST>",
+      "mode": "managed",
+      "url": "http://127.0.0.1:<ARCADE_PORT>"
+    }
+  },
+  "elapsed_seconds": 0.0,
+  "jobs": {
+    "pending": 3
+  },
+  "method": {
+    "bytes": "length of each row's JSON form in the engine; equal to UTF-8 bytes for ASCII text",
+    "exact_rows": 1000,
+    "sample_rows": 256
+  },
+  "project": {
+    "id": "<UUID_1>",
+    "name": "contract-app"
+  },
+  "sources": {
+    "kinds": [
+      {
+        "current": {
+          "bytes": 0,
+          "rows": 1
+        },
+        "kind": "code",
+        "replaced": {
+          "bytes": 0,
+          "rows": 0
+        }
+      },
+      {
+        "current": {
+          "bytes": 0,
+          "rows": 1
+        },
+        "kind": "document",
+        "replaced": {
+          "bytes": 0,
+          "rows": 0
+        }
+      },
+      {
+        "current": {
+          "bytes": 0,
+          "rows": 1
+        },
+        "kind": "manual",
+        "replaced": {
+          "bytes": 0,
+          "rows": 0
+        }
+      },
+      {
+        "current": {
+          "bytes": 0,
+          "rows": 1
+        },
+        "kind": "plan",
+        "replaced": {
+          "bytes": 0,
+          "rows": 0
+        }
+      }
+    ],
+    "sampled": false
+  },
+  "text": "Store size of project contract-app\nBytes are approximate (length of each row's JSON form in the engine; equal to UTF-8 bytes for ASCII text); ~ marks a figure estimated from 256 sampled rows.\n\nCollections\n  projects                   1 <SIZE>\n  project_roots              1 <SIZE>\n  sources                    4 <SIZE>\n  chunks                     2 <SIZE>\n  records                    2 <SIZE>\n  record_revisions           2 <SIZE>\n  jobs                       3 <SIZE>\n  embeddings                 0 <SIZE>\n  import_cursors             0 <SIZE>\n  ingestion_inbox   store-wide, not per project\n  vector_indexes             0 <SIZE>\n  plans                      1 <SIZE>\n  plan_revisions             1 <SIZE>\n  plan_requests              1 <SIZE>\n  worktree_states            1 <SIZE>\n  sessions                   1 <SIZE>\n  resume_packets             1 <SIZE>\n  resume_acks                1 <SIZE>\n  session_events             0 <SIZE>\n  check_runs                 0 <SIZE>\n  memory_settings            0 <SIZE>\n  memory_snapshots           1 <SIZE>\n  memory_imports             0 <SIZE>\n  memory_bindings            0 <SIZE>\n  journal_state     store-wide, not per project\n  journal_events            34 <SIZE>\n  nodes                     10 <SIZE>\n  edges                      8 <SIZE>\n\nSources by kind: current / replaced\n  code                         1 <SIZE>  /         0 <SIZE>\n  document                     1 <SIZE>  /         0 <SIZE>\n  manual                       1 <SIZE>  /         0 <SIZE>\n  plan                         1 <SIZE>  /         0 <SIZE>\n\nChunks by source kind: current / replaced\n  code                         1 <SIZE>  /         0 <SIZE>\n  document                     1 <SIZE>  /         0 <SIZE>\n\nVectors by namespace\n  none\n\nJobs by state\n  pending: 3\n\nDisk (the whole data directory, not only this project)\n  data directory <SIZE>  <DATA_DIR>\n  databases              absent\n  this database          absent\n  engine.log             absent\n  old engine.log         absent\n  engine logs            absent\n  backups scheduled          0 file(s) <SIZE>\n  backups before-schema      0 file(s) <SIZE>\n  backups before-restore     0 file(s) <SIZE>\n  backups other              0 file(s) <SIZE>\n  agent journals      0 session(s) <SIZE>\nMeasured in <SEC> s.",
+  "vectors": {
+    "namespaces": [],
+    "types": []
+  }
+}
