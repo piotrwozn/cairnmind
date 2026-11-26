@@ -20,86 +20,34 @@
   },
   "clients": {
     "claude": {
-      "checks": {
-        "hooks": {
-          "evidence": null,
-          "ok": false,
-          "required": "version >= 1.0.112"
-        },
-        "isolated_process": {
-          "evidence": null,
-          "ok": false,
-          "required": "always"
-        },
-        "mcp": {
-          "evidence": null,
-          "ok": false,
-          "required": "--help mentions the mcp command"
-        },
-        "prompt": {
-          "evidence": null,
-          "ok": false,
-          "required": "--help accepts a prompt argument"
-        },
-        "version": {
-          "evidence": null,
-          "ok": false,
-          "required": ">= 1.0.112"
-        }
-      },
+      "checks": {},
       "hooks": false,
       "installed": false,
       "isolated_process": false,
       "mcp": false,
       "notes": [
-        "Approve the project MCP server using Claude Code's native consent flow."
+        "<HOST_PROBED>"
       ],
       "packet_passing": false,
-      "path": "<HOST_PROBED>",
+      "path": null,
       "session_binding": false,
       "verified_resume": false,
-      "version": "<HOST_PROBED>"
+      "version": null
     },
     "codex": {
-      "checks": {
-        "hooks": {
-          "evidence": null,
-          "ok": false,
-          "required": "`features list` reports hooks ... true"
-        },
-        "isolated_process": {
-          "evidence": null,
-          "ok": false,
-          "required": "--help offers --no-daemon"
-        },
-        "mcp": {
-          "evidence": null,
-          "ok": false,
-          "required": "--help mentions the mcp command"
-        },
-        "prompt": {
-          "evidence": null,
-          "ok": false,
-          "required": "--help accepts a prompt argument"
-        },
-        "version": {
-          "evidence": null,
-          "ok": false,
-          "required": ">= 0.166.0"
-        }
-      },
+      "checks": {},
       "hooks": false,
       "installed": false,
       "isolated_process": false,
       "mcp": false,
       "notes": [
-        "Review project/MCP trust and /hooks in Codex; Cairnmind never bypasses trust."
+        "<HOST_PROBED>"
       ],
       "packet_passing": false,
-      "path": "<HOST_PROBED>",
+      "path": null,
       "session_binding": false,
       "verified_resume": false,
-      "version": "<HOST_PROBED>"
+      "version": null
     }
   },
   "coding_profiles": {
@@ -130,8 +78,7 @@
   "environment_notes": [],
   "get_models": "To use models: `cairnmind models pull` downloads the local models into Ollama (about 7 GB); `cairnmind models set` chooses a model server.",
   "gpu": {
-    "available": false,
-    "devices": []
+    "available": false
   },
   "java": {
     "compatible": true,
@@ -212,7 +159,7 @@
           "rust"
         ],
         "missing_tools": [],
-        "mode": "native",
+        "mode": "<HOST_MODE>",
         "version": "2026-11-23"
       },
       "scip-clang": {
@@ -224,7 +171,7 @@
           "cpp"
         ],
         "missing_tools": [],
-        "mode": "native",
+        "mode": "<HOST_MODE>",
         "version": "v0.4.3"
       },
       "scip-dotnet": {
@@ -235,7 +182,7 @@
           "csharp"
         ],
         "missing_tools": [],
-        "mode": "ecosystem",
+        "mode": "<HOST_MODE>",
         "version": "0.2.14"
       },
       "scip-go": {
@@ -246,7 +193,7 @@
           "go"
         ],
         "missing_tools": [],
-        "mode": "native",
+        "mode": "<HOST_MODE>",
         "version": "v0.2.10"
       },
       "scip-java": {
@@ -258,7 +205,7 @@
           "kotlin"
         ],
         "missing_tools": [],
-        "mode": "native",
+        "mode": "<HOST_MODE>",
         "version": "v0.14.2"
       },
       "scip-php": {
@@ -269,7 +216,7 @@
           "php"
         ],
         "missing_tools": [],
-        "mode": "ecosystem",
+        "mode": "<HOST_MODE>",
         "version": "dev-main"
       },
       "scip-ruby": {
@@ -280,7 +227,7 @@
           "ruby"
         ],
         "missing_tools": [],
-        "mode": "native",
+        "mode": "<HOST_MODE>",
         "version": "scip-ruby-v0.5.1"
       }
     },
@@ -318,12 +265,8 @@
     }
   },
   "tmux": {
-    "available": true,
-    "backend": "tmux",
-    "code": "<HOST_PROBED>",
-    "executable": "<HOST_PROBED>",
-    "minimum_version": "3.4",
-    "version": "<HOST_PROBED>"
+    "available": false,
+    "code": "<HOST_PROBED>"
   },
   "topology": {
     "lines": [
@@ -360,6 +303,5 @@
         "kind": "engine"
       }
     ]
-  },
-  "wsl": false
+  }
 }

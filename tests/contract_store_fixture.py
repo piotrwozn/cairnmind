@@ -256,6 +256,8 @@ def _normalize_scalar(value: str, replacements: list[tuple[str, str]], maps: dic
 
 def _normalize_doctor(normalized: dict[str, Any]) -> None:
     """Normalize host-probed capabilities in `doctor` so every OS/runner produces an identical contract shape."""
+    for os_only in ("wsl", "workspace", "service_autostart", "cockpit"):
+        normalized.pop(os_only, None)
     for host_key in ("python", "openssl", "environment_notes", "missing_required", "attention"):
         if host_key in normalized:
             normalized[host_key] = (
@@ -267,25 +269,22 @@ def _normalize_doctor(normalized: dict[str, Any]) -> None:
             )
     if isinstance(normalized.get("python_executable"), str):
         normalized["python_executable"] = "<PYTHON_EXE>"
-    if isinstance(normalized.get("wsl"), bool):
-        normalized["wsl"] = False
     if isinstance(normalized.get("java"), dict):
-        for k in ("executable", "version", "error", "compatible", "on_path"):
-            if k in normalized["java"]:
-                normalized["java"][k] = "<HOST_PROBED>" if isinstance(normalized["java"][k], str) else bool(normalized["java"][k])
-        if isinstance(normalized["java"].get("major"), int):
-            normalized["java"]["major"] = 21
+        for opt_key in ("error", "managed_executable", "configured_executable"):
+            normalized["java"].pop(opt_key, None)
+        normalized["java"]["compatible"] = True
+        normalized["java"]["on_path"] = True
+        normalized["java"]["executable"] = "<HOST_PROBED>"
+        normalized["java"]["version"] = "<HOST_PROBED>"
+        normalized["java"]["major"] = 21
     if isinstance(normalized.get("arcadedb"), dict):
         for k in ("version", "version_matches", "installed"):
             if k in normalized["arcadedb"]:
                 normalized["arcadedb"][k] = "<HOST_PROBED>" if isinstance(normalized["arcadedb"][k], str) else bool(normalized["arcadedb"][k])
     if isinstance(normalized.get("tmux"), dict):
-        for k in ("executable", "version", "code", "available"):
-            if k in normalized["tmux"]:
-                normalized["tmux"][k] = "<HOST_PROBED>" if isinstance(normalized["tmux"][k], str) else bool(normalized["tmux"][k])
+        normalized["tmux"] = {"available": False, "code": "<HOST_PROBED>"}
     if isinstance(normalized.get("gpu"), dict):
-        normalized["gpu"]["available"] = False
-        normalized["gpu"]["devices"] = []
+        normalized["gpu"] = {"available": False}
     if isinstance(normalized.get("ollama"), dict):
         normalized["ollama"] = {
             "available": False,
@@ -311,6 +310,7 @@ def _normalize_doctor(normalized: dict[str, Any]) -> None:
         normalized["scip"]["docker_available"] = False
         for idx_info in (normalized["scip"].get("indexers") or {}).values():
             if isinstance(idx_info, dict):
+                idx_info["mode"] = "<HOST_MODE>"
                 idx_info["executable"] = None
                 idx_info["installed"] = False
                 idx_info["missing_tools"] = []
@@ -320,15 +320,14 @@ def _normalize_doctor(normalized: dict[str, Any]) -> None:
                 for k, v in list(client_info.items()):
                     if isinstance(v, bool):
                         client_info[k] = False
-                    elif isinstance(v, str):
-                        client_info[k] = "<HOST_PROBED>"
-                if isinstance(client_info.get("checks"), dict):
-                    for chk in client_info["checks"].values():
-                        if isinstance(chk, dict):
-                            if "evidence" in chk:
-                                chk["evidence"] = None
-                            if "ok" in chk:
-                                chk["ok"] = False
+                if "path" in client_info:
+                    client_info["path"] = None
+                if "version" in client_info:
+                    client_info["version"] = None
+                if "checks" in client_info:
+                    client_info["checks"] = {}
+                if "notes" in client_info:
+                    client_info["notes"] = ["<HOST_PROBED>"]
     if isinstance(normalized.get("topology"), dict):
         topo = normalized["topology"]
         if isinstance(topo.get("lines"), list):
