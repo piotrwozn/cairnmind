@@ -21,6 +21,7 @@ CAIRNMIND_TEST_SCHEMA_TEMPLATE=0 builds every database from nothing instead.
 from __future__ import annotations
 
 import contextlib
+from dataclasses import replace
 import json
 import os
 import re
@@ -815,6 +816,8 @@ class SchemaTemplate:
     """
 
     def __init__(self, settings: Settings, prefix: str, scratch: Path):
+        self.settings = settings
+        self.admin_client = ArcadeClient(settings)
         self.databases = settings.data_dir / "arcade" / "databases"
         self.prefix = prefix
         self.name = None
@@ -830,12 +833,12 @@ class SchemaTemplate:
         finally:
             os.environ["CAIRNMIND_ARCADE_DB_PREFIX"] = prefix
         client = store.client
-        client.command("DELETE FROM devbrain_meta")
+        client.command("DELETE FROM devbrain_meta WHERE name NOT IN ['schema_version','lookup_indexes']")
         client.command("DELETE FROM journal_state")
         types = [row["name"] for row in client.query("SELECT name FROM schema:types")]
         rows = sum(client.query(f"SELECT count(*) AS n FROM `{name}`")[0]["n"] for name in types)
         client.server_command(f"close database {client.database}")
-        if rows:  # Store.init wrote more than the two rows above: build every database from nothing.
+        if rows != 2:  # expected only schema_version and lookup_indexes in devbrain_meta
             shutil.rmtree(self.databases / client.database, ignore_errors=True)
             return
         self.name = client.database
@@ -848,19 +851,29 @@ class SchemaTemplate:
             if template.name is None or template.paused or not name.startswith(template.prefix + "_"):
                 return original(client)
             with template.lock:
-                if client._request("GET", f"/api/v1/exists/{quote(name)}").json().get("result") is True:
+                if template.admin_client._request("GET", f"/api/v1/exists/{quote(name)}").json().get("result") is True:
                     return
                 staging = template.databases / f".copy-{name}"
                 shutil.copytree(template.databases / template.name, staging)
                 staging.rename(template.databases / name)
                 try:
-                    client.server_command(f"open database {name}")
+                    template.admin_client.server_command(f"open database {name}")
+                    db_client = ArcadeClient(
+                        replace(template.settings, arcade_database=name),
+                        transport=template.admin_client.transport,
+                        _connections=template.admin_client._connections,
+                    )
+                    db_client.command(
+                        "INSERT INTO journal_state CONTENT :row",
+                        {"row": {"id": "current", "epoch": str(uuid.uuid4()), "seq": 0, "first_seq": 1}},
+                    )
                 except ArcadeError:
                     shutil.rmtree(template.databases / name, ignore_errors=True)
                     return original(client)
         return ensure_database
 
     def remove(self):
+        self.admin_client.close()
         if self.name:
             shutil.rmtree(self.databases / self.name, ignore_errors=True)
 
@@ -1029,7 +1042,7 @@ def release_test_databases(request, run_slot):
     finally:
         template.paused = False
     require_slot(request.config, "Dropping the test's databases")
-    client = ArcadeClient(settings)
+    client = template.admin_client
     try:
         names = client._request("GET", "/api/v1/databases").json().get("result", [])
         for name in names:

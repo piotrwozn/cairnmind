@@ -7,6 +7,7 @@ execution snapshot: an edit followed by a revert between observations is not det
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import math
@@ -30,6 +31,7 @@ from .path_spelling import lies_in
 from .process_identity import start as process_start
 
 MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+PARALLEL_HASH_THRESHOLD = 64
 # Check profiles are declared in the first file. The second is where versions up to 0.9.0 looked.
 _PROFILE_PATHS = (Path(".cairnmind/checks.toml"), Path(".devbrain/checks.toml"))
 
@@ -88,10 +90,8 @@ def _file_hash(path):
     reading the content keeps the promise that any edit changes the fingerprint.
     """
     before = path.stat()
-    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
+        digest = hashlib.file_digest(stream, "sha256")
     after = path.stat()
     def identity(s):
         return (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns, s.st_mode)
@@ -194,9 +194,24 @@ def _manifest(root, patterns, nested=()):
             else:
                 paths.add(Path(match).as_posix())
     inside = _inside(root)
-    # Read one file after another: a pool of threads was measured and was ten times slower,
-    # because the work between the reads holds the interpreter lock.
-    entries = [_entry(root, p, modes.get(p), unknowns, inside) for p in sorted(paths)]
+    ordered = sorted(paths)
+    if len(ordered) >= PARALLEL_HASH_THRESHOLD:
+        for relative in ordered:
+            inside((root / relative).parent)
+
+        def hash_one(relative):
+            local_unknowns = []
+            entry = _entry(root, relative, modes.get(relative), local_unknowns, inside)
+            return entry, local_unknowns
+
+        with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as pool:
+            hashed = list(pool.map(hash_one, ordered))
+        entries = []
+        for entry, local_unknowns in hashed:
+            entries.append(entry)
+            unknowns.extend(local_unknowns)
+    else:
+        entries = [_entry(root, p, modes.get(p), unknowns, inside) for p in ordered]
     return entries, sorted(set(unknowns))
 
 

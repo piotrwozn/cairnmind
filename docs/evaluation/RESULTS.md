@@ -506,3 +506,46 @@ The margin of the longest job was 12.6 s of 120. A cut answer forces the long re
 The per-call figures (22 to 52 s at an input of 6,000 to 8,500 tokens, median output 694 tokens, 19 output tokens a second, the cut call of 52.5 s and its repair of 50.4 s) come from the owner's raw report of the same run, not from the issue; the figures in the issue are the job times, the counts and the budget.
 
 Not measured: a run with the new budget on the Mac, on this or another repository. The tests with a fake clock show that a cut answer and a repair of 60 s each complete within 180 s and did not within 120 s, and that a job past 180 s still fails with the budget named in its diagnostics; the same two calls of 63 s complete with `ask_timeout` 60 (they failed as `model_unavailable` before the call took its limit from the budget).
+
+# Memory snapshot at size (#169)
+
+**Measured on 26 November 2026**, three runs at `N = 1,000` records and three runs at `N = 10,000` records on WSL 2 (`Linux 6.18.58.1-microsoft-standard-WSL2`, Ubuntu, Intel Core i9-14900K, 31 GiB RAM, OpenJDK `21.0.13.1`, CPython `3.12.3`), ArcadeDB `26.11.1`. Each run executed `scripts/measure_snapshot.py N` against an isolated temporary data directory and temporary ArcadeDB engine with no Ollama or external model server.
+
+### Before (`main` at `8164a02`)
+
+| Synthetic project size | Step | Run 1 | Run 2 | Run 3 |
+| --- | --- | --- | --- | --- |
+| `N = 1,000` | `made 1000 records` | `53.27 s` | `52.59 s` | `52.32 s` |
+| `N = 1,000` | `first snapshot` | `11.49 s` | `11.65 s` | `11.25 s` |
+| `N = 1,000` | `repeat, nothing changed` | `1.30 s` | `1.33 s` | `1.31 s` |
+| `N = 1,000` | `repeat after one record was added` | `1.78 s` | `1.84 s` | `1.79 s` |
+| `N = 10,000` | `made 10000 records` | `579.72 s` | `562.21 s` | `572.59 s` |
+| `N = 10,000` | `first snapshot` | `160.71 s` | `185.92 s` | `160.28 s` |
+| `N = 10,000` | `repeat, nothing changed` | `12.42 s` | `11.09 s` | `11.12 s` |
+| `N = 10,000` | `repeat after one record was added` | `15.78 s` | `15.55 s` | `15.66 s` |
+
+### After (snapshot, store write and CLI optimizations)
+
+| Synthetic project size | Step | Run 1 | Run 2 | Run 3 | Speedup vs baseline |
+| --- | --- | --- | --- | --- | --- |
+| `N = 1,000` | `made 1000 records` | `24.62 s` | `24.52 s` | `24.56 s` | **2.1×** (`52.3–53.3 s` → `24.5–24.6 s`) |
+| `N = 1,000` | `first snapshot` | `0.84 s` | `0.82 s` | `0.80 s` | **14×** (`11.3–11.7 s` → `0.80–0.84 s`) |
+| `N = 1,000` | `repeat, nothing changed` | `0.71 s` | `0.71 s` | `0.72 s` | **1.8×** (`1.30–1.33 s` → `0.71–0.72 s`) |
+| `N = 1,000` | `repeat after one record was added` | `0.92 s` | `0.89 s` | `0.89 s` | **2.0×** (`1.78–1.84 s` → `0.89–0.92 s`) |
+| `N = 10,000` | `made 10000 records` | `274.39 s` | `269.95 s` | `264.86 s` | **2.1×** (`562.2–579.7 s` → `264.9–274.4 s`) |
+| `N = 10,000` | `first snapshot` | `7.26 s` | `7.03 s` | `7.09 s` | **24×** (`160.3–185.9 s` → `7.03–7.26 s`) |
+| `N = 10,000` | `repeat, nothing changed` | `4.97 s` | `4.92 s` | `4.80 s` | **2.4×** (`11.1–12.4 s` → `4.80–4.97 s`) |
+| `N = 10,000` | `repeat after one record was added` | `6.72 s` | `6.71 s` | `6.57 s` | **2.4×** (`15.6–15.8 s` → `6.57–6.72 s`) |
+
+**What changed.**
+
+- **Portable snapshot (`src/cairnmind/memory.py`):** batch object durability (`syncfs` on Linux / bounded worker `fsync` fallback) instead of one synchronous disk barrier per object (`20,001` objects at `N = 10,000`), single-pass canonical JSON serialization (`_encode_objects`), skipped redundant JSON re-serialization and directory `resolve()` inside loops, SQL pre-filtering of derived code edges/nodes in `_capture`, skipping duplicate object reads for hashes just verified in `_load_snapshot`, and a journal-cursor + manifest-checksum fast path in scheduled `MemoryManager.tick()`. Format version `1`, `snapshot_id`, `state_hash`, canonical JSON and symlink/conflict guards are unchanged.
+- **Record writes & HTTP client (`src/cairnmind/store.py`, `src/cairnmind/sql.py`, `src/cairnmind/arcade.py`):** batched source validation and `source_rows` reuse across `evidence_time`, `_derive_symbol_anchor` and `_record_graph`, batched node lookups with scoped `tx.known` caching (skipping unchanged `source:<id>` vertex updates and outgoing edge deletes on new record vertices), and pre-parsed `ArcadeClient._parsed_base`.
+- **Parallel zero-trust worktree hashing & CLI `hook` fast path (`src/cairnmind/verification.py`, `src/cairnmind/cli_entry.py`, `src/cairnmind/__main__.py`):** C-level `hashlib.file_digest` and threaded hashing when `>= 64` files are in the worktree (reading full bytes every time, without trusting `mtime`), plus a lightweight `cli_entry.entrypoint` fast path invoked via `python -m cairnmind hook --client <CLIENT>` that avoids importing `typer`/`fastapi`/`textual` on every coding-assistant event (WSL 2 cold-start across 10 runs: median `311.4 ms` [304.6–334.0 ms] → `191.8 ms` [187.0–197.2 ms]).
+
+**What this measurement does not show.**
+
+- The script generates synthetic single-line `fact` records sharing one `note` source and one small Git commit; real repositories with large conversation transcripts, multiple code sources, check outputs and `record_revisions` write larger objects per record.
+- `MemoryManager.tick()` fast path skips full capture and object verification when neither the journal cursor nor `manifest.json` changed; `measure_snapshot.py` calls `MemoryManager.snapshot()` directly, which keeps full integrity verification on every manual snapshot.
+- Runs were executed on the local Linux filesystem in WSL 2 (`/tmp`); slower disks, network mounts or `/mnt/c` cross-OS I/O will take longer.
+
