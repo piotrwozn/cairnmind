@@ -12,7 +12,7 @@ cairnmind memory status my-app
 cairnmind memory auto my-app --disable
 ```
 
-Auto-save is off by default. When enabled, it saves changed memory while the service is running, including after the terminal UI is closed. It keeps the five most recent snapshots and shares identical objects between them. It does not run models, make commits or push anything to GitHub. Full conversations may contain private information: review the export before adding `.memory/cairnmind/` to the repository. Machine configuration, authentication files and configured keys are not exported; the content of saved conversations is not automatically anonymized.
+Auto-save is off by default. When enabled, it saves changed memory while the service is running, including after the terminal UI is closed. It keeps the five most recent snapshots and shares identical objects between them. It does not run models, make commits or push anything to GitHub. Full conversations may contain private information: review the export before adding `.memory/cairnmind/` to the repository. Machine configuration, authentication files and configured keys are not exported; the content of saved conversations is not automatically anonymized. Measured snapshot timings at 1,000 and 10,000 synthetic records are recorded in [evaluation/RESULTS.md](evaluation/RESULTS.md#memory-snapshot-at-size-169).
 
 On a second machine, after installing Cairnmind and cloning the repository:
 

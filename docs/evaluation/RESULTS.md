@@ -506,3 +506,30 @@ The margin of the longest job was 12.6 s of 120. A cut answer forces the long re
 The per-call figures (22 to 52 s at an input of 6,000 to 8,500 tokens, median output 694 tokens, 19 output tokens a second, the cut call of 52.5 s and its repair of 50.4 s) come from the owner's raw report of the same run, not from the issue; the figures in the issue are the job times, the counts and the budget.
 
 Not measured: a run with the new budget on the Mac, on this or another repository. The tests with a fake clock show that a cut answer and a repair of 60 s each complete within 180 s and did not within 120 s, and that a job past 180 s still fails with the budget named in its diagnostics; the same two calls of 63 s complete with `ask_timeout` 60 (they failed as `model_unavailable` before the call took its limit from the budget).
+
+# Memory snapshot at size (#169)
+
+**Measured on 26 November 2026**, three runs at `N = 1,000` records and three runs at `N = 10,000` records on WSL 2 (`Linux 6.18.58.1-microsoft-standard-WSL2`, Ubuntu, Intel Core i9-14900K, 31 GiB RAM, OpenJDK `21.0.13.1`, CPython `3.12.3`), ArcadeDB `26.11.1`, main at `8164a02`. Each run executed `scripts/measure_snapshot.py N` against an isolated temporary data directory and temporary ArcadeDB engine with no Ollama or external model server.
+
+| Synthetic project size | Step | Run 1 | Run 2 | Run 3 |
+| --- | --- | --- | --- | --- |
+| `N = 1,000` | `made 1000 records` | `53.27 s` | `52.59 s` | `52.32 s` |
+| `N = 1,000` | `first snapshot` | `11.49 s` | `11.65 s` | `11.25 s` |
+| `N = 1,000` | `repeat, nothing changed` | `1.30 s` | `1.33 s` | `1.31 s` |
+| `N = 1,000` | `repeat after one record was added` | `1.78 s` | `1.84 s` | `1.79 s` |
+| `N = 10,000` | `made 10000 records` | `579.72 s` | `562.21 s` | `572.59 s` |
+| `N = 10,000` | `first snapshot` | `160.71 s` | `185.92 s` | `160.28 s` |
+| `N = 10,000` | `repeat, nothing changed` | `12.42 s` | `11.09 s` | `11.12 s` |
+| `N = 10,000` | `repeat after one record was added` | `15.78 s` | `15.55 s` | `15.66 s` |
+
+**What the figures show.**
+
+- Writing the initial snapshot writes a content-addressed JSON object per row: `11.25–11.65 s` at `1,000` records and `160.28–185.92 s` at `10,000` records.
+- Repeating a snapshot with unchanged knowledge still reads and hashes every object before detecting a no-op (`1.30–1.33 s` at `1,000` records; `11.09–12.42 s` at `10,000` records), roughly ten times faster than creating the first snapshot.
+- Adding one record after a previous snapshot adds about `0.5 s` at `1,000` records (`1.78–1.84 s`) and `3.4–4.5 s` at `10,000` records (`15.55–15.78 s`) over the unchanged repeat.
+
+**What this measurement does not show.**
+
+- The script generates synthetic single-line `fact` records sharing one `note` source and one small Git commit; real repositories with large conversation transcripts, multiple code sources, check outputs and `record_revisions` write larger objects per record.
+- Runs were executed on the local Linux filesystem in WSL 2 (`/tmp`); slower disks, network mounts or `/mnt/c` cross-OS I/O will take longer.
+
