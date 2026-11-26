@@ -1,0 +1,12 @@
+[
+  {
+    "created_at": "<TIMESTAMP>",
+    "graph_edges": 3,
+    "graph_fingerprint": "<SHA256_1>",
+    "graph_nodes": 5,
+    "id": "<UUID_1>",
+    "name": "contract-app",
+    "publication_id": "<UUID_1>",
+    "root": "<WORKTREE>"
+  }
+]

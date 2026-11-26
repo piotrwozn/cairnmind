@@ -1,0 +1,63 @@
+{
+  "blocked": [],
+  "plan": {
+    "constraints": [
+      "Preserve field names across minor releases"
+    ],
+    "context_hash": "<SHA256_1>",
+    "created_at": "<TIMESTAMP>",
+    "goal": "Freeze JSON/MCP shapes for 1.0.0",
+    "id": "<UUID_1>",
+    "project_id": "<UUID_2>",
+    "source_ids": [
+      "<UUID_3>"
+    ],
+    "step_ids": [
+      "<UUID_4>"
+    ],
+    "title": "Contract stabilization",
+    "updated_at": "<TIMESTAMP>",
+    "version": 1
+  },
+  "reason": "ready",
+  "task": {
+    "active_key": "[\"<UUID_2>\",\"task\",\"plan:<UUID_1>:step-one\"]",
+    "content": "Verify frozen CLI and MCP responses.",
+    "created_at": "<TIMESTAMP>",
+    "id": "<UUID_4>",
+    "key": "plan:<UUID_1>:step-one",
+    "kind": "task",
+    "metadata": {
+      "acceptance_criteria": [
+        "All frozen JSON fields match"
+      ],
+      "depends_on": [],
+      "evidence_basis": "observed",
+      "evidence_earliest": "<TIMESTAMP>",
+      "evidence_latest": "<TIMESTAMP>",
+      "plan_archived": false,
+      "plan_context_hash": "<SHA256_1>",
+      "plan_ref": "<UUID_1>",
+      "requires_review": false,
+      "requires_test": false,
+      "state": "todo",
+      "step_index": 0,
+      "step_key": "step-one"
+    },
+    "project_id": "<UUID_2>",
+    "source_ids": [
+      "<UUID_3>"
+    ],
+    "status": "proposed",
+    "supersedes": null,
+    "updated_at": "<TIMESTAMP>",
+    "version": 1
+  },
+  "verification": {
+    "reasons": [
+      "no machine checks for this task and worktree"
+    ],
+    "run_ids": [],
+    "status": "unknown"
+  }
+}

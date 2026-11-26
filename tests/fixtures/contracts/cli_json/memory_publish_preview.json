@@ -1,0 +1,51 @@
+{
+  "bytes": 0,
+  "carrier": "repository",
+  "destination": "<WORKTREE>/.memory/cairnmind-published",
+  "files": 3,
+  "git": "nothing was staged, committed or pushed",
+  "held": {
+    "by_reason": {
+      "no confirm_plan act covers it": 1,
+      "proposed, not yet confirmed; review it in the inspector": 3
+    },
+    "items": [
+      {
+        "excerpt": "Keep compute_total synchronous and deterministic.",
+        "id": "<UUID_1>",
+        "key": "sync-compute",
+        "kind": "decision",
+        "reason": "proposed, not yet confirmed; review it in the inspector"
+      },
+      {
+        "excerpt": "CLI note contract check",
+        "id": "<UUID_2>",
+        "key": "cli-fact",
+        "kind": "fact",
+        "reason": "proposed, not yet confirmed; review it in the inspector"
+      },
+      {
+        "excerpt": "Contract stabilization",
+        "id": "<UUID_3>",
+        "key": null,
+        "kind": "plan",
+        "reason": "no confirm_plan act covers it"
+      },
+      {
+        "excerpt": "Verify frozen CLI and MCP responses.",
+        "id": "<UUID_4>",
+        "key": "plan:<UUID_3>:step-one",
+        "kind": "task",
+        "reason": "proposed, not yet confirmed; review it in the inspector"
+      }
+    ],
+    "total": 4
+  },
+  "plans": 0,
+  "project_id": "<UUID_5>",
+  "records": 0,
+  "status": "preview",
+  "unchanged": 3,
+  "would_write": [],
+  "written": []
+}

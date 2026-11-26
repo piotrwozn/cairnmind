@@ -50,6 +50,11 @@ As done for 0.9.0 (#66, which changed `pyproject.toml`, `src/cairnmind/__init__.
    The v0.9.0 release has exactly these three assets. Downloads are verified with `sha256sum -c SHA256SUMS`.
 
    **The database on another host (#68, #225).** The notes of 0.11.0 said that it was checked locally: one machine, a loopback address or a relay for the network. The notes of the release that includes #225 say instead that it was checked between two machines, once, on 22 November 2026 (the figures and what failed are in [DEPLOYMENT.md](DEPLOYMENT.md#two-installations-and-one-store-what-a-trial-between-two-machines-showed)), and name what was not checked: a model server on another computer, the published image (the trial built its own) and Docker Desktop (it used Colima), indexing after every file changed, a service with models on over the network (#363), more than one run of anything, and `restore` over the connection, which failed (#362). Remove from that sentence what a later trial covers, and no more; the open issues of the trial (#362, #371, #373, #365, #363) stay in Known limits until each is fixed.
+4. **Record the release's contract fixtures (#249).** Right after publishing, capture the frozen store, export, backup, portable snapshot and published memory fixtures from the built release wheel and add them to `main` in a follow-up PR so CI upgrades and file-compatibility tests cover `X.Y.Z`:
+
+   ```bash
+   uv run python scripts/build_release_fixtures.py --version "$VERSION" --wheel "dist/cairnmind-$VERSION-py3-none-any.whl"
+   ```
 
 ## The database image
 

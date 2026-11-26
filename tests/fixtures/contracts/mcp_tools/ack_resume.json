@@ -1,0 +1,21 @@
+{
+  "created_at": "<TIMESTAMP>",
+  "epoch": 1,
+  "id": "<UUID_1>",
+  "meaning": "Exact packet receipt/readback; not proof of understanding",
+  "packet_hash": "<SHA256_1>",
+  "packet_id": "<UUID_2>",
+  "project_id": "<UUID_3>",
+  "readback": {
+    "plan": {
+      "id": "<UUID_4>",
+      "version": 1
+    },
+    "task": {
+      "id": "<UUID_5>",
+      "version": 1
+    }
+  },
+  "session_id": "<UUID_6>",
+  "status": "acknowledged"
+}

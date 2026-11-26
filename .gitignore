@@ -22,7 +22,7 @@ evidence/
 
 # Maintainer-only release and qualification tooling, kept on disk only
 release-tools/
-releases/
+/releases/
 .ruv-swarm/
 
 # Build outputs and local project state

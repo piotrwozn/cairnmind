@@ -54,3 +54,9 @@ HeadArg = _text("HEAD", "The later Git commit, branch or tag.")
 PlanArg = _text("PLAN", "The plan's id, as `plan list` prints it.")
 KindClientArg = _text("CLIENT", "The client whose transcripts have the kind: claude, codex or unknown.")
 KindArg = _text("KIND", "The record kind, as `record-kind list` names it.")
+ImporterNameArg = _text("NAME", "The external converter's name.")
+ImporterCommandArg = _text("COMMAND", "Absolute path to the converter executable.")
+ImporterArgsArg = Annotated[
+    list[str] | None,
+    typer.Argument(metavar="[ARGS...]", help="Fixed arguments passed to the converter before the transcript path."),
+]
