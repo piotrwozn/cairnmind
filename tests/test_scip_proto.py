@@ -178,3 +178,128 @@ def test_scip_proto_rejects_malformed_and_path_traversal():
     assert decoded.documents[0].relative_path == "main.go"
     assert MAX_SCIP_BYTES == 256 * 1024 * 1024
     assert ROLE_IMPORT == 0x2
+
+
+def test_scip_proto_wire_types_limits_and_edge_cases(tmp_path, monkeypatch):
+    from cairnmind import scip_proto as sp
+
+    # Skip unknown fields across wire types 0 (varint), 1 (64-bit), 2 (len), 5 (32-bit)
+    skip_fields = (
+        _encode_varint((50 << 3) | 0) + _encode_varint(12345)
+        + _encode_varint((51 << 3) | 1) + (b"\x01" * 8)
+        + _encode_varint((52 << 3) | 5) + (b"\x02" * 4)
+        + _encode_varint((53 << 3) | 2) + _encode_varint(2) + b"ok"
+    )
+    # Also test Metadata, ToolInfo, Relationship, SymbolInfo, Occurrence unknown fields & unpacked range
+    occ_payload = (
+        _encode_varint((1 << 3) | 0) + _encode_varint(4)  # unpacked repeated int32 range (3 ints)
+        + _encode_varint((1 << 3) | 0) + _encode_varint(1)
+        + _encode_varint((1 << 3) | 0) + _encode_varint(9)
+        + _encode_varint((7 << 3) | 0) + _encode_varint(4)  # unpacked enclosing_range (4 ints)
+        + _encode_varint((7 << 3) | 0) + _encode_varint(0)
+        + _encode_varint((7 << 3) | 0) + _encode_varint(8)
+        + _encode_varint((7 << 3) | 0) + _encode_varint(1)
+        + _encode_bytes_field(2, b"scip-go gomod a v1 f().")
+        + skip_fields
+    )
+    rel_payload = (
+        _encode_bytes_field(1, b"scip-go gomod a v1 I#")
+        + _encode_varint((2 << 3) | 0) + _encode_varint(1)  # is_reference
+        + _encode_varint((4 << 3) | 0) + _encode_varint(1)  # is_type_definition
+        + _encode_varint((5 << 3) | 0) + _encode_varint(1)  # is_definition
+        + skip_fields
+    )
+    sym_payload = (
+        _encode_bytes_field(1, b"scip-go gomod a v1 f().")
+        + _encode_bytes_field(4, rel_payload)
+        + _encode_bytes_field(8, b"scip-go gomod a v1 T#")
+        + skip_fields
+    )
+    tool_payload = _encode_bytes_field(1, b"t") + skip_fields
+    meta_payload = _encode_bytes_field(2, tool_payload) + skip_fields
+    doc_payload = (
+        _encode_bytes_field(1, b"a.go")
+        + _encode_bytes_field(2, occ_payload)
+        + _encode_bytes_field(3, sym_payload)
+        + _encode_varint((6 << 3) | 0) + _encode_varint(1)  # position_encoding
+        + skip_fields
+    )
+    full = _encode_bytes_field(1, meta_payload) + _encode_bytes_field(2, doc_payload) + skip_fields
+    parsed = parse_scip_bytes(full)
+    assert parsed.documents[0].position_encoding == 1
+    assert parsed.documents[0].occurrences[0].start_line == 4
+    assert parsed.documents[0].occurrences[0].enclosing_end_line == 8
+    rel = parsed.documents[0].symbols[0].relationships[0]
+    assert rel.is_reference and rel.is_type_definition and rel.is_definition
+
+    # Single-line typed range with line=0, col=0 (empty message)
+    zero_occ = ScipOccurrence(0, 0, 0, 0, "scip-go gomod a v1 f().", ROLE_DEFINITION, 0, 0)
+    zero_idx = ScipIndex(documents=[ScipDocument(relative_path="z.go", occurrences=[zero_occ])])
+    dec_zero = parse_scip_bytes(encode_scip_index(zero_idx, typed_ranges=True))
+    assert (dec_zero.documents[0].occurrences[0].start_line, dec_zero.documents[0].occurrences[0].end_line) == (0, 0)
+
+    # Error cases: varint > 64 bits, truncated 64-bit, truncated 32-bit, bad wire type (3)
+    with pytest.raises(ScipFormatError, match="64 bits"):
+        parse_scip_bytes(b"\x80" * 11 + b"\x01")
+    with pytest.raises(ScipFormatError, match="Truncated"):
+        parse_scip_bytes(_encode_varint((51 << 3) | 1) + b"\x01\x02")
+    with pytest.raises(ScipFormatError, match="Truncated"):
+        parse_scip_bytes(_encode_varint((52 << 3) | 5) + b"\x01\x02")
+    with pytest.raises(ScipFormatError, match="wire type"):
+        parse_scip_bytes(_encode_varint((50 << 3) | 3))
+    with pytest.raises(ScipFormatError, match="Invalid document path"):
+        parse_scip_bytes(_encode_bytes_field(2, _encode_bytes_field(1, b"a\x00b.go")))
+
+    # Document / occurrence / symbol count caps
+    monkeypatch.setattr(sp, "MAX_SCIP_DOCUMENTS", 1)
+    two_docs = ScipIndex(documents=[ScipDocument(relative_path="a.go"), ScipDocument(relative_path="b.go")])
+    with pytest.raises(ScipFormatError, match="documents"):
+        parse_scip_bytes(encode_scip_index(two_docs))
+    monkeypatch.setattr(sp, "MAX_SCIP_DOCUMENTS", 100)
+
+    monkeypatch.setattr(sp, "MAX_SCIP_OCCURRENCES", 1)
+    two_occs = ScipIndex(documents=[ScipDocument(relative_path="a.go", occurrences=[zero_occ, zero_occ])])
+    with pytest.raises(ScipFormatError, match="occurrences"):
+        parse_scip_bytes(encode_scip_index(two_occs))
+    monkeypatch.setattr(sp, "MAX_SCIP_OCCURRENCES", 100)
+
+    monkeypatch.setattr(sp, "MAX_SCIP_SYMBOLS", 1)
+    sinfo = ScipSymbolInfo(symbol="scip-go gomod a v1 f().")
+    two_syms = ScipIndex(documents=[ScipDocument(relative_path="a.go", symbols=[sinfo, sinfo])])
+    with pytest.raises(ScipFormatError, match="symbols"):
+        parse_scip_bytes(encode_scip_index(two_syms))
+    two_ext = ScipIndex(external_symbols=[sinfo, sinfo])
+    with pytest.raises(ScipFormatError, match="symbols"):
+        parse_scip_bytes(encode_scip_index(two_ext))
+    monkeypatch.setattr(sp, "MAX_SCIP_SYMBOLS", 100)
+
+    # parse_scip_file size ceiling
+    big = tmp_path / "big.scip"
+    big.write_bytes(b"\x00" * 32)
+    monkeypatch.setattr(sp, "MAX_SCIP_BYTES", 16)
+    with pytest.raises(ScipFormatError, match="exceeds"):
+        parse_scip_file(big)
+
+
+def test_scip_symbol_descriptor_edge_cases():
+    # Local symbol
+    local = parse_scip_symbol("local 7")
+    assert local["local"] is True and local["kind"] == "variable"
+
+    # Space-escaped package name ("my  pkg"), backtick-escaped identifier with doubled backtick
+    spaced = parse_scip_symbol("scip-java maven com.acme:my  pkg 1.0 com/`foo``bar`/Baz#`get``val`().")
+    assert spaced["package"] == "maven:com.acme:my pkg"
+    assert spaced["name"] == "Baz.get`val"
+    assert spaced["kind"] == "method"
+
+    # Parameter (), type param [], namespace /, bare constant without type owner, no descriptors
+    assert parse_scip_symbol("scip-go gomod a v1 f().(arg)")["kind"] == "parameter"
+    assert parse_scip_symbol("scip-go gomod a v1 Box#[T]")["kind"] == "type"
+    assert parse_scip_symbol("scip-go gomod a v1 pkg/")["kind"] == "type"
+    assert parse_scip_symbol("scip-go gomod a v1 GLOBAL.")["kind"] == "constant"
+    assert parse_scip_symbol("scip-go gomod a v1")["name"] == "a"
+    # Trailing bare identifier without suffix + unclosed method descriptor
+    assert parse_scip_symbol("scip-go gomod a v1 bare")["name"] == "bare"
+    assert parse_scip_symbol("scip-go gomod a v1 fn(1)")["kind"] == "function"
+    # Negative varint encoder path
+    assert len(_encode_varint(-1)) == 10
