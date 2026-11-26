@@ -24,7 +24,9 @@ from uuid import UUID, uuid4
 from .code_graph import code_graph_pending
 from .file_locks import lock_exclusive
 from .journal import Journal
-from .private_files import atomic_replace, fsync_directory, is_reparse_point, make_private, open_no_follow
+from .private_files import (
+    atomic_replace, fsync_directory, is_reparse_point, make_private, make_private_fd, open_no_follow,
+)
 from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
 from .memory_size import WARN_FRACTION, package_size
 from .store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
@@ -63,6 +65,9 @@ def _without_rebuilt_graph(payload):
     linked = {row.get(end) for row in edges for end in ("from_id", "to_id")}
     nodes = [row for row in payload["nodes"] if row.get("kind") in _GLOBAL_NODES or row.get("id") in linked]
     return {**payload, "nodes": nodes, "edges": edges}
+
+
+_DEFAULT_WITHOUT_REBUILT_GRAPH = _without_rebuilt_graph
 
 
 class MemoryConflict(ValueError):
@@ -674,7 +679,7 @@ def _write_objects_batch(objects_dir: Path, items: list[tuple[Path, bytes]]) -> 
                 staged.append((temporary, target))
                 with os.fdopen(fd, "wb") as handle:
                     handle.write(data)
-                    os.fchmod(handle.fileno(), 0o600)
+                    make_private_fd(handle.fileno(), temporary)
             if not _try_syncfs(objects_dir):
                 def _fsync_path(tmp_path: str) -> None:
                     rfd = os.open(tmp_path, os.O_RDONLY | os.O_NOFOLLOW)
@@ -766,28 +771,34 @@ class MemoryManager:
         if authorize is not None:
             authorize()
         project, root = self._scope(project_id, worktree, reader)
-        raw_rows = {"edges": reader.query(
-            "SELECT FROM edges WHERE project_id=:project AND kind NOT IN :code_edges",
-            {"project": project_id, "code_edges": sorted(_CODE_EDGES)},
-        )}
-        base_nodes = list(reader.query(
-            "SELECT FROM nodes WHERE project_id=:project AND kind IN :kept_nodes",
-            {"project": project_id, "kept_nodes": sorted(_GLOBAL_NODES)},
-        ))
-        seen_node_ids = {r.get("id") for r in base_nodes}
-        linked = sorted({
-            r.get(end) for r in raw_rows["edges"] for end in ("from_id", "to_id")
-            if isinstance(r.get(end), str) and r.get(end) not in seen_node_ids
-        })
-        for start in range(0, len(linked), 500):
-            base_nodes.extend(reader.query(
-                "SELECT FROM nodes WHERE project_id=:project AND id IN :ids",
-                {"project": project_id, "ids": linked[start:start + 500]},
+        if _without_rebuilt_graph is _DEFAULT_WITHOUT_REBUILT_GRAPH:
+            raw_rows = {"edges": reader.query(
+                "SELECT FROM edges WHERE project_id=:project AND kind NOT IN :code_edges",
+                {"project": project_id, "code_edges": sorted(_CODE_EDGES)},
+            )}
+            base_nodes = list(reader.query(
+                "SELECT FROM nodes WHERE project_id=:project AND kind IN :kept_nodes",
+                {"project": project_id, "kept_nodes": sorted(_GLOBAL_NODES)},
             ))
-        raw_rows["nodes"] = base_nodes
-        for table in TABLES:
-            if table not in raw_rows:
-                raw_rows[table] = reader.query(f"SELECT FROM {table} WHERE project_id=:project", {"project": project_id})
+            seen_node_ids = {r.get("id") for r in base_nodes}
+            linked = sorted({
+                r.get(end) for r in raw_rows["edges"] for end in ("from_id", "to_id")
+                if isinstance(r.get(end), str) and r.get(end) not in seen_node_ids
+            })
+            for start in range(0, len(linked), 500):
+                base_nodes.extend(reader.query(
+                    "SELECT FROM nodes WHERE project_id=:project AND id IN :ids",
+                    {"project": project_id, "ids": linked[start:start + 500]},
+                ))
+            raw_rows["nodes"] = base_nodes
+            for table in TABLES:
+                if table not in raw_rows:
+                    raw_rows[table] = reader.query(f"SELECT FROM {table} WHERE project_id=:project", {"project": project_id})
+        else:
+            raw_rows = {
+                table: reader.query(f"SELECT FROM {table} WHERE project_id=:project", {"project": project_id})
+                for table in TABLES
+            }
         payload = _without_rebuilt_graph({
             table: sorted([_logical(table, r, copy=False) for r in raw_rows[table]], key=lambda r: r["id"])
             for table in TABLES

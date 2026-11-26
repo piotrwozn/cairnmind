@@ -86,7 +86,7 @@ def test_memory_write_objects_batch_paths_and_error_cleanup(tmp_path, monkeypatc
     items = [(many_dir / f"f{i}.json", f'{{"i":{i}}}'.encode()) for i in range(6)]
     monkeypatch.setattr(memory.sys, "platform", "linux")
     monkeypatch.setattr(memory, "_try_syncfs", lambda d: True)
-    monkeypatch.setattr(memory.os, "fchmod", lambda fd, mode: None, raising=False)
+    monkeypatch.setattr(memory, "make_private_fd", lambda fd, path: None)
     monkeypatch.setattr(memory, "atomic_replace", lambda src, dst: Path(src).replace(dst))
     memory._write_objects_batch(many_dir, items)
     assert (many_dir / "f5.json").read_bytes() == b'{"i":5}'

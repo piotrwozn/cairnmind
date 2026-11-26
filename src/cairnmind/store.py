@@ -653,31 +653,35 @@ class Store:
                        else (*V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 2
                        else V05_DOCUMENT_TYPES if version == 3 else DOCUMENT_TYPES)
         exports = collections if version is not None else EXPORT_TYPES
+        statements = []
+        run_ddl = statements.append if version is None else self.client.command
         for collection in collections:
-            self.client.command(f"CREATE DOCUMENT TYPE {collection} IF NOT EXISTS")
+            run_ddl(f"CREATE DOCUMENT TYPE {collection} IF NOT EXISTS")
         if version is None:
-            self.client.command("CREATE VERTEX TYPE nodes IF NOT EXISTS")
-            self.client.command("CREATE EDGE TYPE edges IF NOT EXISTS")
+            run_ddl("CREATE VERTEX TYPE nodes IF NOT EXISTS")
+            run_ddl("CREATE EDGE TYPE edges IF NOT EXISTS")
         for collection in exports:
-            self.client.command(f"CREATE PROPERTY {collection}.id IF NOT EXISTS STRING")
-            self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}(id) UNIQUE NULL_STRATEGY SKIP")
+            run_ddl(f"CREATE PROPERTY {collection}.id IF NOT EXISTS STRING")
+            run_ddl(f"CREATE INDEX IF NOT EXISTS ON {collection}(id) UNIQUE NULL_STRATEGY SKIP")
             if collection != "projects":
-                self.client.command(f"CREATE PROPERTY {collection}.project_id IF NOT EXISTS STRING")
-                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}(project_id) NOTUNIQUE NULL_STRATEGY SKIP")
+                run_ddl(f"CREATE PROPERTY {collection}.project_id IF NOT EXISTS STRING")
+                run_ddl(f"CREATE INDEX IF NOT EXISTS ON {collection}(project_id) NOTUNIQUE NULL_STRATEGY SKIP")
         if version is None:
             for collection, field in (("projects", "name"), ("projects", "root"), ("project_roots", "path"),
                                       ("sources", "current_key"), ("records", "active_key"), ("jobs", "job_key"),
                                       ("import_cursors", "path")):
-                self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
-                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) UNIQUE NULL_STRATEGY SKIP")
+                run_ddl(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
+                run_ddl(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) UNIQUE NULL_STRATEGY SKIP")
             for collection in ("sources", "chunks", "nodes", "edges"):
-                self.client.command(f"CREATE PROPERTY {collection}.is_current IF NOT EXISTS BOOLEAN")
+                run_ddl(f"CREATE PROPERTY {collection}.is_current IF NOT EXISTS BOOLEAN")
             for collection, field in (("chunks", "text"), ("records", "content")):
-                self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
-                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) FULL_TEXT METADATA {{similarity:'BM25'}}")
-        self.client.command("CREATE PROPERTY journal_events.epoch IF NOT EXISTS STRING")
-        self.client.command("CREATE PROPERTY journal_events.seq IF NOT EXISTS LONG")
-        self.client.command("CREATE INDEX IF NOT EXISTS ON journal_events(epoch,seq) UNIQUE")
+                run_ddl(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
+                run_ddl(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) FULL_TEXT METADATA {{similarity:'BM25'}}")
+        run_ddl("CREATE PROPERTY journal_events.epoch IF NOT EXISTS STRING")
+        run_ddl("CREATE PROPERTY journal_events.seq IF NOT EXISTS LONG")
+        run_ddl("CREATE INDEX IF NOT EXISTS ON journal_events(epoch,seq) UNIQUE")
+        if statements:
+            self.client.script(";\n".join(statements))
         with self.client.transaction() as tx:
             if not tx.query("SELECT id FROM journal_state WHERE id='current'"):
                 insert_document(tx, "journal_state", {"id": "current", "epoch": str(uuid4()), "seq": 0, "first_seq": 1})

@@ -40,7 +40,7 @@ Issues = "https://github.com/piotrwozn/cairnmind/issues"
 Changelog = "https://github.com/piotrwozn/cairnmind/blob/main/CHANGELOG.md"
 
 [project.scripts]
-cairnmind = "cairnmind.cli_entry:entrypoint"
+cairnmind = "cairnmind.cli:entrypoint"
 
 [build-system]
 requires = ["hatchling"]
