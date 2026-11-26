@@ -219,7 +219,7 @@ def test_a_new_store_cut_while_its_schema_is_created_is_not_ready_and_the_next_s
                     arcade_database=settings.arcade_database)
     with closing(ArcadeClient(root)) as client:
         client.ensure_database()
-    relay.cut_at(40, matching=b"/api/v1/command/")
+    relay.cut_at(2, matching=b"/api/v1/command/")
     with pytest.raises(ArcadeError, match="is unavailable"):
         Store(data)
     relay.heal()

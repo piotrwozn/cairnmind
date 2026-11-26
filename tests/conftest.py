@@ -859,9 +859,9 @@ class SchemaTemplate:
                 try:
                     template.admin_client.server_command(f"open database {name}")
                     db_client = ArcadeClient(
-                        replace(client.settings, arcade_database=name),
-                        transport=client.transport,
-                        _connections=client._connections,
+                        replace(template.settings, arcade_database=name),
+                        transport=template.admin_client.transport,
+                        _connections=template.admin_client._connections,
                     )
                     db_client.command(
                         "INSERT INTO journal_state CONTENT :row",
