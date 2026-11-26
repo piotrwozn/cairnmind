@@ -71,6 +71,7 @@ db_app = typer.Typer(help="Access to a database on another host: its own user (#
 answers_app = typer.Typer(help="The opt-in log of ask answers and the evidence they cited.")
 service_app = typer.Typer(help="Background knowledge service autostart management.")
 autostart_app = typer.Typer(help="Per-user service autostart at logon (Windows Task Scheduler).")
+scip_app = typer.Typer(help="Multi-language SCIP code indexing (Go, Rust, Java, Kotlin, C/C++, C#, PHP, Ruby).")
 service_app.add_typer(autostart_app, name="autostart")
 app.add_typer(projects_app, name="project")
 app.add_typer(tasks_app, name="task")
@@ -89,6 +90,7 @@ app.add_typer(store_app, name="store")
 app.add_typer(db_app, name="db")
 app.add_typer(answers_app, name="answers")
 app.add_typer(service_app, name="service")
+app.add_typer(scip_app, name="scip")
 
 
 def output(value) -> None:
@@ -1107,7 +1109,16 @@ def stop(ctx: typer.Context, as_json: JSON_FLAG = False):
 
 @projects_app.command("add")
 @initialized
-def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, as_json: JSON_FLAG = False):
+def project_add(
+    ctx: typer.Context,
+    name: ProjectNameArg,
+    root: ProjectRootArg,
+    as_json: JSON_FLAG = False,
+    no_scip: Annotated[
+        bool,
+        typer.Option("--no-scip", help="Skip enqueueing automatic background SCIP indexing for detected languages."),
+    ] = False,
+):
     """Register a project: its name and the folder of its files, which are indexed."""
     import shlex
     from cairnmind import first_start
@@ -1131,6 +1142,11 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
     from cairnmind.ingest import index_project, register_default_histories
     result = index_project(store, project["id"])
     discovery = register_default_histories(store, project["id"], Path(project["root"]))
+    if no_scip:
+        scip_info = {"mode": "skipped", "detected_languages": [], "queued": False, "job_id": None}
+    else:
+        from cairnmind.scip_ingest import enqueue_project_scip
+        scip_info = enqueue_project_scip(store, ctx.obj, project["id"], root)
     # Said, never silent (#327): whether a removed project came back, or one that keeps its memory did not.
     restored, kept, details = removal.add_outcome(removed, known, project)
     quoted = shlex.quote(safe_text(name))
@@ -1147,13 +1163,17 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
             lines.append(first_start.NOT_GIT.format(root=shown))
         elif _git_out(root, "rev-parse", "--verify", "-q", "HEAD") is None:
             lines.append(first_start.NO_COMMIT.format(root=shown))
+        if scip_info.get("queued"):
+            langs = ", ".join(scip_info["detected_languages"])
+            lines.append(f"Queued background SCIP indexing for: {langs}.")
         lines.extend(removal.not_brought_back(row) for row in kept)
         lines.extend([waiting_line] if waiting_line else [])
         # The warning comes before the next step, which stays last (#326).
         lines.append((first_start.PROJECT_EXISTED_NEXT if existed or restored else first_start.PROJECT_ADDED_NEXT)
                      .format(project=quoted))
         return lines
-    _human_or_json({"project": project, "indexed": result, "history": discovery, "jobs": jobs, **details},
+    _human_or_json({"project": project, "indexed": result, "history": discovery, "jobs": jobs,
+                    "scip": scip_info, **details},
                    as_json, sentences)
     if result.get("unavailable"):  # a folder of another machine was not indexed: said above, and the exit code says so
         raise typer.Exit(1)
@@ -2785,3 +2805,113 @@ def service_autostart_remove(ctx: typer.Context):
         output(autostart_remove(ctx.obj))
     except ValueError as exc:
         refuse(str(exc))
+
+
+@scip_app.command("status")
+def scip_status_cmd(
+    ctx: typer.Context,
+    project: Annotated[str | None, typer.Argument(help="Optional project name or id to detect languages in.")] = None,
+    root: Annotated[Path | None, typer.Option("--root", help="Optional folder path to detect SCIP languages in.")] = None,
+):
+    """Show installed SCIP indexers, host toolchains, and detected languages. Read-only."""
+    from cairnmind.scip_manager import scip_status
+    target_root = root
+    if project and target_root is None:
+        store = store_for_read(ctx.obj)
+        target_root = Path(store.resolve_project(project)["root"])
+    output(scip_status(ctx.obj, target_root))
+
+
+@scip_app.command("install")
+@initialized
+def scip_install_cmd(
+    ctx: typer.Context,
+    targets: Annotated[
+        list[str] | None,
+        typer.Argument(help="Languages (go, rust, java, kotlin, c, cpp, csharp, php, ruby) or indexer IDs. Omit for all."),
+    ] = None,
+):
+    """Download and verify pinned SCIP indexers into Cairnmind's private runtime directory."""
+    from cairnmind.scip_manager import ScipError, ensure_indexer
+    from cairnmind.scip_registry import INDEXERS, LANGUAGE_TO_INDEXER
+
+    if not targets:
+        indexer_ids = list(INDEXERS.keys())
+    else:
+        indexer_ids = []
+        for item in targets:
+            key = item.strip().lower()
+            mapped = key if key in INDEXERS else LANGUAGE_TO_INDEXER.get(key)
+            if not mapped:
+                refuse(f"Unknown SCIP language or indexer: {item!r}")
+            if mapped not in indexer_ids:
+                indexer_ids.append(mapped)
+
+    results = {}
+    failed = False
+    for indexer_id in indexer_ids:
+        try:
+            installed = ensure_indexer(ctx.obj, indexer_id, allow_download=True)
+            results[indexer_id] = installed.to_dict()
+        except (ScipError, ValueError, OSError) as exc:
+            failed = True
+            results[indexer_id] = {"indexer_id": indexer_id, "status": "install_failed", "error": str(exc)}
+    output({"indexers": results})
+    if failed:
+        raise typer.Exit(1)
+
+
+@scip_app.command("index")
+@initialized
+def scip_index_cmd(
+    ctx: typer.Context,
+    project: ProjectArg,
+    lang: Annotated[
+        list[str] | None,
+        typer.Option("--lang", help="Limit indexing to specific language(s). Repeatable."),
+    ] = None,
+    worktree: Annotated[Path | None, typer.Option("--worktree", help="Registered project folder to index.")] = None,
+    no_download: Annotated[
+        bool, typer.Option("--no-download", help="Use only already-installed indexers; do not download.")
+    ] = False,
+):
+    """Run SCIP indexer(s) for a project and update its ArcadeDB code graph immediately."""
+    from cairnmind.scip_ingest import index_project_scip
+    store = store_for(ctx.obj)
+    result = index_project_scip(
+        store,
+        ctx.obj,
+        project,
+        languages=lang or None,
+        worktree=worktree,
+        allow_download=not no_download,
+    )
+    output(result)
+    if result.get("errors"):
+        raise typer.Exit(1)
+
+
+@scip_app.command("import")
+@initialized
+def scip_import_cmd(
+    ctx: typer.Context,
+    project: ProjectArg,
+    index_file: Annotated[
+        Path,
+        typer.Argument(
+            metavar="INDEX_FILE",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="Path to an externally or CI-generated binary SCIP index (index.scip).",
+        ),
+    ],
+    root: Annotated[Path | None, typer.Option("--root", help="Registered project folder the SCIP paths are relative to.")] = None,
+):
+    """Import an externally generated index.scip into a project's ArcadeDB code graph."""
+    from cairnmind.scip_ingest import apply_scip_index
+    store = store_for(ctx.obj)
+    proj = store.resolve_project(project)
+    target_root = root if root is not None else Path(proj["root"])
+    result = apply_scip_index(store, proj["id"], target_root, index_file.expanduser().resolve())
+    output(result)

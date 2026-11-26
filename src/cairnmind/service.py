@@ -115,6 +115,7 @@ class RegisterProjectBody(BaseModel):
     name: str = Field(min_length=1, max_length=256)
     root: str = Field(min_length=1, max_length=4096)
     fresh: bool = False  # a separate identity: a removed project of that name and folder is not brought back
+    no_scip: bool = False  # skip automatic background SCIP enqueue for this registration
 
 
 class PlanSaveBody(BaseModel):
@@ -377,7 +378,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     sessions = SessionManager(store, settings)
     memory = MemoryManager(store)
     inference = InferenceQueue()
-    background_status: dict = {"scanner_error": None, "model_error": None, "memory_error": None}
+    background_status: dict = {"scanner_error": None, "model_error": None, "memory_error": None, "scip_error": None}
 
     async def writer_lost(exc) -> None:
         # Another installation took over writing: the background work pauses instead of failing on every turn.
@@ -478,6 +479,23 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                         log.exception("Indexing project %s failed", project["name"])
                         continue
                     scan_errors.extend(f"{project['name']}: {err}" for err in indexed.get("errors", []))
+                    if indexed.get("changed", 0) > 0 and settings.scip_mode == "auto":
+                        try:
+                            from cairnmind.ingest import tree_signature
+                            from cairnmind.scip_ingest import enqueue_project_scip
+                            sig = await asyncio.to_thread(tree_signature, store, project["id"])
+                            await asyncio.to_thread(
+                                enqueue_project_scip,
+                                store,
+                                settings,
+                                project["id"],
+                                Path(project["root"]),
+                                dedupe_suffix=f"tree:{sig[:16]}",
+                            )
+                        except (asyncio.CancelledError, StoreNotWriter):
+                            raise
+                        except Exception as exc:
+                            log.warning("Failed to enqueue SCIP refresh for %s: %s", project["name"], exc)
                 pending = await asyncio.to_thread(index_pending_sources, store)
                 scan_errors.extend(f"memory index: {err}" for err in pending.get("errors", []))
                 from cairnmind.verification import recover_interrupted_runs
@@ -508,6 +526,61 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 background_status["scanner_error"] = str(exc)
                 log.exception("Archive scan failed")
             await asyncio.sleep(settings.poll_seconds)
+
+    async def scip_worker() -> None:
+        """Dedicated background worker for multi-language SCIP indexing jobs (never blocks scanner or GPU)."""
+        if settings.scip_mode == "off":
+            return
+        from cairnmind.scip_ingest import index_project_scip
+        lease_seconds = max(120, int(settings.scip_timeout) + 60)
+        while True:
+            try:
+                job = await asyncio.to_thread(store.claim_job, "scip", lease_seconds, ["scip_index"])
+                writer_back()
+                if not job:
+                    await asyncio.sleep(min(10, max(1, settings.poll_seconds)))
+                    continue
+                try:
+                    payload = job.get("payload") or {}
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    result = await asyncio.to_thread(
+                        index_project_scip,
+                        store,
+                        settings,
+                        job["project_id"],
+                        languages=payload.get("languages"),
+                        worktree=payload.get("root"),
+                    )
+                    errors = result.get("errors") or []
+                    background_status["scip_error"] = "; ".join(errors[:5]) or None
+                    await asyncio.to_thread(
+                        finish_job_if_present,
+                        store,
+                        job["id"],
+                        "; ".join(map(str, errors))[:2000] if errors else None,
+                        worker=job["worker"],
+                        expected_attempts=job["attempts"],
+                    )
+                except Exception as exc:
+                    background_status["scip_error"] = str(exc) or type(exc).__name__
+                    await asyncio.to_thread(
+                        finish_job_if_present,
+                        store,
+                        job["id"],
+                        str(exc) or type(exc).__name__,
+                        worker=job["worker"],
+                        expected_attempts=job["attempts"],
+                    )
+            except asyncio.CancelledError:
+                raise
+            except StoreNotWriter as exc:
+                await writer_lost(exc)
+                continue
+            except Exception as exc:
+                background_status["scip_error"] = str(exc)
+                log.exception("SCIP worker failed")
+                await asyncio.sleep(10)
 
     async def fingerprint_start() -> None:
         """The fixed request to an OpenAI-compatible embedding role at start (#212), retried while it is down.
@@ -603,7 +676,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         if fingerprint_client is not None and models_on:
             tasks.append(asyncio.create_task(fingerprint_start()))
         if start_worker:
-            tasks += [asyncio.create_task(scanner()), asyncio.create_task(memory_snapshots())]
+            tasks += [
+                asyncio.create_task(scanner()),
+                asyncio.create_task(scip_worker()),
+                asyncio.create_task(memory_snapshots()),
+            ]
             if models_on:  # held: without models the embed and extract jobs stay pending, asked of nobody (#274)
                 tasks.append(asyncio.create_task(jobs()))
         try:
@@ -734,9 +811,14 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         removed = await asyncio.to_thread(removed_rows, store)
         created = await asyncio.to_thread(store.add_project, body.name, root, not body.fresh)
         cache.clear()
+        if body.no_scip:
+            scip_info = {"mode": "skipped", "detected_languages": [], "queued": False, "job_id": None}
+        else:
+            from cairnmind.scip_ingest import enqueue_project_scip
+            scip_info = await asyncio.to_thread(enqueue_project_scip, store, settings, created["id"], root)
         # Said, never silent (#327): a removed project that came back is not a new one, and one that keeps its
         # memory under this name or folder was not brought back.
-        return {"project": created, **add_outcome(removed, known, created)[2]}
+        return {"project": created, "scip": scip_info, **add_outcome(removed, known, created)[2]}
 
     @app.get("/project-roots", dependencies=auth)
     async def project_roots(project: str):

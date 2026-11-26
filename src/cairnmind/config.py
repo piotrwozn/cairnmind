@@ -255,6 +255,12 @@ class Settings:
     engine_log_bytes: int = 10 * 1024 * 1024
     engine_log_copies: int = 3
     job_history_days: int = 30
+    # Automatic SCIP multi-language code indexing: "auto" (enqueue on project add/change),
+    # "manual" (only on explicit `cairnmind scip index`/`import`), or "off".
+    scip_mode: str = "auto"
+    scip_timeout: float = 300.0
+    scip_docker_fallback: bool = True
+    scip_languages: list = field(default_factory=list)
 
     @property
     def url(self) -> str:
@@ -319,9 +325,13 @@ class Settings:
                                ("tmux_executable", "TMUX_EXECUTABLE"),
                                ("port", "PORT"),
                                ("cockpit_port", "COCKPIT_PORT"),
-                               ("ollama_url", "OLLAMA_URL")):
+                               ("ollama_url", "OLLAMA_URL"),
+                               ("scip_mode", "SCIP_MODE"),
+                               ("scip_timeout", "SCIP_TIMEOUT"),
+                               ("scip_docker_fallback", "SCIP_DOCKER_FALLBACK")):
             spelling = ENV_PREFIXES[0] + variable
-            if name in ("port", "cockpit_port", "ollama_url", "arcade_connect_url"):
+            if name in ("port", "cockpit_port", "ollama_url", "arcade_connect_url",
+                        "scip_mode", "scip_timeout", "scip_docker_fallback"):
                 # an empty variable (a project file can forward one) names nothing: the first spelling that is not empty;
                 # for the connect address it must not turn a connect-only installation into a managed one
                 spelling = next((key for key in env_names(variable) if os.environ.get(key)), None)
@@ -338,6 +348,25 @@ class Settings:
                         raise ValueError
                 except ValueError:
                     raise ValueError(f"{spelling} must be a port number from 1 to 65535.") from None
+            elif name == "scip_mode":
+                override = override.strip().lower()
+                if override not in {"auto", "manual", "off"}:
+                    raise ValueError(f"{spelling} must be one of: auto, manual, off.")
+            elif name == "scip_timeout":
+                try:
+                    override = float(override)
+                    if override <= 0:
+                        raise ValueError
+                except ValueError:
+                    raise ValueError(f"{spelling} must be a positive number of seconds.") from None
+            elif name == "scip_docker_fallback":
+                lowered = override.strip().lower()
+                if lowered in {"1", "true", "yes", "on"}:
+                    override = True
+                elif lowered in {"0", "false", "no", "off"}:
+                    override = False
+                else:
+                    raise ValueError(f"{spelling} must be true or false.")
             values[name] = override
             kept[name] = (stored.get(name), override)
             if override != stored.get(name):  # a variable that repeats config.json supplies nothing

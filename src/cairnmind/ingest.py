@@ -891,7 +891,11 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
             if before and before["sha256"] == digest:
                 source = before
                 metadata = _metadata(source["metadata"])
-                analysis = metadata.get("analysis") if metadata.get("analysis_version") == parser_identity() else None
+                stored_version = metadata.get("analysis_version")
+                analysis = metadata.get("analysis") if (
+                    stored_version == parser_identity()
+                    or (isinstance(stored_version, str) and stored_version.startswith("scip-v1:"))
+                ) else None
                 if not analysis:
                     analysis = analyze_code(path, content)
                     store.command(
@@ -995,7 +999,9 @@ def _stored_analyses(store, source_ids: list[str]) -> dict[str, dict | None]:
         for row in store.query(
                 "SELECT id,metadata.analysis AS analysis,metadata.analysis_version AS version FROM sources "
                 "WHERE id IN :ids", {"ids": source_ids[offset:offset + 500]}):
-            if row.get("version") == parser_identity() and isinstance(row.get("analysis"), dict):
+            version = row.get("version")
+            if ((version == parser_identity() or (isinstance(version, str) and version.startswith("scip-v1:")))
+                    and isinstance(row.get("analysis"), dict)):
                 found[row["id"]] = row["analysis"]
     return found
 
@@ -1144,7 +1150,21 @@ def _graph_parts(project_id: str, indexed: dict[Path, dict], reuse: dict) -> tup
 
     def leads_to(path: Path) -> tuple:
         entry = indexed[path]
+        if entry["analysis"].get("source") == "scip":
+            return tuple(
+                Path(item["target_path"]) for item in entry["analysis"].get("resolved_imports", ())
+                if Path(item["target_path"]) in indexed
+            )
         return tuple(lead(path, entry["root"], item["module"]) for item in entry["analysis"]["imports"])
+
+    def _scip_symbol_id(target_path: Path, name: str, line_start: int) -> str | None:
+        if target_path not in indexed:
+            return None
+        first(target_path)
+        for cand in tables[target_path].get(name, ()):
+            if cand.get("line_start") == line_start:
+                return cand["id"]
+        return None
 
     def second(path: Path) -> tuple[dict, dict, set[Path]]:
         entry = indexed[path]
@@ -1155,7 +1175,39 @@ def _graph_parts(project_id: str, indexed: dict[Path, dict], reuse: dict) -> tup
         symbols = tables[path]
         imported: dict[str, tuple[Path, str]] = {}
         namespace: dict[str, Path] = {}
-        is_test = path.name.startswith("test_") or bool(re.search(r"[._](test|spec)\.", path.name))
+        is_test = (
+            path.name.startswith("test_")
+            or bool(re.search(r"[._](test|spec)\.", path.name))
+            or bool(re.search(r"(Tests?|Spec)\.(java|kt|kts|cs|php)$", path.name))
+        )
+        if entry["analysis"].get("source") == "scip":
+            for item in entry["analysis"].get("resolved_imports", ()):
+                target = Path(item["target_path"])
+                if target not in indexed:
+                    continue
+                targets.add(target)
+                target_id = file_node(target)
+                edge(file_node(path), target_id, "imports", source_id, item["line"])
+                if is_test:
+                    edge(file_node(path), target_id, "test_imports", source_id, item["line"])
+            for item in entry["analysis"].get("external_imports", ()):
+                target_id = node("external_module", item["module"], None, {"unresolved": False, "source": "scip"})
+                edge(file_node(path), target_id, "imports", source_id, item["line"])
+            for edge_kind, key_name in (("calls", "resolved_calls"), ("references", "resolved_references")):
+                for item in entry["analysis"].get(key_name, ()):
+                    target_path = Path(item["target_path"])
+                    target_sym = _scip_symbol_id(target_path, item["target_name"], item["target_line"])
+                    if target_sym is None:
+                        continue
+                    if target_path != path:
+                        targets.add(target_path)
+                    owner_id = file_node(path)
+                    if item.get("owner_name") and item.get("owner_line"):
+                        resolved_owner = _scip_symbol_id(path, item["owner_name"], item["owner_line"])
+                        if resolved_owner is not None:
+                            owner_id = resolved_owner
+                    edge(owner_id, target_sym, edge_kind, source_id, item["line"])
+            return nodes, edges, targets
         for item in entry["analysis"]["imports"]:
             module = item["module"]
             target = lead(path, entry["root"], module)
@@ -1208,8 +1260,16 @@ def _graph_parts(project_id: str, indexed: dict[Path, dict], reuse: dict) -> tup
     parts: dict[Path, dict] = dict(reuse)
     nodes: dict[str, dict] = {}
     edges: dict[str, dict] = {}
-    keys = {path: (entry["source"]["id"], entry["source"]["uri"], entry["source"]["kind"], str(entry["root"]))
-            for path, entry in indexed.items()}
+    keys = {
+        path: (
+            entry["source"]["id"],
+            entry["source"]["uri"],
+            entry["source"]["kind"],
+            str(entry["root"]),
+            entry["analysis"].get("scip_version", ""),
+        )
+        for path, entry in indexed.items()
+    }
     changed = [path for path in indexed if path not in reuse or reuse[path]["key"] != keys[path]]
     moved: set[Path] = set()
     for path in changed:
@@ -1269,7 +1329,9 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
     lead: resolving an import follows them, and the fingerprint, which holds only files, does not (#451).
     """
     fingerprint = _identifier(parser_identity(), *[
-        f"{path}:{indexed[path]['source']['id']}" for path in sorted(indexed)
+        f"{path}:{indexed[path]['source']['id']}"
+        + (f":{indexed[path]['analysis']['scip_version']}" if indexed[path]["analysis"].get("scip_version") else "")
+        for path in sorted(indexed)
     ])
     markers = store.query(
         "SELECT graph_fingerprint,graph_nodes,graph_edges FROM projects WHERE id=:project",
