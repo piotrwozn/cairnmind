@@ -222,7 +222,7 @@ async def test_registered_secrets_and_oversized_arguments_never_reach_the_server
 @pytest.mark.asyncio
 async def test_a_server_that_does_not_start_is_reported_and_the_turn_uses_built_in_tools(setup):
     memory = Memory()
-    setup[3].joinpath("app.py").write_text("VALUE = 1\n")
+    setup[3].joinpath("app.py").write_text("VALUE = 1\n", encoding="utf-8", newline="\n")
     seen = []
     provider = ScriptedProvider(*acked(memory, call("read_file", {"path": "app.py"}, "c1")))
     engine = agent(setup, provider, memory, servers=[server("exit"), server(identifier="good")],
@@ -242,7 +242,7 @@ async def test_a_server_that_does_not_start_is_reported_and_the_turn_uses_built_
 @pytest.mark.asyncio
 async def test_a_server_tool_named_like_a_built_in_one_never_shadows_it(setup, monkeypatch):
     memory = Memory()
-    setup[3].joinpath("app.py").write_text("BUILT_IN = True\n")
+    setup[3].joinpath("app.py").write_text("BUILT_IN = True\n", encoding="utf-8", newline="\n")
     provider = ScriptedProvider(*acked(memory, call("read_file", {"path": "app.py"}, "c1")))
     engine = agent(setup, provider, memory, approve=lambda request: pytest.fail("a built-in read needs no approval"))
     try:
@@ -364,7 +364,7 @@ async def test_acceptance_a_person_added_server_in_one_project_only(tmp_path):
     worktree_a, worktree_b = tmp_path / "a", tmp_path / "b"
     worktree_a.mkdir()
     worktree_b.mkdir()
-    (worktree_a / "notes.md").write_text("plan\n")
+    (worktree_a / "notes.md").write_text("plan\n", encoding="utf-8", newline="\n")
     servers_a, problems_a = frozen_servers(state.load(), "project-a", worktree_a)
     servers_b, _ = frozen_servers(state.load(), "project-b", worktree_b)
     assert problems_a == [] and len(servers_a) == 2 and servers_b == []

@@ -21,7 +21,6 @@ CAIRNMIND_TEST_SCHEMA_TEMPLATE=0 builds every database from nothing instead.
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import os
 import re
@@ -31,7 +30,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-import termios
 import threading
 import time
 import types
@@ -39,9 +37,13 @@ from urllib.parse import quote, urlparse
 import uuid
 import zlib
 
+if sys.platform != "win32":
+    import fcntl
+    import termios
+
 import pytest
 
-from cairnmind import process_identity
+from cairnmind import file_locks, private_files, process_control, process_identity
 from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import SESSION_NAMES, Settings, env_names, env_value
 from cairnmind.engine import install_engine, start_engine, stop_engine
@@ -82,6 +84,9 @@ NO_ARCADE_MODULES = frozenset({
     "test_setup_mark", "test_setup_change", "test_terminal_setup_change", "test_project_forget_workspace",
     "test_server_mode", "test_restore_messages", "test_command_start",
     "test_model_client_kept", "test_no_process_wide_time_patch",
+    "test_file_locks", "test_private_files", "test_process_control", "test_windows_guards",
+    "test_ci_windows_job", "test_install_windows", "test_person_pipe", "test_terminal_standalone",
+    "test_service_autostart",
 })
 
 TMUX_MODULES = frozenset({
@@ -197,6 +202,68 @@ def status_flags(fd: int) -> int:
     return flags & ~DARWIN_WRITTEN if sys.platform == "darwin" else flags
 
 
+def assert_private(path: Path, *, directory: bool = False) -> None:
+    """Assert owner-only permissions: exact 0600/0700 on POSIX, owner-only NTFS DACL on Windows."""
+    import stat as _stat
+    info = path.lstat()
+    if sys.platform == "win32":
+        assert private_files.is_private_stat(info, path, directory=directory), f"{path} is not private"
+    else:
+        assert _stat.S_IMODE(info.st_mode) == (0o700 if directory else 0o600)
+
+
+def make_world_readable(path: Path, *, directory: bool = False) -> None:
+    """Loosen permissions so fail-closed privacy checks reject ``path`` on both POSIX and Windows."""
+    if sys.platform != "win32":
+        path.chmod(0o755 if directory else 0o644)
+        return
+    import ctypes
+    from ctypes import wintypes
+    me = private_files.current_user_sid()
+    sddl = f"D:P(A;;GA;;;{me})(A;;GR;;;WD)"
+    sd = ctypes.c_void_p()
+    if not private_files._advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl, 1, ctypes.byref(sd), None):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        present = wintypes.BOOL()
+        dacl = ctypes.c_void_p()
+        defaulted = wintypes.BOOL()
+        if not private_files._advapi32.GetSecurityDescriptorDacl(
+                sd, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        err = private_files._advapi32.SetNamedSecurityInfoW(
+            str(path), private_files._SE_FILE_OBJECT,
+            private_files._DACL_SECURITY_INFORMATION | private_files._PROTECTED_DACL_SECURITY_INFORMATION,
+            None, None, dacl, None)
+        if err != 0:
+            raise ctypes.WinError(err)
+    finally:
+        private_files._kernel32.LocalFree(sd)
+    if private_files.is_private_stat(path.lstat(), path, directory=directory):
+        pytest.skip("Environment does not persist NTFS DACL changes (sandboxed or non-NTFS)")
+
+
+def make_private_again(path: Path, *, directory: bool = False) -> None:
+    """Restore owner-only permissions after ``make_world_readable``."""
+    private_files.make_private(path, directory=directory)
+
+
+def make_symlink_or_skip(link: Path, target: Path, *, target_is_directory: bool = False) -> None:
+    """Create a symlink, falling back to an NTFS junction for directories or skipping on WinError 1314."""
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            if target_is_directory and Path(target).is_dir():
+                done = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                                      capture_output=True, text=True, timeout=10)
+                if done.returncode == 0:
+                    return
+            pytest.skip("Windows symlink creation requires Developer Mode or elevated privileges")
+        raise
+
+
 @pytest.fixture
 def short_tmp_path():
     """A short private folder of its own, for a path that has a length limit (#236).
@@ -204,7 +271,8 @@ def short_tmp_path():
     tmp_path on macOS is under /private/var/folders/..., longer than a socket path may be and than some messages
     show a path in full. Resolved, so a path the product resolves (/tmp is /private/tmp there) compares equal.
     """
-    path = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp")).resolve()
+    base = None if sys.platform == "win32" else "/tmp"
+    path = Path(tempfile.mkdtemp(prefix="cm-", dir=base)).resolve()
     yield path
     shutil.rmtree(path, ignore_errors=True)
 
@@ -432,8 +500,7 @@ def is_xdist_controller(config) -> bool:
 
 @contextlib.contextmanager
 def file_lock(path: Path):
-    with path.open("a") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
+    with file_locks.locked_path(path):
         yield
 
 
@@ -466,6 +533,10 @@ def record_owner(root: Path, pid: int) -> None:
 
 def prepare_engine(root: Path, owner_pid: int) -> Settings:
     """Configure, install and start an owned test engine in ``root`` (idempotent)."""
+    if not root.exists():
+        private_files.ensure_private_dir(root)
+    else:
+        private_files.make_private(root, directory=True)
     settings = Settings.load(root, create=True)
     if not (root / "owner.json").exists():
         with socket.socket() as sock:
@@ -523,19 +594,19 @@ def run_slot(request, tmp_path_factory):
     with (run_root / "test-slot.gate").open("a") as gate, (run_root / "test-slot.lock").open("a") as lock:
         # Bounded (#236): a test that hangs elsewhere must not keep this one, and every one behind it, waiting.
         with run_guard.waiting(run_guard.slot_wait(), "waiting for the test slot"):
-            fcntl.flock(gate, fcntl.LOCK_EX)
+            file_locks.lock_exclusive(gate)
             if exclusive:
-                fcntl.flock(lock, fcntl.LOCK_EX)
+                file_locks.lock_exclusive(lock)
             else:
-                fcntl.flock(lock, fcntl.LOCK_SH)
-                fcntl.flock(gate, fcntl.LOCK_UN)
+                file_locks.lock_shared(lock)
+                file_locks.unlock(gate)
         _slot_held = True
         try:
             yield
         finally:
             _slot_held = False
-            fcntl.flock(lock, fcntl.LOCK_UN)
-            fcntl.flock(gate, fcntl.LOCK_UN)
+            file_locks.unlock(lock)
+            file_locks.unlock(gate)
 
 
 @pytest.fixture(autouse=True)
@@ -619,9 +690,43 @@ MCP_MODULES = frozenset({"test_mcp_host", "test_mcp_agent", "test_mcp_sources", 
 
 
 def process_ids() -> list[int]:
-    """Every process id of the machine: procfs on Linux, ps(1) where there is none (macOS)."""
+    """Every process id of the machine: procfs on Linux, Win32 snapshot on Windows, ps(1) on macOS."""
     if sys.platform.startswith("linux"):
         return [int(name) for name in os.listdir("/proc") if name.isdigit()]
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_void_p),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        snap = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+        if snap == wintypes.HANDLE(-1).value:
+            return []
+        pids = []
+        try:
+            entry = PROCESSENTRY32W()
+            entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+            if kernel32.Process32FirstW(snap, ctypes.byref(entry)):
+                while True:
+                    pids.append(int(entry.th32ProcessID))
+                    if not kernel32.Process32NextW(snap, ctypes.byref(entry)):
+                        break
+        finally:
+            kernel32.CloseHandle(snap)
+        return pids
     listed = subprocess.run(["ps", "-A", "-o", "pid="], capture_output=True, text=True, check=True, timeout=30)
     return [int(pid) for pid in listed.stdout.split()]
 
@@ -655,11 +760,14 @@ def no_mcp_server_outlives_its_test(request):
         time.sleep(.05)
         left = mcp_fixture_processes()
     for pid in left:
-        for kill in (lambda: os.killpg(pid, signal.SIGKILL), lambda: os.kill(pid, signal.SIGKILL)):
-            try:
-                kill()
-            except OSError:
-                pass
+        if sys.platform == "win32":
+            process_control.terminate_pid(pid, force=True)
+        else:
+            for kill in (lambda: os.killpg(pid, signal.SIGKILL), lambda: os.kill(pid, signal.SIGKILL)):
+                try:
+                    kill()
+                except OSError:
+                    pass
     if left:
         pytest.fail(f"A fixture MCP server outlived its test and was killed: {left}")
 
@@ -785,8 +893,9 @@ def explained_when_unavailable(settings: Settings, original):
                         open_databases = f"no usable answer to the next request either ({probe!r})"
                     log = settings.data_dir / "arcade" / "engine.log"
                     tail = log.read_text(errors="replace").splitlines()[-15:] if log.exists() else []
+                    load_avg = os.getloadavg() if hasattr(os, "getloadavg") else "n/a"
                     print(f"ENGINE UNAVAILABLE after {waited:.1f}s: {method} {path} {statement!r}; "
-                          f"load average {os.getloadavg()}, databases of the engine: {open_databases}, "
+                          f"load average {load_avg}, databases of the engine: {open_databases}, "
                           f"engine.log ends:\n" + "\n".join(tail), file=sys.stderr)
                     if waited < stall_watch.STALL_AFTER:  # later, the watch has printed the threads, while it waited
                         print("engine threads:\n" + stall_watch.engine_threads(log), file=sys.stderr)

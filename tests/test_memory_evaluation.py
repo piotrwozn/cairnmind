@@ -131,8 +131,10 @@ def test_positive_extraction_then_portable_recall_preserves_user_data_and_uses_s
     assert report["inference"] == "injected_adapter"
     assert report["isolation"]["databases_cleaned"] is True
     assert report["isolation"]["native_clients_started"] is False
+    from conftest import assert_private
     path = Path(report["report_path"])
-    assert path.is_file() and path.stat().st_mode & 0o777 == 0o600
+    assert path.is_file()
+    assert_private(path)
     serialized = path.read_text()
     assert user_canary not in serialized
     assert settings.token not in serialized and settings.arcade_password not in serialized

@@ -18,15 +18,17 @@ def identity(info) -> tuple[int, int]:
     return info.st_dev, info.st_ino
 
 
-def entry_identity(name: str, directory: int) -> tuple[int, int] | None:
+def entry_identity(name: str, directory: int | Path) -> tuple[int, int] | None:
     """The identity of `name` in the open directory `directory`, without following a link; None when absent."""
     try:
-        return identity(os.stat(name, dir_fd=directory, follow_symlinks=False))
+        if isinstance(directory, int):
+            return identity(os.stat(name, dir_fd=directory, follow_symlinks=False))
+        return identity(os.stat(Path(directory) / name, follow_symlinks=False))
     except OSError:
         return None
 
 
-def is_alias(name: str, directory: int) -> bool:
+def is_alias(name: str, directory: int | Path) -> bool:
     """Whether `name` reaches an entry of the open directory `directory` that is listed under another name,
     letter case aside: the short 8.3 alias of a Windows drive. Such an alias always holds a '~', so only those
     names are looked up; a name that is listed (as `foo~1` on Linux) is not an alias."""
@@ -46,15 +48,18 @@ def has_alias(path: Path, root: Path) -> bool:
     folder = root
     for part in parts:
         if "~" in part:
-            try:
-                fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-            except OSError:
-                return False
-            try:
-                if is_alias(part, fd):
-                    return True
-            finally:
-                os.close(fd)
+            if hasattr(os, "O_DIRECTORY") and os.stat in os.supports_dir_fd:
+                try:
+                    fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+                except OSError:
+                    return False
+                try:
+                    if is_alias(part, fd):
+                        return True
+                finally:
+                    os.close(fd)
+            elif is_alias(part, folder):
+                return True
         folder = folder / part
     return False
 

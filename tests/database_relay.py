@@ -149,8 +149,6 @@ class Relay:
         for sock in sockets:
             with suppress(OSError):
                 sock.shutdown(socket.SHUT_RDWR)
-            with suppress(OSError):
-                sock.close()
 
     def _accept(self) -> None:
         while not self._stop.is_set():

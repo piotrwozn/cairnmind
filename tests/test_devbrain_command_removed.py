@@ -11,6 +11,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
+
 from cairnmind import first_start, integrations
 from cairnmind.config import Settings
 
@@ -32,6 +34,7 @@ def _leftover_function():
     return script[start:script.index("\n}\n", start) + 3]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX bash function leftover_devbrain from scripts/install-wsl.sh")
 def test_a_devbrain_left_in_the_tool_folder_is_named_and_not_removed(tmp_path):
     function = _leftover_function()
     folder = tmp_path / "bin"
@@ -63,6 +66,7 @@ def test_a_devbrain_left_in_the_tool_folder_is_named_and_not_removed(tmp_path):
     assert leftover.exists()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX bash function refuse_unlisted_devbrain_tool from scripts/install-wsl.sh")
 def test_an_unlisted_earlier_uv_tool_stops_the_installer(tmp_path):
     script = SCRIPT.read_text(encoding="utf-8")
     start = script.index("refuse_unlisted_devbrain_tool() {")
@@ -92,6 +96,7 @@ def test_an_unlisted_earlier_uv_tool_stops_the_installer(tmp_path):
 
 def test_hand_written_bare_devbrain_entries_are_named_not_rewritten(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "home" / ".local" / "share"))
     monkeypatch.setattr(integrations, "_probe_cli", lambda *args, **kwargs: {
         "installed": True, "version": "9.9.9", "mcp": True, "hooks": True, "packet_passing": True,
         "session_binding": True, "verified_resume": True, "notes": []})
@@ -136,7 +141,8 @@ def test_the_installer_looks_for_the_leftover_after_installing_and_still_replace
     assert install < script.index('leftover_devbrain "$tool_bin_dir"') < script.index("stored_engine_mode() {")
     stop = script.index('stop_installed "$(uv tool dir --bin)/devbrain" devbrain "$(uv tool dir)/devbrain/bin/python"')
     assert stop < script.index("uv tool uninstall devbrain") < install
-    subprocess.run([BASH, "-n", str(SCRIPT)], check=True)
+    if sys.platform != "win32":
+        subprocess.run([BASH, "-n", str(SCRIPT)], check=True)
 
 
 def test_devbrain_era_client_files_are_rewritten_so_none_calls_a_missing_command(tmp_path, monkeypatch):
@@ -144,6 +150,7 @@ def test_devbrain_era_client_files_are_rewritten_so_none_calls_a_missing_command
     # still carry; files 0.9.0 to 0.12.0 wrote (-m cairnmind) are covered by test_integrations.py. This guards the
     # rewrite path; it does not run uv's removal of the link.
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "home" / ".local" / "share"))
     for name in (*integrations.SESSION_ENV_VARS, "CAIRNMIND_HOME", "DEVBRAIN_HOME",
                  "CAIRNMIND_CONTEXT_FILE", "DEVBRAIN_CONTEXT_FILE"):
         monkeypatch.delenv(name, raising=False)
@@ -201,9 +208,10 @@ def test_devbrain_era_client_files_are_rewritten_so_none_calls_a_missing_command
                     for h in entry["hooks"]]
         ours = [c for c in handlers if c != "echo user hook"]
         assert ours and "echo user hook" in handlers
-        assert all(shlex.split(c)[:4] == [sys.executable, "-I", "-m", "cairnmind"] for c in ours)
+        split = lambda cmd: [p.strip('"') for p in shlex.split(cmd, posix=sys.platform != "win32")]  # noqa: E731
+        assert all(split(c)[:4] == [sys.executable, "-I", "-m", "cairnmind"] for c in ours)
         assert not any("-m devbrain " in c for c in ours)
-        commands += [shlex.split(c)[0] for c in ours]
+        commands += [split(c)[0] for c in ours]
     for name in ("AGENTS.md", "CLAUDE.md"):
         body = (root / name).read_text()
         assert "<!-- BEGIN CAIRNMIND -->" in body and "BEGIN DEVBRAIN" not in body

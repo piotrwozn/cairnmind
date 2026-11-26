@@ -450,7 +450,12 @@ class SidebarApp(BasePanel):
             focused = self.focused
             if focused is not None and focused.is_attached:
                 focused.scroll_visible(animate=False)
-        self.call_after_refresh(show)
+
+        def after_layout():
+            show()
+            self.call_after_refresh(show)
+
+        self.call_after_refresh(after_layout)
 
     def selected_native_status(self, value=None):
         """Read the exact selected slot from fresh workspace data, not cached GETs."""

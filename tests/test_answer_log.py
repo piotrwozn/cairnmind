@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import stat
 import subprocess
 
 from fastapi.testclient import TestClient
@@ -96,8 +95,9 @@ def test_an_answer_asked_with_log_is_kept_with_its_evidence_and_never_becomes_ev
     raw = answer_log.log_path(settings, pid).read_text()
     assert settings.token not in raw and "[REDACTED]" in entry["question"]
     # Private to the owner, like the rest of the data directory's memory.
-    assert stat.S_IMODE(answer_log.log_path(settings, pid).stat().st_mode) == 0o600
-    assert stat.S_IMODE(answer_log.log_path(settings, pid).parent.stat().st_mode) == 0o700
+    from conftest import assert_private
+    assert_private(answer_log.log_path(settings, pid))
+    assert_private(answer_log.log_path(settings, pid).parent, directory=True)
     # A stored answer never becomes evidence: no source, chunk or embedding holds it.
     assert not store.query("SELECT id FROM sources WHERE kind IN ['agent_answer','generated_answer']")
     assert not store.query("SELECT id FROM sources WHERE content LIKE :text", {"text": "%handles login%"})

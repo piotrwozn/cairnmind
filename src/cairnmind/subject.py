@@ -399,15 +399,16 @@ def _not_own(store, project_id: str, absent: list[str], spreads: list[str], infl
         return []
     project = store.query("SELECT name, root FROM projects WHERE id=:id", {"id": project_id})
     name, root = (str(project[0].get("name") or ""), str(project[0].get("root") or "")) if project else ("", "")
-    own = {_key(item) for item in (name, *name.split(), PurePosixPath(root).name) if item}
+    own = {_key(item) for item in (name, *name.split(), PurePosixPath(root.replace("\\", "/")).name) if item}
     missing = []
     for term in absent:
         if _key(term) in own or any(_without_prefix(term, spread, own, inflected) for spread in spreads):
             continue
+        folded = term.casefold()
         rows = store.query(
             "SELECT uri FROM sources WHERE project_id=:project AND is_current=true "
-            "AND uri.toLowerCase() LIKE :part LIMIT 50",
-            {"project": project_id, "part": "%/" + term.casefold() + "/%"}) if root else []
+            "AND uri.toLowerCase() LIKE :part LIMIT 200",
+            {"project": project_id, "part": "%" + folded + "%"}) if root else []
         # LIKE treats '_' as a wildcard, and the directories above the root are not parts of the project.
         inside = [str(row.get("uri", ""))[len(root):] for row in rows if str(row.get("uri", "")).startswith(root)]
         if not names_directory(term, inside):

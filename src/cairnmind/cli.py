@@ -1,7 +1,6 @@
 """Cairnmind CLI; native coding clients retain their own terminal and permissions."""
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 from contextlib import contextmanager
@@ -25,8 +24,10 @@ from cairnmind.cli_arguments import (
     SessionClientArg, SessionIdArg, SnapshotArg, SourceIdArg, StateArg, StateFileArg, TaskIdArg, TitleArg,
     TranscriptArg)
 from cairnmind.config import SERVICE_NAMES, Settings, drop_env, session_value, tls_verify
+from cairnmind.file_locks import lock_exclusive, unlock
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.arcade import ArcadeError
+from cairnmind.process_control import detached_popen_kwargs
 
 class _ProjectFirstGroup(TyperGroup):
     """A command whose first argument is the project and that is given only one: the error says the project comes
@@ -68,6 +69,9 @@ workspace_app = typer.Typer(help="The terminal workspace: status, detaching and 
 store_app = typer.Typer(help="How large the store is, which installation writes it, and removing rows that nothing reads.")
 db_app = typer.Typer(help="Access to a database on another host: its own user (#72).")
 answers_app = typer.Typer(help="The opt-in log of ask answers and the evidence they cited.")
+service_app = typer.Typer(help="Background knowledge service autostart management.")
+autostart_app = typer.Typer(help="Per-user service autostart at logon (Windows Task Scheduler).")
+service_app.add_typer(autostart_app, name="autostart")
 app.add_typer(projects_app, name="project")
 app.add_typer(tasks_app, name="task")
 app.add_typer(models_app, name="models")
@@ -84,6 +88,7 @@ app.add_typer(workspace_app, name="workspace")
 app.add_typer(store_app, name="store")
 app.add_typer(db_app, name="db")
 app.add_typer(answers_app, name="answers")
+app.add_typer(service_app, name="service")
 
 
 def output(value) -> None:
@@ -153,12 +158,12 @@ def _pasteable(message: str) -> str:
     arguments = _data_dir_arguments(_INVOCATION.get("data_dir"))
     if not arguments:
         return message
-    import shlex
+    from cairnmind.process_control import format_command
     from cairnmind.terminal_safe import safe_text
     # `cairnmind restore` (the refusal of an unfinished restore, #362) and `cairnmind store takeover` replace or take
     # over a whole store: pasted bare they would act on the default installation.
     for command in ("project root ", "restore ", "store takeover "):
-        message = message.replace(f"`cairnmind {command}", f"`cairnmind {safe_text(shlex.join(arguments))} {command}")
+        message = message.replace(f"`cairnmind {command}", f"`cairnmind {safe_text(format_command(arguments))} {command}")
     return message
 
 
@@ -184,10 +189,13 @@ def _os_error_text(exc: OSError) -> str:
         return str(exc)
     import os
     path = _shortened(os.fsdecode(exc.filename) if isinstance(exc.filename, bytes) else str(exc.filename))
+    if (exc.errno == errno.ENAMETOOLONG
+            or getattr(exc, "winerror", None) == 206
+            or (getattr(exc, "winerror", None) == 123
+                and any(len(part) > 255 for part in Path(os.fsdecode(exc.filename)).parts))):
+        return f"The path is too long for this system: {path}"
     if exc.errno == errno.ENOENT:
         return f"{path} does not exist."
-    if exc.errno == errno.ENAMETOOLONG:
-        return f"The path is too long for this system: {path}"
     return f"{exc.strerror or 'The path cannot be used'}: {path}"
 
 
@@ -291,14 +299,20 @@ def _service_stopped(settings: Settings, held: str, running: str):
     reason = setup_mark.refusal(settings.data_dir)
     if reason:
         refuse(str(reason))  # a change of setup holds this data directory (#339)
-    with (settings.data_dir / "service.lock").open("a") as lock:
+    with (settings.data_dir / "service.lock").open("a", encoding="utf-8") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_exclusive(lock, blocking=False)
         except BlockingIOError:
             refuse(held)
-        if service_alive(settings):
-            refuse(running)
-        yield
+        try:
+            if service_alive(settings):
+                refuse(running)
+            yield
+        finally:
+            try:
+                unlock(lock)
+            except OSError:
+                pass
 
 
 def last_log_line(path: Path) -> str:
@@ -359,7 +373,8 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
         if not background_inference:
             command.append("--defer-background-inference")
         process = subprocess.Popen(command,
-                                   stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True, env=env)
+                                   stdin=subprocess.DEVNULL, stdout=handle, stderr=handle,
+                                   env=env, **detached_popen_kwargs())
     try:
         return _wait_for_start(settings, process, log, started_at)
     except KeyboardInterrupt:
@@ -420,8 +435,8 @@ def _stop_started(settings: Settings) -> None:
             client.post(settings.url + "/shutdown",
                         headers={"Authorization": f"Bearer {settings.token}"}).raise_for_status()
     except httpx.HTTPError:
-        import shlex
-        command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "stop"])
+        from cairnmind.process_control import format_command
+        command = format_command(["cairnmind", *_data_dir_arguments(settings.data_dir), "stop"])
         raise UpgradeInProgress(upgrade_mark.UPGRADE_STOP_FAILED.format(command=command)) from None
     raise UpgradeInProgress(upgrade_mark.refusal() or upgrade_mark.UPGRADE_ENDED)
 
@@ -1050,15 +1065,21 @@ def serve(ctx: typer.Context, defer_background_inference: bool = False):
     import uvicorn
     from cairnmind.service import create_app
     settings = ctx.obj
-    with (settings.data_dir / "service.lock").open("a") as lock:
+    with (settings.data_dir / "service.lock").open("a", encoding="utf-8") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_exclusive(lock, blocking=False)
         except BlockingIOError:
             refuse("The service is already running for this store.")
-        api = create_app(settings, background_inference=not defer_background_inference)
-        server = uvicorn.Server(uvicorn.Config(api, host=settings.host, port=settings.port, log_level="info"))
-        api.state.shutdown = lambda: setattr(server, "should_exit", True)
-        server.run()
+        try:
+            api = create_app(settings, background_inference=not defer_background_inference)
+            server = uvicorn.Server(uvicorn.Config(api, host=settings.host, port=settings.port, log_level="info"))
+            api.state.shutdown = lambda: setattr(server, "should_exit", True)
+            server.run()
+        finally:
+            try:
+                unlock(lock)
+            except OSError:
+                pass
 
 
 @app.command()
@@ -1094,9 +1115,12 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
     from cairnmind.terminal_safe import safe_text
     try:
         root = root.expanduser().resolve(strict=True)  # the folder is checked before the store is opened
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        if getattr(exc, "winerror", None) == 206:
+            raise
+        from cairnmind.process_control import quote_arg
         given = safe_text(str(root.expanduser().absolute()))
-        raise ValueError(first_start.PROJECT_FOLDER_MISSING.format(root=given, quoted=shlex.quote(given))) from None
+        raise ValueError(first_start.PROJECT_FOLDER_MISSING.format(root=given, quoted=quote_arg(given))) from None
     if not root.is_dir():
         raise typer.BadParameter("The path must be a folder, not a file")
     store = store_for(ctx.obj)
@@ -1928,7 +1952,6 @@ def _project_handle(store, project: dict) -> str:
 def stage_next(ctx: typer.Context, project: ProjectArg, plan_id: str | None = None, worktree: Path | None = None,
                as_json: Annotated[bool, typer.Option("--json", help="Print the decision as JSON.")] = False):
     """Show the next plan step's stage and what is mapped to it. Changes no task and starts nothing."""
-    import shlex
     from cairnmind.api_runtime import cli_stage_readiness
     from cairnmind.cockpit_state import CockpitState
     from cairnmind.plans import PlanManager
@@ -1956,7 +1979,8 @@ def stage_next(ctx: typer.Context, project: ProjectArg, plan_id: str | None = No
         return
     typer.echo(safe_text(describe(decision)))
     if decision["command"]:
-        typer.echo("Next: " + safe_text(shlex.join(decision["command"])))
+        from cairnmind.process_control import format_command
+        typer.echo("Next: " + safe_text(format_command(decision["command"])))
     elif decision["command_reason"]:
         typer.echo(FROM_WORKSPACE)
     from cairnmind.workspace_stage import MAP_HINT, MAP_PROBLEMS
@@ -2397,7 +2421,7 @@ def install(ctx: typer.Context, project: ProjectArg, as_json: JSON_FLAG = False,
     from cairnmind import first_start
     from cairnmind.terminal_safe import safe_text
     root = Path(selected["root"]).resolve()
-    files = ", ".join(safe_text(os.path.relpath(path, root)) for path in result["changed"]) or first_start.NOTHING_WRITTEN
+    files = ", ".join(safe_text(Path(os.path.relpath(path, root)).as_posix()) for path in result["changed"]) or first_start.NOTHING_WRITTEN
     from cairnmind.integrations import missing_parts
     installed = {client: info for client, info in result["clients"].items() if info.get("installed")}
     # Connected is the rule a verified launch uses; an installed client that fails it is named with what it lacks.
@@ -2734,3 +2758,30 @@ def benchmark(ctx: typer.Context, project: ProjectArg, question: QuestionArg):
     except (OSError, subprocess.TimeoutExpired):
         gpu = "nvidia-smi unavailable"
     output({"runs": runs, "gpu": gpu})
+
+
+@autostart_app.command("status")
+def service_autostart_status(ctx: typer.Context):
+    """Show whether per-user logon autostart is registered for this data directory."""
+    from cairnmind.service_autostart import status as autostart_status
+    output(autostart_status(ctx.obj))
+
+
+@autostart_app.command("install")
+def service_autostart_install(ctx: typer.Context):
+    """Register per-user Windows Task Scheduler autostart (LogonTrigger + RestartOnFailure)."""
+    from cairnmind.service_autostart import install as autostart_install
+    try:
+        output(autostart_install(ctx.obj))
+    except ValueError as exc:
+        refuse(str(exc))
+
+
+@autostart_app.command("remove")
+def service_autostart_remove(ctx: typer.Context):
+    """Remove per-user Windows Task Scheduler autostart for this data directory."""
+    from cairnmind.service_autostart import remove as autostart_remove
+    try:
+        output(autostart_remove(ctx.obj))
+    except ValueError as exc:
+        refuse(str(exc))

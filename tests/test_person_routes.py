@@ -132,6 +132,7 @@ def test_a_workspace_without_a_key_another_socket_or_no_tmux_is_refused_with_its
     refused(workspace_person, person_proof.NO_WORKSPACE_KEY)
     monkeypatch.setattr(person_proof, "read_key", lambda *args, **kwargs: ("unavailable", None))
     refused(workspace_person, person_proof.PROOF_REFUSED)
+    monkeypatch.setattr(person_proof, "IS_WINDOWS", False)
     monkeypatch.setattr(person_proof, "_tmux", lambda settings: None)
     refused(workspace_person, person_proof.TMUX_MISSING)
 

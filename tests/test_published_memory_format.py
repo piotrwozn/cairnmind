@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 
 from cairnmind.memory_published_check import check_directory, check_files, format_bytes, read_tree
 from cairnmind.memory_published_format import (
@@ -228,9 +227,10 @@ def test_format_json_must_be_exact_and_unknown_entries_or_links_are_refused(tmp_
         (folder / path).parent.mkdir(parents=True, exist_ok=True)
         (folder / path).write_bytes(data)
     assert check_directory(folder)[1] == []
+    from conftest import make_symlink_or_skip
     (folder / "notes.txt").write_text("hello")
     (folder / "fact").mkdir()
-    os.symlink(folder / "notes.txt", folder / "fact" / f"{OTHER}.md")
+    make_symlink_or_skip(folder / "fact" / f"{OTHER}.md", folder / "notes.txt")
     _, errors = read_tree(folder)
     assert {path for path, _ in errors} == {"notes.txt", f"fact/{OTHER}.md"}
 

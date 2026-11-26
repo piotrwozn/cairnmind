@@ -11,21 +11,21 @@ Cairnmind is a local workspace for Codex CLI, Claude Code, GitHub Copilot and AP
 
 ## Quick start
 
-Cairnmind runs on Linux, on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the tested platform) and on macOS with Apple silicon (tested on an M3 Pro with macOS 27; installed with Homebrew). Native Windows is not supported. On Windows, run `wsl --install -d Ubuntu` in PowerShell first, restart when asked, and type everything below in the Ubuntu terminal.
+Cairnmind runs on Linux, on Windows (natively on Windows 10/11 or inside WSL2 Ubuntu via `wsl --install -d Ubuntu`; Ubuntu 24.04 is the tested platform) and on macOS with Apple silicon (tested on an M3 Pro with macOS 27; installed with Homebrew).
 
 **What you need**
 
-- git and [uv](https://docs.astral.sh/uv/), which brings Python 3.12: on Ubuntu `sudo apt install -y git curl` and `curl -LsSf https://astral.sh/uv/install.sh | sh`, then open a new terminal; on macOS `brew install uv`.
-- One way to run the database engine. **Java 21** is the simplest: `sudo apt install -y openjdk-21-jre-headless` (macOS: `brew install openjdk@21`; the installer prints the one link command macOS still needs). Or **Docker**, running on this machine; the engine then runs in a container (not tested on macOS).
+- git and [uv](https://docs.astral.sh/uv/), which brings Python 3.12: on Ubuntu `sudo apt install -y git curl` and `curl -LsSf https://astral.sh/uv/install.sh | sh`, then open a new terminal; on macOS `brew install uv`; on native Windows `winget install Git.Git astral-sh.uv`.
+- One way to run the database engine. **Java 21** is the simplest: `sudo apt install -y openjdk-21-jre-headless` (macOS: `brew install openjdk@21`; native Windows: `winget install EclipseAdoptium.Temurin.21.JDK`). Or **Docker** (Docker Desktop on Windows), running on this machine; the engine then runs in a container (not tested on macOS).
 
 Nothing else: no Ollama, no models, no GPU, no tmux and no coding assistant are needed for the steps below. Each adds something later.
 
-**What gets installed:** the `cairnmind` command; a small local service that starts by itself when a command needs it and keeps running in the background (`cairnmind stop` stops it); and ArcadeDB, the database your project memory is kept in (about 86 MB, checked with SHA-256; with Docker instead, an engine image of about 640 MB on disk, pinned by its SHA-256 digest). Your memory and a native engine are kept in `~/.local/share/cairnmind`; the command is a uv tool, and a Docker engine's image lives in Docker's storage. `cairnmind stop` stops the service and `cairnmind engine stop` the engine, which also keeps running in the background once it has started.
+**What gets installed:** the `cairnmind` command; a small local service that starts by itself when a command needs it and keeps running in the background (`cairnmind stop` stops it); and ArcadeDB, the database your project memory is kept in (about 86 MB, checked with SHA-256; with Docker instead, an engine image of about 640 MB on disk, pinned by its SHA-256 digest). Your memory and a native engine are kept in `~/.local/share/cairnmind` on Linux/macOS/WSL2 (or `%LOCALAPPDATA%\cairnmind` on native Windows); the command is a uv tool, and a Docker engine's image lives in Docker's storage. `cairnmind stop` stops the service and `cairnmind engine stop` the engine, which also keeps running in the background once it has started.
 
 ```bash
 git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
 cd ~/src/cairnmind
-bash scripts/install-wsl.sh                    # 1. installs all of the above and ends with a check: what is required, what is missing, what comes next
+bash scripts/install-wsl.sh                    # Linux / macOS / WSL2 (on native Windows: pwsh -File scripts/install-windows.ps1)
 cairnmind project add my-app ~/src/my-app      # 2. registers your project's folder and indexes its files
 cairnmind remember my-app "Accounts lock after five failed logins."   # 3. stores a first finding, as proposed
 cairnmind brief my-app                         # 4. where work stands: your finding is listed, marked as unconfirmed
@@ -69,7 +69,7 @@ cairnmind stop                   # the service reads the choice when it starts; 
 
 `cairnmind models pull` turns the knowledge agent on; after the restart the waiting extraction and embedding jobs run and `ask` answers with verified quotes. `cairnmind models set` chooses another model server instead: another Ollama or a server with the OpenAI-compatible API; a server on another computer needs HTTPS and your explicit consent, and receives only the sensitivity classes you allow ([docs/API.md](docs/API.md#the-knowledge-agents-models)). The reference setup uses an RTX 4080 Super with 16 GB of VRAM; the 9B model needs roughly 7 GB of GPU memory, and on CPU it works, but answers are slow. Check memory use and latency on your own machine.
 
-**The terminal workspace.** With tmux 3.4+ (`sudo apt install tmux`, or `brew install tmux` on macOS), `cairnmind` opens the workspace: Codex and Claude Code run in panes beside the projects, the memory inspector and the graph ([docs/TERMINAL.md](docs/TERMINAL.md)). In the workspace, Ctrl+B then i opens the memory inspector, where you confirm or dispute proposed findings (view Proposed). The default Focus layout works at 80 × 24; the full Cockpit layout needs at least 140 × 42. Without tmux 3.4+, opening the workspace prints what is missing and the commands that work without it, and exits with code 1.
+**The terminal workspace.** On Linux, WSL2 and macOS, with tmux 3.4+ (`sudo apt install tmux`, or `brew install tmux` on macOS), `cairnmind` opens the multi-pane workspace: Codex and Claude Code run in panes beside the projects, the memory inspector and the graph ([docs/TERMINAL.md](docs/TERMINAL.md)). On native Windows, `cairnmind` opens the standalone Textual workspace directly in Windows Terminal or PowerShell without requiring tmux, backed by an owner-only Windows Named Pipe for person-confirmed actions. In the POSIX workspace, Ctrl+B then i opens the memory inspector, where you confirm or dispute proposed findings (view Proposed); in the native Windows standalone workspace, press `2` for Memory. The default Focus layout works at 80 × 24; the full Cockpit layout needs at least 140 × 42. On POSIX without tmux 3.4+, opening the workspace prints what is missing and the commands that work without it, and exits with code 1.
 
 ## What sets it apart
 

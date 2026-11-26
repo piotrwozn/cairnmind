@@ -15,6 +15,11 @@ from cairnmind.agent_journal import AgentJournal
 from cairnmind.agent_tools import ToolExecutor
 from cairnmind.config import Settings
 
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX process-group/SIGTERM/SIGKILL tests; Windows Job Object termination is tested in test_process_control.py",
+)
+
 # The child ignores SIGTERM, so only SIGKILL ends it.
 CHILD_IGNORING_TERM = "(trap '' TERM; exec sh -c 'echo $$ > child.pid; exec sleep 30') & wait"
 

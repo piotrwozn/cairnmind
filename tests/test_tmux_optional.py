@@ -38,11 +38,17 @@ def tmux(tmp_path, monkeypatch):
     def install(state):
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir(exist_ok=True)
-        stand_in = bin_dir / "tmux"
+        stand_in = bin_dir / ("tmux.cmd" if sys.platform == "win32" else "tmux")
         stand_in.unlink(missing_ok=True)
         if state != "missing":
-            stand_in.write_text(f"#!/bin/sh\necho \"$*\" >> \"$TMUX_STAND_IN_CALLS\"\necho 'tmux {state}'\n")
-            stand_in.chmod(stand_in.stat().st_mode | stat.S_IXUSR)
+            if sys.platform == "win32":
+                stand_in.write_text(
+                    f'@echo off\r\necho %*>>"%TMUX_STAND_IN_CALLS%"\r\necho tmux {state}\r\n',
+                    encoding="utf-8",
+                )
+            else:
+                stand_in.write_text(f"#!/bin/sh\necho \"$*\" >> \"$TMUX_STAND_IN_CALLS\"\necho 'tmux {state}'\n")
+                stand_in.chmod(stand_in.stat().st_mode | stat.S_IXUSR)
         monkeypatch.setenv("PATH", str(bin_dir))
         monkeypatch.setenv("TMUX_STAND_IN_CALLS", str(calls))
         for name in ("CAIRNMIND_TMUX_EXECUTABLE", "DEVBRAIN_TMUX_EXECUTABLE", "CAIRNMIND_SESSION_ID",
@@ -92,6 +98,7 @@ def _terminal(monkeypatch, data, tail):
     monkeypatch.setattr(sys, "argv", ["cairnmind", "--data-dir", str(data), *tail])
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows uses standalone Textual workspace without tmux")
 @pytest.mark.parametrize("tail", [[], ["tui"], ["workspace", "takeover"]])
 @pytest.mark.parametrize("state", ["missing", "3.3a"])
 def test_opening_the_workspace_without_tmux_prints_one_message(monkeypatch, capfd, data, tmux, state, tail):
@@ -110,6 +117,7 @@ def test_opening_the_workspace_without_tmux_prints_one_message(monkeypatch, capf
     assert tmux.calls() in ([], ["-V"])  # asked its version, never started a server
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows uses standalone Textual workspace without tmux")
 def test_with_tmux_3_4_the_workspace_goes_past_the_check(monkeypatch, data, tmux):
     tmux("3.5a")
     _terminal(monkeypatch, data, [])
@@ -152,6 +160,7 @@ def _quiet_doctor(monkeypatch):
         transport=httpx.MockTransport(lambda request: httpx.Response(503)), **kw))
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows uses standalone Textual workspace without tmux")
 def test_doctor_reports_the_cockpit_as_a_warning_and_exits_0(monkeypatch, data, tmux):
     from typer.testing import CliRunner
     _quiet_doctor(monkeypatch)

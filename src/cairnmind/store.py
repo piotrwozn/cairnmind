@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
 import gzip
 import hashlib
 import json
@@ -16,6 +15,7 @@ import time
 from uuid import uuid4
 
 from . import graph_transactions
+from .file_locks import lock_exclusive, unlock
 from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
 from .first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN, UNKNOWN_PROJECT_NEXT
 from .terminal_safe import safe_text
@@ -368,12 +368,12 @@ class Store:
         if getattr(self._local, "lock_held", False):
             yield  # this thread holds it already; a second flock on a new handle would wait for itself
             return
-        with (self.data_dir / "database-writer.lock").open("a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+        with (self.data_dir / "database-writer.lock").open("a", encoding="utf-8") as handle:
+            lock_exclusive(handle)
             try:
                 yield
             finally:
-                fcntl.flock(handle, fcntl.LOCK_UN)
+                unlock(handle)
 
     def query(self, sql, params=None):
         return (getattr(self._local, "transaction", None) or self.client).query(sql, params)
@@ -1630,10 +1630,12 @@ class Store:
             return {**unknown, "reason": "legacy_missing_capture"}
         capture, event_id = payload.get("requested_watermark"), payload.get("origin_event_id")
         path, client = payload.get("path"), payload.get("client")
+        from .private_files import decode_file_id
         if (not isinstance(capture, dict) or not isinstance(event_id, str)
                 or not isinstance(path, str) or client not in {"codex", "claude"}
                 or type(capture.get("size")) is not int or capture["size"] < 0
-                or any(type(capture.get(key)) is not int for key in ("device", "inode", "head_bytes"))
+                or decode_file_id(capture.get("device")) is None or decode_file_id(capture.get("inode")) is None
+                or type(capture.get("head_bytes")) is not int
                 or not isinstance(capture.get("head_sha256"), str)):
             return {**unknown, "reason": "legacy_missing_capture"}
         event = one_row(self, "SELECT FROM session_events WHERE id=:id AND project_id=:project",
@@ -1644,7 +1646,9 @@ class Store:
         for packet in packets:
             for row in (packet.get("payload") or {}).get("archive_watermarks", []):
                 if (row.get("path") != path or row.get("client") != client
-                        or any(row.get(key) != capture[key] for key in ("device", "inode", "head_bytes", "head_sha256"))):
+                        or decode_file_id(row.get("device")) != decode_file_id(capture["device"])
+                        or decode_file_id(row.get("inode")) != decode_file_id(capture["inode"])
+                        or any(row.get(key) != capture[key] for key in ("head_bytes", "head_sha256"))):
                     continue
                 if type(row.get("size")) is not int or row["size"] < capture["size"]:
                     continue

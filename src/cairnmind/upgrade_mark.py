@@ -9,17 +9,20 @@ The English sentences are the source; MESSAGES is their Polish for the terminal 
 from __future__ import annotations
 
 from collections.abc import Callable
+import os
 from pathlib import Path
 import re
+import sys
 import time
 
 from . import process_identity
 
 INSTALLER = "install-wsl.sh"
+INSTALLERS = frozenset({"install-wsl.sh", "install-windows.ps1"})
 BLOCKING = frozenset({"running", "unreadable"})
-_SHELLS = frozenset({"bash", "sh", "dash", "zsh"})
+_SHELLS = frozenset({"bash", "sh", "dash", "zsh", "powershell", "powershell.exe", "pwsh", "pwsh.exe"})
 _READS, _PAUSE = 3, 0.05
-_MARK = re.compile(rb"([0-9]{1,10})\n?")
+_MARK = re.compile(rb"([0-9]{1,10})\r?\n?")
 
 NOTE_RUNNING = ("An upgrade of Cairnmind is in progress (installer process {pid}), or that process cannot be "
                 "identified as the installer, so the knowledge service is not started until it has finished. If no "
@@ -70,7 +73,11 @@ MESSAGES = {
 
 
 def mark_path() -> Path:
-    """The file upgrade_mark names in scripts/install-wsl.sh: one per user, for every data directory."""
+    """The file upgrade_mark names in scripts/install-wsl.sh and scripts/install-windows.ps1: one per user."""
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA")
+        root = Path(base) if base else (Path.home() / "AppData" / "Local")
+        return root / "cairnmind" / "state" / "upgrade-in-progress"
     return Path.home() / ".local" / "state" / "cairnmind" / "upgrade-in-progress"
 
 
@@ -113,8 +120,8 @@ def state() -> tuple[str, int | None]:
         path = mark_path()
     except RuntimeError:  # Path.home() found no home directory
         return "unreadable", None
-    return mark_state(path, lambda arguments: any(Path(argument).name == INSTALLER for argument in arguments),
-                      lambda program: Path(program).name in _SHELLS)
+    return mark_state(path, lambda arguments: any(Path(argument).name.lower() in INSTALLERS for argument in arguments),
+                      lambda program: Path(program).name.lower() in _SHELLS)
 
 
 def _text(kind: str, pid: int | None) -> str | None:

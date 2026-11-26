@@ -163,17 +163,14 @@ def write_temporary(destination, payload: dict) -> Path:
 
 def publish(temporary: Path, destination) -> Path:
     """Sync a complete temporary backup to disk and move it to ``destination``; it is removed on failure."""
+    from .private_files import atomic_replace, fsync_directory, make_private
     destination = Path(destination).expanduser().resolve()
     try:
-        with open(temporary, "rb") as handle:
+        with open(temporary, "r+b") as handle:
             os.fsync(handle.fileno())
-        os.chmod(temporary, 0o600)
-        temporary.replace(destination)
-        directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        make_private(temporary)
+        atomic_replace(temporary, destination)
+        fsync_directory(destination.parent)
         return destination
     finally:
         temporary.unlink(missing_ok=True)

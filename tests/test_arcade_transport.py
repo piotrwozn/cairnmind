@@ -54,8 +54,9 @@ def test_default_transport_skips_ca_loading_is_kept_between_requests_and_closes(
     assert closed == opened
     assert client.query("SELECT 1") == [] and len(opened) == 2  # still usable: a new one is opened
     client.close()
+    import sys
     assert requests[0].extensions["timeout"]["read"] == 30
-    assert requests[1].extensions["timeout"]["read"] == 2
+    assert requests[1].extensions["timeout"]["read"] == (3.5 if sys.platform == "win32" else 2)
     assert all(request.url.scheme == "http" for request in requests)
 
 

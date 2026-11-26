@@ -6,17 +6,19 @@ cell as large as the focused view: switching views moves no pane between windows
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import os
-import pty
 import shlex
 import signal
 import struct
 import sys
-import termios
 import time
 from types import SimpleNamespace
 import warnings
+
+if sys.platform != "win32":
+    import fcntl
+    import pty
+    import termios
 
 import pytest
 
@@ -26,7 +28,7 @@ from cairnmind.workspace_activity import FOCUS_MIN_WIDTH
 from pty_drain import drain_pty
 from test_workspace import manager as manager  # noqa: F401 (the fixture)
 
-pytestmark = pytest.mark.tmux
+pytestmark = [pytest.mark.tmux, pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX tmux/PTY focus column")]
 VIEWS = ("sidebar", "client1", "client2", "inspector", "graph")
 # A stand-in for a pane process: logs its size at start and on every SIGWINCH, and shows its mark.
 PROGRAM = """import os, signal, sys, time

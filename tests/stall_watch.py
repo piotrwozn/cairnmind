@@ -12,7 +12,6 @@ Statements are printed without values (see statement()).
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
@@ -26,7 +25,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 import warnings
 
-from cairnmind import process_identity
+from cairnmind import file_locks, process_identity
 
 STALL_AFTER = 20.0
 DUMP_EVERY = 10.0  # at most one thread dump in this many seconds for all workers sharing the engine
@@ -36,12 +35,29 @@ LOG_LINES = 100
 def engine_threads(log: Path, wait: float = 1.5) -> str:
     """What the test engine's Java threads are doing right now, for the stall report (#221).
 
-    SIGQUIT makes a JVM print its threads to its output, which is engine.log, and go on running. It is sent only
-    to a process whose command line is the ArcadeDB server: for anything else SIGQUIT would be the end.
+    On POSIX, SIGQUIT makes a JVM print its threads to its output, which is engine.log, and go on running.
+    On Windows, jcmd <pid> Thread.print (from the JDK) prints the same JVM thread dump without killing it.
+    Only run against a process whose command line is the ArcadeDB server.
     """
     pid = int(json.loads((log.parent / "process.json").read_text())["pid"])
-    if not any("arcadedb" in part.lower() for part in process_identity.command_line(pid) or []):
+    cmdline = process_identity.command_line(pid) or []
+    if not any("arcadedb" in part.lower() for part in cmdline):
         return f"(none taken: process {pid} is not the engine)"
+    if sys.platform == "win32":
+        jcmd = None
+        if cmdline:
+            candidate = Path(cmdline[0]).with_name("jcmd.exe")
+            if candidate.is_file():
+                jcmd = str(candidate)
+        jcmd = jcmd or shutil.which("jcmd")
+        if not jcmd:
+            return "(not captured on Windows: jcmd not found)"
+        try:
+            done = subprocess.run([jcmd, str(pid), "Thread.print"], capture_output=True, text=True, timeout=3)
+            out = (done.stdout + done.stderr)[:80_000]
+            return out if done.returncode == 0 and out.strip() else "(not captured on Windows)"
+        except (OSError, subprocess.SubprocessError):
+            return "(not captured on Windows)"
     before = log.stat().st_size
     os.kill(pid, signal.SIGQUIT)
     time.sleep(wait)
@@ -54,24 +70,29 @@ def thread_dump(log: Path) -> str:
     """The engine's threads, taken once per DUMP_EVERY seconds across the workers (a file lock and a time stamp)."""
     with (log.parent / "stall-dump.stamp").open("a+") as handle:
         try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            file_locks.lock_exclusive(handle, blocking=False)
         except BlockingIOError:
             return "(not taken: another worker is taking one now, it is in engine.log)"
-        handle.seek(0)
-        ago = time.time() - float(handle.read() or 0)
-        if ago < DUMP_EVERY:
-            return f"(not taken: another worker took one {ago:.0f}s ago, it is in engine.log)"
-        handle.seek(0)
-        handle.truncate()
-        handle.write(str(time.time()))
-        handle.flush()
-        return engine_threads(log)
+        try:
+            handle.seek(0)
+            ago = time.time() - float(handle.read() or 0)
+            if ago < DUMP_EVERY:
+                return f"(not taken: another worker took one {ago:.0f}s ago, it is in engine.log)"
+            handle.seek(0)
+            handle.truncate()
+            handle.write(str(time.time()))
+            handle.flush()
+            return engine_threads(log)
+        finally:
+            file_locks.unlock(handle)
 
 
 def sockets(port: int) -> str:
     """Both ends of every connection on the port, with the receive and send queues (Linux: ss, else /proc)."""
     if sys.platform == "darwin":
         return "(not captured on macOS)"
+    if sys.platform == "win32":
+        return "(not captured on Windows)"
     if shutil.which("ss"):
         done = subprocess.run(["ss", "-tnpi", f"( sport = :{port} or dport = :{port} )"],
                               capture_output=True, text=True, timeout=5)

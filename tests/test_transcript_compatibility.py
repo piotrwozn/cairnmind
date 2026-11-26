@@ -68,7 +68,7 @@ def seed_legacy(workspace, tmp_path, monkeypatch, extra_line=None):
     raw = "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events)
     if extra_line is not None:
         raw += extra_line
-    path.write_text(raw)
+    path.write_text(raw, encoding="utf-8", newline="\n")
     current_parser = ingest._event_text
 
     def legacy_parser(event, client):

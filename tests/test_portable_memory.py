@@ -1,7 +1,6 @@
 """Portable knowledge snapshots on real ArcadeDB, with isolated Git fixtures."""
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -11,6 +10,9 @@ import subprocess
 import sys
 import time
 from uuid import uuid4
+
+if sys.platform != "win32":
+    import fcntl
 
 import pytest
 
@@ -61,7 +63,12 @@ def origin(tmp_path):
 
 def destination(tmp_path, origin, suffix="destination"):
     root = tmp_path / f"{suffix}-repository"
-    subprocess.run(["git", "clone", "-q", str(origin["root"]), str(root)], check=True, capture_output=True)
+    try:
+        subprocess.run(["git", "clone", "-q", str(origin["root"]), str(root)], check=True, capture_output=True)
+    except subprocess.CalledProcessError:
+        if sys.platform != "win32":
+            raise
+        shutil.copytree(origin["root"], root)
     store = Store(tmp_path / f"{suffix}-database")
     return store, root, MemoryManager(store)
 
@@ -358,7 +365,11 @@ def test_the_objects_of_a_snapshot_share_one_directory_sync_before_the_manifest(
             synced.append(path)
         return real(descriptor)
 
-    monkeypatch.setattr(portable.os, "fsync", fsync)
+    if sys.platform == "win32":
+        real_dir = portable.fsync_directory
+        monkeypatch.setattr(portable, "fsync_directory", lambda p: synced.append(str(p)) or real_dir(p))
+    else:
+        monkeypatch.setattr(portable.os, "fsync", fsync)
     published = manager.snapshot(project["id"])
     objects = sum(len(rows) for rows in json.loads(Path(published["path"]).read_bytes())["objects"].values())
     folder = Path(published["path"]).parent
@@ -390,7 +401,11 @@ def test_objects_left_by_a_killed_attempt_are_synced_before_the_manifest_that_na
             synced.append(path)
         return real_fsync(descriptor)
 
-    monkeypatch.setattr(portable.os, "fsync", fsync)
+    if sys.platform == "win32":
+        real_dir = portable.fsync_directory
+        monkeypatch.setattr(portable, "fsync_directory", lambda p: synced.append(str(p)) or real_dir(p))
+    else:
+        monkeypatch.setattr(portable.os, "fsync", fsync)
     published = manager.snapshot(project["id"])
     folder = Path(published["path"]).parent
     assert synced.count(str(folder / "objects")) == 1

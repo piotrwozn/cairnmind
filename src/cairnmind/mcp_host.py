@@ -27,6 +27,7 @@ import tempfile
 
 from .mcp_schema import MAX_BLOCKS, MAX_RESULT_BYTES, admit, convert, text  # noqa: F401 - re-exported
 from .mcp_schema import canonical as _canonical, clean as _clean, sha as _sha
+from .process_control import IS_WINDOWS, ProcessJob, group_popen_kwargs
 from .process_identity import recorded, start as process_start
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -41,7 +42,12 @@ MAX_TOOLS = 32
 MAX_PAGES = 4
 # The variables a server needs to start at all, as the mcp package's own default; nothing else of the
 # worker's environment is copied.
-INHERITED = ("HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER")
+INHERITED = (
+    ("HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER",
+     "SYSTEMROOT", "COMSPEC", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "PATHEXT")
+    if IS_WINDOWS else
+    ("HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER")
+)
 NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 SERVER_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
 _HINTS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
@@ -75,6 +81,7 @@ class McpServer:
         self.state = "new"
         self.process = None
         self.birth = None
+        self._job = None
         self.workdir = None
         self._reader = None
         self._stopping = None
@@ -188,7 +195,7 @@ class McpServer:
         self._spawning = asyncio.ensure_future(asyncio.create_subprocess_exec(
             self.definition["command"], *self.definition.get("args", []), stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, env=self._environment(),
-            cwd=self.workdir, start_new_session=True, limit=MAX_LINE_BYTES))
+            cwd=self.workdir, limit=MAX_LINE_BYTES, **group_popen_kwargs()))
         await asyncio.shield(self._spawning)
         self._owned()
 
@@ -200,6 +207,9 @@ class McpServer:
             if not spawn.cancelled() and spawn.exception() is None:
                 self.process = spawn.result()
                 self.birth = process_start(self.process.pid)
+                if IS_WINDOWS:
+                    self._job = ProcessJob()
+                    self._job.attach(self.process.pid)
         return self.process is not None
 
     async def start(self, deadline):
@@ -280,6 +290,16 @@ class McpServer:
         return self.process is not None or self._spawning is not None
 
     def _signal(self, process, sent):
+        if IS_WINDOWS:
+            job = getattr(self, "_job", None)
+            if job is not None:
+                job.terminate()
+            elif recorded(process.pid, self.birth) is True:
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
+            return
         if recorded(process.pid, self.birth) is not True:
             return  # the number belongs to another process now, or that cannot be told
         try:
@@ -304,14 +324,17 @@ class McpServer:
         process = self.process
         if process is not None:
             self._fail_pending("mcp_server_unavailable")
-            self._signal(process, signal.SIGTERM)
+            self._signal(process, getattr(signal, "SIGTERM", 15))
             if process.stdin is not None and not process.stdin.is_closing():
                 process.stdin.close()
             await self._reaped(process, 1)
             # Also after the leader exited: what is left of its group is killed.
-            self._signal(process, signal.SIGKILL)
+            self._signal(process, getattr(signal, "SIGKILL", 9))
             if await self._reaped(process, 5):
                 self.process = None  # the handle is kept until the process is reaped
+        if self._job is not None:
+            self._job.close()
+            self._job = None
         reader, self._reader = self._reader, None
         if reader is not None and not reader.done():
             reader.cancel()

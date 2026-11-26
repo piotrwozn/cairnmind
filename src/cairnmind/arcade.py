@@ -221,7 +221,9 @@ class ArcadeClient:
             json={"language": "sqlscript", "command": sql, "params": params or {}, "limit": -1}))
 
     def server_info(self) -> dict:
-        return self._request("GET", "/api/v1/server?mode=basic", timeout=2).json()
+        import sys
+        # Windows loopback TCP SYN retries take ~2.0s before WSAECONNREFUSED arrives.
+        return self._request("GET", "/api/v1/server?mode=basic", timeout=3.5 if sys.platform == "win32" else 2).json()
 
     def server_command(self, command: str) -> dict:
         return self._request("POST", "/api/v1/server", json={"command": command}).json()

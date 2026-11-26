@@ -66,7 +66,10 @@ def mac(monkeypatch):
 
 @pytest.fixture
 def sleeper():
-    process = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    if sys.platform == "win32":
+        process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    else:
+        process = subprocess.Popen(["sleep", "30"], start_new_session=True)
     try:
         yield process
     finally:
@@ -205,7 +208,7 @@ def test_mac_engine_stop_refuses_a_reused_id_and_stops_its_own_engine(mac, engin
     mac.argv[sleeper.pid] = engine_argv(state)
     assert engine.managed_java_executable(settings) == "/Library/Java/bin/java"
     assert engine.stop_engine(settings) == {"stopping": True}
-    assert ended(sleeper) and sleeper.returncode == -signal.SIGTERM
+    assert ended(sleeper) and (sys.platform == "win32" or sleeper.returncode == -signal.SIGTERM)
     assert not (state / "process.json").exists()
 
 
@@ -238,7 +241,7 @@ def test_a_command_group_whose_leader_id_was_reused_is_not_killed(system, monkey
     ToolExecutor._kill_group(sleeper, birth + "0")  # the id now names a process born at another time
     assert not ended(sleeper, .3)
     ToolExecutor._kill_group(sleeper, birth)
-    assert ended(sleeper) and sleeper.returncode == -signal.SIGKILL
+    assert ended(sleeper) and (sys.platform == "win32" or sleeper.returncode == -signal.SIGKILL)
 
 
 def test_mac_a_command_or_mcp_group_is_not_signalled_while_its_leader_cannot_be_identified(monkeypatch, sleeper):
@@ -248,9 +251,10 @@ def test_mac_a_command_or_mcp_group_is_not_signalled_while_its_leader_cannot_be_
     birth = "1763400000.000042"
     assert process_identity.recorded(sleeper.pid, birth) is None
     assert process_identity.recorded(sleeper.pid, None) is None
+    sig = getattr(signal, "SIGKILL", signal.SIGTERM)
     ToolExecutor._kill_group(sleeper, birth)
     assert asyncio.run(ToolExecutor._signal_group(sleeper.pid, sleeper, birth)) is False  # not confirmed
-    McpServer._signal(SimpleNamespace(birth=birth), sleeper, signal.SIGKILL)
+    McpServer._signal(SimpleNamespace(birth=birth), sleeper, sig)
     assert not ended(sleeper, .3)
 
 
@@ -258,7 +262,7 @@ def test_the_group_of_a_leader_that_is_gone_is_still_its_own(monkeypatch):
     # The kernel affirms that no process has the id: what is left of the group may be signalled.
     monkeypatch.setattr(process_identity, "_platform", lambda: "darwin")
     monkeypatch.setattr(process_identity, "_darwin_kinfo", lambda pid: None)
-    process = subprocess.Popen(["true"])
+    process = subprocess.Popen([sys.executable, "-c", "pass"] if sys.platform == "win32" else ["true"])
     process.wait()
     assert process_identity.recorded(process.pid, "1763400000.000042") is True
 
@@ -273,10 +277,11 @@ def test_a_leader_is_its_own_only_with_the_recorded_birth(system, monkeypatch, s
     assert process_identity.recorded(sleeper.pid, birth) is True
     assert process_identity.recorded(sleeper.pid, birth + "0") is False
     assert process_identity.recorded(sleeper.pid, None) is False  # no birth was recorded at the spawn
-    McpServer._signal(SimpleNamespace(birth=birth + "0"), sleeper, signal.SIGKILL)
+    sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+    McpServer._signal(SimpleNamespace(birth=birth + "0"), sleeper, sig)
     assert not ended(sleeper, .3)
-    McpServer._signal(SimpleNamespace(birth=birth), sleeper, signal.SIGKILL)
-    assert ended(sleeper) and sleeper.returncode == -signal.SIGKILL
+    McpServer._signal(SimpleNamespace(birth=birth), sleeper, sig)
+    assert ended(sleeper) and (sys.platform == "win32" or sleeper.returncode == -signal.SIGKILL)
 
 
 def test_mac_an_interrupted_check_runner_is_told_apart_from_a_reused_id(mac):
@@ -284,3 +289,17 @@ def test_mac_an_interrupted_check_runner_is_told_apart_from_a_reused_id(mac):
     recorded = verification._process_identity(os.getpid())
     mac.births[os.getpid()] = (1_763_400_900, 1)  # the runner died, its id was given to a new process
     assert verification._process_identity(os.getpid()) != recorded
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Reads Windows process identity via Win32/NtQuery APIs")
+def test_windows_reads_birth_command_line_and_executable_for_real(sleeper):
+    birth = process_identity.start(sleeper.pid)
+    assert birth is not None and birth.isdigit()
+    assert process_identity.start(sleeper.pid, running=True) == birth
+    assert process_identity.alive(sleeper.pid) is True
+    exe = process_identity.executable(sleeper.pid)
+    assert exe is not None and exe.lower().endswith(".exe")
+    argv = process_identity.command_line(sleeper.pid)
+    assert argv is not None and any("time.sleep(30)" in part for part in argv)
+    assert process_identity.recorded(sleeper.pid, birth) is True
+    assert process_identity.recorded(sleeper.pid, birth + "0") is False
