@@ -9,6 +9,10 @@
 
 Cairnmind is a local workspace for Codex CLI, Claude Code, GitHub Copilot and API-based coding agents (OpenAI, Anthropic, OpenAI-compatible endpoints and local Ollama). It keeps a durable, versioned memory of each project outside any single conversation, so the next session, or a different assistant, can pick up exactly where the last one stopped. It is not a plugin for one assistant and not a notes store that a model writes into: it is a separate local service that assistants connect to, and it does not treat a model's statement as evidence.
 
+![Cairnmind demo: a proposed decision and task survive a cold hand-off, then a one-line edit turns fresh test evidence stale.](docs/assets/handoff-demo.gif)
+
+**A decision survives a cold hand-off; a passing test does not survive a code change.** One session reads `DESIGN.md` and saves a proposed decision and a verification task; a fresh session starts cold and recovers the decision, the task and its source quote; `cairnmind check run` records `Checks fresh`, and a one-line edit in `checkout.py` turns that evidence `Checks stale` without running the test again.
+
 ## Quick start
 
 Cairnmind runs on Linux, on Windows (natively on Windows 10/11 or inside WSL2 Ubuntu via `wsl --install -d Ubuntu`; Ubuntu 24.04 is the tested platform) and on macOS with Apple silicon (tested on an M3 Pro with macOS 27; installed with Homebrew).
