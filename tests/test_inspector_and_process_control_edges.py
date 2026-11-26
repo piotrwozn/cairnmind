@@ -120,7 +120,11 @@ def test_process_control_windows_and_posix_edge_branches(monkeypatch):
     job.terminate(grace_seconds=0.01)
     assert pc.signal.SIGTERM in calls and 9 in calls
 
-    # Windows branches with mocked _kernel32
+    # Windows branches with mocked _kernel32 (Win32 APIs exist only on Windows)
+    import sys
+
+    if sys.platform != "win32":
+        return
     monkeypatch.setattr(pc, "IS_WINDOWS", True)
 
     class _FakeK32:

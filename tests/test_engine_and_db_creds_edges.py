@@ -241,7 +241,11 @@ def test_person_pipe_fail_closed_branches(tmp_path, monkeypatch):
         person_pipe.PersonPipeServer(tmp_path, "a" * 64)
     assert person_pipe.read_pipe_key(settings, person_pipe.pipe_name_for(tmp_path)) == ("unavailable", None)
 
-    # Windows Win32 error branches via fake kernel32
+    # Windows Win32 error branches via fake kernel32 (Win32 APIs exist only on Windows)
+    import sys
+
+    if sys.platform != "win32":
+        return
     monkeypatch.setattr(person_pipe, "IS_WINDOWS", True)
     pname = person_pipe.pipe_name_for(settings.data_dir)
 

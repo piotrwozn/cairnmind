@@ -195,14 +195,17 @@ def test_cockpit_status_stop_and_serve_locked_helpers(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)
 
     # Bad URL in server.json refused safely
+    from cairnmind.private_files import ensure_private_dir, make_private
+
     runtime_file = cockpit._runtime_file(settings)
-    runtime_file.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(runtime_file.parent)
     runtime_file.write_text(json.dumps({
         "instance": cockpit.instance_id(settings),
         "pid": cockpit.os.getpid(),
         "birth": cockpit._birth(cockpit.os.getpid()),
         "url": "https://evil.example:8766",
     }), encoding="utf-8")
+    make_private(runtime_file)
     assert cockpit.cockpit_status(settings)["available"] is False
 
     # stop_cockpit when unavailable returns clean dict

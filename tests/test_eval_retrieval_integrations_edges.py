@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
+import sys
 from types import SimpleNamespace
 
 import httpx
@@ -143,6 +144,10 @@ def test_retrieval_and_integrations_edge_branches(tmp_path, monkeypatch):
 
     # doctor with failing java probe, failing /api/ps, failing nvidia-smi
     settings = Settings.load(tmp_path / "data", create=True)
+    monkeypatch.setattr(
+        "cairnmind.platform_hints.host_system",
+        lambda: "windows" if sys.platform == "win32" else "linux",
+    )
     monkeypatch.setattr("cairnmind.engine.resolve_java", lambda s: (_ for _ in ()).throw(ArcadeError("no java")))
     monkeypatch.setattr("cairnmind.engine.managed_java_executable", lambda s: None)
     monkeypatch.setattr("cairnmind.integrations.shutil.which", lambda name: "/usr/bin/nvidia-smi" if name == "nvidia-smi" else None)

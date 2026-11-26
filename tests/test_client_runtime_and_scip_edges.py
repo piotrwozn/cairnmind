@@ -8,13 +8,14 @@ import pytest
 
 from cairnmind import client_runtime as cr, scip_manager as sm
 from cairnmind.config import Settings
+from cairnmind.private_files import ensure_private_dir
 from cairnmind.scip_registry import INDEXERS
 
 
 def test_native_runtime_validation_memory_status_and_start_edges(tmp_path, monkeypatch):
     settings = Settings(data_dir=tmp_path / "data")
     rt = cr.NativeRuntime(settings)
-    rt.directory.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(rt.directory)
 
     # get_run rejects invalid ID; _guard rejects dead run
     with pytest.raises(ValueError, match="Invalid native run ID"):
@@ -84,7 +85,7 @@ def test_native_runtime_validation_memory_status_and_start_edges(tmp_path, monke
 async def test_native_runtime_subscribe_validation(tmp_path, monkeypatch):
     settings = Settings(data_dir=tmp_path / "data")
     rt = cr.NativeRuntime(settings)
-    rt.directory.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(rt.directory)
     rt._save([{"id": "run1", "lifecycle": "exited", "generation": 1, "tmux_session": "cairnmind_run1"}])
     monkeypatch.setattr(rt, "_refresh", lambda row: row)
     monkeypatch.setattr(rt, "_pane", lambda row: None)
