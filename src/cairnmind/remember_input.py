@@ -20,7 +20,7 @@ METADATA_FIELDS = frozenset({
     "state", "depends_on", "acceptance_criteria", "requires_test", "requires_review", "required_profiles",
     "check_run_ids", "plan_ref", "step_key", "step_index", "scope", "test_passed", "test_source_ids",
     "review_passed", "review_source_ids", "acceptance_passed", "acceptance_source_ids", "criterion_checks",
-    "evidence", "topic", "reported_state"})
+    "evidence", "topic", "reported_state", "symbol"})
 REPORT_ORIGIN = {"origin": "client", "role": "external_report"}
 
 

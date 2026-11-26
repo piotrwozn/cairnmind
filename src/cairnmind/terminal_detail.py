@@ -68,6 +68,53 @@ def evidence_parts(item, translate):
     return [labelled(translate("Evidence"), translate(label), evidence_style(item.get("evidence_state")))]
 
 
+def symbol_parts(item, translate):
+    """The `Symbol:` and `Comment tag:` lines when a record has a symbol or comment anchor (#411, #412)."""
+    if not isinstance(item, dict):
+        return []
+    lines = []
+    sym_state = item.get("symbol_state")
+    anchor = item.get("symbol_anchor") if isinstance(item.get("symbol_anchor"), dict) else {}
+    change = item.get("symbol_change") if isinstance(item.get("symbol_change"), dict) else {}
+    sym = str(change.get("symbol") or anchor.get("symbol") or "")
+    path = str(change.get("path") or anchor.get("path") or "")
+    if sym_state == "unchanged" and sym:
+        lines.append(labelled(
+            translate("Symbol"),
+            translate("unchanged ({symbol} in {path})", symbol=sym, path=path),
+            "value",
+        ))
+    elif sym_state == "symbol_changed" and sym:
+        commit = str(change.get("commit") or "")[:12]
+        day = _evidence_date(change.get("changed_at"))
+        if commit and day:
+            text = translate("needs review: {symbol} changed in commit {commit} ({date})",
+                             symbol=sym, commit=commit, date=day)
+        elif commit:
+            text = translate("needs review: {symbol} changed in commit {commit}", symbol=sym, commit=commit)
+        elif day:
+            text = translate("needs review: {symbol} changed ({date})", symbol=sym, date=day)
+        else:
+            text = translate("needs review: {symbol} changed in {path}", symbol=sym, path=path)
+        lines.append(labelled(translate("Symbol"), text, "warn"))
+    elif sym_state == "symbol_gone" and sym:
+        lines.append(labelled(
+            translate("Symbol"),
+            translate("{symbol} is gone from {path}", symbol=sym, path=path),
+            "danger",
+        ))
+    if item.get("comment_state") == "tag_removed":
+        ca = item.get("comment_anchor") if isinstance(item.get("comment_anchor"), dict) else {}
+        tag = str(ca.get("tag") or "DECISION")
+        cpath = str(ca.get("path") or path)
+        lines.append(labelled(
+            translate("Comment tag"),
+            translate("the {tag}: comment was removed from {path}", tag=tag, path=cpath),
+            "warn",
+        ))
+    return lines
+
+
 def sensitivity_parts(value, translate):
     """The `Sensitivity:` line of a source or record detail; nothing for a value that is not a class."""
     label = SENSITIVITY_LABELS.get(value.get("sensitivity")) if isinstance(value, dict) else None
@@ -151,6 +198,7 @@ def record_parts(value, translate):
 
     evidence = value.get("evidence") if isinstance(value.get("evidence"), dict) else {}
     lines += evidence_parts(evidence, translate)
+    lines += symbol_parts(evidence, translate)
     if not lines:
         return None
     return join_lines(lines, "\n\n")

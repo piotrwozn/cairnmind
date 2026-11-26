@@ -987,6 +987,11 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                                  if folder["root"] in away]
     if not walk_errors and not away:
         project_folders.adopt(store, walked)
+    from .code_decisions import ingest_project_decisions
+    available_roots = [Path(folder["root"]) for folder in folders if folder["state"] == "available"]
+    decisions_result = ingest_project_decisions(store, project_id, indexed, roots=available_roots)
+    if decisions_result.get("source") != "off":
+        counts["code_decisions"] = decisions_result
     if state is not None:
         state.update(parser=parser_identity(), files=files, graph=graph)
     return counts
