@@ -216,7 +216,7 @@ def test_cli_project_add_scip_auto_vs_no_scip_and_scip_import(tmp_path, monkeypa
     )
     assert res_skip.exit_code == 0, res_skip.output
     body_skip = json.loads(res_skip.output)
-    assert body_skip["scip"]["queued"] is False
+    assert "scip" not in body_skip
 
     # 2. project add (auto mode) detects Go and enqueues a scip_index job without blocking
     repo2 = _make_sample_go_project(tmp_path / "go_cli_auto")

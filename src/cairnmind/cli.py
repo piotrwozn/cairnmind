@@ -1172,8 +1172,9 @@ def project_add(
         lines.append((first_start.PROJECT_EXISTED_NEXT if existed or restored else first_start.PROJECT_ADDED_NEXT)
                      .format(project=quoted))
         return lines
+    scip_extra = {"scip": scip_info} if (scip_info.get("queued") or scip_info.get("detected_languages")) else {}
     _human_or_json({"project": project, "indexed": result, "history": discovery, "jobs": jobs,
-                    "scip": scip_info, **details},
+                    **scip_extra, **details},
                    as_json, sentences)
     if result.get("unavailable"):  # a folder of another machine was not indexed: said above, and the exit code says so
         raise typer.Exit(1)
@@ -2810,7 +2811,10 @@ def service_autostart_remove(ctx: typer.Context):
 @scip_app.command("status")
 def scip_status_cmd(
     ctx: typer.Context,
-    project: Annotated[str | None, typer.Argument(help="Optional project name or id to detect languages in.")] = None,
+    project: Annotated[
+        str | None,
+        typer.Argument(metavar="[PROJECT]", help="Optional project name or id to detect languages in."),
+    ] = None,
     root: Annotated[Path | None, typer.Option("--root", help="Optional folder path to detect SCIP languages in.")] = None,
 ):
     """Show installed SCIP indexers, host toolchains, and detected languages. Read-only."""
@@ -2828,7 +2832,10 @@ def scip_install_cmd(
     ctx: typer.Context,
     targets: Annotated[
         list[str] | None,
-        typer.Argument(help="Languages (go, rust, java, kotlin, c, cpp, csharp, php, ruby) or indexer IDs. Omit for all."),
+        typer.Argument(
+            metavar="[TARGETS]...",
+            help="Languages (go, rust, java, kotlin, c, cpp, csharp, php, ruby) or indexer IDs. Omit for all.",
+        ),
     ] = None,
 ):
     """Download and verify pinned SCIP indexers into Cairnmind's private runtime directory."""

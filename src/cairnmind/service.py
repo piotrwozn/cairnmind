@@ -816,9 +816,10 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         else:
             from cairnmind.scip_ingest import enqueue_project_scip
             scip_info = await asyncio.to_thread(enqueue_project_scip, store, settings, created["id"], root)
+        scip_extra = {"scip": scip_info} if (scip_info.get("queued") or scip_info.get("detected_languages")) else {}
         # Said, never silent (#327): a removed project that came back is not a new one, and one that keeps its
         # memory under this name or folder was not brought back.
-        return {"project": created, "scip": scip_info, **add_outcome(removed, known, created)[2]}
+        return {"project": created, **scip_extra, **add_outcome(removed, known, created)[2]}
 
     @app.get("/project-roots", dependencies=auth)
     async def project_roots(project: str):

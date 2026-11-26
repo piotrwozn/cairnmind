@@ -29,12 +29,11 @@ import tarfile
 import time
 from typing import Any
 from urllib.parse import urlparse
+import urllib.request
 from uuid import uuid4
 import zipfile
 
-import httpx
-
-from .config import Settings, tls_verify
+from .config import Settings
 from .file_locks import locked_path
 from .private_files import (
     atomic_replace,
@@ -125,14 +124,19 @@ def _resolve_java_for_scip(settings: Settings) -> str | None:
     return shutil.which("java")
 
 
-def _find_host_tool(settings: Settings, tool: str) -> str | None:
+def _find_host_tool(settings: Settings, tool: str, *, passive: bool = False) -> str | None:
     if tool == "java":
+        if passive:
+            configured = settings.java_executable
+            if isinstance(configured, str) and configured and Path(configured).is_file():
+                return configured
+            return shutil.which("java")
         return _resolve_java_for_scip(settings)
     return shutil.which(tool)
 
 
-def _missing_host_tools(settings: Settings, spec: IndexerSpec) -> list[str]:
-    return [tool for tool in spec.required_tools if not _find_host_tool(settings, tool)]
+def _missing_host_tools(settings: Settings, spec: IndexerSpec, *, passive: bool = False) -> list[str]:
+    return [tool for tool in spec.required_tools if not _find_host_tool(settings, tool, passive=passive)]
 
 
 def _ecosystem_binary_path(install_dir: Path, spec: IndexerSpec, os_name: str) -> Path:
@@ -164,33 +168,37 @@ def _validate_download_url(url: str) -> None:
     raise ScipError(f"Refusing non-HTTPS indexer download URL: {url}")
 
 
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Validate every redirect target against the HTTPS-only (or loopback HTTP) rule."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_download_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _download_verified(url: str, expected_sha256: str, staging_dir: Path) -> Path:
     """Download ``url`` into ``staging_dir``, enforcing size cap and exact SHA-256."""
     _validate_download_url(url)
     tmp_path = staging_dir / f".download-{secrets.token_hex(8)}.tmp"
     hasher = hashlib.sha256()
     total = 0
+    opener = urllib.request.build_opener(_SafeRedirectHandler())
     try:
-        with httpx.Client(
-            follow_redirects=True,
-            timeout=httpx.Timeout(30.0, read=120.0),
-            verify=tls_verify(url),
-        ) as client:
-            with client.stream("GET", url) as response:
-                response.raise_for_status()
-                with tmp_path.open("wb") as handle:
-                    for chunk in response.iter_bytes(_COPY_CHUNK_BYTES):
-                        if not chunk:
-                            continue
-                        total += len(chunk)
-                        if total > MAX_DOWNLOAD_BYTES:
-                            raise ScipError(
-                                f"Downloaded indexer exceeds {MAX_DOWNLOAD_BYTES} bytes limit"
-                            )
-                        hasher.update(chunk)
-                        handle.write(chunk)
-                    handle.flush()
-                    os.fsync(handle.fileno())
+        # Keep the environment's proxy and CA trust for release downloads (as in engine.py).
+        with opener.open(url, timeout=120) as response, tmp_path.open("wb") as handle:
+            while True:
+                chunk = response.read(_COPY_CHUNK_BYTES)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_DOWNLOAD_BYTES:
+                    raise ScipError(
+                        f"Downloaded indexer exceeds {MAX_DOWNLOAD_BYTES} bytes limit"
+                    )
+                hasher.update(chunk)
+                handle.write(chunk)
+            handle.flush()
+            os.fsync(handle.fileno())
         make_private(tmp_path)
         actual = hasher.hexdigest().lower()
         if not hmac.compare_digest(actual, expected_sha256.lower()):
@@ -702,7 +710,7 @@ def scip_status(
 
     for indexer_id, spec in INDEXERS.items():
         asset = spec.assets.get((os_name, arch))
-        missing_tools = _missing_host_tools(settings, spec)
+        missing_tools = _missing_host_tools(settings, spec, passive=True)
         install_dir = runtime_root / spec.indexer_id / spec.version
         if asset is not None:
             candidate = install_dir / asset.binary_name
