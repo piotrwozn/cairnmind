@@ -51,9 +51,9 @@ async def test_ctrl_q_never_ends_the_graph(panel):  # noqa: F811
     settings, workspace, broker = panel
     app = GraphApp(settings, broker=broker, workspace=workspace, motion=False)
     async with app.run_test(size=(100, 35)) as pilot:
-        await pilot.pause()
+        await wait_until(pilot, lambda: bool(app.model.nodes) and not app._dirty and not app._loading)
         await pilot.press("ctrl+q")
-        await pilot.pause(.2)
+        await wait_until(pilot, lambda: notice_text(app) == app.LEAVE_KEYS)
         assert app.is_running
         assert notice_text(app) == app.LEAVE_KEYS
 
