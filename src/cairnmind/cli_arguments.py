@@ -33,6 +33,10 @@ SourceIdArg = _text("SOURCE_ID", "The source's id, as a citation or `records` na
 AnswerIdArg = _text("ANSWER_ID", "The logged answer's id, as `answers list` prints it.")
 ProjectNameArg = _text("NAME", "The name to give the project.")
 ProjectRootArg = _path("ROOT", "The project's folder.")
+OptionalProjectNameArg = Annotated[str | None, typer.Argument(
+    metavar="NAME", help="The name to give the project, or a remote Git URL; with --clone defaults to the repository name.")]
+OptionalProjectRootArg = Annotated[str | None, typer.Argument(
+    metavar="ROOT", help="The project's folder, or a remote Git URL; with --clone defaults to ./<repo>.")]
 FolderArg = _path("PATH", "Another folder or worktree of the project.")
 TitleArg = _text("TITLE", "What the task is, in a few words.")
 StateArg = _text("STATE", "todo, in_progress, needs_test, needs_review, done or blocked.")
