@@ -17,7 +17,9 @@ import tempfile
 import pytest
 
 from installer_script import installer_functions as installer_text
-from cairnmind import cli, cockpit, sessions
+from cairnmind import cli
+from cairnmind.terminal import cockpit
+from cairnmind.memory import sessions
 from cairnmind.config import BACKUP_FORMATS, BACKUP_SUFFIXES, BROKER_NAMES, SERVICE_NAMES, Settings
 from cairnmind.service import instance_id
 from cairnmind.store import Store

@@ -4,9 +4,9 @@ import json
 import httpx
 import pytest
 
-from cairnmind.api_credentials import CredentialStore
-from cairnmind.api_profiles import normalize_profile
-from cairnmind.api_runtime import RuntimeSupervisor, _worker_environment
+from cairnmind.agents.api_credentials import CredentialStore
+from cairnmind.agents.api_profiles import normalize_profile
+from cairnmind.agents.api_runtime import RuntimeSupervisor, _worker_environment
 from cairnmind.config import Settings
 
 
@@ -70,7 +70,7 @@ def test_live_slot_reused_and_explicit_resume_reuses_logical_session(runtime):
     rows = runner._read()
     rows[0]['lifecycle'] = 'exited'
     runner._save(rows)
-    from cairnmind.agent_journal import AgentJournal
+    from cairnmind.agents.agent_journal import AgentJournal
     AgentJournal(runner.settings, first['session_id']).append('message', {'role': 'user', 'content': 'Archived turn'})
     resumed = runner.start_agent(project, profile, slot_id='slot', resume=True)
     assert resumed['id'] != first['id'] and resumed['generation'] == 2
@@ -107,7 +107,7 @@ def test_an_unusable_key_is_refused_by_its_own_code_and_never_quoted(runtime, mo
         runner.start_agent(project, stored, slot_id='other')
     assert not spawned and not requests
     # Start work reports both by name, so the sidebar can say what to do (#243).
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal.cockpit_state import CockpitState
     state = CockpitState(runner.settings)
     state.update({'profiles': [*state.load()['profiles'], invalid, stored]})
     started = runner.start_project(project, slots=[{**invalid, 'id': 'one', 'profile_id': 'api'},
@@ -118,7 +118,8 @@ def test_an_unusable_key_is_refused_by_its_own_code_and_never_quoted(runtime, mo
 
 def test_start_work_reports_a_partial_packet_by_its_code_under_the_supervisor(runtime, monkeypatch):
     """The production path of Start work (cockpit -> RuntimeSupervisor), not NativeRuntime's own."""
-    from cairnmind import client_auth, integrations
+    from cairnmind.agents import client_auth
+    from cairnmind.memory import integrations
     runner, credentials, project, spawned, requests = runtime
     monkeypatch.setattr(client_auth, 'probe_client', lambda client: {'installation': 'ready', 'auth': 'signed_in'})
     info = {'verified_resume': True, 'mcp_configured': True, 'hooks_configured': True, 'instructions_configured': True}
@@ -178,7 +179,7 @@ def test_reopening_live_agent_needs_no_new_credential_or_model_call(runtime):
 
 
 def test_all_profiles_custom_credentials_are_absent_from_worker_spec(runtime, monkeypatch):
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal.cockpit_state import CockpitState
     runner, credentials, project, spawned, requests = runtime
     state = CockpitState(runner.settings)
     row = normalize_profile({'id': 'foreign', 'client': 'api', 'label': 'Other', 'provider': 'openai',
@@ -221,7 +222,7 @@ def local_profile():
 
 
 def test_project_mcp_servers_are_frozen_into_the_api_run_only(runtime, tmp_path, monkeypatch):
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal.cockpit_state import CockpitState
     runner, credentials, project, spawned, requests = runtime
     other = tmp_path / 'other'
     other.mkdir()
@@ -235,7 +236,7 @@ def test_project_mcp_servers_are_frozen_into_the_api_run_only(runtime, tmp_path,
     assert runner.agent_configuration(run['id'], run['generation'])['mcp_servers'] == [mcp_server()]
     second = runner.start_agent({'id': 'other', 'root': str(other)}, local_profile(), slot_id='slot')
     assert runner.agent_configuration(second['id'], second['generation'])['mcp_servers'] == []
-    monkeypatch.setattr('cairnmind.copilot_adapter.runtime_status', lambda settings: {'available': True})
+    monkeypatch.setattr('cairnmind.agents.copilot_adapter.runtime_status', lambda settings: {'available': True})
     copilot = normalize_profile({'id': 'copilot', 'client': 'copilot', 'label': 'Copilot'})
     third = runner.start_agent(project, copilot, slot_id='copilot-slot')
     assert runner.agent_configuration(third['id'], third['generation'])['mcp_servers'] == []
@@ -244,7 +245,7 @@ def test_project_mcp_servers_are_frozen_into_the_api_run_only(runtime, tmp_path,
 
 
 def test_a_worktree_program_or_an_invalid_list_gives_no_server_and_the_run_starts(runtime):
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal.cockpit_state import CockpitState
     runner, credentials, project, spawned, requests = runtime
     state = CockpitState(runner.settings)
     inside = mcp_server('local', command=project['root'] + '/bin/server', args=())
@@ -266,7 +267,7 @@ def test_a_worktree_program_or_an_invalid_list_gives_no_server_and_the_run_start
 
 
 def test_the_largest_valid_list_still_fits_the_private_configuration(runtime):
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal.cockpit_state import CockpitState
     runner, credentials, project, spawned, requests = runtime
     state = CockpitState(runner.settings)
     big = [mcp_server(f's{i}', args=['a' * 4000] * 4) for i in range(4)]

@@ -9,13 +9,13 @@ from uuid import uuid4
 
 import pytest
 
-import cairnmind.agent as agent_module
+import cairnmind.agents.agent as agent_module
 import cairnmind.service as service_module
-from cairnmind.agent import KnowledgeAgent
+from cairnmind.agents.agent import KnowledgeAgent
 from cairnmind.config import Settings
-from cairnmind.ollama import OllamaUnavailable
+from cairnmind.agents.ollama import OllamaUnavailable
 from cairnmind.store import Store
-from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
+from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 
 
 PRIVATE = "PRIVATE_METADATA_CREDENTIAL_DO_NOT_ECHO"
@@ -135,11 +135,11 @@ def service_job_fixture(workspace, monkeypatch, model, *, kind="extract"):
     settings.token = "synthetic-service-token"
     item = source(store, project, "Do not commit memory after extraction has timed out.")
     job_id = store.enqueue(kind, project["id"], {"source_id": item["id"]}, f"budget:{kind}:{item['id']}")
-    for name in ("cairnmind.integrations.drain_hook_spool", "cairnmind.ingest.poll_imports",
-                 "cairnmind.ingest.index_project", "cairnmind.ingest.index_pending_sources"):
+    for name in ("cairnmind.memory.integrations.drain_hook_spool", "cairnmind.scip.ingest.poll_imports",
+                 "cairnmind.scip.ingest.index_project", "cairnmind.scip.ingest.index_pending_sources"):
         monkeypatch.setattr(name, lambda *_args, **_kwargs: {"errors": []})
-    monkeypatch.setattr("cairnmind.memory.MemoryManager.tick", lambda _self: {"errors": []})
-    monkeypatch.setattr("cairnmind.verification.recover_interrupted_runs", lambda *_args: None)
+    monkeypatch.setattr("cairnmind.memory.memory.MemoryManager.tick", lambda _self: {"errors": []})
+    monkeypatch.setattr("cairnmind.memory.verification.recover_interrupted_runs", lambda *_args: None)
     monkeypatch.setattr(Store, "backup", lambda *_args: None)
     claims, original_claim = [], Store.claim_job
 
@@ -233,7 +233,7 @@ async def test_service_watchdog_still_stops_stalled_work_and_embedding_keeps_thi
 
     # Deliberately no inner agent deadline: the independent watchdog must work.
     monkeypatch.setattr(KnowledgeAgent, "extract", stalled)
-    monkeypatch.setattr("cairnmind.retrieval.Retriever.embed_pending", stalled)
+    monkeypatch.setattr("cairnmind.agents.retrieval.Retriever.embed_pending", stalled)
 
     class ServiceAsyncio:
         def __getattr__(self, name):

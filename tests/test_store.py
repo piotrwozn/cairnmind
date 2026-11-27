@@ -8,11 +8,11 @@ import time
 
 import pytest
 
-from cairnmind.embed_jobs import repair_embed_jobs
+from cairnmind.storage.embed_jobs import repair_embed_jobs
 from cairnmind.store import Store
 
 from conftest import as_person, person_edit
-from cairnmind.verification import run_check, verification_status
+from cairnmind.memory.verification import run_check, verification_status
 
 
 @pytest.fixture
@@ -327,7 +327,7 @@ def test_corrupt_or_foreign_backups_rejected_without_destroying_store(store, pro
 
 
 def test_portable_backup_carries_no_vectors_and_search_says_so_after_restore(store, project, tmp_path):
-    from cairnmind.retrieval import Retriever
+    from cairnmind.agents.retrieval import Retriever
 
     s = source(store, project)
     namespace = "qwen3-embedding:0.6b@test-digest"
@@ -357,7 +357,7 @@ def test_portable_backup_carries_no_vectors_and_search_says_so_after_restore(sto
 
 
 def test_snapshot_invalidates_native_ann_and_lexical_current_flags(store, project):
-    from cairnmind.retrieval import Retriever
+    from cairnmind.agents.retrieval import Retriever
 
     s = source(store, project)
     retriever = Retriever(store, store.settings)
@@ -477,7 +477,7 @@ def test_observed_replaced_evidence_never_triggers_the_warning(store, project):
 
 
 def test_public_record_shows_evidence_fields_without_truncation(store, project):
-    from cairnmind.retrieval import public_record
+    from cairnmind.agents.retrieval import public_record
     june = _transcript(store, project, "transcript://june", "Sessions last one day.", "2026-06-01T09:00:00Z")
     march = _transcript(store, project, "transcript://march", "Sessions last one hour.", "2026-03-01T09:00:00Z")
     current = store.remember(project["id"], {"kind": "decision", "key": "ttl", "content": "One day",

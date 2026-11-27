@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import pytest
 
-from cairnmind.inspector import Inspector
-from cairnmind.memory import MemoryManager
-from cairnmind.memory_published import Publisher
-from cairnmind.memory_published_import import PublishedImporter
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.memory_published import Publisher
+from cairnmind.memory.memory_published_import import PublishedImporter
 from cairnmind.store import Store
 
 from conftest import person_edit

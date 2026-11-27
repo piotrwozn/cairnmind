@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from cairnmind.scip_proto import (
+from cairnmind.scip.scip_proto import (
     MAX_SCIP_BYTES,
     ROLE_DEFINITION,
     ROLE_IMPORT,
@@ -181,7 +181,7 @@ def test_scip_proto_rejects_malformed_and_path_traversal():
 
 
 def test_scip_proto_wire_types_limits_and_edge_cases(tmp_path, monkeypatch):
-    from cairnmind import scip_proto as sp
+    from cairnmind.scip import scip_proto as sp
 
     # Skip unknown fields across wire types 0 (varint), 1 (64-bit), 2 (len), 5 (32-bit)
     skip_fields = (

@@ -4,8 +4,11 @@ import types
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, engine, first_start, integrations
-from cairnmind.arcade import ArcadeError
+from cairnmind import cli
+from cairnmind.storage import engine
+from cairnmind.cli_cmds import first_start
+from cairnmind.memory import integrations
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.config import Settings
 from cairnmind.store import Store
 
@@ -86,7 +89,7 @@ def test_a_refused_verified_launch_names_the_parts_not_in_place_and_doctor_contr
 
 def test_status_without_a_service_says_the_next_command_starts_it(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "memory", create=True)
-    monkeypatch.setattr("cairnmind.store_writer.inspect", lambda s: {"role": "writer"})
+    monkeypatch.setattr("cairnmind.storage.store_writer.inspect", lambda s: {"role": "writer"})
     assert cli._service_unavailable(settings) == first_start.STATUS_NOT_RUNNING
     assert "serve" not in first_start.STATUS_NOT_RUNNING
 
@@ -95,7 +98,7 @@ def test_an_engine_that_is_not_installed_or_exits_names_its_cause_and_the_next_c
     settings = Settings.load(tmp_path / "memory", create=True)
     monkeypatch.setattr(engine, "connect_only", lambda s: False)
     monkeypatch.setattr(engine, "engine_status", lambda s: {"available": False})
-    monkeypatch.setattr("cairnmind.engine_docker.refuse_if_container_runs", lambda s: None)
+    monkeypatch.setattr("cairnmind.storage.engine_docker.refuse_if_container_runs", lambda s: None)
     monkeypatch.setattr(engine, "runtime_dir", lambda s: tmp_path / "no-runtime")
     with pytest.raises(ArcadeError) as missing:
         engine.start_engine(settings)

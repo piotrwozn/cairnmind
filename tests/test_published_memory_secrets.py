@@ -8,13 +8,13 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.memory_published_check import check_files
-from cairnmind.memory_published_format import path_of, render
-from cairnmind.memory_published_secrets import (
+from cairnmind.memory.memory_published_check import check_files
+from cairnmind.memory.memory_published_format import path_of, render
+from cairnmind.memory.memory_published_secrets import (
     REGISTERED, Rules, SecretRulesError, described, load_rules, random_looking, release_problem, scan_text,
     value_sha256,
 )
-from cairnmind.sql import json_text
+from cairnmind.storage.sql import json_text
 from test_published_memory_format import AT, OTHER, PROJECT, RECORD, REVIEW, constraint, decision, single, tree
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -9,7 +9,8 @@ from uuid import uuid4
 
 import pytest
 
-from cairnmind import mcp_host, memory
+from cairnmind.mcp import mcp_host
+from cairnmind.memory import memory
 
 
 def _write_manifest(base, manifest, *, recompute_id=True):

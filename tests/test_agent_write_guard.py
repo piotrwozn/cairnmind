@@ -7,9 +7,9 @@ import hashlib
 
 import pytest
 
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.agent_tools import ToolExecutor
-from cairnmind.api_agent import AgentEngine
+from cairnmind.agents.agent_journal import AgentJournal
+from cairnmind.agents.agent_tools import ToolExecutor
+from cairnmind.agents.api_agent import AgentEngine
 from cairnmind.config import Settings
 from test_api_agent import Memory, ScriptedProvider, call, reply, setup as setup  # noqa: F401 - fixture
 
@@ -113,7 +113,7 @@ async def test_patch_and_delete_of_a_gated_file_show_the_change_and_need_approva
 
 
 async def test_a_long_gated_write_shows_a_bounded_preview_with_the_count_of_the_rest(executor):
-    from cairnmind.agent_write_guard import MAX_DIFF_LINES
+    from cairnmind.agents.agent_write_guard import MAX_DIFF_LINES
     asked = []
     executor.approve = lambda request: asked.append(request) or False
     content = "".join(f"line {n}\n" for n in range(500))
@@ -124,7 +124,7 @@ async def test_a_long_gated_write_shows_a_bounded_preview_with_the_count_of_the_
 
 
 async def test_a_payload_at_the_end_of_a_long_line_is_shown_never_cut_off(executor):
-    from cairnmind.agent_write_guard import MAX_DIFF_CHARS
+    from cairnmind.agents.agent_write_guard import MAX_DIFF_CHARS
     target = executor.worktree / "AGENTS.md"
     target.write_text("Be helpful.\n", newline="\n")
     asked = []
@@ -164,7 +164,7 @@ async def test_a_file_change_cancelled_while_asking_is_not_listed_live_or_after_
 
 
 def test_an_interrupted_write_counts_after_a_restart_only_when_it_started():
-    from cairnmind.agent_write_guard import ChangeLedger
+    from cairnmind.agents.agent_write_guard import ChangeLedger
     action = {"name": "write_file", "arguments": {"path": "a.py", "expected_sha256": None}}
     ledger = ChangeLedger()
     ledger.replay([{"type": "action_interrupted", "data": {**action, "action_id": "x"}},
@@ -198,7 +198,7 @@ async def test_writes_elsewhere_still_need_no_approval(executor):
     ".envrc", ".pre-commit-config.yaml", ".husky/pre-commit", ".gitlab-ci.yml", "AGENTS.override.md",
     "sub/agents.OVERRIDE.md"])
 def test_files_that_configure_execution_are_recognised(path):
-    from cairnmind.agent_write_guard import configures_execution
+    from cairnmind.agents.agent_write_guard import configures_execution
     assert configures_execution(tuple(path.split("/")))
 
 
@@ -207,7 +207,7 @@ def test_files_that_configure_execution_are_recognised(path):
     ".github/ISSUE_TEMPLATE/bug.md", ".github/CODEOWNERS", ".vscode/extensions.json", "agents.md.bak",
     "claude/settings.json"])
 def test_other_files_are_not_gated(path):
-    from cairnmind.agent_write_guard import configures_execution
+    from cairnmind.agents.agent_write_guard import configures_execution
     assert not configures_execution(tuple(path.split("/")))
 
 
@@ -241,7 +241,7 @@ async def test_the_list_merges_changes_and_resets_only_after_an_approval(executo
 
 
 async def test_the_list_is_bounded_with_a_count_of_the_rest_and_long_paths_are_shortened(executor):
-    from cairnmind.agent_write_guard import MAX_LISTED, MAX_PATH_CHARS
+    from cairnmind.agents.agent_write_guard import MAX_LISTED, MAX_PATH_CHARS
     requests = []
     executor.approve = lambda request: requests.append(request) or False
     for number in range(MAX_LISTED + 5):
@@ -295,7 +295,7 @@ async def test_a_line_break_in_a_file_name_cannot_forge_lines_in_the_list(execut
 
 
 def test_inert_paths_escape_breaks_separators_and_controls_once():
-    from cairnmind.agent_write_guard import inert_path, shown_path
+    from cairnmind.agents.agent_write_guard import inert_path, shown_path
     assert inert_path("a\nb\tc\rd\u2028e\u2029f\x1bg\u202eh\x85i") == (
         "a\\nb\\tc\\rd\\u2028e\\u2029f\\u001bg\\u202eh\\u0085i")
     assert inert_path(inert_path("a\nb")) == inert_path("a\nb") and inert_path("plain/ok.py") == "plain/ok.py"
@@ -364,7 +364,7 @@ def _command_request(**extra):
 
 
 async def _shown(tmp_path, monkeypatch, language, *requests):
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal.cockpit_state import CockpitState
     from test_api_worker import make_app
     app = make_app(tmp_path)
     # Saved, not only set: the app re-reads the saved language every half second and would switch back.

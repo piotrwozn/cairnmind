@@ -22,9 +22,9 @@ if sys.platform != "win32":
 
 import pytest
 
-from cairnmind.cockpit_state import CockpitState
-from cairnmind.workspace import ACTIVITY_WIDTH, SESSION, WorkspaceManager
-from cairnmind.workspace_activity import FOCUS_MIN_WIDTH
+from cairnmind.terminal.cockpit_state import CockpitState
+from cairnmind.terminal.workspace import ACTIVITY_WIDTH, SESSION, WorkspaceManager
+from cairnmind.terminal.workspace_activity import FOCUS_MIN_WIDTH
 from pty_drain import drain_pty
 from test_workspace import manager as manager  # noqa: F401 (the fixture)
 

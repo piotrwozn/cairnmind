@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from rich.cells import cell_len
 
-from cairnmind import terminal_activity
-from cairnmind.terminal_activity import (ActivityApp, ActivityPopup, finished_plans, fit, group_tasks, plan_progress,
+from cairnmind.terminal import terminal_activity
+from cairnmind.terminal.terminal_activity import (ActivityApp, ActivityPopup, finished_plans, fit, group_tasks, plan_progress,
                                          running_rows)
-from cairnmind.terminal_i18n import CATALOG, tr
-from cairnmind.terminal_ui import BasePanel
+from cairnmind.terminal.terminal_i18n import CATALOG, tr
+from cairnmind.terminal.terminal_ui import BasePanel
 from test_terminal_activity import PLANS, TASKS, task
 
 

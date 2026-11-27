@@ -8,10 +8,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from cairnmind import journal as module
-from cairnmind.arcade import ArcadeClient
-from cairnmind.journal import Journal
-from cairnmind.memory import MemoryManager
+from cairnmind.storage import journal as module
+from cairnmind.storage.arcade import ArcadeClient
+from cairnmind.storage.journal import Journal
+from cairnmind.memory.memory import MemoryManager
 from cairnmind.store import Store
 
 
@@ -190,7 +190,7 @@ def test_pagination_project_filter_gaps_and_retention(workspace, monkeypatch):
 
 
 def test_graph_rebuild_is_one_reset_and_unchanged_scan_is_quiet(workspace):
-    from cairnmind.ingest import index_project
+    from cairnmind.scip.ingest import index_project
     store, project, root, journal = workspace
     for args in (("init", "-q"), ("config", "user.email", "test@example.invalid"), ("config", "user.name", "Journal")):
         subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)

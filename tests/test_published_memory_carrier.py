@@ -8,12 +8,13 @@ from fastapi.testclient import TestClient
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, memory_published
-from cairnmind.inspector import Inspector
-from cairnmind.memory import MemoryConflict
-from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher, publication_status
-from cairnmind.memory_published_carrier import configure
-from cairnmind.memory_published_import import PublishedImporter
+from cairnmind import cli
+from cairnmind.memory import memory_published
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.memory.memory import MemoryConflict
+from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher, publication_status
+from cairnmind.memory.memory_published_carrier import configure
+from cairnmind.memory.memory_published_import import PublishedImporter
 from cairnmind.service import create_app
 from cairnmind.store import Store
 

@@ -6,11 +6,12 @@ import re
 import httpx
 import pytest
 
-from cairnmind import __version__, service_version
+from cairnmind import __version__
+from cairnmind.cli_cmds import service_version
 from cairnmind.config import Settings
-from cairnmind.process_control import format_command
-from cairnmind.service_version import NO_HEALTH, OTHER_VERSION, VERSION_UNKNOWN, instance_id, refusal
-from cairnmind.terminal_i18n import CATALOG
+from cairnmind.pal.process_control import format_command
+from cairnmind.cli_cmds.service_version import NO_HEALTH, OTHER_VERSION, VERSION_UNKNOWN, instance_id, refusal
+from cairnmind.terminal.terminal_i18n import CATALOG
 
 
 @pytest.fixture
@@ -86,8 +87,8 @@ def test_a_program_that_does_not_answer_is_not_called_the_service_and_stop_is_no
 
 def test_the_sentence_is_shown_in_polish_by_the_workspace(settings, monkeypatch):
     from cairnmind.cli import ServiceOfOtherVersion
-    from cairnmind.terminal_i18n import tr
-    from cairnmind.terminal_i18n_messages import broker_error_text
+    from cairnmind.terminal.terminal_i18n import tr
+    from cairnmind.terminal.terminal_i18n_messages import broker_error_text
     answer(monkeypatch, lambda request: httpx.Response(200, json=health(settings, version="0.11.0")))
     error = ServiceOfOtherVersion(refusal(settings))
     english = broker_error_text(error, lambda text: tr(text, "en"))

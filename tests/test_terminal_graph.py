@@ -10,12 +10,12 @@ import threading
 import pytest
 from textual.widgets import OptionList, Static
 
-from cairnmind.code_graph import CODE_GRAPH_NOT_BUILT
+from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT
 from cairnmind.config import Settings
-from cairnmind.terminal_graph import (BrailleCanvas, Camera, EDGE_LIMIT, GraphApp, GraphModel, GraphScope,
+from cairnmind.terminal.terminal_graph import (BrailleCanvas, Camera, EDGE_LIMIT, GraphApp, GraphModel, GraphScope,
                                     GroupPicker, NODE_LIMIT, TerminalGraph, layout_positions, render_scene,
                                     seed_position, selection_for, terminal_visible)
-from cairnmind.workspace_state import WorkspaceState
+from cairnmind.terminal.workspace_state import WorkspaceState
 
 
 def projection(project="p", count=3):
@@ -284,7 +284,7 @@ def notice_text(app):
 @pytest.mark.parametrize("language, words", [("en", "code graph of this project is not built yet"),
                                               ("pl", "Graf kodu tego projektu nie jest jeszcze zbudowany")])
 async def test_graph_says_that_the_code_graph_is_being_written_until_the_mark_is_gone(panel, language, words):
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal.cockpit_state import CockpitState
     settings, workspace, broker = panel
     CockpitState(settings).update({"language": language})
     broker.data["alpha"]["warnings"] = [CODE_GRAPH_NOT_BUILT]

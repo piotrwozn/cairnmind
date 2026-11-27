@@ -8,11 +8,11 @@ import sys
 
 import pytest
 
-from cairnmind import person_proof
+from cairnmind.terminal import person_proof
 from cairnmind.config import Settings
-from cairnmind.confirmation import NOT_PROVEN
-from cairnmind.runtime_sockets import prepare_socket_base, socket_directory, workspace_namespace
-from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
+from cairnmind.memory.confirmation import NOT_PROVEN
+from cairnmind.pal.runtime_sockets import prepare_socket_base, socket_directory, workspace_namespace
+from cairnmind.terminal.terminal_i18n_messages import BROKER_MESSAGES
 
 KEY = "ab" * 32
 OTHER = "cd" * 32
@@ -245,7 +245,7 @@ def test_the_proof_is_not_present_until_require_passes(settings, workspace_socke
 
 
 def test_every_new_sentence_has_polish():
-    from cairnmind.terminal_i18n import CATALOG, tr
+    from cairnmind.terminal.terminal_i18n import CATALOG, tr
     sentences = (person_proof.PROOF_MISSING, person_proof.PROOF_REFUSED, person_proof.NO_WORKSPACE_KEY,
                  person_proof.TMUX_MISSING, person_proof.IMPORT_REPLACE, person_proof.FORGET_REFUSED, NOT_PROVEN)
     for sentence in sentences:

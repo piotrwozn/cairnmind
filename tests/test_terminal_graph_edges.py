@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from cairnmind.cockpit_state import CockpitState
+from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.config import Settings
-from cairnmind.terminal_graph import (
+from cairnmind.terminal.terminal_graph import (
     BrailleCanvas,
     GraphApp,
     GraphModel,
@@ -18,7 +18,7 @@ from cairnmind.terminal_graph import (
     selection_for,
     tmux_visible,
 )
-from cairnmind.workspace_state import WorkspaceState
+from cairnmind.terminal.workspace_state import WorkspaceState
 from test_terminal_graph import ControlledBroker, eventually
 
 
@@ -65,18 +65,18 @@ def test_tmux_visible_paths(tmp_path, monkeypatch):
     assert tmux_visible(settings) is True
 
     monkeypatch.setenv("TMUX_PANE", "%1")
-    monkeypatch.setattr("cairnmind.terminal_graph.resolve_tmux", lambda s: None)
+    monkeypatch.setattr("cairnmind.terminal.terminal_graph.resolve_tmux", lambda s: None)
     assert tmux_visible(settings) is False
 
-    monkeypatch.setattr("cairnmind.terminal_graph.resolve_tmux", lambda s: "tmux")
+    monkeypatch.setattr("cairnmind.terminal.terminal_graph.resolve_tmux", lambda s: "tmux")
     monkeypatch.setattr(
-        "cairnmind.terminal_graph.subprocess.run",
+        "cairnmind.terminal.terminal_graph.subprocess.run",
         lambda *a, **k: SimpleNamespace(stdout="1:1:80:24\n"),
     )
     assert tmux_visible(settings) is True
 
     monkeypatch.setattr(
-        "cairnmind.terminal_graph.subprocess.run",
+        "cairnmind.terminal.terminal_graph.subprocess.run",
         lambda *a, **k: SimpleNamespace(stdout="bad-output"),
     )
     assert tmux_visible(settings) is False

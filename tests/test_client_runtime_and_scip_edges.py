@@ -6,10 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from cairnmind import client_runtime as cr, scip_manager as sm
+from cairnmind.agents import client_runtime as cr
+from cairnmind.scip import scip_manager as sm
 from cairnmind.config import Settings
-from cairnmind.private_files import ensure_private_dir
-from cairnmind.scip_registry import INDEXERS
+from cairnmind.pal.private_files import ensure_private_dir
+from cairnmind.scip.scip_registry import INDEXERS
 
 
 def test_native_runtime_validation_memory_status_and_start_edges(tmp_path, monkeypatch):
@@ -69,7 +70,7 @@ def test_native_runtime_validation_memory_status_and_start_edges(tmp_path, monke
 
     # start_auth returns existing live auth run
     rt._save([{"id": "auth1", "client": "codex", "purpose": "auth", "lifecycle": "running", "generation": 1}])
-    monkeypatch.setattr("cairnmind.client_auth.auth_command", lambda c: ["codex", "login"])
+    monkeypatch.setattr("cairnmind.agents.client_auth.auth_command", lambda c: ["codex", "login"])
     assert rt.start_auth("codex")["id"] == "auth1"
 
     # _spawn rollback on tmux error marks failed and re-raises
@@ -104,12 +105,12 @@ def test_scip_manager_java_redirect_process_and_ecosystem_error_paths(tmp_path, 
     fake_java.write_text("bin", encoding="utf-8")
 
     # _resolve_java_for_scip: managed java hit, resolve_java hit, exception fallback to shutil.which
-    monkeypatch.setattr("cairnmind.engine.managed_java_executable", lambda s: str(fake_java))
+    monkeypatch.setattr("cairnmind.storage.engine.managed_java_executable", lambda s: str(fake_java))
     assert sm._resolve_java_for_scip(settings) == str(fake_java)
-    monkeypatch.setattr("cairnmind.engine.managed_java_executable", lambda s: None)
-    monkeypatch.setattr("cairnmind.engine.resolve_java", lambda s: "/usr/bin/java")
+    monkeypatch.setattr("cairnmind.storage.engine.managed_java_executable", lambda s: None)
+    monkeypatch.setattr("cairnmind.storage.engine.resolve_java", lambda s: "/usr/bin/java")
     assert sm._resolve_java_for_scip(settings) == "/usr/bin/java"
-    monkeypatch.setattr("cairnmind.engine.resolve_java", lambda s: (_ for _ in ()).throw(RuntimeError("no java")))
+    monkeypatch.setattr("cairnmind.storage.engine.resolve_java", lambda s: (_ for _ in ()).throw(RuntimeError("no java")))
     monkeypatch.setattr(sm.shutil, "which", lambda name: "/fallback/java" if name == "java" else None)
     assert sm._find_host_tool(settings, "java", passive=False) == "/fallback/java"
 

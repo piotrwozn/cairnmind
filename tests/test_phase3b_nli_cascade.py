@@ -11,13 +11,13 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.agent import KnowledgeAgent
+from cairnmind.agents.agent import KnowledgeAgent
 from cairnmind.config import Settings
-from cairnmind.nli_verifier import (
+from cairnmind.agents.nli_verifier import (
     NEEDS_LLM_REVIEW_CODE, NliScores, NliUnavailable, OnnxNliScorer, evaluate_tier1_nli, resolve_nli_model_dir,
 )
-from cairnmind.ollama import OllamaUnavailable
-from cairnmind.support import support_citations, support_messages
+from cairnmind.agents.ollama import OllamaUnavailable
+from cairnmind.agents.support import support_citations, support_messages
 
 runner = CliRunner()
 

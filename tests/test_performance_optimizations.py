@@ -13,7 +13,9 @@ from uuid import uuid4
 
 import pytest
 
-from cairnmind import arcade, cli_entry, memory, sql, verification
+from cairnmind.storage import arcade, sql
+from cairnmind.cli_cmds import cli_entry
+from cairnmind.memory import memory, verification
 from cairnmind.config import Settings
 from cairnmind.store import Store
 
@@ -178,7 +180,7 @@ def test_memory_unchanged_since_receipt_fast_path(tmp_path, monkeypatch):
                 return list(aliases_rows)
             return []
 
-    monkeypatch.setattr("cairnmind.project_folders.require_here", lambda store, p, r: None)
+    monkeypatch.setattr("cairnmind.memory.project_folders.require_here", lambda store, p, r: None)
     mgr = memory.MemoryManager(FakeStore())
 
     # Exact seq match -> unchanged
@@ -359,8 +361,8 @@ def test_cli_entry_hook_fast_path_and_fallback(tmp_path, monkeypatch, capsys):
 
     # Fast-path hook runs without touching cli module when argv matches
     calls = []
-    monkeypatch.setattr("cairnmind.integrations.hook", lambda s, p, c: calls.append((s.data_dir, p, c)) or {"ok": True})
-    monkeypatch.setattr("cairnmind.cli_entry.sys.stdin", SimpleNamespace(read=lambda: '{"hook_event_name":"Stop"}'))
+    monkeypatch.setattr("cairnmind.memory.integrations.hook", lambda s, p, c: calls.append((s.data_dir, p, c)) or {"ok": True})
+    monkeypatch.setattr("cairnmind.cli_cmds.cli_entry.sys.stdin", SimpleNamespace(read=lambda: '{"hook_event_name":"Stop"}'))
     data_dir = tmp_path / "data"
     cli_entry.entrypoint(["--data-dir", str(data_dir), "hook", "--client", "claude"])
     out = capsys.readouterr()
@@ -368,7 +370,7 @@ def test_cli_entry_hook_fast_path_and_fallback(tmp_path, monkeypatch, capsys):
     assert calls[0][1] == {"hook_event_name": "Stop"} and calls[0][2] == "claude"
 
     # Broken JSON stdin logs cleanly to stderr matching cli.hook
-    monkeypatch.setattr("cairnmind.cli_entry.sys.stdin", SimpleNamespace(read=lambda: "{broken"))
+    monkeypatch.setattr("cairnmind.cli_cmds.cli_entry.sys.stdin", SimpleNamespace(read=lambda: "{broken"))
     cli_entry.entrypoint(["--data-dir", str(data_dir), "hook", "--client", "claude"])
     assert "Cairnmind hook:" in capsys.readouterr().err
 
@@ -465,7 +467,7 @@ def test_memory_and_store_optimization_edge_branches(tmp_path, monkeypatch):
 
     class FakeCaptureStore:
         def find(self, collection, where=(), *, columns=None, order_by=(), limit=None, distinct=False):
-            from cairnmind.storage_query import normalize_where
+            from cairnmind.storage.storage_query import normalize_where
             conds = normalize_where(where)
             if collection == "projects":
                 return [{"id": pid, "name": "Demo", "root": str(root.resolve())}]
@@ -496,7 +498,7 @@ def test_memory_and_store_optimization_edge_branches(tmp_path, monkeypatch):
         def _require_project(self, tx, project_id):
             return None
 
-    monkeypatch.setattr("cairnmind.project_folders.require_here", lambda store, p, r: None)
+    monkeypatch.setattr("cairnmind.memory.project_folders.require_here", lambda store, p, r: None)
     mgr = memory.MemoryManager(FakeCaptureStore())
     _, captured_payload = mgr._capture(pid, root, FakeCaptureStore())
     assert [n["id"] for n in captured_payload["nodes"]] == ["custom:1"]

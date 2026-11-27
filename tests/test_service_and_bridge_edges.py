@@ -8,7 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from cairnmind import service, terminal_bridge as tb
+from cairnmind import service
+from cairnmind.terminal import terminal_bridge as tb
 from cairnmind.config import Settings
 
 
@@ -62,7 +63,7 @@ async def test_terminal_bridge_pane_status_and_raw_protocol_edges(tmp_path, monk
     settings = Settings(data_dir=tmp_path / "data")
 
     # PaneStatus init swallows WorkspaceManager error
-    monkeypatch.setattr("cairnmind.workspace.WorkspaceManager", lambda *a, **k: (_ for _ in ()).throw(ValueError("no tmux")))
+    monkeypatch.setattr("cairnmind.terminal.workspace.WorkspaceManager", lambda *a, **k: (_ for _ in ()).throw(ValueError("no tmux")))
     ps = tb.PaneStatus(settings, "run-1", "default")
     assert ps.manager is None and ps.poll_nonce() is None
 

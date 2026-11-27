@@ -9,12 +9,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
-from cairnmind.impact import build_impact
-from cairnmind.ingest import _write_chunks, index_pending_sources
-from cairnmind.inspector import Inspector
-from cairnmind.inspector_api import attach_inspector_routes
-from cairnmind.memory import MemoryManager
-from cairnmind.retrieval import Retriever
+from cairnmind.memory.impact import build_impact
+from cairnmind.scip.ingest import _write_chunks, index_pending_sources
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.terminal.inspector_api import attach_inspector_routes
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.agents.retrieval import Retriever
 from cairnmind.store import Store
 
 from test_impact_verdicts import RENEWED, changed as changed, entry, give, verdicts, workspace as workspace

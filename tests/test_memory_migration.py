@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from cairnmind.arcade import ArcadeClient
+from cairnmind.storage.arcade import ArcadeClient
 from cairnmind.store import SCHEMA_VERSION, V03_EXPORT_TYPES, V04_DOCUMENT_TYPES, Store
 
 

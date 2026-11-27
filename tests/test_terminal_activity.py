@@ -11,12 +11,12 @@ import pytest
 from rich.cells import cell_len
 from rich.style import Style
 
-from cairnmind import terminal_activity, terminal_theme
-from cairnmind.cockpit_state import _private_directory
+from cairnmind.terminal import terminal_activity, terminal_theme
+from cairnmind.terminal.cockpit_state import _private_directory
 from cairnmind.config import Settings
-from cairnmind.terminal_activity import ActivityList, activity_app
+from cairnmind.terminal.terminal_activity import ActivityList, activity_app
 from test_terminal_notice_feed import install, publish
-from cairnmind.terminal_notices import NoticeHistory
+from cairnmind.terminal.terminal_notices import NoticeHistory
 
 PROJECT = {"id": "project-a", "name": "cairnmind", "root": "/work/cairnmind-144"}
 OTHER = {"id": "project-b", "name": "other", "root": "/work/other"}
@@ -114,7 +114,7 @@ class Broker:
 
 
 def make(tmp_path, monkeypatch, *, language="en", project=PROJECT, slots=SLOTS, broker=None, popup=False):
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     settings = Settings(data_dir=tmp_path / "data")
     _private_directory(settings.data_dir / "workspaces")
     _private_directory(settings.data_dir / "workspaces" / "default")

@@ -12,13 +12,13 @@ import time
 
 import pytest
 
-from cairnmind import ingest
-from cairnmind.arcade import ArcadeClient
+from cairnmind.scip import ingest
+from cairnmind.storage.arcade import ArcadeClient
 from cairnmind.config import Settings
-from cairnmind.ingest import forget_index_signature, index_project, index_project_if_changed
-from cairnmind.journal import Journal, JournalTransaction
+from cairnmind.scip.ingest import forget_index_signature, index_project, index_project_if_changed
+from cairnmind.storage.journal import Journal, JournalTransaction
 from cairnmind.store import Store
-from cairnmind.sql import clean_row
+from cairnmind.storage.sql import clean_row
 
 
 @pytest.fixture(autouse=True)

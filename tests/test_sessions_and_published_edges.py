@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from cairnmind import memory_published_import as mpi
-from cairnmind.memory import MemoryConflict
-from cairnmind.sessions import SessionManager
+from cairnmind.memory import memory_published_import as mpi
+from cairnmind.memory.memory import MemoryConflict
+from cairnmind.memory.sessions import SessionManager
 
 
 def test_sessions_same_generation_and_merge_targets_edges(tmp_path):
@@ -80,9 +80,9 @@ def test_memory_published_import_stubs_store_and_plans_edges(monkeypatch):
     assert imp._placement({}, "missing", "t1") == {}
 
     # _published_here catches Held and returns []
-    from cairnmind.memory_published import Held
-    monkeypatch.setattr("cairnmind.memory_published.Publisher.destination", lambda self, pid: (None, "/root"))
-    monkeypatch.setattr("cairnmind.memory_published.select_history", lambda *a, **k: (_ for _ in ()).throw(Held("held")))
+    from cairnmind.memory.memory_published import Held
+    monkeypatch.setattr("cairnmind.memory.memory_published.Publisher.destination", lambda self, pid: (None, "/root"))
+    monkeypatch.setattr("cairnmind.memory.memory_published.select_history", lambda *a, **k: (_ for _ in ()).throw(Held("held")))
     assert imp._published_here("p1", "fact", "r1", [], {}) == []
 
     # _stubs: conflict on mismatched published ref; quote growth updates document

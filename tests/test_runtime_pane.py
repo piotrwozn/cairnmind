@@ -9,8 +9,8 @@ import tempfile
 
 import pytest
 
-from cairnmind import client_runtime
-from cairnmind.client_runtime import NativeRuntime
+from cairnmind.agents import client_runtime
+from cairnmind.agents.client_runtime import NativeRuntime
 from cairnmind.config import Settings
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX tmux/AF_UNIX runtime panes")

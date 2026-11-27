@@ -11,11 +11,11 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from cairnmind.config import Settings
-from cairnmind.inspector import Inspector
-from cairnmind.mcp_server import _saved_record_view
-from cairnmind.memory import MemoryManager
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.mcp.mcp_server import _saved_record_view
+from cairnmind.memory.memory import MemoryManager
 from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
 
 from conftest import as_person

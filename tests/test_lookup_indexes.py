@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from cairnmind.arcade import ArcadeClient
+from cairnmind.storage.arcade import ArcadeClient
 from cairnmind.store import LOOKUP_INDEX_SET, LOOKUP_INDEXES, SCHEMA_VERSION, Store
 
 
@@ -66,7 +66,7 @@ def test_a_database_of_an_earlier_release_gets_them_when_it_is_opened_and_only_o
 
 
 def test_an_index_that_cannot_be_built_does_not_keep_the_database_closed(tmp_path, monkeypatch):
-    from cairnmind.arcade import ArcadeError
+    from cairnmind.storage.arcade import ArcadeError
 
     store = Store(tmp_path / "memory")
     store.command("DELETE FROM devbrain_meta WHERE name='lookup_indexes'")

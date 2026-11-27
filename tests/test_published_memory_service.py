@@ -9,8 +9,8 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.inspector import Inspector
-from cairnmind.memory_published import PUBLICATION_SWITCH
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.memory.memory_published import PUBLICATION_SWITCH
 from cairnmind.service import create_app
 from cairnmind.store import Store
 

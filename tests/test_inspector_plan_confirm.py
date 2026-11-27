@@ -4,9 +4,9 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button, Select, Static, TextArea
 
-from cairnmind.terminal_client import BrokerError
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_inspector import InspectorApp
+from cairnmind.terminal.terminal_client import BrokerError
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_inspector import InspectorApp
 from consent_steps import consent_drawn, form_ready
 from test_terminal_panels import FakeBroker, setup, settle
 
@@ -33,7 +33,7 @@ class PlanBroker(FakeBroker):
 
 def plan_app(tmp_path, monkeypatch, language="pl"):
     settings, _, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     broker = PlanBroker({"id": "project-a", "name": "Project A", "root": str(tmp_path / "project")})
     return InspectorApp(settings, broker=broker, workspace=workspace), broker, workspace
 

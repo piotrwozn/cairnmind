@@ -9,8 +9,8 @@ from copy import deepcopy
 
 import pytest
 
-from cairnmind.terminal_panels import SidebarApp
-from cairnmind.terminal_ui import ChoiceModal
+from cairnmind.terminal.terminal_panels import SidebarApp
+from cairnmind.terminal.terminal_ui import ChoiceModal
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, setup_ui
 from test_workspace_stage_scope import notice_of
@@ -49,7 +49,7 @@ def ui(tmp_path, monkeypatch, lifecycle="exited", project_id=True):
     if not project_id:
         broker.runs[0]["project_id"] = None  # a sign-in run belongs to no project
     selected = []
-    monkeypatch.setattr("cairnmind.workspace.select_run", lambda *args: selected.append(args[1]))
+    monkeypatch.setattr("cairnmind.terminal.workspace.select_run", lambda *args: selected.append(args[1]))
     return SidebarApp(settings, broker=broker, workspace=workspace), selected
 
 

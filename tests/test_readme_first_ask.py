@@ -7,10 +7,10 @@ import json
 
 import pytest
 
-from cairnmind.agent import KnowledgeAgent
-from cairnmind.ingest import index_project_if_changed
-from cairnmind.knowledge_mode import text_matches
-from cairnmind.retrieval import VECTORS_BUILDING
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.scip.ingest import index_project_if_changed
+from cairnmind.agents.knowledge_mode import text_matches
+from cairnmind.agents.retrieval import VECTORS_BUILDING
 
 from test_knowledge import FakeOllama, final
 

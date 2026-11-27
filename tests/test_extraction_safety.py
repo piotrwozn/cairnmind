@@ -12,13 +12,13 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-import cairnmind.agent as agent_module
-import cairnmind.ollama as ollama_module
-from cairnmind.agent import KnowledgeAgent
-from cairnmind.arcade import ArcadeError
+import cairnmind.agents.agent as agent_module
+import cairnmind.agents.ollama as ollama_module
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.config import Settings
-from cairnmind.memory_openai import OpenAICompatible
-from cairnmind.ollama import Ollama, OllamaUnavailable
+from cairnmind.memory.memory_openai import OpenAICompatible
+from cairnmind.agents.ollama import Ollama, OllamaUnavailable
 from cairnmind.store import Store, TASK_STATES
 
 

@@ -16,12 +16,12 @@ import subprocess
 
 import pytest
 
-from cairnmind import memory as portable
-from cairnmind.agent import KnowledgeAgent
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.memory import MemoryManager
-from cairnmind.sessions import SessionManager
-from cairnmind.inspector import Inspector
+from cairnmind.memory import memory as portable
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.agents.agent_journal import AgentJournal
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.terminal.inspector import Inspector
 from cairnmind.store import EXTRACTION_MARK, Store
 
 PROMPT = ("In inventory.txt change only line 250. We decided that inventory.txt stays sorted by item name, "

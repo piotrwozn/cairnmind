@@ -10,13 +10,13 @@ from uuid import uuid4
 
 import pytest
 
-from cairnmind.confirmation import confirmation_of, confirmation_text
-from cairnmind.confirmation_upgrade import META_NAME, mark_confirmed_before_rule
-from cairnmind.findings import save_finding
-from cairnmind.inspector import Inspector
-from cairnmind.memory import MemoryManager
-from cairnmind.memory_acts import confirm_plan
-from cairnmind.plans import PlanManager
+from cairnmind.memory.confirmation import confirmation_of, confirmation_text
+from cairnmind.memory.confirmation_upgrade import META_NAME, mark_confirmed_before_rule
+from cairnmind.memory.findings import save_finding
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.memory_acts import confirm_plan
+from cairnmind.memory.plans import PlanManager
 from cairnmind.store import Store
 
 from conftest import as_person, confirmed_before_rule, person_edit
@@ -265,7 +265,7 @@ def as_written_by_0_10_0(store, audit_id):
     """Rewrite a review audit to the fields 0.10.0 wrote: the text's hash only, and no name."""
     import json
 
-    from cairnmind.sql import update_document
+    from cairnmind.storage.sql import update_document
     with store.transaction() as tx:
         audit = json.loads(tx.query("SELECT content FROM sources WHERE id=:id", {"id": audit_id})[0]["content"])
         kept = ("actor", "action", "record_id", "previous_version", "previous_status", "status", "reason", "at",

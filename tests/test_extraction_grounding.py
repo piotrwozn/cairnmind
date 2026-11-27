@@ -8,8 +8,8 @@ from uuid import uuid4
 import pytest
 from jsonschema import Draft202012Validator
 
-from cairnmind import agent as agent_module
-from cairnmind.agent import KnowledgeAgent
+from cairnmind.agents import agent as agent_module
+from cairnmind.agents.agent import KnowledgeAgent
 from cairnmind.config import Settings
 from cairnmind.store import Store
 

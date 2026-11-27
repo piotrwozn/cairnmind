@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from cairnmind.sqlite_backend import SQLiteBackend
+from cairnmind.storage.sqlite_backend import SQLiteBackend
 from cairnmind.store import Store
 
 SRC_ROOT = Path(__file__).resolve().parents[1] / "src" / "cairnmind"
@@ -87,7 +87,7 @@ def test_zero_raw_sql_calls_outside_storage_layer():
 
 
 def test_sqlite_backend_has_no_regex_sql_transpiler_and_refuses_raw_sql(tmp_path: Path):
-    import cairnmind.sqlite_backend as sb
+    import cairnmind.storage.sqlite_backend as sb
 
     for removed_symbol in ("_translate_expr", "_split_clauses", "_parse_set_assignments", "_exec_query", "_exec_command"):
         assert not hasattr(sb, removed_symbol), f"Legacy SQL transpiler symbol still present: {removed_symbol}"

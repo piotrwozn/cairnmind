@@ -12,12 +12,13 @@ import pytest
 from textual import _time as textual_time
 from textual.widgets import Button, Static
 
-from cairnmind import person_proof, project_removal, terminal_project_forget as view
-from cairnmind.terminal_client import BrokerError, BrokerUnreachable
-from cairnmind.terminal_i18n import CATALOG, tr
-from cairnmind.terminal_panels import ConfirmModal, SidebarApp
-from cairnmind.terminal_safe import safe_text
-from cairnmind.terminal_ui import ChoiceModal
+from cairnmind.terminal import person_proof, terminal_project_forget as view
+from cairnmind.memory import project_removal
+from cairnmind.terminal.terminal_client import BrokerError, BrokerUnreachable
+from cairnmind.terminal.terminal_i18n import CATALOG, tr
+from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
+from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.terminal.terminal_ui import ChoiceModal
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, screen_text, setup_ui
 from test_workspace_stage_scope import wait_until

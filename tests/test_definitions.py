@@ -8,11 +8,11 @@ import pytest
 
 from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401  (workspace is a fixture)
 
-from cairnmind.agent import EXCERPT_CHARS, INITIAL_HITS, KnowledgeAgent
-from cairnmind.definitions import (
+from cairnmind.agents.agent import EXCERPT_CHARS, INITIAL_HITS, KnowledgeAgent
+from cairnmind.scip.definitions import (
     MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, MAX_ROWS, candidate_names, definition_lines, rank_definitions,
 )
-from cairnmind.ingest import index_project
+from cairnmind.scip.ingest import index_project
 
 CONFIG = '''"""Settings."""
 from dataclasses import dataclass
@@ -284,7 +284,7 @@ def test_a_name_made_of_question_words_outranks_a_one_word_overlap():
 
 
 def test_a_one_word_name_is_never_a_full_match():
-    from cairnmind.definitions import relevance
+    from cairnmind.scip.definitions import relevance
     question = "What is the default delay of a retry, in seconds?"
     field = {"name": "RequestBody.retry", "kind": "field", "owner": "RequestBody", "member": "retry"}
     assert relevance(question, field, "pkg/service.py") == (0, 0, 1, 0)
@@ -294,7 +294,7 @@ def test_a_one_word_name_is_never_a_full_match():
 def test_a_name_that_is_only_a_filler_word_is_not_a_match():
     """A constant called DEFAULT says nothing about what a question on "the default delay" asks:
     it must not take the place of the setting among the few definitions shown."""
-    from cairnmind.definitions import relevance
+    from cairnmind.scip.definitions import relevance
     question = "What is the default delay of a retry, in seconds?"
     rows = [{"symbol": {"name": "DEFAULT", "kind": "constant"}, "path": "pkg/carrier.py"},
             {"symbol": {"name": "Options.send_delay", "kind": "field", "owner": "Options", "member": "send_delay"},
@@ -354,7 +354,7 @@ def test_names_made_of_question_words_are_not_crowded_out_by_word_name_matches(w
 
 
 def test_a_politely_phrased_question_keeps_the_words_that_spell_the_setting(workspace):  # noqa: F811
-    from cairnmind.definitions import pattern_words
+    from cairnmind.scip.definitions import pattern_words
     question = ("Could you please tell me, if you happen to know it, how many tokens an answer may have "
                 "at most by default in this project?")
     assert {"token", "answer"} <= set(pattern_words(question))
@@ -387,7 +387,7 @@ timeout = 41
 def test_a_hyphenated_key_made_of_question_words_matches_the_name_pattern():
     import re
 
-    from cairnmind.definitions import name_word_pattern, relevance
+    from cairnmind.scip.definitions import name_word_pattern, relevance
     pattern = name_word_pattern("Which Python version does this project require?")
     assert re.match(pattern, "requires-python") and re.match(pattern, "requires_python")
     assert not re.match(pattern, "requires-pythonic") and not re.match(pattern, "python")
@@ -489,7 +489,7 @@ def test_unit_and_joining_words_of_a_name_need_not_be_in_the_question(workspace)
 def test_a_unit_word_alone_is_not_a_match():
     import re
 
-    from cairnmind.definitions import name_word_pattern, relevance
+    from cairnmind.scip.definitions import name_word_pattern, relevance
     question = "How large may a blob be?"
     pattern = re.compile(name_word_pattern(question))
     assert pattern.match("max_blob_bytes") and pattern.match("blob_count")
@@ -501,7 +501,7 @@ def test_a_unit_word_alone_is_not_a_match():
 
 
 def test_a_name_word_matches_a_question_word_that_begins_with_it(workspace):  # noqa: F811
-    from cairnmind.definitions import relevance
+    from cairnmind.scip.definitions import relevance
     store, project, settings, root = _project(workspace)
     (root / "pkg" / "engine.py").write_text(
         "class Engine:\n    arcade_version: str = '26.1'\n    arc_version: str = '1'\n    vers_arcade: int = 2\n")

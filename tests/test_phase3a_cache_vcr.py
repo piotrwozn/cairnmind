@@ -12,11 +12,11 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.citation_match import locate_quote, quote_weight
+from cairnmind.agents.citation_match import locate_quote, quote_weight
 from cairnmind.config import Settings
-from cairnmind.extraction_evaluation import run_extraction_evaluation
-from cairnmind.vcr import CassetteMissError, VcrOllama, deterministic_uuid4, normalize_for_key, request_key
-from cairnmind.verdict_cache import (
+from cairnmind.agents.extraction_evaluation import run_extraction_evaluation
+from cairnmind.agents.vcr import CassetteMissError, VcrOllama, deterministic_uuid4, normalize_for_key, request_key
+from cairnmind.agents.verdict_cache import (
     VERIFIER_VERSION, VerdictCache, context_window_text, prompt_fingerprint, verdict_cache_key,
 )
 

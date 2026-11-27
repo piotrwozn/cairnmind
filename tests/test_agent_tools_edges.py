@@ -1,4 +1,4 @@
-"""Fast-tier edge-case and error-handling coverage tests for cairnmind.agent_tools."""
+"""Fast-tier edge-case and error-handling coverage tests for cairnmind.agents.agent_tools."""
 from __future__ import annotations
 
 import hashlib
@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from cairnmind import agent_tools
-from cairnmind.agent_journal import AgentJournal, JournalError
-from cairnmind.agent_tools import ToolError, ToolExecutor
+from cairnmind.agents import agent_tools
+from cairnmind.agents.agent_journal import AgentJournal, JournalError
+from cairnmind.agents.agent_tools import ToolError, ToolExecutor
 from cairnmind.config import Settings
 
 

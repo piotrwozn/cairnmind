@@ -16,10 +16,10 @@ VERIFY: dict[tuple[str, str], str] = {
     ("api_runtime.py", "api_worker_config"): "tls_verify(url)",  # the broker: http on 127.0.0.1 only
     ("api_runtime.py", "report_mcp_failure"): "tls_verify(url)",
     ("arcade.py", "client"): "self._verify",  # an ssl context for https (tls_context), False only for the loopback http it is given
-    ("cli.py", "service_alive"): "tls_verify(settings.url)",
-    ("cli.py", "_stop_started"): "tls_verify(settings.url)",
-    ("cli.py", "request"): "tls_verify(settings.url)",
-    ("cli.py", "model_pull"): "tls_verify(settings.ollama_url)",
+    ("io.py", "service_alive"): "tls_verify(settings.url)",
+    ("io.py", "_stop_started"): "tls_verify(settings.url)",
+    ("io.py", "request"): "tls_verify(settings.url)",
+    ("models_cmds.py", "model_pull"): "tls_verify(settings.ollama_url)",
     ("client_runtime.py", "_memory_identity"): "tls_verify(self.settings.url)",
     ("cockpit.py", "upstream"): "tls_verify(settings.url)",
     ("cockpit.py", "stream"): "tls_verify(settings.url)",
@@ -60,7 +60,7 @@ def _calls(path: Path):
 
 def test_every_httpx_client_states_verify_and_none_turns_it_off_by_a_literal():
     missing, literal, unlisted, redirected = [], [], [], []
-    for path in sorted(SRC.glob("*.py")):
+    for path in sorted(SRC.rglob("*.py")):
         for function, call in _calls(path):
             where = f"{path.name}:{call.lineno} {function}"
             keywords = {k.arg: k.value for k in call.keywords}
@@ -81,14 +81,14 @@ def test_every_httpx_client_states_verify_and_none_turns_it_off_by_a_literal():
 
 def test_every_listed_verify_expression_is_still_used():
     used = {((path.name, function), ast.unparse({k.arg: k.value for k in call.keywords}["verify"]))
-            for path in SRC.glob("*.py") for function, call in _calls(path) if any(k.arg == "verify" for k in call.keywords)}
+            for path in SRC.rglob("*.py") for function, call in _calls(path) if any(k.arg == "verify" for k in call.keywords)}
     stale = set(VERIFY.items()) - used
     assert not stale, f"listed but not used, remove: {sorted(stale)}"
 
 
 def test_no_httpx_client_is_made_through_a_name_imported_from_httpx():
     # `from httpx import Client` or `import httpx as hx` would make a client the checks above cannot see.
-    for path in SRC.glob("*.py"):
+    for path in SRC.rglob("*.py"):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.ImportFrom) and node.module == "httpx":
                 assert not {a.name for a in node.names} & CALLS, path.name

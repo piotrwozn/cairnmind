@@ -1,4 +1,4 @@
-"""Fast-tier edge-case coverage tests for cairnmind.copilot_adapter."""
+"""Fast-tier edge-case coverage tests for cairnmind.agents.copilot_adapter."""
 from __future__ import annotations
 
 import asyncio
@@ -10,9 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from cairnmind import copilot_adapter as ca
+from cairnmind.agents import copilot_adapter as ca
 from cairnmind.config import Settings
-from cairnmind.copilot_adapter import CopilotAdapter, CopilotError
+from cairnmind.agents.copilot_adapter import CopilotAdapter, CopilotError
 
 
 def test_runtime_status_prepare_and_worker_edge_cases(tmp_path, monkeypatch):

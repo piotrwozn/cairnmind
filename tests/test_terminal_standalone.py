@@ -6,7 +6,9 @@ import sys
 import pytest
 from textual.widgets import DataTable, Static, TabbedContent
 
-from cairnmind import first_start, person_pipe, person_proof, terminal_standalone, workspace
+from cairnmind.cli_cmds import first_start
+from cairnmind.pal import person_pipe
+from cairnmind.terminal import person_proof, terminal_standalone, workspace
 from cairnmind.config import Settings
 
 
@@ -87,7 +89,7 @@ def test_cockpit_status_treats_standalone_windows_as_ready():
 @pytest.mark.asyncio
 async def test_standalone_workspace_actions_filters_modals_and_errors(tmp_path, monkeypatch):
     from textual.widgets import Button, Input, Select
-    from cairnmind.terminal_client import BrokerError
+    from cairnmind.terminal.terminal_client import BrokerError
 
     settings = Settings.load(tmp_path / "data", create=True)
     broker = FakeBroker()

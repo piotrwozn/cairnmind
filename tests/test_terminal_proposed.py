@@ -6,12 +6,12 @@ from copy import deepcopy
 import pytest
 from textual.widgets import DataTable, Input, Select, Static, TextArea
 
-from cairnmind.stale_proposed import MAX_DAYS
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_inspector import _VIEWS, InspectorApp
-from cairnmind.terminal_proposed import (BASIS_WORDS, DAYS_ERROR, SUMMARY_ONE_DAY, TEXT_WIDTH, days_error,
+from cairnmind.memory.stale_proposed import MAX_DAYS
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_inspector import _VIEWS, InspectorApp
+from cairnmind.terminal.terminal_proposed import (BASIS_WORDS, DAYS_ERROR, SUMMARY_ONE_DAY, TEXT_WIDTH, days_error,
                                         list_summary)
-from cairnmind.terminal_ui import FormModal
+from cairnmind.terminal.terminal_ui import FormModal
 from consent_steps import consent_drawn, form_ready
 from test_terminal_panels import settle, setup
 
@@ -67,7 +67,7 @@ def test_the_view_is_the_last_entry_and_the_others_keep_their_order():
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_the_list_shows_age_kind_id_sources_and_evidence_time_as_literal_text(tmp_path, monkeypatch, language):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     proposed = Proposed(broker)
     app = InspectorApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(140, 40)) as pilot:
@@ -95,7 +95,7 @@ async def test_the_list_shows_age_kind_id_sources_and_evidence_time_as_literal_t
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_a_narrow_pane_keeps_the_text_on_screen_and_crops_the_id_first(tmp_path, monkeypatch, language, width):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     record = {**ITEMS[1], "id": "3f2b6a1e-9c4d-4e8f-a1b2-c3d4e5f60718"}  # record ids are 36-character UUIDs
     monkeypatch.setitem(globals(), "ITEMS", [record])
     Proposed(broker)
@@ -153,7 +153,7 @@ async def test_an_entry_is_reviewed_through_the_inspector_review_and_then_leaves
 @pytest.mark.asyncio
 async def test_filters_ask_for_the_days_and_refuse_anything_else(tmp_path, monkeypatch):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: "en")
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: "en")
     proposed = Proposed(broker)
     app = InspectorApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 42)) as pilot:

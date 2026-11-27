@@ -4,8 +4,9 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, first_start
-from cairnmind import cockpit
+from cairnmind import cli
+from cairnmind.cli_cmds import first_start
+from cairnmind.terminal import cockpit
 
 
 @pytest.fixture

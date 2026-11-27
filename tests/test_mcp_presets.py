@@ -9,7 +9,9 @@ import tomllib
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, ingest, mcp_presets, mcp_probe
+from cairnmind import cli
+from cairnmind.scip import ingest
+from cairnmind.mcp import mcp_presets, mcp_probe
 from cairnmind.config import Settings
 
 runner = CliRunner()

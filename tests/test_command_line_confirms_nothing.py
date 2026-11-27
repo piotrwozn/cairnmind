@@ -10,7 +10,8 @@ import pytest
 from conftest import plain_words
 from typer.testing import CliRunner
 
-from cairnmind import cli, confirmation, impact_verdicts, memory_published_release, record_kinds
+from cairnmind import cli
+from cairnmind.memory import confirmation, impact_verdicts, memory_published_release, record_kinds
 from cairnmind.cli import app
 
 ENVIRONMENT_WITHOUT_A_SESSION = ("CAIRNMIND_SESSION_ID", "DEVBRAIN_SESSION_ID", "CAIRNMIND_PACKET_ID",
@@ -88,7 +89,7 @@ def test_impact_verdict_and_release_commands_are_refused_in_a_person_terminal(
 @pytest.mark.parametrize("arguments", [["forget", "demo", "--delete-project"], ["forget", "demo"],
                                        ["forget", "0a1b2c3d", "--delete-project"]])
 def test_forget_is_refused_and_opens_no_store(tmp_path, monkeypatch, arguments, in_a_session):
-    from cairnmind import project_forget
+    from cairnmind.memory import project_forget
     for name in ENVIRONMENT_WITHOUT_A_SESSION:
         monkeypatch.delenv(name, raising=False)
     if in_a_session:
@@ -105,7 +106,7 @@ def test_forget_is_refused_and_opens_no_store(tmp_path, monkeypatch, arguments, 
 
 
 def test_the_command_line_refusals_name_team_memory():
-    from cairnmind import person_proof
+    from cairnmind.terminal import person_proof
     for sentence in (confirmation.replaces_refusal(["fact/x.md"]), confirmation.REPLACES_NOTE,
                      person_proof.IMPORT_REPLACE):
         assert "Team memory" in sentence and "memory view of the workspace" in sentence, sentence

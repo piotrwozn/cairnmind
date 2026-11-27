@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from cairnmind.config import Settings
-from cairnmind.retrieval import Retriever
+from cairnmind.agents.retrieval import Retriever
 from cairnmind.store import Store
 
 from conftest import as_person
@@ -103,7 +103,7 @@ def entry(identifier, status="confirmed", kind="decision", size=100):
 
 
 def test_filling_continues_past_an_entry_that_does_not_fit():
-    from cairnmind.context_selection import select_entries
+    from cairnmind.agents.context_selection import select_entries
 
     entries = [entry("large-0", size=2000), entry("large-1", size=2000), entry("small", size=10)]
     selected, omitted = select_entries(entries, [False] * 3, 2500)
@@ -114,7 +114,7 @@ def test_filling_continues_past_an_entry_that_does_not_fit():
 def test_rules_reserve_does_not_push_the_checkpoint_out_of_the_smallest_budget():
     # Review of #241: at the 2,500 floor (an active plan with a large workflow) a long newest finding and a
     # long confirmed rule, each taken by its own reserve, left no room for the checkpoint, which 0.10 showed.
-    from cairnmind.context_selection import entry_size, select_entries
+    from cairnmind.agents.context_selection import entry_size, select_entries
 
     entries = [entry("checkpoint-0", status="proposed", kind="checkpoint", size=940),
                entry("constraint-0", kind="constraint", size=1040),
@@ -129,14 +129,14 @@ def test_rules_reserve_does_not_push_the_checkpoint_out_of_the_smallest_budget()
 
 
 def test_selection_rejects_mismatched_reserve_flags():
-    from cairnmind.context_selection import select_entries
+    from cairnmind.agents.context_selection import select_entries
 
     with pytest.raises(ValueError):
         select_entries([entry("a")], [], 2500)
 
 
 def test_reserved_share_is_used_by_others_when_there_are_no_findings():
-    from cairnmind.context_selection import PROPOSED_SHARE, select_entries
+    from cairnmind.agents.context_selection import PROPOSED_SHARE, select_entries
 
     entries = [entry(str(index)) for index in range(40)]
     selected, omitted = select_entries(entries, [False] * 40, 4000)
@@ -146,7 +146,7 @@ def test_reserved_share_is_used_by_others_when_there_are_no_findings():
 
 
 def test_reserve_takes_newest_findings_in_given_order_and_keeps_presentation_order():
-    from cairnmind.context_selection import select_entries
+    from cairnmind.agents.context_selection import select_entries
 
     entries = [entry(f"c{index}") for index in range(40)] + \
         [entry(f"p{index}", status="proposed", kind="fact") for index in range(5)]
@@ -173,8 +173,8 @@ def test_finding_text_cannot_claim_a_better_place(workspace):
 
 
 def test_newest_finding_of_real_size_is_seen_beside_an_active_plan(workspace):
-    from cairnmind.context_selection import PROPOSED_SHARE, entry_size
-    from cairnmind.plans import PlanManager
+    from cairnmind.agents.context_selection import PROPOSED_SHARE, entry_size
+    from cairnmind.memory.plans import PlanManager
 
     store, project, settings = workspace
     PlanManager(store).save(project["id"], {"title": "Large plan", "goal": "Goal " * 2000,
@@ -202,7 +202,7 @@ def test_newest_finding_of_real_size_is_seen_beside_an_active_plan(workspace):
 
 
 def test_newest_reservable_entry_is_taken_before_shorter_older_ones():
-    from cairnmind.context_selection import select_entries
+    from cairnmind.agents.context_selection import select_entries
 
     entries = [entry(f"c{index}") for index in range(30)] + \
         [entry("newest", status="proposed", kind="fact", size=1200),
@@ -285,7 +285,7 @@ def test_context_order_is_active_work_then_rules_in_force_then_findings_then_fin
 
 
 def test_recall_fixture_context_holds_the_current_decision_rather_than_the_finished_task(tmp_path):
-    from cairnmind.evaluation import _seed
+    from cairnmind.agents.evaluation import _seed
 
     root, other = tmp_path / "root", tmp_path / "other"
     root.mkdir()
@@ -305,7 +305,7 @@ def test_recall_fixture_context_holds_the_current_decision_rather_than_the_finis
 
 
 def test_finished_tasks_do_not_take_the_finding_reserve(workspace, monkeypatch):
-    import cairnmind.retrieval as retrieval
+    import cairnmind.agents.retrieval as retrieval
 
     store, project, settings = workspace
     confirmed_decisions(store, project, 20)
@@ -339,7 +339,7 @@ def open_tasks(store, project, count, evidence):
 
 
 def test_rules_in_force_are_seen_beside_many_open_tasks_and_some_tasks_are_counted_as_omitted(workspace):
-    from cairnmind.context_selection import entry_size
+    from cairnmind.agents.context_selection import entry_size
 
     store, project, settings = workspace
     evidence = source(store, project)
@@ -373,7 +373,7 @@ def test_all_four_rules_are_seen_beside_eight_open_tasks_and_a_contradicting_pro
     # proposed constraint that contradicts the oldest rule. The rules reserve held three; the main pass then
     # walked presentation order, where the open tasks come first, and the oldest rule was left out while the
     # proposal that contradicts it was shown.
-    from cairnmind.context_selection import entry_size
+    from cairnmind.agents.context_selection import entry_size
 
     store, project, settings = workspace
     evidence = source(store, project)
@@ -407,7 +407,7 @@ def conflicting(identifier, others, size=100):
 
 
 def test_a_proposal_is_not_shown_while_the_confirmed_record_it_contradicts_is_left_out():
-    from cairnmind.context_selection import entry_size, select_entries
+    from cairnmind.agents.context_selection import entry_size, select_entries
 
     entries = [entry("task-0", status="proposed", kind="task", size=1000),
                entry("rule-0", kind="constraint", size=600),
@@ -433,7 +433,7 @@ def test_a_proposal_is_not_shown_while_the_confirmed_record_it_contradicts_is_le
 
 
 def test_a_conflict_mark_names_only_confirmed_records_present_and_cannot_pull_in_other_entries():
-    from cairnmind.context_selection import select_entries
+    from cairnmind.agents.context_selection import select_entries
 
     # A mark naming a proposed record, an unknown id or itself does not hold the proposal back.
     entries = [entry("other-proposal", status="proposed", kind="fact", size=2000),
@@ -458,7 +458,7 @@ def test_a_conflict_mark_names_only_confirmed_records_present_and_cannot_pull_in
 def test_many_rules_take_their_share_and_the_open_tasks_get_the_rest():
     # The owner's decision of 15 November (#241): a share is reserved for the rules in force; tasks get the
     # rest. Many confirmed rules must not push all but one open task out.
-    from cairnmind.context_selection import RULES_SHARE, entry_size, select_entries
+    from cairnmind.agents.context_selection import RULES_SHARE, entry_size, select_entries
 
     budget = 6800
     for rule_count in (4, 8, 12, 20):
@@ -499,6 +499,6 @@ def test_a_proposal_waits_for_the_record_that_replaced_the_rule_it_contradicts(w
     assert proposal["id"] not in shown or new["id"] in shown, shown
     assert any(task["id"] in shown for task in tasks)
     # The same through select_entries: the stored mark resolved to the successor holds the proposal back.
-    from cairnmind.conflicts import standing_marks
+    from cairnmind.memory.conflicts import standing_marks
     assert standing_marks(store, project["id"], set(), [[old["id"], "missing"], None]) == \
         [[new["id"], "missing"], None]

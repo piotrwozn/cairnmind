@@ -12,11 +12,11 @@ import threading
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import store_writer
-from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.storage import store_writer
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.cli import app
 from cairnmind.store import Store
-from cairnmind.store_writer import StoreNotWriter, StoreWriterLost, take_over
+from cairnmind.storage.store_writer import StoreNotWriter, StoreWriterLost, take_over
 
 from test_store_writer import head, project, second_installation, writer_row
 

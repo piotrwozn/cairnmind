@@ -6,11 +6,11 @@ import json
 
 from fastapi.testclient import TestClient
 
-from cairnmind.inspector import Inspector
-from cairnmind.mcp_server import _saved_record_view
-from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
-from cairnmind.packet_origin import EXTERNAL
-from cairnmind.recorder_agent import RECORDER_REPLY
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.mcp.mcp_server import _saved_record_view
+from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
+from cairnmind.memory.packet_origin import EXTERNAL
+from cairnmind.agents.recorder_agent import RECORDER_REPLY
 from cairnmind.service import create_app
 from cairnmind.store import ORIGIN_METADATA, Store
 

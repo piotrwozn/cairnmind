@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from cairnmind import memory
+from cairnmind.memory import memory
 
 
 def _valid_payload(project_id="p1"):

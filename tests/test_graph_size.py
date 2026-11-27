@@ -14,10 +14,11 @@ import time
 
 import pytest
 
-from cairnmind import ingest, process_identity
-from cairnmind.code_graph import code_graph_pending
+from cairnmind.scip import ingest
+from cairnmind.pal import process_identity
+from cairnmind.scip.code_graph import code_graph_pending
 from cairnmind.config import env_names
-from cairnmind.engine import stop_engine
+from cairnmind.storage.engine import stop_engine
 from cairnmind.store import Store
 
 from conftest import prepare_engine

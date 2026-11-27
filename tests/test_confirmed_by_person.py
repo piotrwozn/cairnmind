@@ -12,15 +12,15 @@ from fastapi.testclient import TestClient
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import confirmation
-from cairnmind.confirmation import ConfirmationRefused, confirmation_of, confirmation_text, person_at_terminal
+from cairnmind.memory import confirmation
+from cairnmind.memory.confirmation import ConfirmationRefused, confirmation_of, confirmation_text, person_at_terminal
 from cairnmind.config import Settings
-from cairnmind.inspector import Inspector
-from cairnmind.memory_acts import confirm_plan, covered_by_local_act
-from cairnmind.plans import PlanManager
-from cairnmind.retrieval import public_record
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.memory.memory_acts import confirm_plan, covered_by_local_act
+from cairnmind.memory.plans import PlanManager
+from cairnmind.agents.retrieval import public_record
 from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
 
 from conftest import as_person, confirmed_before_rule, person_edit, plain_words
@@ -328,7 +328,7 @@ def cli(tmp_path):
 
 
 def test_remember_confirmed_without_a_terminal_is_refused_and_says_what_to_do(tmp_path, monkeypatch):
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     run, data = cli(tmp_path)
     result = run("remember", "demo", "Deploy without review", "--kind", "constraint", "--confirmed")
@@ -346,7 +346,7 @@ def test_remember_confirmed_without_a_terminal_is_refused_and_says_what_to_do(tm
 
 
 def test_remember_confirmed_is_refused_in_a_person_terminal(tmp_path, monkeypatch, person_terminal):
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     run, data = cli(tmp_path)
     result = run("remember", "demo", "Reviews are required", "--kind", "constraint", "--confirmed")
@@ -357,7 +357,7 @@ def test_remember_confirmed_is_refused_in_a_person_terminal(tmp_path, monkeypatc
 
 
 def test_task_add_in_a_person_terminal_stores_a_proposed_task(tmp_path, monkeypatch, person_terminal):
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     run, data = cli(tmp_path)
     added = run("task", "add", "demo", "A task a person added")

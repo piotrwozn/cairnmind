@@ -10,16 +10,16 @@ import time
 
 import pytest
 
-from cairnmind import mcp_host, mcp_schema
-from cairnmind.api_providers import ProviderError, _error_code
-from cairnmind.brief import build_brief
-from cairnmind.evidence import THIRD_PARTY_WRITTEN, evidence_states, orphans_report
-from cairnmind.impact import build_impact
-from cairnmind.mcp_host import McpHost
-from cairnmind.mcp_schema import admit
-from cairnmind.mcp_servers import inside_worktree, server_directory
-from cairnmind.retrieval import Retriever
-from cairnmind.sessions import format_packet
+from cairnmind.mcp import mcp_host, mcp_schema
+from cairnmind.agents.api_providers import ProviderError, _error_code
+from cairnmind.memory.brief import build_brief
+from cairnmind.memory.evidence import THIRD_PARTY_WRITTEN, evidence_states, orphans_report
+from cairnmind.memory.impact import build_impact
+from cairnmind.mcp.mcp_host import McpHost
+from cairnmind.mcp.mcp_schema import admit
+from cairnmind.mcp.mcp_servers import inside_worktree, server_directory
+from cairnmind.agents.retrieval import Retriever
+from cairnmind.memory.sessions import format_packet
 from conftest import MCP_FIXTURE, mcp_fixture_processes, time_budget
 from test_api_agent import Memory, ScriptedProvider, call, reply, setup as setup
 from test_impact_verdicts import changed as changed, entry, workspace as workspace
@@ -353,7 +353,7 @@ def test_a_packet_names_the_cause_of_an_unverified_plan_or_task():
 
 
 def test_impact_names_the_cause_of_a_degraded_record(changed, monkeypatch):
-    import cairnmind.impact as impact_module
+    import cairnmind.memory.impact as impact_module
     store, pid, root, records = changed
     original = impact_module.evidence_states
 

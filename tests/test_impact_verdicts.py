@@ -9,11 +9,11 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind.cli import app
-from cairnmind.evidence import _is_audit, evidence_states
-from cairnmind.impact import build_impact
-from cairnmind.impact_verdicts import CLI_REFUSED, record_verdict
-from cairnmind.inspector_api import attach_inspector_routes
-from cairnmind.sql import clean_row
+from cairnmind.memory.evidence import _is_audit, evidence_states
+from cairnmind.memory.impact import build_impact
+from cairnmind.memory.impact_verdicts import CLI_REFUSED, record_verdict
+from cairnmind.terminal.inspector_api import attach_inspector_routes
+from cairnmind.storage.sql import clean_row
 
 from test_cockpit_server import cockpit as cockpit, login
 from test_impact import AUTH, link, workspace as workspace

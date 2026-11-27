@@ -15,14 +15,14 @@ import pytest
 
 from pty_drain import drain_pty
 from test_workspace import manager as manager  # noqa: F401 (fixture)
-import cairnmind.workspace as module
+import cairnmind.terminal.workspace as module
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX tmux/PTY workspace stop exit")
 
 SCRIPT = """import fcntl, sys, termios
 from pathlib import Path
 from cairnmind.config import Settings
-from cairnmind.workspace import WorkspaceManager
+from cairnmind.terminal.workspace import WorkspaceManager
 fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 raise SystemExit(WorkspaceManager(Settings.load(Path(sys.argv[1])), tmux_binary=sys.argv[2]).attach())
 """
@@ -30,7 +30,7 @@ raise SystemExit(WorkspaceManager(Settings.load(Path(sys.argv[1])), tmux_binary=
 
 # The same attach, held at its first claiming tmux call until the test lets it go.
 HELD_SCRIPT = SCRIPT.replace("raise SystemExit", """import time
-import cairnmind.workspace as w
+import cairnmind.terminal.workspace as w
 real, here = w.WorkspaceManager.tmux, Path(sys.argv[3])
 def tmux(self, *args, **kwargs):
     if args[:1] == ("switch-client",):

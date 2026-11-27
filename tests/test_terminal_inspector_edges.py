@@ -8,8 +8,8 @@ import pytest
 from textual.widgets import Button, DataTable, Input, Select, Static
 
 from cairnmind.config import Settings
-from cairnmind.terminal_client import BrokerError
-from cairnmind.terminal_inspector import InspectorApp
+from cairnmind.terminal.terminal_client import BrokerError
+from cairnmind.terminal.terminal_inspector import InspectorApp
 from test_terminal_panels import FakeBroker, FakeWorkspace, settle
 
 
@@ -80,8 +80,8 @@ def _setup(tmp_path, monkeypatch, *, project=True):
     broker = InspectorBroker(proj)
     workspace = FakeWorkspace(proj if project else None)
     settings = Settings(data_dir=tmp_path / "data")
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", lambda *args, **kwargs: workspace.read())
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda s: "en")
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", lambda *args, **kwargs: workspace.read())
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda s: "en")
     return settings, broker, workspace
 
 

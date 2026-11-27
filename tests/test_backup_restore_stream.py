@@ -8,10 +8,10 @@ import tracemalloc
 
 import pytest
 
-from cairnmind import backup_reader
-from cairnmind.backup_reader import opened_backup
-from cairnmind.restore_staged import RestoreFailed
-from cairnmind.sql import json_text
+from cairnmind.storage import backup_reader
+from cairnmind.storage.backup_reader import opened_backup
+from cairnmind.storage.restore_staged import RestoreFailed
+from cairnmind.storage.sql import json_text
 from cairnmind.store import EXPORT_TYPES, RESTORE_TYPES, Store
 
 from conftest import as_person

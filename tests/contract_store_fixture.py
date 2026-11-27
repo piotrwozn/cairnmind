@@ -18,12 +18,12 @@ import uvicorn
 
 from cairnmind import __version__, cli
 from cairnmind.config import Settings
-from cairnmind.importers import add_importer
-from cairnmind.memory import MemoryManager
-from cairnmind.memory_published import Publisher
-from cairnmind.plans import PlanManager
+from cairnmind.memory.importers import add_importer
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.memory_published import Publisher
+from cairnmind.memory.plans import PlanManager
 from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
 
 _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
@@ -112,7 +112,7 @@ def build_contract_environment(tmp_path: Path) -> dict[str, Any]:
     project = store.add_project("contract-app", repo)
     pid = project["id"]
 
-    from cairnmind.ingest import index_project
+    from cairnmind.scip.ingest import index_project
 
     index_project(store, pid)
     code_source = next(
@@ -564,7 +564,7 @@ def capture_cli_json_contracts(env: dict[str, Any]) -> dict[str, Any]:
 
 async def capture_mcp_tool_contracts(env: dict[str, Any]) -> dict[str, Any]:
     """Call all 8 MCP tools through StrictFastMCP on the fixed contract store."""
-    from cairnmind.mcp_server import ServiceClient, create_server
+    from cairnmind.mcp.mcp_server import ServiceClient, create_server
 
     settings = env["settings"]
     repo = env["repo"]

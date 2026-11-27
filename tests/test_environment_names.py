@@ -10,10 +10,10 @@ import sys
 
 import pytest
 
-from cairnmind.api_runtime import _worker_environment
+from cairnmind.agents.api_runtime import _worker_environment
 from cairnmind.config import (Settings, data_dir_note, default_data_dir, drop_env, env_conflicts, env_names, env_value,
                               is_own_variable, session_conflicts, session_value, set_env)
-from cairnmind.mcp_server import ServiceClient
+from cairnmind.mcp.mcp_server import ServiceClient
 
 @pytest.fixture(autouse=True)
 def clean_environment(monkeypatch, tmp_path):

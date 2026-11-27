@@ -11,7 +11,8 @@ import pytest
 from typer.testing import CliRunner
 
 from conftest import time_budget
-from cairnmind import cli, pulse
+from cairnmind import cli
+from cairnmind.memory import pulse
 from cairnmind.config import Settings
 
 runner = CliRunner()
@@ -346,11 +347,11 @@ def test_pulse_large_repo_fast_path_skips_full_manifest_capture(tmp_path, monkey
     # Force fast path by lowering threshold below 1 tracked file.
     monkeypatch.setattr(pulse, "_SMALL_REPO_FILE_LIMIT", 0)
     monkeypatch.setattr(
-        "cairnmind.verification.capture_code_state",
+        "cairnmind.memory.verification.capture_code_state",
         lambda *a, **k: pytest.fail("Large-repo fast path must not double-hash entire repo"),
     )
     monkeypatch.setattr(
-        "cairnmind.verification._entry",
+        "cairnmind.memory.verification._entry",
         lambda *a, **k: pytest.fail("Large-repo fast path must not hash tracked files"),
     )
 
@@ -368,7 +369,7 @@ def test_pulse_large_repo_fast_path_skips_full_manifest_capture(tmp_path, monkey
         "source_ids": ["s1"],
         "metadata": {"state": "in_progress", "requires_test": True, "required_profiles": ["unit"]},
     }
-    from cairnmind.verification import load_profiles, task_definition_hash
+    from cairnmind.memory.verification import load_profiles, task_definition_hash
 
     store = _FakeStore(data_dir, project, [root], records=[task], sources=[src])
     prof = load_profiles(store, "p1", root)["unit"]

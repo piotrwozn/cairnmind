@@ -5,13 +5,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
-from cairnmind import person_proof
-from cairnmind.confirmation import ConfirmationRefused
-from cairnmind.impact import build_impact
-from cairnmind.impact_verdicts import StaleVerdict, record_verdict
-from cairnmind.inspector_api import attach_inspector_routes
-from cairnmind.memory_published import Publisher
-from cairnmind.memory_published_release import SecretsRefused, release
+from cairnmind.terminal import person_proof
+from cairnmind.memory.confirmation import ConfirmationRefused
+from cairnmind.memory.impact import build_impact
+from cairnmind.memory.impact_verdicts import StaleVerdict, record_verdict
+from cairnmind.terminal.inspector_api import attach_inspector_routes
+from cairnmind.memory.memory_published import Publisher
+from cairnmind.memory.memory_published_release import SecretsRefused, release
 from cairnmind.service import create_app
 from conftest import person_proven, person_unproven
 from test_impact import workspace as workspace

@@ -11,9 +11,9 @@ from typer.testing import CliRunner
 
 from conftest import time_budget
 from cairnmind import cli
-from cairnmind.ingest import index_project
+from cairnmind.scip.ingest import index_project
 from cairnmind.store import Store
-from cairnmind.verification import run_check
+from cairnmind.memory.verification import run_check
 
 runner = CliRunner()
 _LATENCY_SCALE = float(os.environ.get("CAIRNMIND_LATENCY_SCALE") or "1")

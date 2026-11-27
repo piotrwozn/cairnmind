@@ -6,10 +6,11 @@ import threading
 import pytest
 from test_index_batching import code_tree, counted, dump, graph_row_by_row, rewrite
 
-from cairnmind import graph_transactions, ingest
-from cairnmind.arcade import ArcadeError
-from cairnmind.code_graph import code_graph_pending
-from cairnmind.journal import Journal, JournalTransaction
+from cairnmind.storage import graph_transactions
+from cairnmind.scip import ingest
+from cairnmind.storage.arcade import ArcadeError
+from cairnmind.scip.code_graph import code_graph_pending
+from cairnmind.storage.journal import Journal, JournalTransaction
 from cairnmind.store import GRAPH_ROWS_PER_REQUEST, Store
 
 ROW_BY_ROW_EDGE = "CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:from_id)"

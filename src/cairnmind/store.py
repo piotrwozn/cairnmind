@@ -6,24 +6,28 @@ from datetime import datetime, timezone
 import gzip
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import re
 import threading
-import time
 from uuid import uuid4
 
-from . import graph_transactions
-from .file_locks import lock_exclusive, unlock
-from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
-from .first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN, UNKNOWN_PROJECT_NEXT
-from .terminal_safe import safe_text
+from cairnmind.storage import store_graph, store_jobs
+from cairnmind.storage.store_jobs import (  # noqa: F401
+    JOB_STATES,
+    JobNotFoundError,
+    _DIAGNOSTIC_CODE,
+    _JOB_UNSET,
+    job_diagnostics,
+)
+from cairnmind.pal.file_locks import lock_exclusive, unlock
+from cairnmind.config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
+from cairnmind.cli_cmds.first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN, UNKNOWN_PROJECT_NEXT
+from cairnmind.pal.terminal_safe import safe_text
 # The sensitivity class of a source and a record (#180): derived on every read, stored nowhere.
-from .sensitivity import record_sensitivity, source_sensitivity  # noqa: F401
-from .sql import PROFILE_NAME, clean_row, evidence_time, json_text, parse_utc, utc_now
-from .storage_query import (
-    all_of,
+from cairnmind.memory.sensitivity import record_sensitivity, source_sensitivity  # noqa: F401
+from cairnmind.storage.sql import PROFILE_NAME, clean_row, evidence_time, json_text, parse_utc, utc_now
+from cairnmind.storage.storage_query import (
     any_of,
     asc,
     db_delete_where,
@@ -35,17 +39,15 @@ from .storage_query import (
     eq,
     gt,
     is_in,
-    is_not_null,
     is_null,
-    lt,
     lte,
     ne,
     not_in,
 )
-from .arcade import REQUEST_TIMEOUT
-from .backup_reader import opened_backup
-from .path_spelling import lies_in
-from .store_backup import VECTOR_COLLECTIONS, payload_digest, streamed_backup, write_backup
+from cairnmind.storage.arcade import REQUEST_TIMEOUT
+from cairnmind.storage.backup_reader import opened_backup
+from cairnmind.pal.path_spelling import lies_in
+from cairnmind.storage.store_backup import VECTOR_COLLECTIONS, payload_digest, streamed_backup, write_backup
 
 SCHEMA_VERSION = 4
 # Indexes for lookups by a field other than id and project_id. They are not part of the schema version:
@@ -164,15 +166,6 @@ def normalise_criteria(metadata: dict) -> None:
             metadata.pop(key, None)
 
 
-_DIAGNOSTIC_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_JOB_UNSET = object()
-JOB_STATES = {"pending", "running", "completed", "failed"}
-
-
-class JobNotFoundError(ValueError):
-    """No job is visible in the requested project."""
-
-
 class KeyTaken(ValueError):
     """Another current record of the same kind holds the key of this write; it names that record (#238)."""
 
@@ -191,47 +184,6 @@ def validate_task_state(value):
     """Validate a supplied task state without coercing or inferring a value."""
     if not isinstance(value, str) or value not in TASK_STATES:
         raise ValueError(f"Task state must be one of: {', '.join(sorted(TASK_STATES))}")
-
-
-def job_diagnostics(value):
-    """Retain bounded operational codes/counts, never model/source text."""
-    if not isinstance(value, dict):
-        return {}
-    result = {}
-    for key in ("stage", "code", "repair_outcome", "failure_reason", "persistence_stage"):
-        candidate = value.get(key)
-        if isinstance(candidate, str) and _DIAGNOSTIC_CODE.fullmatch(candidate):
-            result[key] = candidate
-    if type(value.get("repair_attempted")) is bool:
-        result["repair_attempted"] = value["repair_attempted"]
-    codes = value.get("validation_codes")
-    if isinstance(codes, list):
-        result["validation_codes"] = [code for code in codes[:8]
-                                      if isinstance(code, str) and _DIAGNOSTIC_CODE.fullmatch(code)]
-    for group, keys in (("budget", ("timeout_seconds", "max_steps", "context_limit_chars", "elapsed_seconds")),
-                        ("counts", ("candidate_records", "accepted_records", "skipped_records", "written_records",
-                                    "superseded_records"))):
-        original = value.get(group)
-        if isinstance(original, dict):
-            result[group] = {key: original[key] for key in keys if type(original.get(key)) in (int, float)
-                             and 0 <= original[key] <= 10**15 and math.isfinite(original[key])}
-    rejections = value.get("rejection_counts")
-    if isinstance(rejections, dict):
-        result["rejection_counts"] = {key: rejections[key] for key in (
-            "blank_content", "blank_evidence", "quote_absent_source", "reserved_metadata")
-            if type(rejections.get(key)) is int and 0 <= rejections[key] <= 10**15}
-    calls = value.get("model_calls")
-    if isinstance(calls, list):
-        result["model_calls"] = []
-        for call in calls[-2:]:
-            if not isinstance(call, dict):
-                continue
-            item = {key: call[key] for key in ("phase", "done_reason")
-                    if isinstance(call.get(key), str) and _DIAGNOSTIC_CODE.fullmatch(call[key])}
-            item.update({key: call[key] for key in ("prompt_eval_count", "eval_count", "total_duration")
-                         if type(call.get(key)) is int and 0 <= call[key] <= 10**18})
-            result["model_calls"].append(item)
-    return result
 
 
 # Where a write came from, set by the service from the session row and never by a client: today only
@@ -333,7 +285,7 @@ class Store:
     @property
     def backend(self):
         if self._backend is None:
-            from .arcade_backend import ArcadeBackend
+            from cairnmind.storage.arcade_backend import ArcadeBackend
             self._backend = ArcadeBackend(self)
         return self._backend
 
@@ -348,7 +300,7 @@ class Store:
     @classmethod
     def open_readonly(cls, settings: Settings) -> Store:
         """Read the existing store. Raises StoreNotReady, naming the command to run, instead of preparing it."""
-        from .store_readonly import open_readonly
+        from cairnmind.storage.store_readonly import open_readonly
         return open_readonly(cls, settings)
 
     def read_consistently(self, read, kinds):
@@ -360,7 +312,7 @@ class Store:
         """
         if not self.read_only:
             return read()[1]
-        from .store_readonly import read_consistently
+        from cairnmind.storage.store_readonly import read_consistently
         return read_consistently(self, read, kinds)
 
     @classmethod
@@ -378,7 +330,7 @@ class Store:
 
     def __init__(self, data_dir: Path, *, settings: Settings | None = None, for_takeover: bool = False,
                  for_restore: bool = False, backend: str | None = None, db_path: Path | str | None = None):
-        from .config import resolved_backend, sqlite_db_path
+        from cairnmind.config import resolved_backend, sqlite_db_path
         self._for_takeover = bool(for_takeover)
         self._for_restore = bool(for_restore)
         self.data_dir = Path(data_dir).expanduser().resolve()
@@ -386,19 +338,19 @@ class Store:
         if settings is not None and settings.data_dir.expanduser().resolve() != self.data_dir:
             raise ValueError("Provided settings must belong to this data directory")
         self.settings = settings if settings is not None else Settings.load(self.data_dir, create=True)
-        from .store_writer import installation
+        from cairnmind.storage.store_writer import installation
         self.installation = installation(self.data_dir)
         chosen = (backend or "").strip().lower() or resolved_backend(self.settings)
         if chosen == "sqlite":
-            from .sqlite_backend import SQLiteBackend
+            from cairnmind.storage.sqlite_backend import SQLiteBackend
             target_db = db_path if db_path is not None else sqlite_db_path(self.settings)
             self.backend = SQLiteBackend(target_db, store=self)
             self.client = self.backend.as_client_proxy()
             self.backend.ensure_database()
         elif chosen == "arcade":
-            from .arcade import ArcadeClient
-            from .arcade_backend import ArcadeBackend
-            from .engine import ensure_engine
+            from cairnmind.storage.arcade import ArcadeClient
+            from cairnmind.storage.arcade_backend import ArcadeBackend
+            from cairnmind.storage.engine import ensure_engine
             ensure_engine(self.settings)
             self.client = ArcadeClient(self.settings)
             self.backend = ArcadeBackend(self)
@@ -484,9 +436,9 @@ class Store:
     def update_where(self, collection: str, *, set_fields=None, remove_fields=(), where=()) -> list[dict]:
         if self.read_only:
             if self.not_writer:
-                from .store_writer import StoreNotWriter
+                from cairnmind.storage.store_writer import StoreNotWriter
                 raise StoreNotWriter(self.not_writer)
-            from .store_readonly import ReadOnlyStoreError
+            from cairnmind.storage.store_readonly import ReadOnlyStoreError
             raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
         tx = getattr(self._local, "transaction", None)
         if tx is not None:
@@ -501,9 +453,9 @@ class Store:
     def delete_where(self, collection: str, where=(), *, limit: int | None = None) -> list[dict]:
         if self.read_only:
             if self.not_writer:
-                from .store_writer import StoreNotWriter
+                from cairnmind.storage.store_writer import StoreNotWriter
                 raise StoreNotWriter(self.not_writer)
-            from .store_readonly import ReadOnlyStoreError
+            from cairnmind.storage.store_readonly import ReadOnlyStoreError
             raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
         tx = getattr(self._local, "transaction", None)
         if tx is not None:
@@ -512,12 +464,12 @@ class Store:
             return self.backend.delete_where(active_tx, collection, where, limit=limit)
 
     def command(self, sql, params=None):
-        from .journal import mutation
+        from cairnmind.storage.journal import mutation
         if self.read_only:
             if self.not_writer:
-                from .store_writer import StoreNotWriter
+                from cairnmind.storage.store_writer import StoreNotWriter
                 raise StoreNotWriter(self.not_writer)
-            from .store_readonly import ReadOnlyStoreError
+            from cairnmind.storage.store_readonly import ReadOnlyStoreError
             raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
         tx = getattr(self._local, "transaction", None)
         if tx:
@@ -525,7 +477,7 @@ class Store:
         if mutation(sql):
             with self.transaction() as tx:
                 return tx.command(sql, params)
-        from .store_writer import require_writer
+        from cairnmind.storage.store_writer import require_writer
         with self._lock():
             # Not journaled, so not fenced by the journal head: the writer is read before the statement.
             require_writer(self)
@@ -548,8 +500,8 @@ class Store:
                 finally:
                     del self._local.transaction
             return
-        from .journal import JournalTransaction
-        from .store_writer import StoreWriterLost, check_head, recheck
+        from cairnmind.storage.journal import JournalTransaction
+        from cairnmind.storage.store_writer import StoreWriterLost, check_head, recheck
         recheck(self)  # one read, only while the role is lost: a person may have taken it back
         if self._writer_lost:
             raise StoreWriterLost(self._writer_lost)
@@ -607,7 +559,7 @@ class Store:
         person_proof.require, which proves the open workspace (_proven_act). An act that does not count is
         what a session's write is: it confirms nothing and takes no confirmation away.
         """
-        from .confirmation import PERSON_ROUTES, SEED_ROUTE
+        from cairnmind.memory.confirmation import PERSON_ROUTES, SEED_ROUTE
         if route not in PERSON_ROUTES and route != SEED_ROUTE:
             raise ValueError("Unknown route of a person's act")
         previous = getattr(self._local, "person_act", None)
@@ -623,8 +575,8 @@ class Store:
         act = getattr(self._local, "person_act", None)
         if not act:
             return None
-        from .confirmation import SEED_ROUTE
-        from .person_proof import present
+        from cairnmind.memory.confirmation import SEED_ROUTE
+        from cairnmind.terminal.person_proof import present
         return act if act["route"] == SEED_ROUTE or present() else None
 
     def _confirmation(self, tx, project_id, old, asked, status, statement, sources, version):
@@ -639,7 +591,7 @@ class Store:
         mark that says the confirmation lapsed; the same mark is left when such a write sets another status.
         A person's act leaves no such mark.
         """
-        from .confirmation import (MARK, NOT_PROVEN, PERSON_ROUTES, SEED_ROUTE, SEED_SOURCE, ConfirmationRefused,
+        from cairnmind.memory.confirmation import (MARK, NOT_PROVEN, PERSON_ROUTES, SEED_ROUTE, SEED_SOURCE, ConfirmationRefused,
                                    lowered, person_mark, said)
         act = self._proven_act()
         if status != "confirmed":
@@ -675,7 +627,7 @@ class Store:
     def _persons_act(self) -> bool:
         """Whether this thread writes as a person: an act of a person's route is open (evaluation seed data
         is not one), and no session or marked origin writes."""
-        from .confirmation import PERSON_ROUTES
+        from cairnmind.memory.confirmation import PERSON_ROUTES
         act = self._proven_act()
         return bool(act) and act["route"] in PERSON_ROUTES and not (
             self.current_origin() or getattr(self._local, "session_write", None))
@@ -686,18 +638,18 @@ class Store:
 
     def _kept(self, record) -> bool:
         """Whether this write is not a person's act and `record` is confirmed by a person here (#177)."""
-        from .confirmation import kept_verdict
+        from cairnmind.memory.confirmation import kept_verdict
         return not self._persons_act() and kept_verdict(record)
 
     def _keep_verdict(self, record, change, status=None, differs=()):
         """A write that is not a person's act never takes a person's confirmation away (#177): refused."""
-        from .confirmation import VerdictKept
+        from cairnmind.memory.confirmation import VerdictKept
         if self._kept(record):
             raise VerdictKept(record, change, status, differs)
 
     def init(self):
-        from .arcade import ArcadeError
-        from .store_writer import claimed_meanwhile, mixed_reason, read_fence, read_writer, settle
+        from cairnmind.storage.arcade import ArcadeError
+        from cairnmind.storage.store_writer import claimed_meanwhile, mixed_reason, read_fence, read_writer, settle
         with self._lock():
             types = self.backend.list_collections(self.client)
             writer, named = read_writer(self.client) if "devbrain_meta" in types else None, None
@@ -709,7 +661,7 @@ class Store:
                 return
             if "devbrain_meta" in types:
                 # A restore that did not finish (#362): no command uses a half-restored store, and nothing runs over it.
-                from .restore_staged import RestoreUnfinished, refusal, unfinished
+                from cairnmind.storage.restore_staged import RestoreUnfinished, refusal, unfinished
                 mark = unfinished(self.client)
                 if mark is not None and not (self._for_restore or self._for_takeover):
                     raise RestoreUnfinished(refusal(mark), mark)
@@ -740,13 +692,13 @@ class Store:
         if self._unfinished_restore:
             return  # the one-time step would write into a store that holds only part of a backup
         # As the writer, once the schema is current: the writer lock is taken again by the transaction.
-        from .confirmation_upgrade import mark_confirmed_before_rule
+        from cairnmind.memory.confirmation_upgrade import mark_confirmed_before_rule
         self.confirmations_before_rule = mark_confirmed_before_rule(self)
 
     def _open_as_reader(self, writer):
         """Go on as a store that reads only: every write is refused with the reason (store_writer)."""
-        from .store_readonly import ReadOnlyClient, StoreNotReady, check_ready
-        from .store_writer import reader_reason
+        from cairnmind.storage.store_readonly import ReadOnlyClient, StoreNotReady, check_ready
+        from cairnmind.storage.store_writer import reader_reason
         reason = reader_reason(self.installation, writer)
         try:
             check_ready(self.client, self.settings)
@@ -762,7 +714,7 @@ class Store:
 
     def writer_state(self):
         """Which installation writes this store, and whether this one is the writer, a reader or lost it (#70)."""
-        from .store_writer import state
+        from cairnmind.storage.store_writer import state
         return state(self)
 
     def _prepare_schema(self):
@@ -798,43 +750,12 @@ class Store:
     @contextmanager
     def _keeping(tx):
         """Graph writes that keep what the transaction remembers current, instead of forgetting it."""
-        if getattr(tx, "known", None) is None:
-            yield None
-            return
-        tx.keeps_known = True
-        try:
-            yield tx.known
-        finally:
-            tx.keeps_known = False
+        with store_graph.keeping_known(tx) as known:
+            yield known
 
     def prefetch_graph(self, tx, nodes, edges):
-        """Read, in a few requests, what upsert_node and upsert_edge would look up row by row.
-
-        Only inside the transaction that then writes these rows. The checks stay the same checks:
-        a row that was not read here is read when it is needed, and one known to be absent fails as before.
-        """
-        if not hasattr(tx, "known"):
-            return
-        nodes, edges = list(nodes), list(edges)
-        wanted = {
-            "sources": {item["source_id"] for item in (*nodes, *edges) if isinstance(item.get("source_id"), str) and item["source_id"]},
-            "nodes": {item["id"] for item in nodes if isinstance(item.get("id"), str)}
-            | {item[key] for item in edges for key in ("from_id", "to_id") if isinstance(item.get(key), str)},
-            "edges": {item["id"] for item in edges if isinstance(item.get("id"), str)},
-        }
-        fields = {
-            "sources": ("id", "project_id", "is_current"),
-            "nodes": ("id", "project_id"),
-            "edges": ("id", "project_id", "from_id", "to_id"),
-        }
-        known = {"projects": set(), "sources": {}, "nodes": {}, "edges": {}}
-        for table, identifiers in wanted.items():
-            identifiers = sorted(identifiers)
-            for offset in range(0, len(identifiers), 500):
-                part = identifiers[offset:offset + 500]
-                found = {row["id"]: row for row in db_find(tx, table, is_in("id", part), columns=fields[table])}
-                known[table].update({identifier: found.get(identifier) for identifier in part})
-        tx.known = known
+        """Read, in a few requests, what upsert_node and upsert_edge would look up row by row."""
+        return store_graph.prefetch_graph(self, tx, nodes, edges)
 
     def require_safe_project_root(self, root):
         path = str(Path(root).expanduser().resolve())
@@ -862,21 +783,21 @@ class Store:
                         raise ValueError(PROJECT_NAME_TAKEN.format(name=safe_text(name), root=safe_text(existing["root"])))
                     raise ValueError(PROJECT_ROOT_TAKEN.format(name=safe_text(existing["name"]), root=safe_text(path)))
                 return existing
-            from .project_removal import restore_in
+            from cairnmind.memory.project_removal import restore_in
             restored = restore_in(tx, name, path, restore)  # the same name and folder as a removed project (#327)
             if restored:
                 return restored
             project = {"id": str(uuid4()), "name": name, "root": path, "created_at": utc_now()}
             db_insert_document(tx, "projects", project)
-            from .project_folders import stamp
+            from cairnmind.memory.project_folders import stamp
             db_insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project["id"], "path": path, **stamp()})
             return project
 
     def add_project_root(self, project_id, path) -> dict:
         """Register a folder of the project, recording this machine as the one that has it (#371). A folder that
         another machine registered is moved to this one, and `moved_from` says from which host."""
-        from .project_folders import stamp, this_machine
-        from .store_writer import label
+        from cairnmind.memory.project_folders import stamp, this_machine
+        from cairnmind.storage.store_writer import label
         root = self.require_safe_project_root(path)
         with self.transaction() as tx:
             self._require_project(tx, project_id)
@@ -905,7 +826,7 @@ class Store:
         transcript or a hook event): it names a place, typed by nobody, that may since have been removed.
         """
         value = str(identifier)
-        from .project_removal import find_removed, unknown_removed
+        from cairnmind.memory.project_removal import find_removed, unknown_removed
         project = db_find_one(
             self, "projects", [is_null("removed_at"), any_of(eq("id", value), eq("name", value))]
         )
@@ -1017,17 +938,8 @@ class Store:
         return source
 
     def enqueue_new(self, tx, kind, project_id, payload, dedupe_key):
-        """A job whose key cannot exist yet, because it names a row created in this same transaction.
-
-        The row is the one ``enqueue`` writes. The unique index on the key still refuses a second one.
-        """
-        if not kind or not isinstance(dedupe_key, str) or not dedupe_key:
-            raise ValueError("A job requires a kind and deduplication key")
-        job_id, now = str(uuid4()), utc_now()
-        db_insert_document(tx, "jobs", {"id": job_id, "project_id": project_id, "kind": kind, "payload": payload, "dedupe_key": dedupe_key,
-                             "job_key": json_text([kind, project_id, dedupe_key]), "state": "pending", "lease_until": None,
-                             "worker": None, "error": None, "attempts": 0, "created_at": now, "updated_at": now})
-        return job_id
+        """A job whose key cannot exist yet, because it names a row created in this same transaction."""
+        return store_jobs.enqueue_new(self, tx, kind, project_id, payload, dedupe_key)
 
     def get_source(self, source_id):
         return db_find_one(self, "sources", {"id": source_id}, required=True)
@@ -1102,266 +1014,33 @@ class Store:
                     raise ValueError(f"{field} must reference this record's source IDs")
 
     def upsert_node(self, node, tx=None):
-        if tx is None:
-            with self.transaction() as native:
-                return self.upsert_node(node, native)
-        node, existing = self._checked_node(tx, node)
-        with self._keeping(tx) as known:
-            self.backend.upsert_vertex(tx, node, existing=bool(existing))
-            if known is not None:
-                known["nodes"][node["id"]] = {"id": node["id"], "project_id": node["project_id"]}
-        return node
+        return store_graph.upsert_node(self, node, tx=tx)
 
     def _checked_node(self, tx, node):
         """The vertex upsert_node writes, after its checks, and the stored row with its ID if there is one."""
-        node = {"metadata": {}, **node}
-        for key in ("id", "project_id", "kind", "label"):
-            if not isinstance(node.get(key), str):
-                raise ValueError(f"Graph vertex requires {key}")
-        self._require_project(tx, node["project_id"])
-        source = None
-        if node.get("source_id"):
-            source = self._remembered(
-                tx,
-                "sources",
-                node["source_id"],
-                lambda: db_find_one(tx, "sources", {"id": node["source_id"]}, columns=("project_id", "is_current")),
-            )
-            if not source or source.get("project_id") != node["project_id"]:
-                raise ValueError("Graph vertex source must belong to the same project")
-        # Evidence/decision vertices remain traversable as provenance even if a code file changed.
-        node.setdefault("is_current", bool(source["is_current"]) if source and node["kind"] not in KINDS | {"source"} else True)
-        existing = self._remembered(
-            tx, "nodes", node["id"], lambda: db_find_one(tx, "nodes", {"id": node["id"]})
-        )
-        if existing and existing.get("project_id") != node["project_id"]:
-            raise ValueError("Graph vertex belongs to another project")
-        return node, existing
+        return store_graph.checked_node(self, tx, node)
 
     def upsert_edge(self, edge, tx=None):
-        if tx is None:
-            with self.transaction() as native:
-                return self.upsert_edge(edge, native)
-        edge, existing = self._checked_edge(tx, edge)
-        with self._keeping(tx) as known:
-            if known is not None:
-                known["edges"][edge["id"]] = {key: edge[key] for key in ("id", "project_id", "from_id", "to_id")}
-            self.backend.upsert_edge(tx, edge, existing=existing)
-        return edge
+        return store_graph.upsert_edge(self, edge, tx=tx)
 
     def _checked_edge(self, tx, edge):
         """The edge upsert_edge writes, after its checks, and the stored row with its ID if there is one."""
-        edge = {"status": "observed", **edge}
-        for key in ("id", "project_id", "from_id", "to_id", "kind"):
-            if not isinstance(edge.get(key), str):
-                raise ValueError(f"Graph edge requires {key}")
-        for endpoint in (edge["from_id"], edge["to_id"]):
-            vertex = self._remembered(
-                tx,
-                "nodes",
-                endpoint,
-                lambda endpoint=endpoint: db_find_one(tx, "nodes", {"id": endpoint}, columns=("project_id",)),
-            )
-            if not vertex or vertex.get("project_id") != edge["project_id"]:
-                raise ValueError("Graph edge endpoints must exist in the same project")
-        source = None
-        if edge.get("source_id"):
-            source = self._remembered(
-                tx,
-                "sources",
-                edge["source_id"],
-                lambda: db_find_one(tx, "sources", {"id": edge["source_id"]}, columns=("project_id", "is_current")),
-            )
-            if not source or source.get("project_id") != edge["project_id"]:
-                raise ValueError("Graph edge source must belong to the same project")
-        edge.setdefault("is_current", bool(source["is_current"]) if source and edge["kind"] not in {"supported_by", "depends_on", "supersedes"} else True)
-        existing = self._remembered(
-            tx, "edges", edge["id"], lambda: db_find_one(tx, "edges", {"id": edge["id"]})
-        )
-        if existing and existing.get("project_id") != edge["project_id"]:
-            raise ValueError("Graph edge belongs to another project")
-        return edge, existing
+        return store_graph.checked_edge(self, tx, edge)
 
     def write_graph(self, tx, project_id, nodes, edges):
-        """Write graph rows as upsert_node, then upsert_edge, would for each, with one request per group of rows.
-
-        Every row passes the checks of its upsert before its group is written. Grouped only in a transaction
-        that reports the project's graph as reset, whose journal needs no single row; otherwise row by row.
-        A group the database did not write in full fails the transaction, which then leaves the graph as it was.
-        """
-        from .journal import JournalTransaction
-        nodes, edges = list(nodes), list(edges)
-        if not isinstance(tx, JournalTransaction) or (tx.reset_reason is None and project_id not in tx.graph_resets):
-            for item in nodes:
-                self.upsert_node(item, tx)
-            for item in edges:
-                self.upsert_edge(item, tx)
-            return
-        for rows, kind in ((nodes, "node"), (edges, "edge")):
-            if any(not isinstance(item, dict) or item.get("project_id") != project_id for item in rows):
-                raise ValueError(f"Every graph {kind} of a grouped write belongs to its project")
-            if len({item.get("id") for item in rows}) != len(rows):
-                raise ValueError(f"A grouped graph write names a {kind} twice")
-        created_nodes, updated_nodes = [], []
-        for item in nodes:
-            node, existing = self._checked_node(tx, item)
-            (updated_nodes if existing else created_nodes).append(node)
-            if tx.known is not None:
-                tx.known["nodes"][node["id"]] = {"id": node["id"], "project_id": node["project_id"]}
-        with self._keeping(tx):
-            self.backend.write_graph_batch(tx, project_id, created_nodes, updated_nodes, [])
-        created_edges, existing_edges = [], []
-        for item in edges:
-            edge, existing = self._checked_edge(tx, item)
-            if existing:
-                existing_edges.append(item)
-            else:
-                created_edges.append(edge)
-                if tx.known is not None:
-                    tx.known["edges"][edge["id"]] = {key: edge[key] for key in ("id", "project_id", "from_id", "to_id")}
-        with self._keeping(tx):
-            self.backend.write_graph_batch(tx, project_id, [], [], created_edges)
-        for item in existing_edges:  # rare here: an edge that is kept is not written again
-            self.upsert_edge(item, tx)
+        """Write graph rows as upsert_node, then upsert_edge, would for each, with one request per group of rows."""
+        return store_graph.write_graph(self, tx, project_id, nodes, edges)
 
     def remove_graph_nodes(self, tx, project_id, identifiers):
-        """Delete the project's vertices among `identifiers` that no edge names, one group per request.
-
-        The same rows go as when each one was checked and deleted on its own: a vertex that an edge
-        still names (a knowledge record's relationship, say) is kept, so that edge never dangles.
-        A group the database did not delete in full fails the transaction, which then leaves the graph as it was.
-        The engine counts the vertices a DELETE removes, not the edges that go with them (measured, #402).
-        """
-        identifiers = sorted({identifier for identifier in identifiers if isinstance(identifier, str)})
-        # A transaction's rows in one request: the engine scans the project's index once per DELETE, so groups of 250
-        # made it 80 times more scans for a replaced graph (#402). The count is vertices only.
-        group = graph_transactions.ROWS_PER_TRANSACTION
-        kept = []  # returned: the caller counts the vertices the store still holds (#426)
-        for offset in range(0, len(identifiers), group):
-            part = identifiers[offset:offset + group]
-            named = set()
-            for row in db_find(
-                tx,
-                "edges",
-                any_of(is_in("from_id", part), is_in("to_id", part)),
-                columns=("from_id", "to_id"),
-            ):
-                named.update((row.get("from_id"), row.get("to_id")))
-            kept.extend(identifier for identifier in part if identifier in named)
-            unlinked = [identifier for identifier in part if identifier not in named]
-            if not unlinked:
-                continue
-            # The project names the graph a reset transaction reports, so the journal reads nothing for this statement.
-            deleted = self.backend.delete_graph_nodes(tx, project_id, unlinked)
-            count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
-            if type(count) is not int or count != len(unlinked):
-                raise RuntimeError("The database did not delete every graph vertex of a group")
-        return kept
+        """Delete the project's vertices among `identifiers` that no edge names, one group per request."""
+        return store_graph.remove_graph_nodes(self, tx, project_id, identifiers)
 
     @staticmethod
     def _load_checked_sources(tx, project_id, sources):
-        if not isinstance(sources, list) or not sources or not all(isinstance(item, str) for item in sources):
-            raise ValueError("A memory record requires at least one source ID: cite a source you read, "
-                             "or the source_ids a checkpoint returns")
-        unique_ids = list(dict.fromkeys(sources))
-        loaded = {}
-        for start in range(0, len(unique_ids), 500):
-            for row in db_find(tx, "sources", is_in("id", unique_ids[start:start + 500])):
-                cleaned = clean_row(row)
-                loaded[cleaned["id"]] = cleaned
-        if len(loaded) != len(unique_ids) or any(row.get("project_id") != project_id for row in loaded.values()):
-            raise ValueError("Sources must exist and belong to the same project")
-        return loaded
+        return store_graph.load_checked_sources(tx, project_id, sources)
 
     def _record_graph(self, tx, record, *, source_rows=None):
-        resolved_sources = {}
-        missing_source_ids = []
-        for source_id in dict.fromkeys(record["source_ids"]):
-            if source_rows is not None and source_id in source_rows:
-                resolved_sources[source_id] = source_rows[source_id]
-            else:
-                missing_source_ids.append(source_id)
-        for start in range(0, len(missing_source_ids), 500):
-            for row in db_find(tx, "sources", is_in("id", missing_source_ids[start:start + 500])):
-                cleaned = clean_row(row)
-                resolved_sources[cleaned["id"]] = cleaned
-        for source_id in missing_source_ids:
-            if source_id not in resolved_sources:
-                resolved_sources[source_id] = db_find_one(tx, "sources", {"id": source_id}, required=True)
-
-        node_id = f"record:{record['id']}"
-        dep_ids = [f"record:{dependency}" for dependency in (record["metadata"].get("depends_on") or [])]
-        sup_ids = [f"record:{record['supersedes']}"] if record.get("supersedes") else []
-        source_node_ids = [f"source:{source_id}" for source_id in resolved_sources]
-        candidate_ids = list(dict.fromkeys([node_id, *source_node_ids, *dep_ids, *sup_ids]))
-        existing_nodes = {}
-        for start in range(0, len(candidate_ids), 500):
-            for row in db_find(tx, "nodes", is_in("id", candidate_ids[start:start + 500])):
-                cleaned = clean_row(row)
-                existing_nodes[cleaned["id"]] = cleaned
-
-        has_known = hasattr(tx, "known")
-        prior_known = tx.known if has_known else None
-        try:
-            if has_known:
-                if tx.known is None:
-                    tx.known = {"projects": set(), "sources": {}, "nodes": {}, "edges": {}}
-                tx.known["projects"].add(record["project_id"])
-                for sid, src in resolved_sources.items():
-                    tx.known["sources"][sid] = {"id": sid, "project_id": src.get("project_id"), "is_current": src.get("is_current")}
-                for nid in candidate_ids:
-                    tx.known["nodes"][nid] = existing_nodes.get(nid)
-
-            had_record_node = node_id in existing_nodes
-            self.upsert_node({"id": node_id, "project_id": record["project_id"], "kind": record["kind"],
-                              "label": record["content"][:1000], "source_id": record["source_ids"][0],
-                              "is_current": record["status"] != "superseded",
-                              "metadata": {**record["metadata"], "record_id": record["id"], "status": record["status"]}}, tx)
-            if had_record_node:
-                with self._keeping(tx):
-                    db_delete_where(
-                        tx,
-                        "edges",
-                        [eq("from_id", node_id), is_in("kind", ("supported_by", "depends_on", "supersedes"))],
-                    )
-
-            def edge(target, kind, source_id):
-                eid = hashlib.sha256(f"{node_id}\0{kind}\0{target}".encode()).hexdigest()
-                if has_known and tx.known is not None:
-                    tx.known["edges"][eid] = None
-                self.upsert_edge({"id": eid, "project_id": record["project_id"], "from_id": node_id, "to_id": target,
-                                  "kind": kind, "source_id": source_id, "is_current": record["status"] != "superseded"}, tx)
-
-            for source_id in record["source_ids"]:
-                source = resolved_sources[source_id]
-                target = f"source:{source_id}"
-                desired = {"id": target, "project_id": record["project_id"], "kind": "source", "label": source["uri"],
-                           "source_id": source_id, "is_current": True,
-                           "metadata": {"source_id": source_id, "source_kind": source["kind"]}}
-                existing_src = existing_nodes.get(target)
-                if not (existing_src is not None
-                        and existing_src.get("project_id") == desired["project_id"]
-                        and existing_src.get("kind") == "source"
-                        and existing_src.get("label") == desired["label"]
-                        and existing_src.get("source_id") == source_id
-                        and existing_src.get("is_current") is True
-                        and existing_src.get("metadata") == desired["metadata"]):
-                    self.upsert_node(desired, tx)
-                    existing_nodes[target] = desired
-                edge(target, "supported_by", source_id)
-            for dependency in record["metadata"].get("depends_on") or []:
-                target = f"record:{dependency}"
-                if target in existing_nodes:
-                    edge(target, "depends_on", record["source_ids"][0])
-            # As for a dependency: a replacement written before the record it replaces (an import in ID order)
-            # gets its edge when its graph is written again after that record's (#239).
-            if record.get("supersedes"):
-                sup_target = f"record:{record['supersedes']}"
-                if sup_target in existing_nodes:
-                    edge(sup_target, "supersedes", record["source_ids"][0])
-        finally:
-            if has_known and prior_known is None:
-                tx.known = None
+        return store_graph.record_graph(self, tx, record, source_rows=source_rows)
 
     def _revision(self, tx, record, *, source_rows=None):
         db_insert_document(tx, "record_revisions", {"id": f"{record['id']}:{record['version']}", "project_id": record["project_id"],
@@ -1370,8 +1049,8 @@ class Store:
 
     def _derive_symbol_anchor(self, tx, project_id, sources, metadata, *, source_rows=None):
         """Derive a cross-OS symbol anchor from cited code sources when metadata names a symbol or quote."""
-        from .parsing import analyze_code
-        from .symbol_anchor import posix_path, resolve_symbol_anchor
+        from cairnmind.scip.parsing import analyze_code
+        from cairnmind.memory.symbol_anchor import posix_path, resolve_symbol_anchor
         symbol_name = metadata.get("symbol") if isinstance(metadata.get("symbol"), str) else None
         quote = metadata.get("evidence") if isinstance(metadata.get("evidence"), str) else None
         if not (symbol_name and symbol_name.strip()) and not (quote and quote.strip()):
@@ -1519,7 +1198,7 @@ class Store:
         metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
                         evidence_basis=evidence["basis"])
         if symbol_anchor is not None:
-            from .symbol_anchor import validate_symbol_anchor
+            from cairnmind.memory.symbol_anchor import validate_symbol_anchor
             validated_anchor = validate_symbol_anchor(symbol_anchor)
             if validated_anchor is None:
                 raise ValueError("Invalid symbol_anchor")
@@ -1604,7 +1283,7 @@ class Store:
                 raise ValueError("Managed task membership must be changed through PlanManager")
             if not old and "expected_version" in record and record["expected_version"] != previous["version"]:
                 raise ValueError("Record version conflict; replaced record has changed")
-            from .confirmation import MARK as mark_name, lowered
+            from cairnmind.memory.confirmation import MARK as mark_name, lowered
             self._keep_verdict(previous, "replace")
             act = self._proven_act()
             if not act and previous["status"] == "confirmed":
@@ -1640,7 +1319,7 @@ class Store:
                 metadata["supersede_warning"] = "anachronistic_supersede"
                 metadata["supersede_replaced_evidence_latest"] = replaced_time["latest"]
         # The rule for `confirmed`, on the final statement of this write and for every route (#177).
-        from .confirmation import MARK, said, said_difference
+        from cairnmind.memory.confirmation import MARK, said, said_difference
         statement = said(kind, content, key, supersedes, metadata)
         if old and status != "confirmed":
             self._keep_verdict(old, "status", status)
@@ -1664,7 +1343,7 @@ class Store:
                   "source_ids": list(dict.fromkeys(sources)), "version": old["version"] + 1 if old else 1, "supersedes": supersedes,
                   "metadata": metadata, "created_at": old["created_at"] if old else now, "updated_at": now, "active_key": active_key}
         if explicit_completion and metadata.get("requires_test"):
-            from .verification import validate_completion
+            from cairnmind.memory.verification import validate_completion
             validate_completion(self, tx, project_id, {**result, "_completion_worktree": record.get("worktree")})
         if old:
             updated = db_update_where(
@@ -1679,7 +1358,7 @@ class Store:
             db_insert_document(tx, "records", result)
         self._revision(tx, result, source_rows=source_rows)
         if managed and not managed_batch:
-            from .plans import note_task_mutation
+            from cairnmind.memory.plans import note_task_mutation
             note_task_mutation(self, tx, result, record["expected_plan_version"])
         if kind == "task" and metadata.get("scope"):
             before, after = (old.get("metadata", {}).get("state", "todo") if old else None), metadata.get("state")
@@ -1692,7 +1371,7 @@ class Store:
             if change:
                 # A scoped task starts or ends: the tree is noted for the scope-drift warning. Only after
                 # the whole write is committed and the writer lock is released, and never as part of it.
-                from .scope import note_progress
+                from cairnmind.memory.scope import note_progress
                 worktree = record.get("worktree")
                 self._after_commit(lambda: note_progress(self, result, worktree, change))
         return result
@@ -1714,7 +1393,7 @@ class Store:
         if not isinstance(state, dict):
             raise ValueError("Checkpoint state must be an object")
         content = json_text(state)
-        from .secret_mask import note_metadata  # indexed with its known secrets replaced (#182)
+        from cairnmind.memory.secret_mask import note_metadata  # indexed with its known secrets replaced (#182)
         source = self.snapshot(project_id, f"checkpoint://{uuid4()}", content, "checkpoint",
                                note_metadata(self.settings, content, {"origin": "client"}))
         with self.transaction() as tx:
@@ -1747,321 +1426,66 @@ class Store:
         ]
 
     def enqueue(self, kind, project_id, payload, dedupe_key):
-        if not kind or not isinstance(dedupe_key, str) or not dedupe_key:
-            raise ValueError("A job requires a kind and deduplication key")
-        with self.transaction() as tx:
-            self._require_project(tx, project_id)
-            job_key = json_text([kind, project_id, dedupe_key])
-            old = db_find_one(tx, "jobs", {"job_key": job_key}, columns=("id",))
-            if old:
-                return old["id"]
-            job_id, now = str(uuid4()), utc_now()
-            db_insert_document(tx, "jobs", {"id": job_id, "project_id": project_id, "kind": kind, "payload": payload, "dedupe_key": dedupe_key,
-                                 "job_key": job_key, "state": "pending", "lease_until": None, "worker": None, "error": None,
-                                 "attempts": 0, "created_at": now, "updated_at": now})
-            return job_id
+        return store_jobs.enqueue(self, kind, project_id, payload, dedupe_key)
 
     def claim_job(self, worker, lease_seconds=60, kinds=None, *, project_ids=None):
-        if lease_seconds <= 0 or not worker:
-            raise ValueError("Worker and positive lease duration are required")
-        if kinds is not None and not kinds:
-            return None
-        if project_ids is not None:
-            if (not isinstance(project_ids, (list, tuple))
-                    or any(not isinstance(value, str) or not value for value in project_ids)):
-                raise ValueError("Job project filter must contain explicit project IDs")
-            if not project_ids:
-                return None  # An empty authorization set must never claim global work.
-        if self.not_writer:
-            # Only the writer's worker claims jobs (#70): a lease is measured by the claiming machine's clock.
-            from .store_writer import StoreNotWriter
-            raise StoreNotWriter(self.not_writer)
-        with self.transaction() as tx:
-            # The jobs of a removed project wait until it is back (#327).
-            removed = [r["id"] for r in db_find(tx, "projects", is_not_null("removed_at"), columns=("id",))]
-            conds = [any_of(eq("state", "pending"), all_of(eq("state", "running"), lt("lease_until", time.time())))]
-            if kinds is not None:
-                conds.append(is_in("kind", list(kinds)))
-            if project_ids is not None:
-                conds.append(is_in("project_id", list(project_ids)))
-            if removed:
-                conds.append(any_of(is_null("project_id"), not_in("project_id", removed)))
-            job = db_find_one(tx, "jobs", conds, order_by=(asc("created_at"), asc("id")))
-            if not job:
-                return None
-            if job["state"] == "running":
-                job["attempt_history"] = self._job_event(job, "lease_expired")
-            job.update(state="running", worker=worker, lease_until=time.time() + lease_seconds, attempts=job.get("attempts", 0) + 1, updated_at=utc_now())
-            job["diagnostics"] = {}
-            db_update_where(tx, "jobs", set_fields=job, where={"id": job["id"]})
-            return job
+        return store_jobs.claim_job(self, worker, lease_seconds=lease_seconds, kinds=kinds, project_ids=project_ids)
 
     @staticmethod
     def _job_event(job, event, *, state=None, error=_JOB_UNSET):
-        history = list(job.get("attempt_history") or [])
-        history.append({"event": event, "attempts": job.get("attempts", 0),
-                        "state": state or job["state"], "at": utc_now(),
-                        "worker": job.get("worker"), "error": job.get("error") if error is _JOB_UNSET else error,
-                        "diagnostics": job_diagnostics(job.get("diagnostics"))})
-        return history
+        return store_jobs.job_event(job, event, state=state, error=error)
 
     def set_job_diagnostics(self, job_id, diagnostics, *, expected_attempts=None, worker=None):
         """Publish sanitized attempt diagnostics without completing/reclaiming a job."""
-        cleaned = job_diagnostics(diagnostics)
-        with self.transaction() as tx:
-            job = db_find_one(tx, "jobs", {"id": job_id})
-            if not job:
-                return False  # Project deletion never recreates operational rows.
-            if (expected_attempts is not None and (job["state"] != "running"
-                    or job.get("attempts", 0) != expected_attempts)):
-                return False
-            if worker is not None and (job["state"] != "running" or job.get("worker") != worker):
-                return False
-            db_update_where(tx, "jobs", set_fields={"diagnostics": cleaned, "updated_at": utc_now()}, where={"id": job_id})
-        return True
-
-    def finish_job(self, job_id, error=None, *, worker=None, expected_attempts=None):
-        with self.transaction() as tx:
-            job = db_find_one(tx, "jobs", {"id": job_id})
-            if (not job or (worker is not None and (job.get("worker") != worker or job["state"] != "running"))
-                    or (expected_attempts is not None and (job["state"] != "running"
-                        or job.get("attempts", 0) != expected_attempts))):
-                raise ValueError("Unknown job or stale job lease")
-            state = "failed" if error else "completed"
-            updates = {"state": state, "error": error, "lease_until": None, "updated_at": utc_now(),
-                       "attempt_history": self._job_event(job, "finished", state=state, error=error)}
-            if error:
-                updates.update(last_error=error, last_error_at=updates["updated_at"])
-            db_update_where(tx, "jobs", set_fields=updates, where={"id": job_id})
-
-    def job_summary(self, project_id=None):
-        self._require_project(self, project_id)
-        summary = {name: {state: 0 for state in sorted(JOB_STATES)}
-                   for name in ("archive", "indexing", "extraction", "other")}
-        for row in self.group_counts(
-            "jobs", ("kind", "state"), {"project_id": project_id} if project_id else (), count_alias="total"
-        ):
-            group = {"import": "archive", "embed": "indexing", "extract": "extraction"}.get(row["kind"], "other")
-            if row["state"] in JOB_STATES:
-                summary[group][row["state"]] += int(row["total"])
-        return summary
-
-    def list_jobs(self, project_id, state=None, kind=None, limit=50):
-        self._require_project(self, project_id)
-        if state is not None and state not in JOB_STATES:
-            raise ValueError("Unknown job state")
-        if kind is not None and (not isinstance(kind, str) or not 1 <= len(kind) <= 80):
-            raise ValueError("Invalid job kind")
-        if type(limit) is not int or not 1 <= limit <= 100:
-            raise ValueError("Job list limit must be between 1 and 100")
-        conds = [eq("project_id", project_id)]
-        if state:
-            conds.append(eq("state", state))
-        if kind:
-            conds.append(eq("kind", kind))
-        rows = self.find("jobs", conds, order_by=(desc("updated_at"), asc("id")), limit=limit)
-        packets = self._job_proofs(project_id) if any(row["kind"] == "import" for row in rows) else []
-        return [self._public_job(clean_row(row), packets=packets) for row in rows]
-
-    def job_status(self, project_id, job_id):
-        self._require_project(self, project_id)
-        job = self.find_one("jobs", {"id": job_id, "project_id": project_id})
-        if not job:
-            raise JobNotFoundError("Unknown job in requested project")
-        return self._public_job(job, detail=True,
-                                packets=self._job_proofs(project_id) if job["kind"] == "import" else [])
-
-    def _job_proofs(self, project_id):
-        # Read already published bounded evidence; never prepare, repair or
-        # recapture a transcript merely to display operational diagnostics.
-        return self.find(
-            "resume_packets",
-            {"project_id": project_id},
-            columns=("id", "created_at", "payload"),
-            order_by=(desc("created_at"), asc("id")),
-            limit=100,
+        return store_jobs.set_job_diagnostics(
+            self, job_id, diagnostics, expected_attempts=expected_attempts, worker=worker
         )
 
+    def finish_job(self, job_id, error=None, *, worker=None, expected_attempts=None):
+        return store_jobs.finish_job(
+            self, job_id, error=error, worker=worker, expected_attempts=expected_attempts
+        )
+
+    def job_summary(self, project_id=None):
+        return store_jobs.job_summary(self, project_id=project_id)
+
+    def list_jobs(self, project_id, state=None, kind=None, limit=50):
+        return store_jobs.list_jobs(self, project_id, state=state, kind=kind, limit=limit)
+
+    def job_status(self, project_id, job_id):
+        return store_jobs.job_status(self, project_id, job_id)
+
+    def _job_proofs(self, project_id):
+        return store_jobs.job_proofs(self, project_id)
+
     def _import_job_coverage(self, job, packets):
-        unknown = {"status": "scope_unknown", "scope": "requested_capture"}
-        payload = job.get("payload") or {}
-        if not isinstance(payload, dict):
-            return {**unknown, "reason": "legacy_missing_capture"}
-        capture, event_id = payload.get("requested_watermark"), payload.get("origin_event_id")
-        path, client = payload.get("path"), payload.get("client")
-        from .private_files import decode_file_id
-        if (not isinstance(capture, dict) or not isinstance(event_id, str)
-                or not isinstance(path, str) or client not in {"codex", "claude"}
-                or type(capture.get("size")) is not int or capture["size"] < 0
-                or decode_file_id(capture.get("device")) is None or decode_file_id(capture.get("inode")) is None
-                or type(capture.get("head_bytes")) is not int
-                or not isinstance(capture.get("head_sha256"), str)):
-            return {**unknown, "reason": "legacy_missing_capture"}
-        event = self.find_one("session_events", {"id": event_id, "project_id": job["project_id"]})
-        if (not event or event.get("transcript_path") != path or event.get("client") != client
-                or event.get("transcript_watermark") != capture):
-            return {**unknown, "reason": "capture_receipt_unavailable"}
-        for packet in packets:
-            for row in (packet.get("payload") or {}).get("archive_watermarks", []):
-                if (row.get("path") != path or row.get("client") != client
-                        or decode_file_id(row.get("device")) != decode_file_id(capture["device"])
-                        or decode_file_id(row.get("inode")) != decode_file_id(capture["inode"])
-                        or any(row.get(key) != capture[key] for key in ("head_bytes", "head_sha256"))):
-                    continue
-                if type(row.get("size")) is not int or row["size"] < capture["size"]:
-                    continue
-                pending = capture.get("pending_tail_bytes", 0)
-                if pending and (row.get("pending_tail_sha256") != capture.get("pending_tail_sha256")
-                                or row.get("captured_tail_start", row["size"]) != capture["size"]):
-                    continue
-                proof = {"packet_id": packet["id"], "at": packet["created_at"], "captured_size": row["size"]}
-                if (row.get("status") == "complete" and row.get("archived_offset", -1) >= row["size"]
-                        and type(row.get("source_count")) is int and isinstance(row.get("source_ids_hash"), str)):
-                    sources = self.find(
-                        "sources",
-                        [
-                            eq("project_id", job["project_id"]),
-                            eq("metadata.import_path", path),
-                            lt("metadata.byte_offset", row["size"]),
-                        ],
-                        columns=("id",),
-                    )
-                    ids = sorted(source["id"] for source in sources)
-                    digest = hashlib.sha256(json_text(ids).encode()).hexdigest()
-                    if len(ids) == row["source_count"] and digest == row["source_ids_hash"]:
-                        return {"status": "captured_complete", "scope": "requested_capture", "proof_ref": proof}
-                    return {**unknown, "reason": "published_source_set_unavailable"}
-                if row.get("status") == "partial" and row["size"] == capture["size"]:
-                    return {"status": "captured_blocked", "scope": "requested_capture", "proof_ref": proof}
-        return {**unknown, "reason": "no_matching_published_proof"}
+        return store_jobs.import_job_coverage(self, job, packets)
 
     def _public_job(self, job, *, detail=False, packets=()):
-        result = {key: job.get(key) for key in ("id", "project_id", "kind", "state", "attempts", "created_at",
-                                               "updated_at", "lease_until", "worker", "retry_count", "last_retry_at")}
-        result["attempts"] = job.get("attempts", 0)
-        result["diagnostics"] = job_diagnostics(job.get("diagnostics"))
-        result["has_error"] = bool(job.get("error"))
-        result.update(self._job_error(job.get("error"), result["diagnostics"]))
-        history = job.get("attempt_history") or []
-        # Events an old completed job no longer keeps (store_prune.compact_old_jobs, #190) still count.
-        pruned = job.get("attempt_history_pruned") if type(job.get("attempt_history_pruned")) is int else 0
-        result["attempt_history_count"] = len(history) + pruned
-        if detail:
-            result["attempt_history"] = [{key: event.get(key) for key in ("event", "attempts", "state", "at")}
-                                          | {"has_error": bool(event.get("error")),
-                                             "diagnostics": job_diagnostics(event.get("diagnostics"))}
-                                          | self._job_error(event.get("error"), job_diagnostics(event.get("diagnostics")))
-                                          for event in history[-20:] if isinstance(event, dict)]
-            result["attempt_history_omitted"] = max(0, len(history) - 20) + pruned
-        payload = job.get("payload") or {}
-        result["target"] = ({key: payload[key][:1024] for key in ("path", "root", "client", "source_id", "chunk_id", "origin_event_id")
-                             if isinstance(payload.get(key), str)} if isinstance(payload, dict) else {})
-        if job["kind"] == "import":
-            result["coverage"] = self._import_job_coverage(job, packets)
-        return result
+        return store_jobs.public_job(self, job, detail=detail, packets=packets)
 
     @staticmethod
     def _job_error(error, diagnostics):
         """Expose actionable fixed categories; keep original exceptions in storage/export."""
-        if not error:
-            return {"error_code": None, "error": None}
-        text = str(error).lower()
-        categories = (
-            (("history does not exist", "no such file or directory", "filenotfounderror"),
-             "transcript_missing", "The captured transcript file was unavailable."),
-            (("unknown transcript schema", "unrecognized transcript", "unsupported transcript"),
-             "unknown_transcript_schema", "A transcript record did not match a supported schema."),
-            (("jsondecodeerror", "invalid complete jsonl", "expecting value", "expecting property name", "invalid json"),
-             "invalid_jsonl", "A complete transcript record could not be parsed as JSON."),
-            (("unparsed or conflicting transcript", "unparsed transcript", "unknown_schema"),
-             "unparsed_transcript_record", "A transcript record requires compatible parsing or conflict review."),
-            (("another project", "outside project", "project scope", "different project"),
-             "project_scope_conflict", "Transcript project attribution did not match this project."),
-            (("cursor has not archived", "captured eof", "archived prefix"),
-             "archive_incomplete", "The captured transcript horizon was not completely archived."),
-            (("transcript eof is unknown",),
-             "capture_not_initialized", "The original event did not capture a finite transcript horizon."),
-            (("arcadedb",), "storage_error", "The storage request failed."),
-            # The texts of ollama.OllamaUnavailable (#238); a model call that timed out is the model's, not the job's,
-            # and is still called a timeout.
-            (("runtime reported a context-length limit",), "model_context_length",
-             "The model refused an input longer than its context length."),
-            (("response read timed out", "request timed out"), "model_timeout",
-             "The model runtime did not answer in time."),
-            (("ollama /api/", "runtime reported", "runtime rejected", "runtime returned", "embedding model returned",
-              "returned no chat message"), "model_runtime_error", "The model runtime refused or failed the request."),
-            (("timeout", "timed out"), "job_timeout", "The job exceeded its execution budget."),
-        )
-        for needles, code, message in categories:
-            if any(needle in text for needle in needles):
-                return {"error_code": diagnostics.get("code", code), "error": message}
-        return {"error_code": diagnostics.get("code", "job_error"),
-                "error": "The job failed; its original error is retained in the database and export."}
+        return store_jobs.public_job_error(error, diagnostics)
 
     def retry_job(self, project_id, job_id, expected_attempts, *, include_omissions=False):
-        if type(expected_attempts) is not int or expected_attempts < 0:
-            raise ValueError("Expected attempts must be a nonnegative integer")
-        if type(include_omissions) is not bool:
-            raise ValueError("Include omissions must be a boolean")
-        with self.transaction() as tx:
-            self._require_project(tx, project_id)
-            job = db_find_one(tx, "jobs", {"id": job_id, "project_id": project_id})
-            if not job:
-                raise JobNotFoundError("Unknown job in requested project")
-            eligible = job["state"] == "failed" or (include_omissions and self._all_proposals_rejected(job))
-            if not eligible or job.get("attempts", 0) != expected_attempts:
-                raise ValueError("Job retry conflict: read the current eligible attempt before retrying")
-            self._retry_job_locked(tx, job)
-        return self.job_status(project_id, job_id)
+        return store_jobs.retry_job(
+            self, project_id, job_id, expected_attempts, include_omissions=include_omissions
+        )
 
     @staticmethod
     def _all_proposals_rejected(job):
-        diagnostics = job.get("diagnostics")
-        if not isinstance(diagnostics, dict):
-            return False
-        counts = diagnostics.get("counts")
-        codes = diagnostics.get("validation_codes")
-        return (job.get("kind") == "extract" and job["state"] == "completed"
-                and diagnostics.get("code") == "completed_with_omissions"
-                and isinstance(counts, dict) and isinstance(codes, list) and "proposal_rejected" in codes
-                and all(type(counts.get(key)) is int for key in (
-                    "candidate_records", "accepted_records", "written_records", "skipped_records"))
-                and counts["candidate_records"] > 0 and counts["accepted_records"] == 0
-                and counts["written_records"] == 0 and counts["skipped_records"] == counts["candidate_records"])
+        return store_jobs.all_proposals_rejected(job)
 
     def _retry_job_locked(self, tx, job):
-        now = utc_now()
-        updates = {"state": "pending", "error": None, "lease_until": None, "worker": None,
-                   "updated_at": now, "last_retry_at": now, "retry_count": job.get("retry_count", 0) + 1,
-                   "attempt_history": self._job_event(job, "retry_requested")}
-        if job.get("error"):
-            updates.update(last_error=job["error"], last_error_at=job.get("updated_at"))
-        db_update_where(tx, "jobs", set_fields=updates, where={"id": job["id"], "state": job["state"]})
+        return store_jobs.retry_job_locked(self, tx, job)
 
     def _count(self, collection, project_id=None, extra=()):
-        from .storage_query import normalize_where
-        conds = []
-        if project_id:
-            conds.append(eq("project_id", project_id))
-        if extra:
-            conds.extend(normalize_where(extra))
-        return self.count(collection, conds)
+        return store_jobs.count_rows(self, collection, project_id=project_id, extra=extra)
 
     def status(self, project_id=None):
-        self._require_project(self, project_id)
-        counts = {key: self._count(key, project_id) for key in ("sources", "chunks", "records", "nodes", "edges", "embeddings")}
-        counts["projects"] = 1 if project_id else self._count("projects", extra=is_null("removed_at"))
-        counts["removed_projects"] = 0 if project_id else self._count("projects", extra=is_not_null("removed_at"))
-        counts["jobs"] = {state: self._count("jobs", project_id, eq("state", state)) for state in ("pending", "running", "completed", "failed")}
-        counts["archived"] = counts["sources"]
-        counts["indexed"] = len(
-            self.find("chunks", {"project_id": project_id} if project_id else (), columns=("source_id",), distinct=True)
-        )
-        counts["processed"] = self._count("jobs", project_id, [eq("kind", "extract"), eq("state", "completed")])
-        counts["unassigned_sources"], counts["inbox"] = self._count("sources", extra=is_null("project_id")), self._count("ingestion_inbox")
-        for collection in ("plans", "sessions", "check_runs"):
-            counts[collection] = self._count(collection, project_id)
-        return counts
+        return store_jobs.status(self, project_id=project_id)
 
     def cache_stamp(self, project_id):
         """A value that changes whenever a committed write could change an answer for the project.
@@ -2118,38 +1542,21 @@ class Store:
         return hashlib.sha256(json_text(parts).encode()).hexdigest()
 
     def recent_job_errors(self, project_id=None, limit=10):
-        conds = [eq("state", "failed")]
-        if project_id:
-            conds.append(eq("project_id", project_id))
-        rows = self.find("jobs", conds, order_by=(desc("updated_at"),), limit=max(1, min(100, limit)))
-        proofs = {}
-        for row in rows:
-            if row["kind"] == "import" and row["project_id"] not in proofs:
-                proofs[row["project_id"]] = self._job_proofs(row["project_id"])
-        return [self._public_job(clean_row(row), packets=proofs.get(row["project_id"], ())) for row in rows]
+        return store_jobs.recent_job_errors(self, project_id=project_id, limit=limit)
 
     def retry_jobs(self):
         """Explicit legacy global compatibility; every requeue retains its audit."""
-        with self.transaction() as tx:
-            rows = db_find(tx, "jobs", {"state": "failed"})
-            for row in rows:
-                self._retry_job_locked(tx, clean_row(row))
-        return {"retried": len(rows), "job_ids": [row["id"] for row in rows]}
+        return store_jobs.retry_jobs(self)
 
     def missing_embeddings(self, namespace, project_id=None):
-        conds = [eq("is_current", True)]
-        if project_id:
-            conds.append(eq("project_id", project_id))
-        chunks = self.find("chunks", conds, columns=("id", "project_id"))
-        existing = {r["chunk_id"] for r in self.find("embeddings", {"namespace": namespace}, columns=("chunk_id",))}
-        return [{"id": row["id"], "project_id": row.get("project_id")} for row in chunks if row["id"] not in existing]
+        return store_jobs.missing_embeddings(self, namespace, project_id=project_id)
 
     def delete_embeddings(self, project_id):
         with self.transaction() as tx:
             self.backend.delete_vectors_for_project(tx, project_id)
 
     def export(self, project_id=None):
-        from .restore_staged import refuse_if_unfinished
+        from cairnmind.storage.restore_staged import refuse_if_unfinished
         refuse_if_unfinished(self.client)  # part of a backup is not an export of the store (#362)
         with self.transaction() as tx:
             return self._export_snapshot(tx, project_id, EXPORT_TYPES, 5)
@@ -2165,7 +1572,7 @@ class Store:
         return result
 
     def backup(self, destination):
-        from .restore_staged import refuse_if_unfinished
+        from cairnmind.storage.restore_staged import refuse_if_unfinished
         refuse_if_unfinished(self.client)  # a backup of part of a restore would pass for a whole one (#362)
         destination = Path(destination).expanduser().resolve()
         if destination.is_dir():
@@ -2262,8 +1669,8 @@ class Store:
         rows are written as they are; `cairnmind restore` decides by the open workspace's key."""
         # The file is validated in two passes over it before anything changes, and read a third time for
         # the inserts; it is never held in memory whole (#196, backup_reader).
-        from .restore_staged import staged_restore
-        from .store_writer import require_writer
+        from cairnmind.storage.restore_staged import staged_restore
+        from cairnmind.storage.store_writer import require_writer
         path = Path(backup).expanduser().resolve()
         with opened_backup(path, self._validated_backup, RESTORE_TYPES) as source:
             require_writer(self)  # only the writer restores, and the restored data keeps naming it (#70)
@@ -2273,14 +1680,14 @@ class Store:
             self.confirmations_before_rule = None  # nothing restored is a person's, so nothing is marked as one
             return
         # A backup of a store before 0.11.0 brings records confirmed before the rule back (#215).
-        from .confirmation_upgrade import mark_confirmed_before_rule
+        from cairnmind.memory.confirmation_upgrade import mark_confirmed_before_rule
         self.confirmations_before_rule = mark_confirmed_before_rule(self, force=True)
 
     def _restore_from(self, source, claims=None):
         # DDL is deliberately outside the data transaction; no live data has been removed.
         self.backend.ensure_restored_vector_types(source.vector_indexes)
         # Rows are deleted and written in transactions of bounded size, the engine's heap holding a transaction (#362).
-        from .restore_staged import replace
+        from cairnmind.storage.restore_staged import replace
         self.embed_jobs_requeued = replace(self, source, claims)
 
     @staticmethod
@@ -2290,7 +1697,7 @@ class Store:
         tx = batches.tx
         if db_find_one(tx, "embeddings", columns=("id",)):
             return None
-        from .retrieval import json_value  # retrieval imports this module
+        from cairnmind.agents.retrieval import json_value  # retrieval imports this module
         current = {row["id"] for row in db_find(tx, "chunks", {"is_current": True}, columns=("id",))}
         first = {}  # one job per chunk: a retry can leave two completed jobs of the same chunk
         for row in db_find(tx, "jobs", {"kind": "embed", "state": "completed"}, columns=("id", "payload")):
@@ -2309,13 +1716,13 @@ class Store:
         return len(ids)
 
     def forget_project(self, project_id):
-        from .confirmation import ConfirmationRefused
-        from .person_proof import FORGET_REFUSED, present
+        from cairnmind.memory.confirmation import ConfirmationRefused
+        from cairnmind.terminal.person_proof import FORGET_REFUSED, present
         if not present():
             raise ConfirmationRefused(FORGET_REFUSED)  # only the workspace's route deletes a project (#347)
         with self.transaction() as tx:
             self._require_project(tx, project_id)
-            from .journal import Journal
+            from cairnmind.storage.journal import Journal
             Journal.reset(tx, reason="forget")
             self._delete_old_vectors(
                 tx, [r["id"] for r in db_find(tx, "sources", {"project_id": project_id}, columns=("id",))]

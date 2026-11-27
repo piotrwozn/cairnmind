@@ -9,7 +9,7 @@ import pytest
 
 from cairnmind.config import Settings
 from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import ORIGIN_METADATA, Store
 
 FORGED = {"origin_client": "codex", "origin_session_id": "someone-else", "origin_history": "archived",
@@ -146,10 +146,10 @@ def remember(fixture, bound, content, sources, kind="decision"):
 
 
 def test_an_external_record_is_never_verified_wherever_its_evidence_state_is_shown(fixture):
-    from cairnmind.evidence import evidence_states, orphans_report
-    from cairnmind.inspector import Inspector
-    from cairnmind.retrieval import public_record
-    from cairnmind.terminal_inspector import EVIDENCE_LABELS
+    from cairnmind.memory.evidence import evidence_states, orphans_report
+    from cairnmind.terminal.inspector import Inspector
+    from cairnmind.agents.retrieval import public_record
+    from cairnmind.terminal.terminal_inspector import EVIDENCE_LABELS
 
     external = remember(fixture, fixture.session("external"), "Decided in an external editor", [fixture.note["id"]])
     native = remember(fixture, fixture.session("codex"), "Decided in a native client", [fixture.note["id"]])
@@ -174,7 +174,7 @@ def test_an_external_record_is_never_verified_wherever_its_evidence_state_is_sho
 
 
 def test_an_external_source_cannot_anchor_any_record(fixture):
-    from cairnmind.evidence import evidence_states
+    from cairnmind.memory.evidence import evidence_states
 
     checkpoint = post(fixture, "/checkpoint", {"project": fixture.project["id"], **fixture.session("external"),
                                                "state": {"summary": "Claimed by an external editor"}})
@@ -190,7 +190,7 @@ def test_an_external_source_cannot_anchor_any_record(fixture):
 
 
 def test_an_external_test_claim_is_reported_never_a_machine_check(fixture):
-    from cairnmind.verification import verification_status
+    from cairnmind.memory.verification import verification_status
 
     bound = fixture.session("external")
     plan = post(fixture, "/plans/save", {"project": fixture.project["id"], **bound, "idempotency_key": "claims",
@@ -212,7 +212,7 @@ def test_an_external_test_claim_is_reported_never_a_machine_check(fixture):
 
 
 def test_the_brief_says_an_external_session_saved_the_latest_checkpoint(fixture):
-    from cairnmind.brief import build_brief
+    from cairnmind.memory.brief import build_brief
 
     post(fixture, "/checkpoint", {"project": fixture.project["id"], **fixture.session("external"),
                                   "state": {"summary": "From an external editor"}})
@@ -225,7 +225,7 @@ def test_the_brief_says_an_external_session_saved_the_latest_checkpoint(fixture)
 
 
 def test_a_full_native_packet_stays_ready_and_never_shows_an_external_record_unmarked(fixture, monkeypatch):
-    import cairnmind.sessions as sessions_module
+    import cairnmind.memory.sessions as sessions_module
 
     external = remember(fixture, fixture.session("external"), "Decided in an external editor", [fixture.note["id"]])
     changed = remember(fixture, None, "Rests on a note that changed", [fixture.note["id"]])
@@ -263,7 +263,7 @@ def test_a_field_put_beside_the_record_is_refused_by_name_and_nothing_changes(fi
 
 
 def test_an_external_session_remembers_a_fact_after_its_ack_without_a_source_and_never_verified(fixture):
-    from cairnmind.evidence import evidence_states
+    from cairnmind.memory.evidence import evidence_states
 
     bound = fixture.session("external")
     saved = post(fixture, "/remember", {"project": fixture.project["id"], "sources": [], **bound,

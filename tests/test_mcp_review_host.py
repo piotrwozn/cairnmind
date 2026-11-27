@@ -9,12 +9,12 @@ import time
 
 import pytest
 
-from cairnmind import mcp_host, mcp_schema
-from cairnmind.cockpit_state import CockpitState
+from cairnmind.mcp import mcp_host, mcp_schema
+from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.config import Settings
-from cairnmind.mcp_host import McpHost, McpServer
-from cairnmind.mcp_schema import admit, valid_arguments
-from cairnmind.mcp_servers import LOADER_ENV, inside_worktree, validate_server
+from cairnmind.mcp.mcp_host import McpHost, McpServer
+from cairnmind.mcp.mcp_schema import admit, valid_arguments
+from cairnmind.mcp.mcp_servers import LOADER_ENV, inside_worktree, validate_server
 from conftest import MCP_FIXTURE, mcp_fixture_processes
 
 

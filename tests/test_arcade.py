@@ -7,7 +7,7 @@ import time
 import httpx
 import pytest
 
-from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
 
 

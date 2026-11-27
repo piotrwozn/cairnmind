@@ -351,13 +351,13 @@ def stop_engines(funcargs) -> list[str]:
             # A record a test wrote by hand may name any process, this one too: never stopped here.
             if pid <= 0 or pid == os.getpid() or not data_dir.resolve().is_relative_to(root.resolve()):
                 continue
-            from cairnmind import process_identity
+            from cairnmind.pal import process_identity
             if not process_identity.alive(pid):
                 continue
         except (OSError, ValueError, KeyError, TypeError):
             continue  # no such process (or not ours): nothing is left running
         from cairnmind.config import Settings
-        from cairnmind.engine import stop_engine
+        from cairnmind.storage.engine import stop_engine
         try:
             stop_engine(Settings.load(data_dir))
             stopped.append(f"engine {pid} of {data_dir}")
@@ -368,7 +368,7 @@ def stop_engines(funcargs) -> list[str]:
 
 def socket_directories() -> set[str]:
     """The workspace and native-run socket directories now in the product's socket base (#235)."""
-    from cairnmind.runtime_sockets import KINDS, socket_directory
+    from cairnmind.pal.runtime_sockets import KINDS, socket_directory
     return {path for kind in KINDS for path in glob.glob(str(socket_directory(kind, "[0-9a-f]" * 16)))}
 
 

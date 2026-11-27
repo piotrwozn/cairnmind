@@ -33,13 +33,13 @@ from test_terminal_ux080 import CONFLICT, screen_text, setup_ui
 from test_workspace_stage_scope import wait_until
 from textual.widgets import Button, Select, Static, TextArea
 
-from cairnmind import (person_proof, project_forget, terminal_person_act, terminal_plan_confirm,
-                       terminal_project_forget, terminal_record_kinds, terminal_release, terminal_replace)
-from cairnmind.terminal_i18n import CATALOG, tr
-from cairnmind.terminal_inspector import InspectorApp
-from cairnmind.terminal_panels import ConfirmModal, SidebarApp
-from cairnmind.terminal_person_act import NOT_GIVEN, agreed, record_line, typed
-from cairnmind.terminal_ui import ChoiceModal, FormModal
+from cairnmind.terminal import person_proof, terminal_person_act, terminal_plan_confirm, terminal_project_forget, terminal_record_kinds, terminal_release, terminal_replace
+from cairnmind.memory import project_forget
+from cairnmind.terminal.terminal_i18n import CATALOG, tr
+from cairnmind.terminal.terminal_inspector import InspectorApp
+from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
+from cairnmind.terminal.terminal_person_act import NOT_GIVEN, agreed, record_line, typed
+from cairnmind.terminal.terminal_ui import ChoiceModal, FormModal
 
 REASON = "Read the source."
 NEW = "Validate tokens with the shared helper."
@@ -76,7 +76,7 @@ def posts_of(broker, suffix):
 
 def make_review(tmp_path, monkeypatch, language):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     return InspectorApp(settings, broker=broker, workspace=workspace), workspace, posts_of(broker, "/review")
 
 
@@ -123,7 +123,7 @@ async def reach_conflict(app, pilot, text):
 
 def make_apply(tmp_path, monkeypatch, language):
     settings, broker, workspace = setup(tmp_path, monkeypatch, project=False)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     return InspectorApp(settings, broker=broker, workspace=workspace), workspace, posts_of(broker, "/api/memory/import")
 
 
@@ -257,7 +257,7 @@ async def reach_forget(app, pilot, text):
 
 def make_sidebar_import(tmp_path, monkeypatch, language):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     return SidebarApp(settings, broker=broker, workspace=workspace), workspace, posts_of(broker, "/api/memory/import")
 
 

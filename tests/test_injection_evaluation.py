@@ -15,14 +15,14 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.agent import KnowledgeAgent
-from cairnmind.agent_memory import MemoryRefusal
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.agents.agent_memory import MemoryRefusal
 from cairnmind.config import Settings
-from cairnmind.injection_evaluation import (SERVER_ID, TOOL, agent_path, answers_path, approver, body, extraction_path,
+from cairnmind.agents.injection_evaluation import (SERVER_ID, TOOL, agent_path, answers_path, approver, body, extraction_path,
                                             load_fixture, new_tokens, run_injection_evaluation, score_agent,
                                             score_answer, score_extraction, tally, write_worktree)
-from cairnmind.ollama import OllamaUnavailable
-from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
+from cairnmind.agents.ollama import OllamaUnavailable
+from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 from test_api_agent import Memory, call, reply
 
 FIXTURE = Path(__file__).resolve().parents[1] / "docs" / "evaluation" / "injection-fixture.json"
@@ -245,7 +245,7 @@ async def test_any_file_that_configures_execution_written_in_the_sandbox_breaks_
                                                "expected_sha256": None})]
 
     # An approver that lets everything through stands for a broken guard: the write must still be caught.
-    monkeypatch.setattr("cairnmind.injection_evaluation.approver", lambda record: lambda request: True)
+    monkeypatch.setattr("cairnmind.agents.injection_evaluation.approver", lambda record: lambda request: True)
     fixture = load_fixture(FIXTURE)
     tokens = new_tokens(fixture)
     root = tmp_path / "sandbox" / "worktree"
@@ -297,7 +297,7 @@ def test_a_run_that_cannot_reach_the_model_is_not_run_and_a_bad_run_count_is_ref
 
 @pytest.mark.parametrize("status, code", [("measured", 0), ("not_run", 3), ("failed", 1)])
 def test_the_command_only_measures_and_exits_by_status(monkeypatch, tmp_path, status, code):
-    monkeypatch.setattr("cairnmind.injection_evaluation.run_injection_evaluation",
+    monkeypatch.setattr("cairnmind.agents.injection_evaluation.run_injection_evaluation",
                         lambda settings, path, **kwargs: {"status": status, "details": {"secret": 1}, "runs": kwargs["runs"]})
     result = CliRunner().invoke(cli.app, ["--data-dir", str(tmp_path / "data"), "eval", "injection", "--runs", "2"])
     assert result.exit_code == code, result.output or repr(result.exception)
@@ -305,9 +305,9 @@ def test_the_command_only_measures_and_exits_by_status(monkeypatch, tmp_path, st
 
 
 def test_a_connect_only_installation_is_refused_before_anything_is_created(monkeypatch, tmp_path):
-    from cairnmind import database_mode
+    from cairnmind.storage import database_mode
     monkeypatch.setattr(database_mode, "connect_only", lambda settings: True)
-    monkeypatch.setattr("cairnmind.injection_evaluation.run_injection_evaluation",
+    monkeypatch.setattr("cairnmind.agents.injection_evaluation.run_injection_evaluation",
                         lambda *args, **kwargs: pytest.fail("a database would have been created"))
     result = CliRunner().invoke(cli.app, ["--data-dir", str(tmp_path / "data"), "eval", "injection"])
     assert result.exit_code != 0 and "cairnmind eval injection" in " ".join(result.stderr.split())
@@ -446,7 +446,7 @@ async def test_a_file_outside_the_sandbox_that_changed_breaks_an_invariant(tmp_p
 
 
 def test_a_broken_invariant_or_an_undropped_database_fails_the_run(tmp_path, monkeypatch, capsys):
-    from cairnmind import agent_memory, repository_evaluation
+    from cairnmind.agents import agent_memory, repository_evaluation
     settings = Settings.load(tmp_path / "data", create=True)
     # A memory that, unlike the service, accepts a confirmed record: the product guarantee is broken.
     monkeypatch.setattr(agent_memory, "AgentMemoryClient", lambda *args, **kwargs: Memory())
@@ -473,7 +473,7 @@ def test_the_throwaway_service_ignores_an_exported_database_name(tmp_path, monke
     """create_app used to reload its settings from the environment: an exported name made the agent path's
     service talk to (or create) that database instead of the throwaway one."""
     from dataclasses import replace
-    from cairnmind.arcade import ArcadeClient
+    from cairnmind.storage.arcade import ArcadeClient
     settings = Settings.load(tmp_path / "data", create=True)
     exported = "cairnmind_g8a_exported_" + os.urandom(4).hex()
     other = ArcadeClient(replace(settings, arcade_database=exported))

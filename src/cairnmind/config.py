@@ -9,8 +9,8 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .file_locks import lock_exclusive
-from .private_files import ensure_private_dir, write_durable_private
+from cairnmind.pal.file_locks import lock_exclusive
+from cairnmind.pal.private_files import ensure_private_dir, write_durable_private
 
 
 # Environment variables are spelled CAIRNMIND_<NAME>. The earlier spelling DEVBRAIN_<NAME> is
@@ -289,7 +289,7 @@ class Settings:
                 # Only the managed engine on this machine gets a generated password, kept in config.json
                 # as before (#72). The password of a database this installation only connects to (#68) is
                 # set where that server runs, and comes from the environment or a file.
-                from .database_mode import connect_only, savable
+                from cairnmind.storage.database_mode import connect_only, savable
                 # The connect address is saved the first time it is seen in the environment (#68): a command
                 # started later without the variable (another shell, a terminal server started before the
                 # export) must not find a managed installation here and start an engine with an empty store.
@@ -393,7 +393,7 @@ class Settings:
             kept["arcade_url"] = (stored.get("arcade_url"), connect)
             values["arcade_url"] = connect
         # The password: the environment, then arcade_password_file, then config.json for this machine only.
-        from .database_credentials import resolve_password
+        from cairnmind.storage.database_credentials import resolve_password
         password, source, problem = resolve_password(values)
         problem = conflict or problem
         if password != stored.get("arcade_password", ""):

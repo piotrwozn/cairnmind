@@ -14,19 +14,21 @@ import pytest
 import typer.main
 from textual.widgets import Button, Static
 
-from cairnmind import cli, setup_mark, setup_profiles, terminal_setup, terminal_setup_change, topology as topology_module
+from cairnmind import cli
+from cairnmind.terminal import setup_mark, setup_profiles, terminal_setup, terminal_setup_change
+from cairnmind.cli_cmds import topology as topology_module
 from cairnmind.config import Settings
-from cairnmind.terminal_i18n import CATALOG, tr
-from cairnmind.terminal_setup import (
+from cairnmind.terminal.terminal_i18n import CATALOG, tr
+from cairnmind.terminal.terminal_setup import (
     CHIP_PROBLEM, CHIPS, HOW, KEEP_OPEN, LOADED, LOCAL_BACK, MESSAGES, NO_ANSWER, OPTIONAL_KEY, PLACEHOLDERS_OF, UNREADABLE,
     commands, describe, shown)
-from cairnmind.terminal_safe import safe_text
-from cairnmind.topology import lines, topology
+from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.cli_cmds.topology import lines, topology
 from conftest import plain_words
-from cairnmind.terminal_client import BrokerError
-from cairnmind.terminal_panels import SidebarApp
-from cairnmind.terminal_panels import ConfirmModal
-from cairnmind.terminal_ui import ChoiceModal
+from cairnmind.terminal.terminal_client import BrokerError
+from cairnmind.terminal.terminal_panels import SidebarApp
+from cairnmind.terminal.terminal_panels import ConfirmModal
+from cairnmind.terminal.terminal_ui import ChoiceModal
 from consent_steps import consent_drawn, early_enter_sends_nothing, form_ready
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, screen_text, setup_ui
@@ -430,7 +432,7 @@ def carried_out(tmp_path, monkeypatch, language="en", *, change=False):
     whose helper is fake: it records its start and, with `change`, makes the change as the helper would."""
     import types
 
-    from cairnmind import setup_change
+    from cairnmind.terminal import setup_change
     from test_setup_change import Rig
     from test_setup_profiles import make as make_installation
     from test_terminal_setup_change import Broker, Helper

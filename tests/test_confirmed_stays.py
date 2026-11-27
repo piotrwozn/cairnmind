@@ -8,17 +8,17 @@ from __future__ import annotations
 
 import pytest
 
-from cairnmind import confirmation
-from cairnmind.agent import KnowledgeAgent
-from cairnmind.confirmation import confirmation_of, confirmation_text
-from cairnmind.inspector import Inspector
-from cairnmind.memory import MemoryConflict, MemoryManager
-from cairnmind.memory_published import Publisher
-from cairnmind.memory_published_import import PublishedImporter
-from cairnmind.retrieval import Retriever, public_record
-from cairnmind.sql import update_document
-from cairnmind.terminal_detail import conflict_text, joined, record_parts
-from cairnmind.terminal_i18n import tr
+from cairnmind.memory import confirmation
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.memory.confirmation import confirmation_of, confirmation_text
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.memory.memory import MemoryConflict, MemoryManager
+from cairnmind.memory.memory_published import Publisher
+from cairnmind.memory.memory_published_import import PublishedImporter
+from cairnmind.agents.retrieval import Retriever, public_record
+from cairnmind.storage.sql import update_document
+from cairnmind.terminal.terminal_detail import conflict_text, joined, record_parts
+from cairnmind.terminal.terminal_i18n import tr
 
 from conftest import confirmed_before_rule
 from test_confirmed_by_person import fixture  # noqa: F401
@@ -275,8 +275,8 @@ class Panel:
     ("lapsed", "decision / confirmed · confirmation lapsed", "decyzja / potwierdzone · potwierdzenie wygasło"),
     ("person", "decision / confirmed", "decyzja / potwierdzone"), (None, "decision / confirmed", "decyzja / potwierdzone")])
 def test_an_inspector_list_row_says_when_a_confirmation_is_not_a_persons_own(by, english, polish):
-    from cairnmind.terminal_impact import ImpactView
-    from cairnmind import terminal_theme
+    from cairnmind.terminal.terminal_impact import ImpactView
+    from cairnmind.terminal import terminal_theme
     assert ImpactView.state_cell(Panel("en"), "decision", "confirmed", by).plain == english
     assert ImpactView.state_cell(Panel("pl"), "decision", "confirmed", by).plain == polish
     cell = ImpactView.state_cell(Panel("en"), "decision", "confirmed", by)
@@ -289,7 +289,7 @@ def test_the_inspector_list_and_the_conflict_view_carry_who_confirmed(fixture): 
     imported = marked_as_imported(fixture.store, fixture.proposed("Sessions last 24 hours.")["id"], ["Eve\x1b[31m"])
     listed = {row["id"]: row for row in Inspector(fixture.store).page("records", fixture.pid)["items"]}
     assert listed[imported["id"]]["confirmed_by"] == "import"
-    from cairnmind.conflicts import _view
+    from cairnmind.memory.conflicts import _view
     side = _view(imported, {}, {}, {})
     assert side["confirmed_by"] == "import"
     pair = {"candidate": {"id": "a", "kind": "decision", "status": "proposed", "version": 1, "content": "12 hours."},
@@ -326,7 +326,7 @@ def test_the_polish_line_holds_no_english_word_where_the_mark_holds_no_value():
 
 
 def test_the_import_dialog_says_what_an_import_replaces_of_this_computers_verdicts():
-    from cairnmind.terminal_ui import replaces_here, summary_text
+    from cairnmind.terminal.terminal_ui import replaces_here, summary_text
     preview = {"status": "dry_run", "replaces_confirmed_here": {"total": 2, "records": ["a", "b"]}}
     assert replaces_here(preview) and not replaces_here({"replaces_confirmed_here": {"total": 0}})
     assert "Replaces 2 records that were confirmed or disputed on this computer." in summary_text(preview, "en")

@@ -16,8 +16,8 @@ import zipfile
 import pytest
 
 from cairnmind.config import Settings
-from cairnmind.private_files import IS_WINDOWS
-from cairnmind.scip_manager import (
+from cairnmind.pal.private_files import IS_WINDOWS
+from cairnmind.scip.scip_manager import (
     ScipChecksumError,
     ScipError,
     ScipRunError,
@@ -26,7 +26,7 @@ from cairnmind.scip_manager import (
     ensure_indexer,
     scip_status,
 )
-from cairnmind.scip_registry import (
+from cairnmind.scip.scip_registry import (
     INDEXERS,
     SUPPORTED_LANGUAGES,
     BinaryAsset,
@@ -167,7 +167,7 @@ def test_download_sha256_verification_and_archive_formats(tmp_path, monkeypatch)
                 },
             ),
         }
-        monkeypatch.setattr("cairnmind.scip_manager.INDEXERS", custom_indexers)
+        monkeypatch.setattr("cairnmind.scip.scip_manager.INDEXERS", custom_indexers)
         settings = Settings.load(tmp_path / "data", create=True)
 
         # Successful tar.gz install
@@ -202,7 +202,7 @@ def test_download_sha256_verification_and_archive_formats(tmp_path, monkeypatch)
 def test_docker_fallback_windows_clang_and_ruby_security_flags(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)
     settings.scip_docker_fallback = True
-    monkeypatch.setattr("cairnmind.scip_manager.shutil.which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+    monkeypatch.setattr("cairnmind.scip.scip_manager.shutil.which", lambda name: "/usr/bin/docker" if name == "docker" else None)
 
     clang_win = ensure_indexer(settings, "scip-clang", allow_download=False, platform_override=("windows", "x64"))
     assert clang_win.status == "docker"
@@ -267,7 +267,7 @@ def test_config_scip_env_validation(tmp_path, monkeypatch):
 
 
 def test_registry_platform_compdb_header_only_and_dedupe(tmp_path, monkeypatch):
-    from cairnmind import scip_registry as sr
+    from cairnmind.scip import scip_registry as sr
 
     for plat, mach, expected in (
         ("win32", "AMD64", ("windows", "x64")),
@@ -310,7 +310,7 @@ def test_registry_platform_compdb_header_only_and_dedupe(tmp_path, monkeypatch):
 
 
 def test_scip_manager_urls_archives_ecosystems_and_commands(tmp_path, monkeypatch):
-    from cairnmind import scip_manager as sm
+    from cairnmind.scip import scip_manager as sm
 
     # 1. URL validation & redirect guard
     sm._validate_download_url("https://github.com/sourcegraph/scip-go")

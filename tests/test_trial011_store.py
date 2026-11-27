@@ -21,7 +21,7 @@ def project(store, tmp_path):
 @pytest.mark.parametrize("place", ["under a file", "read-only folder"])
 def test_a_backup_into_a_folder_that_cannot_be_written_says_so_plainly(tmp_path, place):
     import os
-    from cairnmind.store_backup import TEMPORARY_PREFIX, write_temporary
+    from cairnmind.storage.store_backup import TEMPORARY_PREFIX, write_temporary
     if place == "under a file":
         (tmp_path / "plain-file").write_text("")
         destination = tmp_path / "plain-file" / "dir" / "x.json.gz"
@@ -41,8 +41,8 @@ def test_a_backup_into_a_folder_that_cannot_be_written_says_so_plainly(tmp_path,
 @pytest.mark.parametrize("existing", [False, True])
 def test_engine_log_is_private_whatever_the_umask(tmp_path, monkeypatch, existing):
     import os
-    from cairnmind import engine
-    from cairnmind.arcade import ArcadeError
+    from cairnmind.storage import engine
+    from cairnmind.storage.arcade import ArcadeError
     from test_store_prune import fake_engine
     settings = fake_engine(tmp_path, monkeypatch, engine_log_bytes=1000, engine_log_copies=2)
     log = settings.data_dir / "arcade" / "engine.log"
@@ -64,8 +64,8 @@ def test_engine_log_is_private_whatever_the_umask(tmp_path, monkeypatch, existin
                                         ("engine_log_bytes", -5), ("engine_log_copies", 99),
                                         ("engine_log_copies", "2")])
 def test_an_invalid_log_setting_is_reported_where_the_engine_starts(tmp_path, monkeypatch, capsys, name, value):
-    from cairnmind import engine
-    from cairnmind.arcade import ArcadeError
+    from cairnmind.storage import engine
+    from cairnmind.storage.arcade import ArcadeError
     from test_store_prune import fake_engine
     settings = fake_engine(tmp_path, monkeypatch, **{name: value})
     assert engine.log_settings_problems(settings) and len(engine.log_settings_problems(settings)) == 1
@@ -77,14 +77,14 @@ def test_an_invalid_log_setting_is_reported_where_the_engine_starts(tmp_path, mo
 
 
 def test_valid_log_settings_report_nothing(tmp_path):
-    from cairnmind import engine
+    from cairnmind.storage import engine
     from cairnmind.config import Settings
     assert engine.log_settings_problems(Settings(tmp_path / "data", engine_log_bytes=2000, engine_log_copies=0)) == []
 
 
 def test_engine_status_of_a_stopped_engine_says_to_start_it(tmp_path):
     import socket
-    from cairnmind import engine
+    from cairnmind.storage import engine
     from cairnmind.config import Settings
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
@@ -100,7 +100,7 @@ def test_engine_status_of_a_stopped_engine_says_to_start_it(tmp_path):
 def test_engine_status_of_a_slow_engine_keeps_the_cause_and_does_not_call_it_stopped(tmp_path, monkeypatch, cause):
     # A timeout or a broken answer may come from an engine that is starting or busy, not a stopped one.
     import httpx
-    from cairnmind import engine
+    from cairnmind.storage import engine
     from cairnmind.config import Settings
 
     def failing(self, *args, **kwargs):
@@ -113,7 +113,7 @@ def test_engine_status_of_a_slow_engine_keeps_the_cause_and_does_not_call_it_sto
 
 
 def test_store_size_names_an_empty_leftover_vector_type_for_what_it_is(store):
-    from cairnmind.store_size import measure
+    from cairnmind.storage.store_size import measure
     # What a restore leaves: an emptied vector type whose registry entry the backup did not bring.
     store.client.command("CREATE DOCUMENT TYPE vector_leftover0 IF NOT EXISTS")
     report = measure(store)
@@ -175,7 +175,7 @@ def test_a_null_depends_on_is_stored_as_no_dependencies(store, project, kind):
 
 def test_a_key_held_by_a_person_confirmed_record_gets_the_kept_refusal(store, project):
     from conftest import as_person
-    from cairnmind.confirmation import VerdictKept
+    from cairnmind.memory.confirmation import VerdictKept
     cited = source(store, project)
     held = as_person(store, project["id"], {"kind": "decision", "key": "queue", "content": "Queue in the database"},
                      [cited["id"]])
@@ -198,8 +198,8 @@ def test_a_key_held_by_another_record_names_that_record(store, project):
 
 def test_the_command_line_key_clash_names_what_a_person_can_do(tmp_path, monkeypatch):
     from conftest import plain_words
-    from cairnmind import ingest
-    from cairnmind.inspector import Inspector
+    from cairnmind.scip import ingest
+    from cairnmind.terminal.inspector import Inspector
     from cairnmind.store import Store
     from test_confirmed_by_person import cli
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
@@ -223,7 +223,7 @@ def test_the_command_line_key_clash_names_what_a_person_can_do(tmp_path, monkeyp
 def test_rotated_engine_log_copies_are_private_too(tmp_path):
     # The first fix made only the new live log 0600; os.replace keeps the mode of each copy it moves.
     import os
-    from cairnmind import engine
+    from cairnmind.storage import engine
     log = tmp_path / "engine.log"
     for name in ("engine.log", "engine.log.1"):
         (tmp_path / name).write_bytes(b"x" * 200)
@@ -248,7 +248,7 @@ def test_a_log_or_copy_the_owner_cannot_open_or_chmod_is_still_rotated(tmp_path,
     # Making a copy private is best effort: a mode-0000 copy, a write-only live log, or a copy owned by another
     # user (EPERM on fchmod) must not stop the move, or the log would grow without the size bound.
     import os
-    from cairnmind import engine
+    from cairnmind.storage import engine
     log = tmp_path / "engine.log"
     log.write_bytes(b"new" * 100)
     (tmp_path / "engine.log.1").write_bytes(b"old" * 100)
@@ -261,7 +261,7 @@ def test_a_log_or_copy_the_owner_cannot_open_or_chmod_is_still_rotated(tmp_path,
         if hasattr(engine.os, "fchmod"):
             monkeypatch.setattr(engine.os, "fchmod", refuse)
         else:
-            from cairnmind import private_files
+            from cairnmind.pal import private_files
             monkeypatch.setattr(private_files, "make_private_fd", refuse)
             monkeypatch.setattr(private_files, "make_private", refuse)
     try:
@@ -279,7 +279,9 @@ def test_a_log_or_copy_the_owner_cannot_open_or_chmod_is_still_rotated(tmp_path,
 def test_doctor_names_an_invalid_engine_log_setting(tmp_path, monkeypatch, name, value):
     import json
     from typer.testing import CliRunner
-    from cairnmind import cli, integrations, store_writer
+    from cairnmind import cli
+    from cairnmind.memory import integrations
+    from cairnmind.storage import store_writer
     from cairnmind.config import Settings
     data = tmp_path / "data"
     Settings.load(data, create=True)

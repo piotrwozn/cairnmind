@@ -5,7 +5,7 @@ import ssl
 import httpx
 import pytest
 
-from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
 
 
@@ -150,7 +150,7 @@ def test_only_a_read_outside_a_transaction_is_sent_again_when_a_kept_connection_
 
 def test_a_commit_waits_as_long_as_any_request_unless_the_transaction_asks_for_longer(tmp_path, monkeypatch):
     """#362: only the transactions of a restore wait 120 s for their commit; every other command keeps 30 s."""
-    from cairnmind import arcade
+    from cairnmind.storage import arcade
     waits, request = [], ArcadeClient._request
 
     def noting(self, method, path, **kwargs):
@@ -170,7 +170,7 @@ def test_a_commit_waits_as_long_as_any_request_unless_the_transaction_asks_for_l
 
 
 def test_a_forked_process_does_not_use_the_connections_of_its_parent(tmp_path, monkeypatch):
-    import cairnmind.arcade as arcade
+    import cairnmind.storage.arcade as arcade
 
     client = ArcadeClient(settings(tmp_path), transport=httpx.MockTransport(
         lambda request: httpx.Response(200, json={"result": []})))

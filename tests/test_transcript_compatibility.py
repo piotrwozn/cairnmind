@@ -7,8 +7,8 @@ import subprocess
 
 import pytest
 
-from cairnmind import ingest
-from cairnmind.sessions import SessionManager
+from cairnmind.scip import ingest
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
 
 

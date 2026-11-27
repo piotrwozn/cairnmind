@@ -11,20 +11,20 @@ import time
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import engine
-from cairnmind.arcade import ArcadeError
+from cairnmind.storage import engine
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.cli import app
 from cairnmind.config import Settings
-from cairnmind.ingest import import_history
-from cairnmind.integrations import _transcript_watermark
-from cairnmind.memory import MemoryManager
-from cairnmind.memory_egress import REMOTE_NOT_ALLOWED, release_held_extractions
+from cairnmind.scip.ingest import import_history
+from cairnmind.memory.integrations import _transcript_watermark
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.memory_egress import REMOTE_NOT_ALLOWED, release_held_extractions
 from cairnmind.service import compact_job_history, daily_backups
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
-from cairnmind.store_prune import compact_old_jobs, delete_backups, prune_plan, safety_backups
-from cairnmind.store_size import measure
-from cairnmind.sql import json_text
+from cairnmind.storage.store_prune import compact_old_jobs, delete_backups, prune_plan, safety_backups
+from cairnmind.storage.store_size import measure
+from cairnmind.storage.sql import json_text
 
 OMITTED = {"stage": "extract", "code": "completed_with_omissions", "repair_attempted": False,
            "repair_outcome": "not_needed", "validation_codes": ["proposal_rejected"],
@@ -270,7 +270,7 @@ def invoke(tmp_path, *arguments, **kwargs):
 def test_only_a_person_prunes_safety_backups(tmp_path, monkeypatch):
     directory = backups_dir(tmp_path)
     before = sorted(path.name for path in directory.iterdir())
-    for name in ("cairnmind.engine.start_engine", "cairnmind.engine.ensure_engine", "cairnmind.cli.ensure_service"):
+    for name in ("cairnmind.storage.engine.start_engine", "cairnmind.storage.engine.ensure_engine", "cairnmind.cli.ensure_service"):
         monkeypatch.setattr(name, lambda *a, **k: pytest.fail("pruning backups started the engine or the service"))
     result = invoke(tmp_path, "--keep", "1", "--yes")
     assert result.exit_code == 2 and "Only a person" in result.output
@@ -300,8 +300,8 @@ def first_answer(result):
 
 def marked_store(tmp_path, named, **changes):
     """A store whose mark of an unfinished restore names the copy ``named``."""
-    from cairnmind import restore_staged
-    from cairnmind.sql import utc_now
+    from cairnmind.storage import restore_staged
+    from cairnmind.storage.sql import utc_now
     store = Store(tmp_path / "data")
     restore_staged.write_mark(store, {"backup": "/elsewhere/the-backup.cairnmind.json.gz", "before": str(named),
                                       "before_sha256": "0" * 64, "installation_id": store.installation.id,
@@ -350,7 +350,7 @@ def test_prune_keeps_every_restore_copy_when_no_engine_answers_and_starts_none(t
     def silent(self):
         raise ArcadeError("no engine answers")
 
-    monkeypatch.setattr("cairnmind.arcade.ArcadeClient.database_exists", silent)
+    monkeypatch.setattr("cairnmind.storage.arcade.ArcadeClient.database_exists", silent)
     result = invoke(tmp_path, "--keep", "0", "--yes")
     assert result.exit_code == 0, result.output
     assert {"before-restore-a.cairnmind.json.gz", "before-restore-b.cairnmind.json.gz"} <= {

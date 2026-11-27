@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 
-from cairnmind.parsing import analyze_code
+from cairnmind.scip.parsing import analyze_code
 
 
 def test_python_declarations_imports_and_calls():

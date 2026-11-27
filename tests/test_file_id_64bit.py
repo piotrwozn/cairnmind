@@ -10,10 +10,11 @@ import types
 
 import pytest
 
-from cairnmind import engine, private_files, process_control, process_identity
+from cairnmind.storage import engine
+from cairnmind.pal import private_files, process_control, process_identity
 from cairnmind.config import Settings
-from cairnmind.integrations import _transcript_watermark
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.integrations import _transcript_watermark
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
 
 

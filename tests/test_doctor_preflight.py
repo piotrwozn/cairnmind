@@ -7,7 +7,10 @@ from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
-from cairnmind import cli, doctor_attention, doctor_preflight, integrations, mcp_presets
+from cairnmind import cli
+from cairnmind.cli_cmds import doctor_attention, doctor_preflight
+from cairnmind.memory import integrations
+from cairnmind.mcp import mcp_presets
 from cairnmind.config import Settings
 
 runner = CliRunner()
@@ -46,8 +49,8 @@ def test_doctor_json_and_summary_include_preflight_and_check_mcp(tmp_path, monke
         "tmux": {"available": False},
         "memory_models": {},
     })
-    monkeypatch.setattr("cairnmind.knowledge_mode.doctor_fields", lambda s: {"knowledge_agent": "disabled (deterministic-only mode)"})
-    monkeypatch.setattr("cairnmind.store_writer.inspect", lambda s: {"role": "writer"})
+    monkeypatch.setattr("cairnmind.agents.knowledge_mode.doctor_fields", lambda s: {"knowledge_agent": "disabled (deterministic-only mode)"})
+    monkeypatch.setattr("cairnmind.storage.store_writer.inspect", lambda s: {"role": "writer"})
     monkeypatch.setattr(cli, "service_alive", lambda s: False)
     monkeypatch.setattr(cli, "store_for_read", lambda s: (_ for _ in ()).throw(RuntimeError("no engine in fast test")))
 
@@ -79,8 +82,8 @@ def test_doctor_check_mcp_exits_1_when_handshake_fails(tmp_path, monkeypatch):
         "arcadedb": {"available": True, "database_available": True, "version_matches": True, "url": s.arcade_url},
         "java": {"on_path": True, "compatible": True, "major": 21}, "tmux": {}, "memory_models": {},
     })
-    monkeypatch.setattr("cairnmind.knowledge_mode.doctor_fields", lambda s: {"knowledge_agent": "disabled (deterministic-only mode)"})
-    monkeypatch.setattr("cairnmind.store_writer.inspect", lambda s: {"role": "writer"})
+    monkeypatch.setattr("cairnmind.agents.knowledge_mode.doctor_fields", lambda s: {"knowledge_agent": "disabled (deterministic-only mode)"})
+    monkeypatch.setattr("cairnmind.storage.store_writer.inspect", lambda s: {"role": "writer"})
     monkeypatch.setattr(cli, "service_alive", lambda s: False)
     monkeypatch.setattr(cli, "store_for_read", lambda s: (_ for _ in ()).throw(RuntimeError("offline")))
     monkeypatch.setattr(

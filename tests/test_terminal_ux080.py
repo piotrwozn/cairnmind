@@ -12,18 +12,18 @@ from textual.binding import Binding
 from textual.widgets import Button, DataTable, Input, Static
 
 from cairnmind.config import Settings
-from cairnmind.terminal_client import BrokerError
-from cairnmind.terminal_i18n import language_for, tr
-from cairnmind.terminal_inspector import InspectorApp
-from cairnmind.terminal_panels import ConfirmModal, SidebarApp
-from cairnmind.terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FolderPicker, FormModal, MessageModal
+from cairnmind.terminal.terminal_client import BrokerError
+from cairnmind.terminal.terminal_i18n import language_for, tr
+from cairnmind.terminal.terminal_inspector import InspectorApp
+from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
+from cairnmind.terminal.terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FolderPicker, FormModal, MessageModal
 from test_terminal_panels import FakeBroker, FakeWorkspace, settle
 from test_client_runtime import native as native
 
 
 def test_binding_localization_preserves_routing_and_roundtrips():
     from textual.app import App
-    from cairnmind.terminal_i18n import localize_bindings
+    from cairnmind.terminal.terminal_i18n import localize_bindings
 
     class BindingApp(App):
         BINDINGS = [Binding("ctrl+s", "save", "Save", priority=True, id="save", tooltip="Save",
@@ -48,7 +48,7 @@ async def test_footer_follows_language_change_without_builtin_palette(tmp_path, 
         await settle(app, pilot)
         assert app._bindings.key_to_bindings["w"][0].description == "Rozpocznij pracę"
         assert "Palette" not in screen_text(app)
-        monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: "en")
+        monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: "en")
         await app._poll_workspace()
         await pilot.pause()
         assert app._bindings.key_to_bindings["w"][0].description == "Start work"
@@ -80,8 +80,8 @@ async def test_delayed_palette_start_after_project_change_only_prepares(tmp_path
 
 @pytest.mark.asyncio
 async def test_import_summary_keeps_destination_visible_and_details_never_approve(tmp_path, monkeypatch):
-    from cairnmind.terminal_panels import ConfirmModal
-    from cairnmind.terminal_ui import summary_text
+    from cairnmind.terminal.terminal_panels import ConfirmModal
+    from cairnmind.terminal.terminal_ui import summary_text
 
     value = {"status": "dry_run", "project": {"name": "Example", "root": "/synthetic/target"},
              "counts": {"records": 4, "sources": 7}, "verification": "historical"}
@@ -148,8 +148,8 @@ def setup_ui(tmp_path, monkeypatch, language="en", empty=False):
     broker = UIBroker(project, empty=empty)
     workspace = FakeWorkspace(None if empty else project)
     settings = Settings(data_dir=tmp_path / "data")
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", lambda *args, **kwargs: workspace.read())
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", lambda *args, **kwargs: workspace.read())
     return settings, broker, workspace
 
 
@@ -427,7 +427,7 @@ async def test_inspector_primary_detail_shows_mixed_evidence_range(tmp_path, mon
 ])
 async def test_inspector_detail_names_the_evidence_state(tmp_path, monkeypatch, language, evidence, expected):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language=language)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     original = broker.request
 
     def request(method, path, *, params=None, json=None, timeout=20):
@@ -460,8 +460,8 @@ CONFLICT = {
 
 
 def test_conflict_text_shows_both_findings_with_dates_scope_sources_and_order():
-    from cairnmind.terminal_i18n import tr
-    from cairnmind.terminal_inspector import conflict_text
+    from cairnmind.terminal.terminal_i18n import tr
+    from cairnmind.terminal.terminal_inspector import conflict_text
     text = conflict_text(CONFLICT, lambda value, **values: tr(value, "en", **values))
     assert text.split("\n\n")[0] == "Possible conflict"
     assert "A (new finding)  [decision] proposed, version 3" in text
@@ -591,8 +591,8 @@ async def test_a_refused_decision_reloads_the_list_and_a_mixed_pair_is_not_offer
 
 
 def test_every_evidence_label_has_a_polish_translation():
-    from cairnmind.terminal_i18n import tr
-    from cairnmind.terminal_inspector import EVIDENCE_LABELS
+    from cairnmind.terminal.terminal_i18n import tr
+    from cairnmind.terminal.terminal_inspector import EVIDENCE_LABELS
     assert {state for state, _ in EVIDENCE_LABELS} == {"anchored", "evidence_replaced", "orphaned", "unverified",
                                                        "degraded"}
     for text in ["Evidence", *EVIDENCE_LABELS.values()]:
@@ -636,7 +636,7 @@ async def test_named_add_assistant_preserves_assignments_without_starting(tmp_pa
 async def test_language_changes_without_workspace_revision_or_restarting_panel(tmp_path, monkeypatch):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     language = ["en"]
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language[0])
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language[0])
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(80, 24)) as pilot:
         await settle(app, pilot)
@@ -711,7 +711,7 @@ async def test_resume_keeps_the_other_running_session_on_screen(tmp_path, monkey
 
     live = LiveBroker(project)
     workspace.value["visible_slot_ids"] = list(before)
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", lambda *args, **kwargs: workspace.update({"slots": [
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", lambda *args, **kwargs: workspace.update({"slots": [
         {"id": r["slot_id"], "run_id": r["id"], "generation": 1, "client": r["client"], "lifecycle": "running"}
         for r in runs]}))
     app = SidebarApp(settings, broker=live, workspace=workspace)
@@ -752,13 +752,13 @@ async def test_keyboard_resume_returns_to_actual_native_pid_and_never_launches_a
     broker = RuntimeBroker(project)
     broker.profiles[0]["model"] = "after-edit"
     workspace = FakeWorkspace(project)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     def reconcile(*args):
         assert workspace.value["intent"] == "inspect", "Resume is attach/focus only"
         row = runtime.get_run(original["id"])
         return workspace.update({"slots": [{"id": "slot-native", "run_id": row["id"], "generation": row["generation"],
                                             "client": row["client"], "lifecycle": row["lifecycle"]}]})
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", reconcile)
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", reconcile)
     app = SidebarApp(runtime.settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(80, 24)) as pilot:
         await settle(app, pilot)
@@ -824,7 +824,7 @@ async def test_keyboard_resume_returns_to_actual_native_pid_and_never_launches_a
 @pytest.mark.parametrize("language", ["en", "pl"])
 @pytest.mark.parametrize("start", [False, True])
 async def test_keyboard_remembers_claude_per_project_before_start_and_live_resume(native, monkeypatch, language, start):
-    from cairnmind.workspace_state import WorkspaceState
+    from cairnmind.terminal.workspace_state import WorkspaceState
 
     runtime, project, events = native
     second_root = Path(project["root"]).parent / "project-b"
@@ -846,7 +846,7 @@ async def test_keyboard_remembers_claude_per_project_before_start_and_live_resum
     broker.profiles[1] = {"id": "claude-private-2", "label": "Claude", "client": "claude"}
     broker.preferences["default_slots"][1] = {"id": "slot-claude", "profile_id": "claude-private-2"}
     preferences = deepcopy(broker.preferences)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
 
     def reconcile(*args):
         current = workspace.read()
@@ -863,7 +863,7 @@ async def test_keyboard_remembers_claude_per_project_before_start_and_live_resum
             slots.append(row)
         return workspace.update({"slots": slots})
 
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", reconcile)
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", reconcile)
     app = SidebarApp(runtime.settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(80, 24)) as pilot:
         await settle(app, pilot)
@@ -920,14 +920,14 @@ async def test_keyboard_remembers_claude_per_project_before_start_and_live_resum
 
 @pytest.mark.asyncio
 async def test_assistant_choice_is_separate_for_worktrees_and_not_written_by_render(tmp_path, monkeypatch):
-    from cairnmind.workspace_state import WorkspaceState
+    from cairnmind.terminal.workspace_state import WorkspaceState
 
     settings, broker, _ = setup_ui(tmp_path, monkeypatch)
     workspace = WorkspaceState(settings)
     workspace.select_project(broker.project)
     other = tmp_path / "other-worktree"
     other.mkdir()
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", lambda *args: workspace.read())
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", lambda *args: workspace.read())
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(80, 24)) as pilot:
         await settle(app, pilot)
@@ -958,14 +958,14 @@ async def test_assistant_choice_is_separate_for_worktrees_and_not_written_by_ren
 @pytest.mark.asyncio
 @pytest.mark.parametrize("return_to_a", [False, True])
 async def test_delayed_assistant_dialog_cannot_write_after_scope_change(tmp_path, monkeypatch, return_to_a):
-    from cairnmind.workspace_state import WorkspaceState
+    from cairnmind.terminal.workspace_state import WorkspaceState
 
     settings, broker, _ = setup_ui(tmp_path, monkeypatch)
     workspace = WorkspaceState(settings)
     workspace.select_project(broker.project)
     second = {"id": "b", "name": "B", "root": broker.project["root"]}
     broker.projects.append(second)
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", lambda *args: workspace.read())
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", lambda *args: workspace.read())
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(80, 24)) as pilot:
         await settle(app, pilot)
@@ -991,7 +991,7 @@ async def test_delayed_assistant_dialog_cannot_write_after_scope_change(tmp_path
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["removed-slot", "removed-profile", "reordered"])
 async def test_remembered_assistant_uses_only_current_valid_assignments(tmp_path, monkeypatch, change):
-    from cairnmind.workspace_state import WorkspaceState
+    from cairnmind.terminal.workspace_state import WorkspaceState
 
     settings, broker, _ = setup_ui(tmp_path, monkeypatch)
     workspace = WorkspaceState(settings)
@@ -1018,12 +1018,12 @@ async def test_remembered_assistant_uses_only_current_valid_assignments(tmp_path
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_keyboard_assistant_cas_conflict_keeps_choice_and_localizes_notice(tmp_path, monkeypatch, language):
-    from cairnmind.workspace_state import WorkspaceState
+    from cairnmind.terminal.workspace_state import WorkspaceState
 
     settings, broker, _ = setup_ui(tmp_path, monkeypatch, language)
     workspace = WorkspaceState(settings)
     workspace.select_project(broker.project)
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", lambda *args: workspace.read())
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", lambda *args: workspace.read())
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(80, 24)) as pilot:
         await settle(app, pilot)
@@ -1065,7 +1065,7 @@ async def test_keyboard_assistant_cas_conflict_keeps_choice_and_localizes_notice
     ("duplicate", "Duplicate assistant selection scope", "Powtórzony wybór asystenta dla tego samego projektu i katalogu"),
 ])
 async def test_worker_state_validation_errors_are_localized_without_mutation(tmp_path, monkeypatch, language, kind, english, polish):
-    from cairnmind.workspace_state import WorkspaceState
+    from cairnmind.terminal.workspace_state import WorkspaceState
 
     settings, broker, _ = setup_ui(tmp_path, monkeypatch, language)
     workspace = WorkspaceState(settings)
@@ -1106,7 +1106,7 @@ async def test_worker_state_validation_errors_are_localized_without_mutation(tmp
 @pytest.mark.parametrize("later_action", ["failure", "saved", "scope_change"])
 async def test_keyboard_start_feedback_tracks_fresh_selected_slot_without_overwriting_other_action(
         tmp_path, monkeypatch, language, later_action):
-    from cairnmind.terminal_i18n import native_failure_notice
+    from cairnmind.terminal.terminal_i18n import native_failure_notice
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)
     slot = {"id": "slot-native", "run_id": "run-keyboard", "generation": 1,
             "client": "codex", "lifecycle": "starting", "exit_code": None}
@@ -1114,7 +1114,7 @@ async def test_keyboard_start_feedback_tracks_fresh_selected_slot_without_overwr
         if workspace.value.get("intent") == "work" and not workspace.value.get("slots"):
             workspace.update({"slots": [slot]})
         return workspace.read()
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", reconcile)
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", reconcile)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(80, 24)) as pilot:
         await settle(app, pilot)
@@ -1156,7 +1156,7 @@ async def test_keyboard_start_feedback_tracks_fresh_selected_slot_without_overwr
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_a_folder_this_machine_cannot_read_is_named_in_the_project_panel(tmp_path, monkeypatch, language):
-    from cairnmind.project_folders import folder_notice
+    from cairnmind.memory.project_folders import folder_notice
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)
     entry = {"project": "Keyboard project", "root": "/Users/me/proj", "state": "missing", "host": None, "error": None,
              "message": "unused here: the panel words it itself"}
@@ -1267,7 +1267,7 @@ async def test_workspace_poll_after_shutdown_does_not_touch_removed_widgets(tmp_
 
 
 def menu_row(action):
-    from cairnmind.terminal_commands import COMMANDS
+    from cairnmind.terminal.terminal_commands import COMMANDS
     return next(row for row in COMMANDS if row[3] == action)
 
 

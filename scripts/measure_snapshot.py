@@ -45,7 +45,7 @@ def timed(label, action):
 
 
 def measure(store, worktree: Path, records: int):
-    from cairnmind.memory import MemoryManager
+    from cairnmind.memory.memory import MemoryManager
 
     project = store.add_project("synthetic", worktree)["id"]
     lines = [f"Synthetic fact {number}: the value of setting {number} is {number * 7}." for number in range(records + 1)]
@@ -73,8 +73,8 @@ def main() -> int:
     for name in list(os.environ):
         if name.startswith(("CAIRNMIND_", "DEVBRAIN_")) and not name.endswith(("_HOME", "_ARCADE_DIST")):
             os.environ.pop(name)
-    from cairnmind import process_identity
-    from cairnmind.engine import install_engine, runtime_dir, start_engine, stop_engine
+    from cairnmind.pal import process_identity
+    from cairnmind.storage.engine import install_engine, runtime_dir, start_engine, stop_engine
     from cairnmind.store import Store
 
     distribution = Path(os.environ.get("CAIRNMIND_ARCADE_DIST") or os.environ.get("DEVBRAIN_ARCADE_DIST") or runtime_dir(user))

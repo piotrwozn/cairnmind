@@ -1,4 +1,4 @@
-"""Fast-tier coverage tests for cairnmind.terminal_preview (no real tmux required)."""
+"""Fast-tier coverage tests for cairnmind.terminal.terminal_preview (no real tmux required)."""
 from __future__ import annotations
 
 import argparse
@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 import pytest
 
-from cairnmind import terminal_preview as tp
+from cairnmind.terminal import terminal_preview as tp
 from cairnmind.config import Settings
 
 
@@ -115,7 +115,7 @@ def test_preview_parse_size_capture_panel_and_main(tmp_path, monkeypatch):
             ran.append("sidebar")
 
     monkeypatch.setattr(tp, "PreviewBroker", FakeBroker)
-    monkeypatch.setattr("cairnmind.terminal_panels.SidebarApp", FakeApp)
+    monkeypatch.setattr("cairnmind.terminal.terminal_panels.SidebarApp", FakeApp)
     tp.panel_main(settings, "sidebar")
     assert ran == ["sidebar"] and closed == [True]
 

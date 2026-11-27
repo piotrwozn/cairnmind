@@ -6,10 +6,11 @@ import time
 
 import pytest
 
-from cairnmind import embed_jobs, ingest
+from cairnmind.storage import embed_jobs
+from cairnmind.scip import ingest
 from cairnmind.service import schedule_embeddings
 from cairnmind.store import Store
-from cairnmind.store_writer import StoreNotWriter
+from cairnmind.storage.store_writer import StoreNotWriter
 
 from test_index_batching import counted, tree
 from test_store_writer import second_installation
@@ -304,7 +305,7 @@ def test_an_idle_round_costs_the_same_on_a_store_four_times_larger(tmp_path, mon
 
 @pytest.mark.parametrize("state", ["missing", "elsewhere", "elsewhere-parser"])
 def test_an_idle_round_of_a_project_whose_folder_is_unavailable_costs_no_work_per_row(tmp_path, monkeypatch, state):
-    monkeypatch.setattr("cairnmind.store_writer.machine_identity", lambda: "machine-id:fixture")
+    monkeypatch.setattr("cairnmind.storage.store_writer.machine_identity", lambda: "machine-id:fixture")
     small = settled_store(tmp_path, "small", 30, 10)
     large = settled_store(tmp_path, "large", 120, 40)
     time.sleep(2.1)
@@ -326,7 +327,7 @@ def test_an_idle_round_of_a_project_whose_folder_is_unavailable_costs_no_work_pe
         assert again["skipped"] is True and [item["state"] for item in again["unavailable"]] == [state.split("-")[0]]
         assert len(again["errors"]) == (2 if state == "elsewhere-parser" else 1)
         monkeypatch.undo()
-        monkeypatch.setattr("cairnmind.store_writer.machine_identity", lambda: "machine-id:fixture")
+        monkeypatch.setattr("cairnmind.storage.store_writer.machine_identity", lambda: "machine-id:fixture")
     assert costs[0] == costs[1] and costs[1] < 40, costs
 
 

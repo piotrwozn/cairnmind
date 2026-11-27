@@ -9,14 +9,14 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.agent_memory import archive_agent_target, capture_agent_target
-from cairnmind.api_agent import AgentEngine
-from cairnmind.api_providers import ProviderError
-from cairnmind.evidence import evidence_states
-from cairnmind.ingest import index_pending_sources
-from cairnmind.mcp_agent import MAX_SHOWN_CHARS, approval_text
-from cairnmind.retrieval import Retriever
+from cairnmind.agents.agent_journal import AgentJournal
+from cairnmind.agents.agent_memory import archive_agent_target, capture_agent_target
+from cairnmind.agents.api_agent import AgentEngine
+from cairnmind.agents.api_providers import ProviderError
+from cairnmind.memory.evidence import evidence_states
+from cairnmind.scip.ingest import index_pending_sources
+from cairnmind.mcp.mcp_agent import MAX_SHOWN_CHARS, approval_text
+from cairnmind.agents.retrieval import Retriever
 from cairnmind.service import create_app
 from conftest import mcp_fixture_processes
 from test_api_agent import Memory, ScriptedProvider, call, reply, setup as setup

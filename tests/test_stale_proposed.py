@@ -9,10 +9,10 @@ from fastapi.testclient import TestClient
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import stale_proposed as proposed
+from cairnmind.memory import stale_proposed as proposed
 from cairnmind.cli import app as cli_app
-from cairnmind.inspector import Inspector
-from cairnmind.inspector_api import attach_inspector_routes
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.terminal.inspector_api import attach_inspector_routes
 from cairnmind.store import Store
 
 from conftest import as_person

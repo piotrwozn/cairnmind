@@ -13,7 +13,7 @@ import httpx
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from cairnmind.cockpit import BrowserSessions, create_cockpit_app
+from cairnmind.terminal.cockpit import BrowserSessions, create_cockpit_app
 from cairnmind.config import Settings
 
 
@@ -125,7 +125,7 @@ def cockpit(tmp_path, monkeypatch):
                                   headers={"Content-Type": "text/event-stream"})
         return httpx.Response(200, json={"ok": True})
 
-    monkeypatch.setattr("cairnmind.client_auth.probe_client", lambda client, **kwargs: {
+    monkeypatch.setattr("cairnmind.agents.client_auth.probe_client", lambda client, **kwargs: {
         "client": client, "installation": "installed", "auth": "reported_signed_in", "ready_to_launch": True})
     app = create_cockpit_app(settings, runtime=runtime, proxy_transport=httpx.MockTransport(upstream), public_url=ORIGIN)
     with TestClient(app, base_url=ORIGIN) as client:
@@ -209,7 +209,7 @@ def test_launch_is_idempotent_and_never_accepts_arbitrary_executable(cockpit):
 
 def test_a_run_the_runtime_does_not_know_is_not_found(cockpit, monkeypatch):
     # #161: it was a 400, which `workspace stop --clients` could not tell from a refused stop.
-    from cairnmind.client_runtime import UnknownRun
+    from cairnmind.agents.client_runtime import UnknownRun
     settings, app, client, runtime, project, *_ = cockpit
     login(app, client)
 
@@ -280,9 +280,9 @@ def test_the_state_of_a_foreign_service_stays_whole_and_carries_the_refusal(cock
 @pytest.mark.parametrize("route", ["/api/projects", "/api/stage?project=project-one"])
 def test_a_service_of_another_data_directory_is_named_not_reported_as_unreadable(cockpit, route):
     # #308: the broker replaced the service's 401 with "could not be read".
-    from cairnmind.terminal_client import BrokerClient, BrokerError
-    from cairnmind.terminal_i18n import tr
-    from cairnmind.terminal_i18n_messages import broker_error_text
+    from cairnmind.terminal.terminal_client import BrokerClient, BrokerError
+    from cairnmind.terminal.terminal_i18n import tr
+    from cairnmind.terminal.terminal_i18n_messages import broker_error_text
     settings, app, client, runtime, project, requests, outage = cockpit
     login(app, client)
     outage["foreign"] = True
@@ -486,7 +486,7 @@ def test_ask_proxy_forwards_only_bounded_question_fields(cockpit):
 
 def test_only_the_person_route_writes_mcp_servers(cockpit):
     """The settings route needs the cookie, the exact Origin and the CSRF token; the service bearer is not one (#126)."""
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal.cockpit_state import CockpitState
     settings, app, client, runtime, project, requests, _ = cockpit
     body = {"project_mcp_servers": {project["id"]: [{"id": "tracker", "command": "/usr/bin/env",
                                                      "args": ["tracker-mcp"], "env": {}}]}}

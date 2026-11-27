@@ -6,11 +6,14 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import (cli, doctor_attention, engine, first_start, integrations, knowledge_mode, project_removal,
-                       store_writer)
-from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind import cli
+from cairnmind.cli_cmds import doctor_attention, first_start
+from cairnmind.storage import engine, store_writer
+from cairnmind.memory import integrations, project_removal
+from cairnmind.agents import knowledge_mode
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
-from cairnmind.platform_hints import hint
+from cairnmind.pal.platform_hints import hint
 
 REPORT = {"python": "3.12.3", "data_dir": "/home/me/.local/share/cairnmind", "environment_notes": [],
           "clients": {"codex": {"installed": False, "verified_resume": False},
@@ -34,7 +37,7 @@ def healthy(**changes):
 @pytest.fixture
 def doctor(monkeypatch, tmp_path):
     """`cairnmind doctor` over a report the test chooses; no engine, no store, no client."""
-    from cairnmind import api_runtime
+    from cairnmind.agents import api_runtime
     directory = tmp_path / "memory"
     directory.mkdir()
     (directory / "config.json").write_text(json.dumps({"port": 1, "knowledge_agent": "disabled"}))
@@ -218,7 +221,7 @@ def test_stop_names_a_running_service_and_the_engine_it_leaves(monkeypatch, run,
 
 
 def test_init_says_where_memory_is_in_a_terminal(monkeypatch, run, tmp_path):
-    from cairnmind import database_mode, engine_docker
+    from cairnmind.storage import database_mode, engine_docker
     store = type("S", (), {"not_writer": None, "confirmations_before_rule": {"marked": 2, "before_rule": 1}})()
     monkeypatch.setattr(engine_docker, "choose_engine_mode", lambda settings: None)
     monkeypatch.setattr(database_mode, "connect_only", lambda settings: False)
@@ -255,7 +258,7 @@ def test_ask_in_a_terminal_is_a_short_view_and_its_json_is_unchanged(monkeypatch
 
 
 def test_ask_summary_keeps_unavailable_with_models():
-    from cairnmind.terminal_commands import ask_summary
+    from cairnmind.terminal.terminal_commands import ask_summary
     configured = {"status": "unavailable", "answer": "The model server did not answer.", "unknowns": []}
     assert ask_summary(configured, str).startswith("Status: Unavailable")
     assert ask_summary(unavailable(MATCH), str).startswith("Status: " + first_start.MODE_STATUS)
@@ -271,7 +274,7 @@ def test_a_record_and_the_note_it_came_from_are_one_match():
 
 
 def test_ask_for_an_unknown_project_starts_no_service(monkeypatch, run):
-    from cairnmind.store_readonly import StoreNotReady
+    from cairnmind.storage.store_readonly import StoreNotReady
     started, asked = [], []
 
     class Store:
@@ -301,7 +304,7 @@ def test_project_add_of_a_missing_folder_says_how_to_go_on(monkeypatch, run, tmp
     result = run("project", "add", "x", str(missing))
     assert result.exit_code == 1
     text = str(result.exception)
-    from cairnmind.process_control import quote_arg
+    from cairnmind.pal.process_control import quote_arg
     assert text == first_start.PROJECT_FOLDER_MISSING.format(root=missing, quoted=quote_arg(str(missing)))
     assert "mkdir -p" in text
 
@@ -344,7 +347,7 @@ def test_install_writes_nothing_for_a_client_that_is_not_installed(monkeypatch, 
 
 
 def test_the_managed_block_is_not_chunked():
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
     block = f"{integrations.BEGIN}\nCall resume_context first.\n{integrations.END}"
     text = f"My rules\n\n{block}\n\nAfter the block\nlast line\n"
     chunks = list(ingest._chunks(text, "/p/AGENTS.md"))
@@ -370,7 +373,7 @@ def test_the_managed_block_is_not_chunked():
 
 def test_text_matches_lists_a_record_and_its_note_once(monkeypatch):
     import asyncio
-    from cairnmind import memory_egress
+    from cairnmind.memory import memory_egress
     monkeypatch.setattr(memory_egress, "ask_gate", lambda settings, store, also_held=frozenset(): None)  # #183's run classes
     shown = [{"id": "chunk", "source_id": "s1", "uri": "manual://note/1", "kind": "note", "text": "We deploy blue green."},
              {"id": "rec", "source_id": "s1", "uri": "manual://note/1", "kind": "decision", "status": "proposed",
@@ -394,7 +397,7 @@ def test_text_matches_lists_a_record_and_its_note_once(monkeypatch):
 
 
 def test_doctor_lists_an_engine_that_refuses_the_sign_in_once(monkeypatch, tmp_path):
-    from cairnmind import arcade, database_credentials
+    from cairnmind.storage import arcade, database_credentials
     settings = Settings.load(tmp_path / "new", create=True)
     real = ArcadeClient
     transport = httpx.MockTransport(lambda request: httpx.Response(401, json={"error": "User/Password not valid"}))
@@ -407,7 +410,7 @@ def test_doctor_lists_an_engine_that_refuses_the_sign_in_once(monkeypatch, tmp_p
 
 
 def test_the_storage_line_says_the_cause_only_and_doctor_says_the_way_out_once(tmp_path):
-    from cairnmind.topology import _storage_line, topology
+    from cairnmind.cli_cmds.topology import _storage_line, topology
     settings = Settings.load(tmp_path / "new", create=True)
     reason = ("ArcadeDB HTTP 401: User/Password not valid. "
               + first_start.FOREIGN_ENGINE.format(url=settings.arcade_url, data_dir=settings.data_dir))
@@ -445,7 +448,7 @@ def test_the_engine_of_this_data_directory_is_not_called_foreign(monkeypatch, tm
 
 
 def test_in_docker_mode_only_a_running_container_of_ours_is_the_own_engine(monkeypatch, tmp_path):
-    from cairnmind import engine_docker
+    from cairnmind.storage import engine_docker
     settings = Settings.load(tmp_path / "new", create=True)
     monkeypatch.setattr(engine, "engine_mode", lambda settings: "docker")
     asked = []
@@ -472,8 +475,8 @@ def test_in_docker_mode_only_a_running_container_of_ours_is_the_own_engine(monke
 
 
 def test_ask_names_a_proposed_finding_and_the_warnings_of_the_json():
-    from cairnmind.terminal_commands import ask_summary
-    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal.terminal_commands import ask_summary
+    from cairnmind.terminal.terminal_i18n import tr
     record = {**MATCH, "id": "rec", "uri": "manual://note/1", "status": "proposed", "excerpt": "We deploy blue green."}
     answer = unavailable(record, {**MATCH, "id": "kept", "uri": "/w/b.py", "status": "confirmed"})
     answer["freshness"]["warnings"] = ["Current source changed since it was indexed: /w/a.py"]
@@ -503,7 +506,7 @@ def test_ask_for_a_project_on_an_engine_that_refuses_this_directory_starts_no_se
 
 
 def test_doctor_counts_the_registered_projects_and_ends_with_the_next_step(monkeypatch, doctor):
-    from cairnmind import record_kinds
+    from cairnmind.memory import record_kinds
     store = type("S", (), {"list_projects": lambda self: [{"id": "a"}]})()
     monkeypatch.setattr(cli, "store_for_read", lambda settings: store)
     monkeypatch.setattr(record_kinds, "doctor_view", lambda store: {})

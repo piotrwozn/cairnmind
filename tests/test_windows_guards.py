@@ -12,7 +12,7 @@ import sys
 import pytest
 
 from conftest import make_symlink_or_skip
-from cairnmind import private_files
+from cairnmind.pal import private_files
 
 SRC_DIR = Path(__file__).resolve().parents[1] / "src" / "cairnmind"
 TESTS_DIR = Path(__file__).resolve().parent
@@ -21,10 +21,16 @@ TESTS_DIR = Path(__file__).resolve().parent
 def test_import_every_module_on_this_platform():
     """Every module under src/cairnmind/ must import cleanly on Windows, macOS, and Linux (#437)."""
     failures = []
-    for path in sorted(SRC_DIR.glob("*.py")):
+    for path in sorted(SRC_DIR.rglob("*.py")):
         if path.name == "__main__.py":
             continue
-        mod_name = "cairnmind" if path.name == "__init__.py" else f"cairnmind.{path.stem}"
+        rel = path.relative_to(SRC_DIR)
+        if rel == Path("__init__.py"):
+            mod_name = "cairnmind"
+        elif path.name == "__init__.py":
+            mod_name = "cairnmind." + ".".join(rel.parent.parts)
+        else:
+            mod_name = "cairnmind." + ".".join(rel.with_suffix("").parts)
         try:
             importlib.import_module(mod_name)
         except Exception as exc:
@@ -41,7 +47,7 @@ def test_no_fcntl_flock_or_unapproved_fcntl_imports():
     }
     bad_imports = []
     bad_flocks = []
-    for path in sorted(SRC_DIR.glob("*.py")):
+    for path in sorted(SRC_DIR.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -68,7 +74,7 @@ def test_no_unapproved_chmod_or_getuid_calls():
         "runtime_sockets.py", "system_links.py", "terminal_preview.py", "workspace.py",
     }
     violations = []
-    for path in sorted(SRC_DIR.glob("*.py")):
+    for path in sorted(SRC_DIR.rglob("*.py")):
         if path.name in allowed:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -81,7 +87,7 @@ def test_no_unapproved_chmod_or_getuid_calls():
 def test_no_direct_os_pread_outside_private_files():
     """All offset reads must go through private_files.pread_at (#440)."""
     violations = []
-    for path in sorted(SRC_DIR.glob("*.py")):
+    for path in sorted(SRC_DIR.rglob("*.py")):
         if path.name == "private_files.py":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -94,7 +100,7 @@ def test_no_direct_os_pread_outside_private_files():
 def test_explicit_utf8_encoding_on_all_text_file_io():
     """Every text-mode read_text/write_text/open in src/cairnmind/ must pass encoding= (#445)."""
     violations = []
-    for path in sorted(SRC_DIR.glob("*.py")):
+    for path in sorted(SRC_DIR.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -134,8 +140,8 @@ def test_windows_skip_count_stays_bounded():
 @pytest.mark.asyncio
 async def test_agent_tools_rejects_junction_and_symlink_escape(tmp_path):
     """ToolExecutor must fail closed on NTFS directory junctions and symlinks pointing outside worktree (#437)."""
-    from cairnmind.agent_journal import AgentJournal
-    from cairnmind.agent_tools import ToolExecutor
+    from cairnmind.agents.agent_journal import AgentJournal
+    from cairnmind.agents.agent_tools import ToolExecutor
     from cairnmind.config import Settings
 
     settings = Settings.load(tmp_path / "data", create=True)
@@ -185,7 +191,7 @@ def test_atomic_replace_succeeds_while_concurrent_reader_holds_handle(tmp_path):
     private_files.write_durable_private(target, '{"version": 1}\n')
 
     reader_code = (
-        "import os, sys; from pathlib import Path; from cairnmind import private_files\n"
+        "import os, sys; from pathlib import Path; from cairnmind.pal import private_files\n"
         "fd = private_files.open_no_follow(Path(sys.argv[1]), os.O_RDONLY, private_on_create=False)\n"
         "with os.fdopen(fd, 'rb') as f:\n"
         "    before = f.read().decode('utf-8')\n"
@@ -210,7 +216,7 @@ def test_atomic_replace_succeeds_while_concurrent_reader_holds_handle(tmp_path):
 
 def test_transcript_watermark_crlf_and_lf_parity(tmp_path):
     """_transcript_watermark handles CRLF and LF transcripts cleanly without spurious change errors (#440)."""
-    from cairnmind.integrations import _transcript_watermark
+    from cairnmind.memory.integrations import _transcript_watermark
 
     lf_path = tmp_path / "lf.jsonl"
     crlf_path = tmp_path / "crlf.jsonl"
@@ -241,11 +247,11 @@ def test_polish_utf8_round_trip_without_pythonutf8(tmp_path):
     env = {k: v for k, v in os.environ.items() if k.upper() != "PYTHONUTF8"}
     script = (
         "import json, sys; from pathlib import Path\n"
-        "from cairnmind.agent_journal import AgentJournal\n"
-        "from cairnmind.cockpit_state import CockpitState\n"
+        "from cairnmind.agents.agent_journal import AgentJournal\n"
+        "from cairnmind.terminal.cockpit_state import CockpitState\n"
         "from cairnmind.config import Settings\n"
-        "from cairnmind.private_files import write_durable_private\n"
-        "from cairnmind.store_writer import installation\n"
+        "from cairnmind.pal.private_files import write_durable_private\n"
+        "from cairnmind.storage.store_writer import installation\n"
         "text = 'Zażółć gęślą jaźń — ąęćłńóśźż'\n"
         "root = Path(sys.argv[1])\n"
         "settings = Settings.load(root / 'data', create=True)\n"

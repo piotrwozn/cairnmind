@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.scip_manager import ScipError
+from cairnmind.scip.scip_manager import ScipError
 
 runner = CliRunner()
 
@@ -23,18 +23,18 @@ def test_cli_autostart_benchmark_forget_and_export_markdown(tmp_path, monkeypatc
     data = _init_data_dir(tmp_path)
 
     # autostart status / install / remove (ok + ValueError refusal)
-    monkeypatch.setattr("cairnmind.service_autostart.status", lambda s: {"installed": False})
+    monkeypatch.setattr("cairnmind.pal.service_autostart.status", lambda s: {"installed": False})
     res = runner.invoke(cli.app, ["--data-dir", str(data), "service", "autostart", "status"])
     assert res.exit_code == 0 and '"installed": false' in res.stdout
 
-    monkeypatch.setattr("cairnmind.service_autostart.install", lambda s: {"installed": True})
+    monkeypatch.setattr("cairnmind.pal.service_autostart.install", lambda s: {"installed": True})
     assert runner.invoke(cli.app, ["--data-dir", str(data), "service", "autostart", "install"]).exit_code == 0
-    monkeypatch.setattr("cairnmind.service_autostart.install", lambda s: (_ for _ in ()).throw(ValueError("not windows")))
+    monkeypatch.setattr("cairnmind.pal.service_autostart.install", lambda s: (_ for _ in ()).throw(ValueError("not windows")))
     assert runner.invoke(cli.app, ["--data-dir", str(data), "service", "autostart", "install"]).exit_code != 0
 
-    monkeypatch.setattr("cairnmind.service_autostart.remove", lambda s: {"removed": True})
+    monkeypatch.setattr("cairnmind.pal.service_autostart.remove", lambda s: {"removed": True})
     assert runner.invoke(cli.app, ["--data-dir", str(data), "service", "autostart", "remove"]).exit_code == 0
-    monkeypatch.setattr("cairnmind.service_autostart.remove", lambda s: (_ for _ in ()).throw(ValueError("not windows")))
+    monkeypatch.setattr("cairnmind.pal.service_autostart.remove", lambda s: (_ for _ in ()).throw(ValueError("not windows")))
     assert runner.invoke(cli.app, ["--data-dir", str(data), "service", "autostart", "remove"]).exit_code != 0
 
     # forget is explicitly refused on CLI
@@ -75,13 +75,13 @@ def test_cli_scip_install_and_index_error_branches(tmp_path, monkeypatch):
             raise ScipError("download blocked")
         return SimpleNamespace(to_dict=lambda: {"indexer_id": indexer_id, "status": "installed"})
 
-    monkeypatch.setattr("cairnmind.scip_manager.ensure_indexer", fake_ensure)
+    monkeypatch.setattr("cairnmind.scip.scip_manager.ensure_indexer", fake_ensure)
     res_all = runner.invoke(cli.app, ["--data-dir", str(data), "scip", "install"])
     assert res_all.exit_code == 1 and "install_failed" in res_all.stdout
 
     # scip index with errors -> exit 1
     monkeypatch.setattr(cli, "store_for", lambda *a, **k: SimpleNamespace())
-    monkeypatch.setattr("cairnmind.scip_ingest.index_project_scip", lambda *a, **k: {"errors": ["boom"]})
+    monkeypatch.setattr("cairnmind.scip.scip_ingest.index_project_scip", lambda *a, **k: {"errors": ["boom"]})
     res_idx = runner.invoke(cli.app, ["--data-dir", str(data), "scip", "index", "proj-a", "--no-download"])
     assert res_idx.exit_code == 1
 
@@ -93,24 +93,24 @@ def test_cli_eval_answers_sessions_and_memory_edges(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "store_for_read", lambda *a, **k: SimpleNamespace(resolve_project=lambda p: {"id": "p1"}))
 
     # eval extraction, repository, injection, replay error & exit-code paths
-    monkeypatch.setattr("cairnmind.extraction_evaluation.run_extraction_evaluation", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad file")))
+    monkeypatch.setattr("cairnmind.agents.extraction_evaluation.run_extraction_evaluation", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad file")))
     assert runner.invoke(cli.app, ["--data-dir", str(data), "eval", "extraction"]).exit_code != 0
-    monkeypatch.setattr("cairnmind.extraction_evaluation.run_extraction_evaluation", lambda *a, **k: {"status": "failed", "runs": [{"run": 1, "summary": {}, "failures": []}]})
+    monkeypatch.setattr("cairnmind.agents.extraction_evaluation.run_extraction_evaluation", lambda *a, **k: {"status": "failed", "runs": [{"run": 1, "summary": {}, "failures": []}]})
     assert runner.invoke(cli.app, ["--data-dir", str(data), "eval", "extraction"]).exit_code == 1
 
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
-    monkeypatch.setattr("cairnmind.repository_evaluation.run_repository_evaluation", lambda *a, **k: {"status": "not_run"})
+    monkeypatch.setattr("cairnmind.agents.repository_evaluation.run_repository_evaluation", lambda *a, **k: {"status": "not_run"})
     assert runner.invoke(cli.app, ["--data-dir", str(data), "eval", "repository", str(repo_dir)]).exit_code == 3
 
-    monkeypatch.setattr("cairnmind.injection_evaluation.run_injection_evaluation", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad fixture")))
+    monkeypatch.setattr("cairnmind.agents.injection_evaluation.run_injection_evaluation", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad fixture")))
     assert runner.invoke(cli.app, ["--data-dir", str(data), "eval", "injection"]).exit_code != 0
 
-    monkeypatch.setattr("cairnmind.answer_log.replay", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad limit")))
+    monkeypatch.setattr("cairnmind.agents.answer_log.replay", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad limit")))
     assert runner.invoke(cli.app, ["--data-dir", str(data), "eval", "replay", "p1"]).exit_code != 0
 
     # answers list ValueError
-    monkeypatch.setattr("cairnmind.answer_log.listing", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad limit")))
+    monkeypatch.setattr("cairnmind.agents.answer_log.listing", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad limit")))
     assert runner.invoke(cli.app, ["--data-dir", str(data), "answers", "list", "p1"]).exit_code != 0
 
     # sessions prepare (not ready -> exit 2) and sessions ack (foreign session -> BadParameter)
@@ -131,7 +131,7 @@ def test_cli_eval_answers_sessions_and_memory_edges(tmp_path, monkeypatch):
     monkeypatch.delenv("CAIRNMIND_SESSION_ID", raising=False)
 
     # memory status with --worktree & memory import with --replace-confirmed --name
-    monkeypatch.setattr("cairnmind.memory.inspect_snapshot", lambda p: {"ok": True})
+    monkeypatch.setattr("cairnmind.memory.memory.inspect_snapshot", lambda p: {"ok": True})
     assert runner.invoke(cli.app, ["--data-dir", str(data), "memory", "status", "p1", "--worktree", str(repo_dir)]).exit_code == 0
     assert runner.invoke(
         cli.app,

@@ -14,18 +14,18 @@ import sys
 import pytest
 
 from cairnmind.config import Settings
-from cairnmind.impact import build_impact
-from cairnmind.ingest import index_project
-from cairnmind.inspector import Inspector
-from cairnmind.memory import MemoryConflict
-from cairnmind.memory_paths import is_reserved_below, nested_reserved
-from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
-from cairnmind.memory_published_import import PublishedImporter
-from cairnmind.memory_published_parse import parse_file
-from cairnmind.scope import path_states
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.impact import build_impact
+from cairnmind.scip.ingest import index_project
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.memory.memory import MemoryConflict
+from cairnmind.memory.memory_paths import is_reserved_below, nested_reserved
+from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
+from cairnmind.memory.memory_published_import import PublishedImporter
+from cairnmind.memory.memory_published_parse import parse_file
+from cairnmind.memory.scope import path_states
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
-from cairnmind.verification import capture_code_state, run_check, verification_status
+from cairnmind.memory.verification import capture_code_state, run_check, verification_status
 
 GUIDE = "# Guide\n\nThe active backend is ArcadeDB.\nNothing else stores memory.\n"
 PUBLISHED = Path(".memory/cairnmind-published")
@@ -300,7 +300,7 @@ def test_the_import_guard_resolves_links_and_ignores_case(teams):
 
 
 def test_a_git_that_does_not_answer_refuses_the_import(teams, monkeypatch):
-    import cairnmind.verification as verification
+    import cairnmind.memory.verification as verification
     store, root, b, tmp = teams["store"], teams["root"], teams["b"], teams["tmp"]
     index_project(store, b["id"])
     reviewed(store, b["id"], "Team B stores memory in ArcadeDB too.", "storage")

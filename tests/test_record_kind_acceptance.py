@@ -13,13 +13,14 @@ from fastapi.testclient import TestClient
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import confirmation, ingest, record_kinds
+from cairnmind.memory import confirmation, record_kinds
+from cairnmind.scip import ingest
 from cairnmind.config import Settings
-from cairnmind.confirmation import person_source
-from cairnmind.memory import MemoryManager
-from cairnmind.record_kinds import AcceptanceRefused, act_as_person, set_acceptance
+from cairnmind.memory.confirmation import person_source
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.record_kinds import AcceptanceRefused, act_as_person, set_acceptance
 from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
 
 from conftest import plain_words

@@ -12,7 +12,10 @@ import socket
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, doctor_attention, first_start, integrations, store_writer
+from cairnmind import cli
+from cairnmind.cli_cmds import doctor_attention, first_start
+from cairnmind.memory import integrations
+from cairnmind.storage import store_writer
 from cairnmind.config import Settings
 from cairnmind.store import Store
 

@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import pytest
 
-from cairnmind.inspector import Inspector
-from cairnmind.memory_published import Publisher
-from cairnmind.memory_published_release import SecretsRefused
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.memory.memory_published import Publisher
+from cairnmind.memory.memory_published_release import SecretsRefused
 
 from conftest import person_edit
 from test_published_memory_release import ada  # noqa: F401 (a fixture)

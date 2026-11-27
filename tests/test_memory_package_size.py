@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import pytest
 
-from cairnmind import memory as portable
-from cairnmind import memory_size
-from cairnmind.memory import MemoryManager
+from cairnmind.memory import memory as portable
+from cairnmind.memory import memory_size
+from cairnmind.memory.memory import MemoryManager
 from cairnmind.store import Store
-from cairnmind.terminal_ui import summary_text
+from cairnmind.terminal.terminal_ui import summary_text
 
 SECRET = "SECRET-PASSAGE-191"
 
@@ -187,7 +187,7 @@ def test_an_unmeasured_package_is_said_not_left_out():
 
 def _stopping(store, monkeypatch, when):
     """Make the engine 'stop' the statements that ``when(sql, params)`` selects, as its regex timeout does."""
-    from cairnmind.arcade import ArcadeError
+    from cairnmind.storage.arcade import ArcadeError
     original = store.query
 
     def query(sql, params=None):

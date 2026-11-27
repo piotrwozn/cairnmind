@@ -8,10 +8,10 @@ import sys
 
 import pytest
 
-from cairnmind import path_spelling, process_control
+from cairnmind.pal import path_spelling, process_control
 from cairnmind.config import Settings
-from cairnmind.ingest import index_project
-from cairnmind.retrieval import Retriever
+from cairnmind.scip.ingest import index_project
+from cairnmind.agents.retrieval import Retriever
 from cairnmind.store import Store
 
 

@@ -25,7 +25,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 import warnings
 
-from cairnmind import file_locks, process_identity
+from cairnmind.pal import file_locks, process_identity
 
 STALL_AFTER = 20.0
 DUMP_EVERY = 10.0  # at most one thread dump in this many seconds for all workers sharing the engine

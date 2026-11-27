@@ -10,11 +10,12 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 import pytest
 
-from cairnmind import confirmation, migration, record_kinds, sqlite_telemetry
+from cairnmind.memory import confirmation, record_kinds
+from cairnmind.storage import migration, sqlite_telemetry
 from cairnmind.config import Settings, resolved_backend
 from cairnmind.service import create_app
 from cairnmind.store import Store
-from cairnmind.verdict_cache import VerdictCache
+from cairnmind.agents.verdict_cache import VerdictCache
 
 
 def _sqlite_settings_with_arcade_env(tmp_path: Path, arcade_test_engine, *, name: str) -> Settings:

@@ -7,13 +7,13 @@ import subprocess
 
 import pytest
 
-from cairnmind.evidence import evidence_states
-from cairnmind.inspector import Inspector
-from cairnmind.memory import MemoryConflict, MemoryManager
-from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
-from cairnmind.memory_published_main import import_commit
+from cairnmind.memory.evidence import evidence_states
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.memory.memory import MemoryConflict, MemoryManager
+from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
+from cairnmind.memory.memory_published_main import import_commit
 from cairnmind.store import Store
-from cairnmind.terminal_detail import evidence_parts, joined
+from cairnmind.terminal.terminal_detail import evidence_parts, joined
 
 GUIDE = "# Guide\n\nThe active backend is ArcadeDB.\nNothing else stores memory.\n"
 

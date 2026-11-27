@@ -14,16 +14,16 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.ignore_rules import IgnoreMatcher, escapes_root, git_check_ignore, is_binary_bytes
-from cairnmind.ingest import _files
-from cairnmind.integrations import PRE_COMMIT_HOOK_ID, install_pre_commit_hook
-from cairnmind.memory import MemoryConflict, inspect_snapshot
-from cairnmind.memory_audit import audit_memory
-from cairnmind.memory_published_secrets import (
+from cairnmind.scip.ignore_rules import IgnoreMatcher, escapes_root, git_check_ignore, is_binary_bytes
+from cairnmind.scip.ingest import _files
+from cairnmind.memory.integrations import PRE_COMMIT_HOOK_ID, install_pre_commit_hook
+from cairnmind.memory.memory import MemoryConflict, inspect_snapshot
+from cairnmind.memory.memory_audit import audit_memory
+from cairnmind.memory.memory_published_secrets import (
     REGISTERED, Rules, SecretRulesError, load_rules, random_looking, redact_text, scan_text, value_sha256,
 )
 from cairnmind.service import MemoryPublishBody
-from cairnmind.snapshot_privacy import SnapshotPrivacyError, apply_snapshot_privacy, merge_snapshots, resolve_snapshot_refs
+from cairnmind.memory.snapshot_privacy import SnapshotPrivacyError, apply_snapshot_privacy, merge_snapshots, resolve_snapshot_refs
 
 ROOT = Path(__file__).resolve().parents[1]
 runner = CliRunner()
@@ -117,7 +117,7 @@ def _write_package(root: Path, project_id: str, payload: dict, *,
                    redacted: bool = False, parent_id: str | None = None,
                    ancestors: list[str] | None = None,
                    subdir: Path | None = None) -> Path:
-    from cairnmind.memory import FORMAT, TABLES, VERSION, _bytes, _descriptors, _digest, _manifest_id, _state_hash
+    from cairnmind.memory.memory import FORMAT, TABLES, VERSION, _bytes, _descriptors, _digest, _manifest_id, _state_hash
     out = (subdir or (root / ".memory" / "cairnmind"))
     (out / "objects").mkdir(parents=True, exist_ok=True)
     (out / "manifests").mkdir(parents=True, exist_ok=True)

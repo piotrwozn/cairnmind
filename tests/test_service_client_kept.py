@@ -12,10 +12,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
 import pytest
 
-from cairnmind import cli, mcp_server
+from cairnmind import cli
+from cairnmind.mcp import mcp_server
 from cairnmind.config import Settings, tls_verify
-from cairnmind.mcp_server import ServiceClient, create_server
-from cairnmind.ollama import Ollama
+from cairnmind.mcp.mcp_server import ServiceClient, create_server
+from cairnmind.agents.ollama import Ollama
 
 UNAVAILABLE = "Cairnmind service is unavailable (ConnectError); start `cairnmind serve` or use the launcher."
 
@@ -221,7 +222,7 @@ def test_requests_at_the_moment_the_service_closes_an_idle_connection_are_never_
 
     import uvicorn
     from cairnmind import __version__
-    from cairnmind.service_version import instance_id
+    from cairnmind.cli_cmds.service_version import instance_id
     keep = 0.2
     monkeypatch.setattr(mcp_server, "KEEPALIVE_EXPIRY", keep * 0.8)
     health = json.dumps({"service": "cairnmind", "version": __version__, "instance": instance_id(settings)}).encode()

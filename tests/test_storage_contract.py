@@ -22,9 +22,9 @@ from uuid import uuid4
 import pytest
 
 from cairnmind.config import Settings
-from cairnmind.journal import Journal
-from cairnmind.retrieval import Retriever
-from cairnmind.storage_backend import ALL_COLLECTIONS, StorageBackend
+from cairnmind.storage.journal import Journal
+from cairnmind.agents.retrieval import Retriever
+from cairnmind.storage.storage_backend import ALL_COLLECTIONS, StorageBackend
 from cairnmind.store import Store
 
 
@@ -93,7 +93,7 @@ def test_contract_all_collections_present_and_countable(contract_store: Store):
 
 
 def test_contract_crud_optimistic_cas_and_explicit_journal(contract_store: Store, tmp_path: Path, monkeypatch):
-    from cairnmind import journal as journal_mod
+    from cairnmind.storage import journal as journal_mod
 
     project, _ = _seed_project(contract_store, tmp_path, "cas_proj")
     journal = Journal(contract_store)
@@ -372,7 +372,7 @@ def test_contract_readonly_blocks_writes(contract_store: Store, tmp_path: Path):
 
 def test_contract_declarative_dal_find_count_group_update_delete(contract_store: Store, tmp_path: Path):
     """Verify declarative find/find_one/count/group_counts/update_where/delete_where without raw SQL."""
-    from cairnmind.storage_query import any_of, desc, eq, is_in, ne
+    from cairnmind.storage.storage_query import any_of, desc, eq, is_in, ne
 
     project, _ = _seed_project(contract_store, tmp_path, "dal_proj")
     s1 = contract_store.snapshot(project["id"], "note://dal-1", "alpha", "note", {"origin": "unit", "tag": "a"})
@@ -412,7 +412,7 @@ def test_contract_declarative_dal_find_count_group_update_delete(contract_store:
 
 def test_sqlite_large_in_clause_temp_table_scaling(tmp_path: Path):
     """SQLiteBackend must never hit SQLITE_MAX_VARIABLE_NUMBER even with 40,000+ eligible IDs."""
-    from cairnmind.storage_query import is_in, split_sql_statements
+    from cairnmind.storage.storage_query import is_in, split_sql_statements
 
     # Verify quote-aware SQL statement splitter ignores semicolons inside strings & comments
     stmts = split_sql_statements("INSERT INTO a VALUES ('x; y'); -- comment; here\nSELECT 1; /* block; */ UPDATE b SET c=\"p;q\";")

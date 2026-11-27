@@ -10,7 +10,7 @@ import sys
 import pytest
 
 from conftest import assert_private, make_private_again, make_symlink_or_skip, make_world_readable
-from cairnmind.agent_journal import AgentJournal, JournalError, ZERO_HASH, canonical
+from cairnmind.agents.agent_journal import AgentJournal, JournalError, ZERO_HASH, canonical
 from cairnmind.config import Settings
 
 
@@ -117,7 +117,7 @@ def test_corrupt_history_is_rejected_before_further_append(journal, corruption):
 
 
 def test_exhausted_event_budget_prevents_any_append(journal, monkeypatch):
-    from cairnmind import agent_journal
+    from cairnmind.agents import agent_journal
     journal.append("message", {"content": "existing"})
     before = journal.path.read_bytes()
     monkeypatch.setattr(agent_journal, "MAX_EVENT_BYTES", 400)
@@ -127,7 +127,7 @@ def test_exhausted_event_budget_prevents_any_append(journal, monkeypatch):
 
 
 def test_total_budget_exhaustion_does_not_truncate_history(journal, monkeypatch):
-    from cairnmind import agent_journal
+    from cairnmind.agents import agent_journal
     journal.append("message", {"content": "existing"})
     before = journal.path.read_bytes()
     monkeypatch.setattr(agent_journal, "MAX_JOURNAL_BYTES", len(before) + 20)
@@ -158,7 +158,7 @@ def test_refuses_symlinked_storage_and_insecure_existing_file(journal, tmp_path)
 
 
 def test_refuses_symlinked_parent_without_creating_inside_target(journal, tmp_path):
-    from cairnmind import private_files
+    from cairnmind.pal import private_files
     private_files.ensure_private_dir(journal.settings.data_dir.joinpath("runtime"))
     target = tmp_path / "outside"
     target.mkdir(mode=0o700)

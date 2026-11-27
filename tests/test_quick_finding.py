@@ -13,17 +13,17 @@ import httpx
 import pytest
 from textual.widgets import Select, Static, TextArea
 
-from cairnmind.cockpit import create_cockpit_app
-from cairnmind.cockpit_state import CockpitState
+from cairnmind.terminal.cockpit import create_cockpit_app
+from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.config import Settings
-from cairnmind.findings import FINDING_KINDS, FINDING_STATUSES, MAX_FINDING_CHARS, finding_error
+from cairnmind.memory.findings import FINDING_KINDS, FINDING_STATUSES, MAX_FINDING_CHARS, finding_error
 from cairnmind.service import create_app
 from cairnmind.store import Store
-from cairnmind.terminal_client import BrokerClient, BrokerError
-from cairnmind.terminal_commands import CommandPaletteApp
-from cairnmind.workspace import WorkspaceManager
-from cairnmind.workspace_finding import ERROR_LIMIT, FindingApp, confirmation, run_finding_form
-from cairnmind.workspace_state import WorkspaceState
+from cairnmind.terminal.terminal_client import BrokerClient, BrokerError
+from cairnmind.terminal.terminal_commands import CommandPaletteApp
+from cairnmind.terminal.workspace import WorkspaceManager
+from cairnmind.terminal.workspace_finding import ERROR_LIMIT, FindingApp, confirmation, run_finding_form
+from cairnmind.terminal.workspace_state import WorkspaceState
 from test_cockpit_server import ORIGIN, Runtime, cockpit as cockpit, login
 from test_service import LocalModelFixture
 
@@ -182,7 +182,7 @@ def stack(tmp_path, monkeypatch, workspace_person):
     The popup runs inside the open workspace (#214): its client sends the workspace's proof, the broker passes
     it on and the service checks it, here against a tmux that answers with the test's key.
     """
-    monkeypatch.setattr("cairnmind.person_proof.workspace_headers", lambda settings, environ=None: workspace_person)
+    monkeypatch.setattr("cairnmind.terminal.person_proof.workspace_headers", lambda settings, environ=None: workspace_person)
     settings = Settings.load(tmp_path / "memory", create=True)
     root = tmp_path / "repo"
     root.mkdir()
@@ -192,7 +192,7 @@ def stack(tmp_path, monkeypatch, workspace_person):
         subprocess.run(["git", "-C", str(root), *args], capture_output=True, check=True)
     store = Store(settings.data_dir)
     project = store.add_project("demo", root)
-    monkeypatch.setattr("cairnmind.client_auth.probe_client", lambda client, **kwargs: {"client": client})
+    monkeypatch.setattr("cairnmind.agents.client_auth.probe_client", lambda client, **kwargs: {"client": client})
     with TestClient(create_app(settings, start_worker=False, ollama=LocalModelFixture())) as service:
         def upstream(request):
             reply = service.request(request.method, request.url.path, params=dict(request.url.params),
@@ -206,7 +206,7 @@ def stack(tmp_path, monkeypatch, workspace_person):
         app = create_cockpit_app(settings, runtime=Runtime(), proxy_transport=httpx.MockTransport(upstream),
                                  public_url=ORIGIN)
         with TestClient(app, base_url=ORIGIN) as browser:
-            monkeypatch.setattr("cairnmind.cockpit.cockpit_status",
+            monkeypatch.setattr("cairnmind.terminal.cockpit.cockpit_status",
                                 lambda settings: {"available": True, "url": ORIGIN})
             def through_browser(request):
                 # The test client may be built on httpx2, whose transport httpx cannot use; bridge by request.
@@ -259,7 +259,7 @@ async def test_saved_finding_reaches_store_byte_for_byte_and_is_visible_in_the_i
 
 
 def test_service_keeps_the_resume_gate_and_its_own_validation(stack, tmp_path, workspace_person):
-    from cairnmind.sessions import SessionManager
+    from cairnmind.memory.sessions import SessionManager
     settings, store, project, root, _, service = stack
     token_only = {"Authorization": f"Bearer {settings.token}"}
     headers = {**token_only, **workspace_person}
@@ -379,7 +379,7 @@ async def test_an_unclear_answer_is_not_called_a_failure_and_messages_follow_the
 
 @pytest.mark.asyncio
 async def test_a_finding_saved_in_one_worktree_is_found_from_another(stack, tmp_path):
-    from cairnmind.retrieval import Retriever
+    from cairnmind.agents.retrieval import Retriever
     settings, store, project, root, broker, _ = stack
     linked = tmp_path / "linked"
     linked.mkdir()
@@ -405,7 +405,7 @@ async def test_a_finding_saved_in_one_worktree_is_found_from_another(stack, tmp_
 
 
 def test_an_acknowledged_session_saves_once_under_its_own_origin(stack):
-    from cairnmind.sessions import SessionManager
+    from cairnmind.memory.sessions import SessionManager
     settings, store, project, root, _, service = stack
     manager = SessionManager(store, settings)
     ready = manager.prepare(project["id"], "codex", timeout=0)
@@ -434,7 +434,7 @@ def test_confirmation_reaches_the_status_line_with_kind_and_status_only(tmp_path
                               tmux=lambda *args, **kwargs: calls.append((args, kwargs)))
     results = iter([{"id": "r", "kind": "decision", "status": "confirmed", "content": "secret #{pid}"},
                     {"id": "r", "kind": "#(touch x)", "status": "#[fg=red]"}, None])
-    monkeypatch.setattr("cairnmind.workspace_finding.FindingApp",
+    monkeypatch.setattr("cairnmind.terminal.workspace_finding.FindingApp",
                         lambda *args, **kwargs: SimpleNamespace(run=lambda: next(results)))
     for _ in range(3):
         run_finding_form(manager, "/dev/pts/1")

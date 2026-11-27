@@ -7,8 +7,8 @@ import threading
 import pytest
 from textual.widgets import Button, DataTable, Static
 
-from cairnmind.terminal_client import BrokerClient, BrokerError
-from cairnmind.terminal_inspector import InspectorApp
+from cairnmind.terminal.terminal_client import BrokerClient, BrokerError
+from cairnmind.terminal.terminal_inspector import InspectorApp
 from test_terminal_impact import REPORT, VERDICT, Impact, open_impact, script, text, wait
 from test_terminal_panels import settle
 from test_terminal_ux080 import setup_ui

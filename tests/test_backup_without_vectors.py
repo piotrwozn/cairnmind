@@ -10,13 +10,13 @@ import types
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import person_proof
+from cairnmind.terminal import person_proof
 from cairnmind.cli import app
-from cairnmind.ingest import _write_chunks
-from cairnmind.restore_claims import VECTORS_REBUILT, VECTORS_UNDECIDED, VECTORS_WAIT, checked_restore
-from cairnmind.retrieval import VECTORS_BUILDING, VECTORS_FAILED, VECTORS_NOT_READY, Retriever, last_warnings
+from cairnmind.scip.ingest import _write_chunks
+from cairnmind.storage.restore_claims import VECTORS_REBUILT, VECTORS_UNDECIDED, VECTORS_WAIT, checked_restore
+from cairnmind.agents.retrieval import VECTORS_BUILDING, VECTORS_FAILED, VECTORS_NOT_READY, Retriever, last_warnings
 from cairnmind.store import Store
-from cairnmind.terminal_i18n import tr
+from cairnmind.terminal.terminal_i18n import tr
 
 NAMESPACE = "embedder@digest"
 TEXT = "signed tokens are rotated every night\n" * 30
@@ -107,7 +107,7 @@ def test_a_restore_into_the_same_store_rebuilds_into_its_emptied_vector_type(emb
 
 def test_the_workspace_shows_both_vector_warnings_in_polish():
     """The answer view of the workspace says the warnings of a search without its vectors in the person's language."""
-    from cairnmind.terminal_commands import ask_summary
+    from cairnmind.terminal.terminal_commands import ask_summary
     answer = {"status": "complete", "answer": "x", "freshness": {"warnings": [VECTORS_NOT_READY, f"{VECTORS_BUILDING}7"]}}
     shown = ask_summary(answer, lambda text: tr(text, "pl"))
     assert "- " + tr(VECTORS_NOT_READY, "pl") in shown and tr(VECTORS_NOT_READY, "pl") != VECTORS_NOT_READY
@@ -163,7 +163,7 @@ def test_a_rebuild_whose_jobs_failed_still_says_vectors_are_missing(embedded):
     search = Retriever(target, target.settings)
     search.search(embedded.project, "rotated", query_vector=[0.25, 0.5, 0.75, 1.0], embedding_key=NAMESPACE)
     assert f"{VECTORS_FAILED}{missing}" in search.warnings
-    from cairnmind.terminal_commands import ask_summary
+    from cairnmind.terminal.terminal_commands import ask_summary
     shown = ask_summary({"status": "complete", "answer": "x", "freshness": {"warnings": search.warnings}}, lambda text: tr(text, "pl"))
     assert f"fragmenty: {missing}" in shown and "retry-jobs" in shown and VECTORS_FAILED not in shown
     target.retry_jobs()  # the sentence's own advice: the jobs run again and the warning goes
@@ -194,7 +194,7 @@ def test_a_backup_that_carries_vectors_is_restored_with_them_and_nothing_is_requ
     """An older file: the writer of this version leaves vectors out, restore still loads those a file brings."""
     import gzip
     import hashlib
-    from cairnmind.sql import clean_row, json_text, quote_name
+    from cairnmind.storage.sql import clean_row, json_text, quote_name
     envelope = json.loads(gzip.decompress(embedded.backup.read_bytes()))
     payload = envelope["payload"]
     assert payload["embeddings"] == [] and payload["vector_indexes"] == [] and payload["vector_data"] == {}

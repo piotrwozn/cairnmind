@@ -10,11 +10,11 @@ import pytest
 from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
 from cairnmind.config import Settings
-from cairnmind.terminal_client import BrokerError
-from cairnmind.terminal_inspector import InspectorApp
-from cairnmind.terminal_panels import SidebarApp
-from cairnmind.terminal_safe import plain, safe_text
-from cairnmind.terminal_ui import wide_dialog
+from cairnmind.terminal.terminal_client import BrokerError
+from cairnmind.terminal.terminal_inspector import InspectorApp
+from cairnmind.terminal.terminal_panels import SidebarApp
+from cairnmind.pal.terminal_safe import plain, safe_text
+from cairnmind.terminal.terminal_ui import wide_dialog
 from consent_steps import consent_drawn, form_ready
 
 
@@ -107,8 +107,8 @@ def setup(tmp_path, monkeypatch, *, managed=False, project=True):
     broker = FakeBroker(value, managed=managed)
     workspace = FakeWorkspace(value if project else None)
     settings = Settings(data_dir=tmp_path / "data")
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", lambda *args, **kwargs: workspace.read())
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: "pl")
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", lambda *args, **kwargs: workspace.read())
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: "pl")
     return settings, broker, workspace
 
 
@@ -297,7 +297,7 @@ async def test_wide_dialog_zooms_real_pane_and_preserves_explicit_user_focus(tmp
     app = SimpleNamespace(settings=settings, workspace=workspace, workspace_id="default", is_headless=False)
     monkeypatch.setenv("TMUX_PANE", "%fixture")
     reconciled = []
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", lambda *args: reconciled.append(workspace.read()))
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", lambda *args: reconciled.append(workspace.read()))
 
     async def opened(screen):
         assert screen == "fixture-screen"
@@ -368,7 +368,7 @@ async def test_sessions_tell_rows_apart_offer_stop_only_while_live_and_confirm_i
 
     broker.request = request
     stopped, seen, notices = [], [], []
-    monkeypatch.setattr("cairnmind.workspace.stop_run", lambda settings, run_id, *args: stopped.append(run_id))
+    monkeypatch.setattr("cairnmind.terminal.workspace.stop_run", lambda settings, run_id, *args: stopped.append(run_id))
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(95, 42)) as pilot:
         await settle(app, pilot)
@@ -431,7 +431,7 @@ async def test_sidebar_resize_uses_current_event_and_keeps_actions_reachable(
     tmp_path, monkeypatch, language, page
 ):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(24, 33)) as pilot:
         await settle(app, pilot)

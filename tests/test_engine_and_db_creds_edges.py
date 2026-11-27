@@ -10,8 +10,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from cairnmind import database_credentials as dbcreds, engine, person_pipe, repository_evaluation as repeval
-from cairnmind.arcade import ArcadeError
+from cairnmind.storage import database_credentials as dbcreds, engine
+from cairnmind.pal import person_pipe
+from cairnmind.agents import repository_evaluation as repeval
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.config import Settings
 
 
@@ -163,7 +165,7 @@ def test_database_credentials_validation_tls_doctor_and_create_user_edges(tmp_pa
         def close(self):
             pass
 
-    monkeypatch.setattr("cairnmind.arcade.ArcadeClient", _FakeArcade)
+    monkeypatch.setattr("cairnmind.storage.arcade.ArcadeClient", _FakeArcade)
     doc = dbcreds.doctor_block(conn_s)
     assert doc["ca_file"] == str(bad_ca) and doc["database_available"] is False and "error" in doc
 
@@ -173,12 +175,12 @@ def test_database_credentials_validation_tls_doctor_and_create_user_edges(tmp_pa
 
     # plan_user version_problem raises
     conn_s._origin = {"password": "environment"}
-    monkeypatch.setattr("cairnmind.database_mode.version_problem", lambda st, info: "old server")
+    monkeypatch.setattr("cairnmind.storage.database_mode.version_problem", lambda st, info: "old server")
     with pytest.raises(ArcadeError, match="old server"):
         dbcreds.plan_user(conn_s, "adminpw")
 
     # create_user rolls back user when ensure_database fails
-    monkeypatch.setattr("cairnmind.database_mode.version_problem", lambda st, info: None)
+    monkeypatch.setattr("cairnmind.storage.database_mode.version_problem", lambda st, info: None)
     with pytest.raises(ArcadeError, match="was not created"):
         dbcreds.create_user(conn_s, "adminpw")
 
@@ -190,12 +192,12 @@ async def test_repository_evaluation_ask_all_and_error_paths(tmp_path, monkeypat
         repeval.run_repository_evaluation(settings, tmp_path / "missing", tmp_path / "q.json")
 
     # _ask_all when engine unavailable raises ArcadeError
-    monkeypatch.setattr("cairnmind.engine.engine_status", lambda s: {"available": False})
+    monkeypatch.setattr("cairnmind.storage.engine.engine_status", lambda s: {"available": False})
     with pytest.raises(ArcadeError, match="stopped during the evaluation"):
         await repeval._ask_all(settings, tmp_path, [], SimpleNamespace(calls=[]), {})
 
     # _ask_all happy path with lightweight fakes
-    monkeypatch.setattr("cairnmind.engine.engine_status", lambda s: {"available": True})
+    monkeypatch.setattr("cairnmind.storage.engine.engine_status", lambda s: {"available": True})
 
     class _FakeStore:
         def __init__(self, data_dir, settings=None):
@@ -222,9 +224,9 @@ async def test_repository_evaluation_ask_all_and_error_paths(tmp_path, monkeypat
             return {"status": "answered", "answer": "yes", "sources": []}
 
     monkeypatch.setattr("cairnmind.store.Store", _FakeStore)
-    monkeypatch.setattr("cairnmind.ingest.index_project", lambda store, pid: {"files": 1, "errors": []})
-    monkeypatch.setattr("cairnmind.retrieval.Retriever", _FakeRetriever)
-    monkeypatch.setattr("cairnmind.agent.KnowledgeAgent", _FakeAgent)
+    monkeypatch.setattr("cairnmind.scip.ingest.index_project", lambda store, pid: {"files": 1, "errors": []})
+    monkeypatch.setattr("cairnmind.agents.retrieval.Retriever", _FakeRetriever)
+    monkeypatch.setattr("cairnmind.agents.agent.KnowledgeAgent", _FakeAgent)
     report = {"questions": []}
     case = {"id": "q1", "question": "Is it ok?", "file": "a.py", "accepted": ["yes"], "sources": []}
     await repeval._ask_all(settings, tmp_path, [case], SimpleNamespace(calls=[]), report)

@@ -5,11 +5,12 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, mcp_server
+from cairnmind import cli
+from cairnmind.mcp import mcp_server
 from cairnmind.config import Settings
-from cairnmind.terminal_client import BrokerClient, BrokerError
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_i18n_messages import broker_error_text
+from cairnmind.terminal.terminal_client import BrokerClient, BrokerError
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_i18n_messages import broker_error_text
 
 BARE = {"detail": "Invalid local service token"}
 
@@ -94,7 +95,7 @@ def test_status_shows_the_url_it_asked(monkeypatch, tmp_path):
 async def test_the_sidebar_names_a_foreign_service_from_the_state_once(tmp_path, monkeypatch, language, words):
     # #308: /api/state stays whole; its refusal flag is what the sidebar names, in the panel's language.
     from test_mcp_failure_notice import RunsBroker
-    from cairnmind.terminal_panels import SidebarApp
+    from cairnmind.terminal.terminal_panels import SidebarApp
     from test_terminal_panels import settle
     from test_terminal_ux080 import setup_ui
     from test_workspace_stage_scope import notice_of, wait_until

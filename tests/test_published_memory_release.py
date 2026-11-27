@@ -6,12 +6,12 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.api_credentials import CredentialStore
-from cairnmind.memory import MemoryConflict
-from cairnmind.memory_published import Publisher
-from cairnmind.memory_published_check import check_directory
-from cairnmind.memory_published_import import PublishedImporter
-from cairnmind.memory_published_release import (
+from cairnmind.agents.api_credentials import CredentialStore
+from cairnmind.memory.memory import MemoryConflict
+from cairnmind.memory.memory_published import Publisher
+from cairnmind.memory.memory_published_check import check_directory
+from cairnmind.memory.memory_published_import import PublishedImporter
+from cairnmind.memory.memory_published_release import (
     CLI_REFUSED, SecretsRefused, checkout_rules, import_rules, registered_secrets, release,
 )
 from cairnmind.service import create_app

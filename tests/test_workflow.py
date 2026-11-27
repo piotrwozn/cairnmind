@@ -55,9 +55,9 @@ def readback(packet):
 
 
 def test_codex_claude_fresh_codex_restore_plan_check_and_compaction(workspace, monkeypatch, tmp_path):
-    from cairnmind import integrations
-    from cairnmind.ingest import import_history
-    from cairnmind.verification import run_check
+    from cairnmind.memory import integrations
+    from cairnmind.scip.ingest import import_history
+    from cairnmind.memory.verification import run_check
 
     settings, store, project, root = workspace
     headers = {"Authorization": f"Bearer {settings.token}"}
@@ -138,7 +138,7 @@ def test_codex_claude_fresh_codex_restore_plan_check_and_compaction(workspace, m
 
 
 def test_api_session_reads_and_writes_stay_in_selected_worktree(workspace, tmp_path):
-    from cairnmind.plans import PlanManager
+    from cairnmind.memory.plans import PlanManager
     settings, store, project, first = workspace
     second = tmp_path / "second"
     repository(second, "second")
@@ -169,9 +169,9 @@ def test_api_session_reads_and_writes_stay_in_selected_worktree(workspace, tmp_p
 def test_cli_read_views_inherit_session_worktree_before_ack(workspace, tmp_path, monkeypatch):
     from typer.testing import CliRunner
     from cairnmind.cli import app
-    from cairnmind.plans import PlanManager
-    from cairnmind.sessions import SessionManager
-    from cairnmind.verification import run_check
+    from cairnmind.memory.plans import PlanManager
+    from cairnmind.memory.sessions import SessionManager
+    from cairnmind.memory.verification import run_check
     settings, store, project, first = workspace
     second = tmp_path / "second"
     repository(second, "second")

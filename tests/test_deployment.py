@@ -14,7 +14,7 @@ import sys
 import pytest
 import typer
 
-from cairnmind import engine
+from cairnmind.storage import engine
 from cairnmind.cli import app
 from cairnmind.config import Settings
 
@@ -264,7 +264,7 @@ def test_the_volume_is_unpacked_without_setting_the_root_owned_top_folder():
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Tests Kubernetes POSIX 0400 secret symlink mount")
 def test_the_mounted_password_mode_of_the_manifests_is_one_the_password_file_rule_accepts(tmp_path):
-    from cairnmind.database_credentials import read_private_file
+    from cairnmind.storage.database_credentials import read_private_file
     from test_database_credentials import SECRET, mounted_secret
     job = manifest("check/connection-check.yaml")
     modes = set(re.findall(r"^\s+defaultMode: (0\d+)$", job, re.M))

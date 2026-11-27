@@ -12,9 +12,11 @@ import types
 
 import pytest
 
-from cairnmind import cli, first_start, platform_hints
+from cairnmind import cli
+from cairnmind.cli_cmds import first_start
+from cairnmind.pal import platform_hints
 from cairnmind.config import Settings
-from cairnmind.terminal_i18n import tr
+from cairnmind.terminal.terminal_i18n import tr
 
 STATES = ["missing", "3.3a", "3.5a"]
 SENTENCE_TAIL = ("Without it, every other command works, for example cairnmind brief, cairnmind remember, "
@@ -107,7 +109,7 @@ def test_opening_the_workspace_without_tmux_prints_one_message(monkeypatch, capf
 
     def broker(*args, **kwargs):
         raise AssertionError("the broker must not start without tmux 3.4+")
-    monkeypatch.setattr("cairnmind.terminal_client.BrokerClient", broker)
+    monkeypatch.setattr("cairnmind.terminal.terminal_client.BrokerClient", broker)
     with pytest.raises(SystemExit) as caught:
         cli.entrypoint()
     assert caught.value.code == 1
@@ -124,7 +126,7 @@ def test_with_tmux_3_4_the_workspace_goes_past_the_check(monkeypatch, data, tmux
 
     def broker(*args, **kwargs):
         raise Reached
-    monkeypatch.setattr("cairnmind.terminal_client.BrokerClient", broker)
+    monkeypatch.setattr("cairnmind.terminal.terminal_client.BrokerClient", broker)
     with pytest.raises(Reached):
         cli.entrypoint()
 
@@ -139,7 +141,9 @@ def test_every_new_sentence_has_polish_in_the_catalog():
 def _quiet_doctor(monkeypatch):
     """Doctor with no client, engine, model server or store to ask: only tmux differs between the runs."""
     import httpx
-    from cairnmind import api_runtime, database_credentials, engine, integrations, store_writer
+    from cairnmind.agents import api_runtime
+    from cairnmind.storage import database_credentials, engine, store_writer
+    from cairnmind.memory import integrations
     monkeypatch.setattr(cli, "service_alive", lambda settings: False)
     monkeypatch.setattr(integrations, "_probe_cli", lambda name: {"installed": False})
     monkeypatch.setattr(database_credentials, "doctor_block", lambda settings: {
@@ -179,7 +183,7 @@ def test_doctor_reports_the_cockpit_as_a_warning_and_exits_0(monkeypatch, data, 
 
 
 def test_the_installer_view_of_doctor_says_cockpit_unavailable(monkeypatch):
-    from cairnmind import doctor_attention
+    from cairnmind.cli_cmds import doctor_attention
     monkeypatch.setattr(platform_hints, "host_system", lambda *a, **k: "wsl")
     healthy = {"python": "3.12.3", "java": {"on_path": True, "executable": "/usr/bin/java", "compatible": True},
                "arcadedb": {"available": True, "database_available": True},
@@ -231,7 +235,7 @@ def _invoke(data, *args):
 
 @pytest.mark.parametrize("state", STATES)
 def test_init_works_without_tmux(monkeypatch, tmp_path, data, tmux, state):
-    from cairnmind import database_mode, engine_docker
+    from cairnmind.storage import database_mode, engine_docker
     tmux(state)
     monkeypatch.setattr(engine_docker, "choose_engine_mode", lambda settings: None)
     monkeypatch.setattr(database_mode, "connect_only", lambda settings: False)
@@ -257,7 +261,9 @@ def test_serve_starts_without_tmux(monkeypatch, data, tmux, state):
 
 @pytest.mark.parametrize("state", STATES)
 def test_run_starts_the_client_in_this_terminal_without_tmux(monkeypatch, tmp_path, data, tmux, state):
-    from cairnmind import ingest, integrations, store
+    from cairnmind.scip import ingest
+    from cairnmind.memory import integrations
+    from cairnmind import store
     tmux(state)
     monkeypatch.setattr(cli, "_ensure_service_or_refuse", lambda settings: None)
     monkeypatch.setattr(cli, "store_for", lambda settings, **kw: FakeStore(tmp_path))
@@ -273,7 +279,7 @@ def test_run_starts_the_client_in_this_terminal_without_tmux(monkeypatch, tmp_pa
 
 @pytest.mark.parametrize("state", STATES)
 def test_mcp_works_without_tmux(monkeypatch, tmp_path, data, tmux, state):
-    from cairnmind import mcp_server
+    from cairnmind.mcp import mcp_server
     tmux(state)
     started = []
     monkeypatch.setattr(mcp_server, "run", lambda settings, external=None: started.append(external))
@@ -285,7 +291,7 @@ def test_mcp_works_without_tmux(monkeypatch, tmp_path, data, tmux, state):
 
 @pytest.mark.parametrize("state", STATES)
 def test_brief_works_without_tmux(monkeypatch, tmp_path, data, tmux, state):
-    from cairnmind import brief
+    from cairnmind.memory import brief
     tmux(state)
     monkeypatch.setattr(cli, "store_for", lambda settings, **kw: FakeStore(tmp_path))
     monkeypatch.setattr(brief, "build_brief", lambda *a, **k: {"text": "Where work stopped."})
@@ -296,7 +302,7 @@ def test_brief_works_without_tmux(monkeypatch, tmp_path, data, tmux, state):
 
 @pytest.mark.parametrize("state", STATES)
 def test_check_run_works_without_tmux(monkeypatch, tmp_path, data, tmux, state):
-    from cairnmind import verification
+    from cairnmind.memory import verification
     tmux(state)
     monkeypatch.setattr(cli, "store_for", lambda settings, **kw: FakeStore(tmp_path))
     monkeypatch.setattr(verification, "run_check", lambda *a, **k: {"passed": True})
@@ -307,7 +313,7 @@ def test_check_run_works_without_tmux(monkeypatch, tmp_path, data, tmux, state):
 
 @pytest.mark.parametrize("state", STATES)
 def test_impact_works_without_tmux(monkeypatch, tmp_path, data, tmux, state):
-    from cairnmind import impact
+    from cairnmind.memory import impact
     tmux(state)
     monkeypatch.setattr(cli, "store_for_read", lambda settings: FakeStore(tmp_path))
     monkeypatch.setattr(impact, "build_impact", lambda *a, **k: {"text": "No records are linked."})

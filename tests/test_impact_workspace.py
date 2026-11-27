@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from cairnmind.cli import app
-from cairnmind.inspector_api import attach_inspector_routes
+from cairnmind.terminal.inspector_api import attach_inspector_routes
 
 from test_cockpit_server import cockpit as cockpit, login
 from test_impact import workspace as workspace

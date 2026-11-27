@@ -8,9 +8,9 @@ import subprocess
 
 import pytest
 
-from cairnmind import ingest
-from cairnmind.retrieval import Retriever
-from cairnmind.sessions import SessionManager
+from cairnmind.scip import ingest
+from cairnmind.agents.retrieval import Retriever
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
 
 

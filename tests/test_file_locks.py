@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from cairnmind import file_locks
+from cairnmind.pal import file_locks
 
 
 def test_exclusive_lock_blocks_nonblocking_contender(tmp_path):
@@ -77,7 +77,7 @@ def test_locked_path_releases_on_normal_and_exception_exit(tmp_path):
 def test_exclusive_lock_enforced_across_processes(tmp_path):
     target = tmp_path / "cross-proc.lock"
     code = (
-        "import sys; from pathlib import Path; from cairnmind import file_locks\n"
+        "import sys; from pathlib import Path; from cairnmind.pal import file_locks\n"
         "with file_locks.locked_path(Path(sys.argv[1]), blocking=False):\n"
         "    print('LOCKED', flush=True)\n"
         "    sys.stdin.readline()\n"
@@ -102,7 +102,7 @@ def test_shared_locks_enforced_across_two_processes(tmp_path):
     """Two processes hold shared locks concurrently while an exclusive contender is blocked (#435)."""
     target = tmp_path / "shared-proc.lock"
     code = (
-        "import sys; from pathlib import Path; from cairnmind import file_locks\n"
+        "import sys; from pathlib import Path; from cairnmind.pal import file_locks\n"
         "with Path(sys.argv[1]).open('a', encoding='utf-8') as f:\n"
         "    file_locks.lock_shared(f, blocking=False)\n"
         "    print('SHARED', flush=True)\n"
@@ -129,10 +129,10 @@ def test_shared_locks_enforced_across_two_processes(tmp_path):
 
 def test_killing_lock_holder_releases_lock_for_next_process(tmp_path):
     """Hard-killing the lock holder releases the OS lock immediately (#435)."""
-    from cairnmind import process_control
+    from cairnmind.pal import process_control
     target = tmp_path / "killed-holder.lock"
     code = (
-        "import os, sys, time; from pathlib import Path; from cairnmind import file_locks\n"
+        "import os, sys, time; from pathlib import Path; from cairnmind.pal import file_locks\n"
         "with file_locks.locked_path(Path(sys.argv[1]), blocking=False):\n"
         "    print(f'LOCKED {os.getpid()}', flush=True)\n"
         "    time.sleep(60)\n"
@@ -152,7 +152,7 @@ def test_killing_lock_holder_releases_lock_for_next_process(tmp_path):
         holder.wait(timeout=15)
         # On Windows, holder.pid is uv's .venv\Scripts\python.exe shim while real_pid is the child
         # cpython process; TerminateProcess is asynchronous in the kernel, so wait until real_pid exits.
-        from cairnmind import process_identity
+        from cairnmind.pal import process_identity
         deadline = time.monotonic() + 5.0
         while process_identity.alive(real_pid) and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -174,7 +174,7 @@ def test_child_process_does_not_inherit_lock_handle(tmp_path):
     target = tmp_path / "inherit.lock"
     grandchild_code = "import sys, time; print('CHILD_UP', flush=True); sys.stdin.readline()"
     parent_code = (
-        "import subprocess, sys; from pathlib import Path; from cairnmind import file_locks\n"
+        "import subprocess, sys; from pathlib import Path; from cairnmind.pal import file_locks\n"
         "with file_locks.locked_path(Path(sys.argv[1]), blocking=False):\n"
         "    gc = subprocess.Popen([sys.executable, '-c', sys.argv[2]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)\n"
         "    assert gc.stdout.readline().strip() == 'CHILD_UP'\n"
@@ -199,8 +199,8 @@ def test_child_process_does_not_inherit_lock_handle(tmp_path):
 
 def test_product_locks_work_on_this_platform(tmp_path):
     """Exercise real product lock callers: config.load(create=True), setup_mark.held, CockpitState (#435)."""
-    from cairnmind import setup_mark
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal import setup_mark
+    from cairnmind.terminal.cockpit_state import CockpitState
     from cairnmind.config import Settings
 
     settings = Settings.load(tmp_path / "data", create=True)

@@ -5,7 +5,8 @@ import sys
 
 import pytest
 
-from cairnmind import person_pipe, person_proof
+from cairnmind.pal import person_pipe
+from cairnmind.terminal import person_proof
 from cairnmind.config import Settings
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows Named Pipe tests run on native Windows")

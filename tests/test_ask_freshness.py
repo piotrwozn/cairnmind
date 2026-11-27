@@ -12,15 +12,15 @@ from fastapi.testclient import TestClient
 import pytest
 
 from conftest import own_time
-from cairnmind import ingest
+from cairnmind.scip import ingest
 from cairnmind.config import Settings
-from cairnmind.ingest import forget_index_signature, index_project, index_project_if_changed, tree_signature
-from cairnmind.journal import Journal
-from cairnmind.plans import PlanManager
+from cairnmind.scip.ingest import forget_index_signature, index_project, index_project_if_changed, tree_signature
+from cairnmind.storage.journal import Journal
+from cairnmind.memory.plans import PlanManager
 from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
-from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
-from cairnmind.inspector import Inspector
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
+from cairnmind.terminal.inspector import Inspector
 from cairnmind.store import Store
 
 
@@ -348,7 +348,7 @@ def test_a_directory_that_cannot_be_listed_is_an_error_and_deactivates_nothing(w
 
 def test_memory_import_makes_the_next_question_index_again(workspace, monkeypatch):
     settings, store, project, root = workspace
-    from cairnmind.memory import MemoryManager
+    from cairnmind.memory.memory import MemoryManager
     # The import itself is covered elsewhere; here only what the route does after it matters.
     monkeypatch.setattr(MemoryManager, "import_snapshot",
                         lambda self, *args, **kwargs: {"status": "imported", "project": {"id": project["id"]}})

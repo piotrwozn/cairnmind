@@ -10,8 +10,9 @@ import pytest
 
 from installer_script import installer_functions
 from conftest import own_time
-from cairnmind import process_identity, upgrade_mark
-from cairnmind.terminal_i18n import CATALOG
+from cairnmind.pal import process_identity
+from cairnmind.cli_cmds import upgrade_mark
+from cairnmind.terminal.terminal_i18n import CATALOG
 
 
 @pytest.fixture
@@ -151,7 +152,7 @@ def test_the_installer_and_the_package_agree_on_the_mark(tmp_path):
     """The path, the format and the identity the installer writes are the ones the package reads: a real bash,
     named install-wsl.sh, writes the mark and a Python reads it, while it runs and after it removed the mark."""
     functions = installer_functions(tmp_path / "sockets")
-    reader = ("import sys; from cairnmind import upgrade_mark as u; "
+    reader = ("import sys; from cairnmind.cli_cmds import upgrade_mark as u; "
               "u.mark_path = lambda: __import__('pathlib').Path(sys.argv[1]); print(u.state())")
     mark = tmp_path / ".local" / "state" / "cairnmind" / "upgrade-in-progress"
     installer = tmp_path / "install-wsl.sh"

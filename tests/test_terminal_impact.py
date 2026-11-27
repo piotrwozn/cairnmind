@@ -6,11 +6,11 @@ from copy import deepcopy
 import pytest
 from textual.widgets import Button, Checkbox, DataTable, Input, Static
 
-from cairnmind.terminal_client import BrokerError
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_inspector import InspectorApp
-from cairnmind.terminal_panels import ConfirmModal
-from cairnmind.terminal_ui import ChoiceModal, FormModal
+from cairnmind.terminal.terminal_client import BrokerError
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_inspector import InspectorApp
+from cairnmind.terminal.terminal_panels import ConfirmModal
+from cairnmind.terminal.terminal_ui import ChoiceModal, FormModal
 from test_terminal_panels import settle
 from test_terminal_ux080 import setup_ui
 
@@ -306,7 +306,7 @@ def test_every_label_of_the_view_has_a_polish_translation():
     import ast
     import re
     from pathlib import Path
-    import cairnmind.terminal_impact as view
+    import cairnmind.terminal.terminal_impact as view
     source = Path(view.__file__).read_text(encoding="utf-8")
     # Every literal handed to the translator, with adjacent literals joined as Python joins them.
     found = re.findall(r'(?:self\.t|translate)\(\s*((?:"(?:[^"\\]|\\.)*"\s*)+)', source)

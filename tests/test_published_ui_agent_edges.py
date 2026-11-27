@@ -9,9 +9,11 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Static
 
-from cairnmind import agent as agent_mod, memory_published as mp, terminal_ui
+from cairnmind.agents import agent as agent_mod
+from cairnmind.memory import memory_published as mp
+from cairnmind.terminal import terminal_ui
 from cairnmind.config import Settings
-from cairnmind.memory import MemoryConflict
+from cairnmind.memory.memory import MemoryConflict
 
 
 def test_memory_published_helpers_close_and_publish_edges(tmp_path, monkeypatch):
@@ -154,13 +156,13 @@ def test_knowledge_agent_validation_and_source_edge_branches(tmp_path, monkeypat
     assert len(merged["citations"]) == 8
 
     # _source: current_source raising OSError appends warning & re-raises; wrong project_id raises
-    monkeypatch.setattr("cairnmind.ingest.current_source", lambda st, sid: (_ for _ in ()).throw(OSError("disk err")))
+    monkeypatch.setattr("cairnmind.scip.ingest.current_source", lambda st, sid: (_ for _ in ()).throw(OSError("disk err")))
     with pytest.raises(OSError):
         ka._source("s1", "p1", {})
     assert any("Cannot verify current source" in w for w in warnings)
 
     monkeypatch.setattr(
-        "cairnmind.ingest.current_source",
+        "cairnmind.scip.ingest.current_source",
         lambda st, sid: {"id": sid, "project_id": "other", "kind": "file", "uri": "file://a.py", "sha256": "h1", "is_current": True},
     )
     with pytest.raises(ValueError, match="outside this project"):

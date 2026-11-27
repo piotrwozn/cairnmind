@@ -10,11 +10,11 @@ from typer.testing import CliRunner
 
 from cairnmind.cli import app
 from cairnmind.config import Settings
-from cairnmind.contract import build_contract, write_contract
-from cairnmind.plans import PlanManager
+from cairnmind.memory.contract import build_contract, write_contract
+from cairnmind.memory.plans import PlanManager
 from cairnmind.store import Store
-from cairnmind.sql import clean_row
-from cairnmind.verification import (criteria_status, load_profiles, run_check, task_definition_hash,
+from cairnmind.storage.sql import clean_row
+from cairnmind.memory.verification import (criteria_status, load_profiles, run_check, task_definition_hash,
                                     verification_status)
 
 
@@ -303,7 +303,7 @@ def test_changing_only_a_proposed_command_keeps_reported_evidence_and_the_defini
 
 def test_a_plan_whose_resave_drops_criteria_links_still_previews_and_snapshots(workspace):
     """Plan revisions hold the store's results: a key added to them breaks every later capture (#325)."""
-    from cairnmind.memory import MemoryManager
+    from cairnmind.memory.memory import MemoryManager
     store, pid, root, settings = workspace
     saved, task = plan(store, pid, root)
     assert task["metadata"]["check_proposals"]
@@ -357,7 +357,7 @@ def test_a_file_where_the_profile_directory_should_be_is_an_error_not_a_crash(wo
 
 
 def test_an_imported_record_cannot_carry_links_the_store_would_refuse(workspace):
-    from cairnmind import memory as portable
+    from cairnmind.memory import memory as portable
 
     for metadata in ({"acceptance_criteria": ["A"], "criterion_checks": {"B": "unit"}},
                      {"acceptance_criteria": ["A"], "criterion_checks": {"A": "not a name"}},
@@ -370,7 +370,7 @@ def test_an_imported_record_cannot_carry_links_the_store_would_refuse(workspace)
 
 
 def test_the_next_task_view_lists_the_check_of_each_criterion_it_shows(workspace):
-    from cairnmind.mcp_server import _next_task_view
+    from cairnmind.mcp.mcp_server import _next_task_view
 
     store, pid, root, settings = workspace
     plan(store, pid, root)

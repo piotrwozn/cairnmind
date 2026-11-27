@@ -8,13 +8,13 @@ import pytest
 from textual.widgets import Button, Input, Static, TextArea
 
 from cairnmind import cli
-from cairnmind.agent_memory import MEMORY_TOOLS
-from cairnmind.agent_tools import FILE_TOOLS
-from cairnmind.terminal_i18n import CATALOG
-from cairnmind.terminal_panels import ConfirmModal, SidebarApp
-from cairnmind.terminal_ui import ChoiceModal, FormModal
-from cairnmind.mcp_servers import LOADER_ENV
-from cairnmind.workspace_mcp import LOADER_NOTE, NOTE, REMOVED, SAVED, SAVED_NOT_RUNNABLE, parse_form
+from cairnmind.agents.agent_memory import MEMORY_TOOLS
+from cairnmind.agents.agent_tools import FILE_TOOLS
+from cairnmind.terminal.terminal_i18n import CATALOG
+from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
+from cairnmind.terminal.terminal_ui import ChoiceModal, FormModal
+from cairnmind.mcp.mcp_servers import LOADER_ENV
+from cairnmind.terminal.workspace_mcp import LOADER_NOTE, NOTE, REMOVED, SAVED, SAVED_NOT_RUNNABLE, parse_form
 from test_terminal_panels import settle
 from test_terminal_ux080 import screen_text, setup_ui
 from test_workspace_stage import wait_for

@@ -24,15 +24,17 @@ from mcp.client.stdio import stdio_client
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, first_start, knowledge_mode
+from cairnmind import cli
+from cairnmind.cli_cmds import first_start
+from cairnmind.agents import knowledge_mode
 from cairnmind.config import Settings
-from cairnmind.ingest import index_project_if_changed
-from cairnmind.ollama import OllamaUnavailable
-from cairnmind.retrieval import Retriever
+from cairnmind.scip.ingest import index_project_if_changed
+from cairnmind.agents.ollama import OllamaUnavailable
+from cairnmind.agents.retrieval import Retriever
 from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
-from cairnmind.topology import MODELS_DISABLED
+from cairnmind.cli_cmds.topology import MODELS_DISABLED
 
 from test_external_mcp import clean_environment
 from test_resume_mcp_protocol import ack_arguments, local_service, rejected, tool_result
@@ -196,7 +198,7 @@ def test_held_jobs_run_once_after_models_are_configured_and_a_restart_changes_no
 
 
 def test_the_embedding_fingerprint_is_not_requested_without_models(workspace, monkeypatch):
-    from cairnmind import memory_fingerprint
+    from cairnmind.memory import memory_fingerprint
     settings, store, project, root = workspace
     asked = []
 
@@ -313,7 +315,7 @@ def test_full_text_matches_stay_in_the_project_the_worktree_and_the_session(work
 
 async def test_full_text_matches_leave_out_what_ask_would_hold_back(tmp_path):
     from uuid import uuid4
-    from cairnmind.agent import KnowledgeAgent
+    from cairnmind.agents.agent import KnowledgeAgent
     store = Store(tmp_path / "data")
     pid = store.add_project("ledger", tmp_path)["id"]
     remote = {"provider": "openai_compatible", "base_url": "https://models.example/v1", "allow_remote": True}
@@ -352,7 +354,7 @@ async def test_full_text_matches_leave_out_what_ask_would_hold_back(tmp_path):
 
 
 async def test_a_file_changed_since_indexing_is_said_to_be_left_out(workspace):
-    from cairnmind.agent import KnowledgeAgent
+    from cairnmind.agents.agent import KnowledgeAgent
     settings, store, project, root = workspace
     index_project_if_changed(store, project["id"])
     (root / "notes.md").write_text("The ledger amounts are kept in cents, since the file was edited.\n")

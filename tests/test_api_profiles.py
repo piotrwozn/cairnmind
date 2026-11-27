@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from cairnmind.api_profiles import normalize_profile
-from cairnmind.cockpit_state import CockpitState
+from cairnmind.agents.api_profiles import normalize_profile
+from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.config import Settings
 
 
@@ -97,7 +97,7 @@ def test_preferences_v1_read_is_nonmutating_and_migration_has_exact_backup(tmp_p
     state = CockpitState(settings)
     assert state.load()["version"] == 2
     assert not settings.data_dir.exists()
-    from cairnmind import private_files
+    from cairnmind.pal import private_files
     private_files.ensure_private_dir(state.root)
     original = b'{"version":1,"profiles":[{"id":"codex","client":"codex","label":"Code"},{"id":"claude","client":"claude","label":"Review"}]}\n'
     state.path.write_bytes(original)
@@ -124,7 +124,7 @@ def test_preferences_v1_read_is_nonmutating_and_migration_has_exact_backup(tmp_p
 
 
 def test_preferences_reject_embedded_keys_on_read_without_rewriting(tmp_path):
-    from cairnmind import private_files
+    from cairnmind.pal import private_files
     state = CockpitState(Settings.load(tmp_path / "data"))
     private_files.ensure_private_dir(state.root)
     raw = json.dumps({"version": 2, "profiles": [api(api_key="PRIVATE_KEY_MARKER")]}).encode()

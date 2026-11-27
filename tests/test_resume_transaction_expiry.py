@@ -11,8 +11,8 @@ import time
 
 import pytest
 
-from cairnmind import verification
-from cairnmind.arcade import ArcadeClient
+from cairnmind.memory import verification
+from cairnmind.storage.arcade import ArcadeClient
 
 from test_external_session_writes import fixture as fixture  # noqa: F401 - a fixture
 from test_external_session_writes import post, readback
@@ -189,7 +189,7 @@ def test_a_root_registered_after_the_code_state_was_taken_refuses_the_check(fixt
 
 def test_a_memory_write_rechecks_the_code_as_it_was_when_its_transaction_began(fixture, transactions,
                                                                                monkeypatch):  # noqa: F811
-    from cairnmind.memory import MemoryManager
+    from cairnmind.memory.memory import MemoryManager
     bound = fixture.session("external")
     lock = MemoryManager._publisher_lock
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from cairnmind.cockpit_state import CockpitState
+from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.config import Settings
 
 
@@ -15,7 +15,7 @@ def server(**changes):
 
 
 def test_server_list_round_trips_per_project_and_old_files_load(tmp_path):
-    from cairnmind import private_files
+    from cairnmind.pal import private_files
     settings = Settings.load(tmp_path / "data")
     state = CockpitState(settings)
     assert state.load()["project_mcp_servers"] == {}

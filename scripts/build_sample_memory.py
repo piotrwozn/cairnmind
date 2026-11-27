@@ -65,10 +65,10 @@ def free_port() -> int:
 
 
 def build(store, settings) -> Path:
-    from cairnmind.confirmation import SEED_ROUTE, remember_as_person
-    from cairnmind.memory import MemoryManager
-    from cairnmind.plans import PlanManager
-    from cairnmind.verification import run_check
+    from cairnmind.memory.confirmation import SEED_ROUTE, remember_as_person
+    from cairnmind.memory.memory import MemoryManager
+    from cairnmind.memory.plans import PlanManager
+    from cairnmind.memory.verification import run_check
 
     project = store.add_project("trail-notes", NEUTRAL)["id"]
     notes = {uri: store.snapshot(project, uri, text, "note") for uri, text in NOTES.items()}
@@ -137,7 +137,7 @@ def main() -> int:
     for name in list(os.environ):
         if name.startswith(("CAIRNMIND_", "DEVBRAIN_")) and not name.endswith(("_HOME", "_ARCADE_DIST")):
             os.environ.pop(name)
-    from cairnmind.engine import install_engine, runtime_dir, start_engine, stop_engine
+    from cairnmind.storage.engine import install_engine, runtime_dir, start_engine, stop_engine
     from cairnmind.store import Store
 
     distribution = Path(os.environ.get("CAIRNMIND_ARCADE_DIST") or os.environ.get("DEVBRAIN_ARCADE_DIST") or runtime_dir(user))

@@ -2,7 +2,7 @@
 import json
 from types import SimpleNamespace
 
-from cairnmind.integrations import drain_hook_spool
+from cairnmind.memory.integrations import drain_hook_spool
 
 
 class Store:

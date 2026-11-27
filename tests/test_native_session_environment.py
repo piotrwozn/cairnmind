@@ -14,7 +14,7 @@ import tomllib
 import pytest
 
 from cairnmind.config import Settings
-from cairnmind import integrations
+from cairnmind.memory import integrations
 
 
 @pytest.mark.parametrize("forward_session", [False, True])

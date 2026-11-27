@@ -14,8 +14,8 @@ from conftest import plain_words
 from cairnmind import __version__, cli
 from cairnmind.config import Settings
 from cairnmind.service import create_app
-from cairnmind.service_version import instance_id
-from cairnmind.sessions import SessionManager
+from cairnmind.cli_cmds.service_version import instance_id
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
 
 
@@ -51,7 +51,7 @@ def _headers(store):
 
 
 def _snapshot(store, project):
-    from cairnmind.memory import MemoryManager
+    from cairnmind.memory.memory import MemoryManager
     return MemoryManager(store).snapshot(project["id"])
 
 
@@ -465,7 +465,7 @@ def test_memory_settings_reject_coerced_or_invalid_values(memory_workspace, body
 
 @pytest.mark.parametrize(("status", "exit_code"), [("passed", 0), ("failed", 1), ("not_run", 3)])
 def test_memory_evaluation_cli_preserves_exit_contract(tmp_path, monkeypatch, status, exit_code):
-    from cairnmind import memory_evaluation
+    from cairnmind.agents import memory_evaluation
     calls = []
 
     def evaluate(settings, *, report_dir=None):

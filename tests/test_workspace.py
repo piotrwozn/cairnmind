@@ -17,8 +17,8 @@ import time
 import pytest
 
 from cairnmind.config import Settings
-from cairnmind.cockpit_state import CockpitState
-from cairnmind.workspace import WorkspaceManager, workspace_status
+from cairnmind.terminal.cockpit_state import CockpitState
+from cairnmind.terminal.workspace import WorkspaceManager, workspace_status
 
 
 class Broker:
@@ -242,7 +242,7 @@ def test_outer_keyboard_claim_requires_exact_identity_and_explicit_takeover(tmp_
 
 
 def test_the_read_only_line_of_an_observer_reads_in_the_workspace_language(tmp_path, monkeypatch):
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal.cockpit_state import CockpitState
     settings = Settings.load(tmp_path / "data")
     CockpitState(settings).update({"language": "pl"})
     workspace = WorkspaceManager(settings)
@@ -258,7 +258,7 @@ def test_the_read_only_line_of_an_observer_reads_in_the_workspace_language(tmp_p
 
 @pytest.mark.parametrize("stop_clients", [False, True])
 def test_detach_preserves_ui_and_stop_only_targets_explicitly_adopted_runs(manager, monkeypatch, stop_clients):
-    from cairnmind import workspace as module
+    from cairnmind.terminal import workspace as module
     workspace, broker, project = manager
     workspace.create(start_supervisor=False)
     before = rows(workspace)
@@ -277,7 +277,7 @@ def test_detach_preserves_ui_and_stop_only_targets_explicitly_adopted_runs(manag
 
 def test_stop_with_clients_skips_ended_runs_and_saves_what_it_stopped(manager, monkeypatch):
     # #154: every ended run was reported as client_stop_unavailable, and the saved slots still said running.
-    from cairnmind import workspace as module
+    from cairnmind.terminal import workspace as module
     workspace, broker, project = manager
     workspace.create(start_supervisor=False)
     base = {"generation": 1, "client": "codex", "profile_id": "codex", "project_id": project["id"],
@@ -301,8 +301,8 @@ def test_stop_with_clients_skips_ended_runs_and_saves_what_it_stopped(manager, m
 
 def test_stop_with_clients_still_reports_an_ended_run_whose_pane_cannot_be_cleared(manager, monkeypatch):
     # #243: clearing the dead pane of an ended run is best effort; a refused stop is not a client error.
-    from cairnmind import workspace as module
-    from cairnmind.terminal_client import BrokerError
+    from cairnmind.terminal import workspace as module
+    from cairnmind.terminal.terminal_client import BrokerError
     workspace, broker, project = manager
     workspace.create(start_supervisor=False)
     broker.value["runs"] = [{"id": "ended", "generation": 3, "project_id": project["id"], "lifecycle": "failed"}]
@@ -327,8 +327,8 @@ def test_stop_with_clients_still_reports_an_ended_run_whose_pane_cannot_be_clear
 def test_stop_with_clients_forgets_a_run_the_broker_no_longer_knows(manager, monkeypatch, answer):
     # #161: an adopted run missing from the broker's records was reported as client_stop_unavailable.
     # 400 is how a broker before this change answers; 404 is the answer now.
-    from cairnmind import workspace as module
-    from cairnmind.terminal_client import BrokerError
+    from cairnmind.terminal import workspace as module
+    from cairnmind.terminal.terminal_client import BrokerError
     workspace, broker, project = manager
     workspace.create(start_supervisor=False)
     broker.value["runs"] = [{"id": "live", "generation": 1, "project_id": project["id"], "lifecycle": "running"}]
@@ -351,8 +351,8 @@ def test_stop_with_clients_forgets_a_run_the_broker_no_longer_knows(manager, mon
 @pytest.mark.parametrize("answer", [(503, "The local broker does not answer."), (404, "Not Found")])
 def test_stop_with_clients_still_reports_a_broker_that_does_not_answer(manager, monkeypatch, answer):
     # A 404 that does not name the run (a route the service lacks) says nothing about the run (#161 review).
-    from cairnmind import workspace as module
-    from cairnmind.terminal_client import BrokerError
+    from cairnmind.terminal import workspace as module
+    from cairnmind.terminal.terminal_client import BrokerError
     workspace, broker, project = manager
     workspace.create(start_supervisor=False)
     workspace._adopt(["kept"])
@@ -366,8 +366,8 @@ def test_stop_with_clients_still_reports_a_broker_that_does_not_answer(manager, 
     assert workspace.state.read()["run_ids"] == ["kept"]  # still adopted: it may be running
 
 def test_a_real_tmux_server_holds_and_answers_the_key(manager, tmp_path):
-    from cairnmind import person_proof
-    from cairnmind.workspace import SESSION
+    from cairnmind.terminal import person_proof
+    from cairnmind.terminal.workspace import SESSION
     workspace, _, _ = manager
     workspace.create(start_supervisor=False)
     kind, key = person_proof.read_key(workspace.settings, workspace.socket, workspace.binary)
@@ -395,7 +395,7 @@ def test_a_real_tmux_server_holds_and_answers_the_key(manager, tmp_path):
 
 
 def test_a_server_without_the_option_and_a_missing_server_answer_no_key_and_unavailable(manager, short_tmp_path):
-    from cairnmind import person_proof
+    from cairnmind.terminal import person_proof
     workspace, _, _ = manager
     socket = short_tmp_path / "bare.sock"
     # No server there: unavailable, and asking starts none.

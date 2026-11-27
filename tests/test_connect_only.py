@@ -18,15 +18,15 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import engine, store_writer
-from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.storage import engine, store_writer
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.cli import app
 from cairnmind.config import Settings
-from cairnmind.database_mode import connect_only, mode
-from cairnmind.ingest import index_project
+from cairnmind.storage.database_mode import connect_only, mode
+from cairnmind.scip.ingest import index_project
 from cairnmind.store import Store
-from cairnmind.store_readonly import StoreNotReady
-from cairnmind.store_writer import StoreNotWriter, StoreWriterLost
+from cairnmind.storage.store_readonly import StoreNotReady
+from cairnmind.storage.store_writer import StoreNotWriter, StoreWriterLost
 from database_relay import Relay
 from test_database_credentials import certificate_authority
 from test_database_user import this_machine_address
@@ -200,8 +200,8 @@ def test_a_password_written_into_the_address_is_never_shown_and_the_setting_is_n
         assert result.exit_code == code, (command, result.output, result.exception)
         shown.append(result.output + str(result.exception))
     settings = Settings.load(data)
-    from cairnmind.database_credentials import doctor_block
-    from cairnmind.database_mode import address, missing_database, unavailable, version_problem
+    from cairnmind.storage.database_credentials import doctor_block
+    from cairnmind.storage.database_mode import address, missing_database, unavailable, version_problem
     block = doctor_block(settings)
     shown += [json.dumps(block), missing_database(settings), unavailable(settings),
               version_problem(settings, {"version": "1.0"})]
@@ -238,7 +238,7 @@ def test_engine_status_with_only_the_address_is_refused_and_names_what_is_missin
     assert f"arcade_database (the name {settings.arcade_database}, derived from this data directory's path" in message
     # doctor says the same (second trial of #242): the server was not asked, so it is not reported as one that
     # does not answer, which an installer turns into "the database engine does not answer".
-    from cairnmind.database_credentials import doctor_block
+    from cairnmind.storage.database_credentials import doctor_block
     block = doctor_block(settings)
     assert block["available"] is None and "needs the password set where that server runs" in block["error"]
     # The first command saved config.json with the default root in it (#242 review): later commands still
@@ -257,7 +257,7 @@ def test_another_host_with_only_the_address_names_root_the_password_and_the_data
                                                                                      monkeypatch):
     """On a host other than this machine the root refusal came alone (#242 review): it named neither the
     missing password nor the derived database name. A user set in config.json is not called the default."""
-    from cairnmind.database_credentials import problem
+    from cairnmind.storage.database_credentials import problem
     data = data_directory(tmp_path)
     monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", "https://db.example.org:2490")
     settings = Settings.load(data)
@@ -385,7 +385,7 @@ def test_an_unsupported_server_version_is_reported_and_refused_with_what_is_supp
     shown = cli(data, "engine", "status")
     assert shown.exit_code == 1 and json.loads(shown.output)["problem"] == status["problem"]
 
-    from cairnmind.database_credentials import doctor_block
+    from cairnmind.storage.database_credentials import doctor_block
     block = doctor_block(settings)
     assert block["mode"] == "connect" and block["version"] == "25.12.1" and block["version_matches"] is False
     assert f"Supported: {pinned}" in block["error"] and "database_available" not in block
@@ -480,7 +480,7 @@ def test_evaluations_that_create_databases_are_refused_in_one_sentence(tmp_path,
 
 
 def test_doctor_does_not_look_for_java_on_an_installation_that_only_connects(tmp_path, test_engine, monkeypatch):
-    from cairnmind import integrations
+    from cairnmind.memory import integrations
     data = data_directory(tmp_path)
     connect(monkeypatch, "http://127.0.0.1:2999", "Some-password-1234")
     settings = Settings.load(data, create=True)

@@ -32,10 +32,10 @@ import uvicorn
 from websockets.sync.client import connect
 
 from conftest import status_flags, terminal_attributes, time_budget
-from cairnmind import client_auth
-from cairnmind.client_runtime import NativeRuntime
-from cairnmind.cockpit import _birth, create_cockpit_app, instance_id
-from cairnmind.cockpit_state import _atomic
+from cairnmind.agents import client_auth
+from cairnmind.agents.client_runtime import NativeRuntime
+from cairnmind.terminal.cockpit import _birth, create_cockpit_app, instance_id
+from cairnmind.terminal.cockpit_state import _atomic
 from cairnmind.config import Settings
 from cairnmind.service import create_app
 from cairnmind.store import Store
@@ -156,7 +156,7 @@ class TerminalStack:
         self.base, self.patch = Path(base), monkeypatch
         self.tmux = available_tmux()
         self.settings = Settings.load(self.base / "data", create=True)
-        from cairnmind.cockpit_state import CockpitState
+        from cairnmind.terminal.cockpit_state import CockpitState
         # These geometry/resize scenarios exercise the optional full cockpit.
         # Focus mode is verified separately and intentionally stays compact.
         CockpitState(self.settings).update({"view": "cockpit"})
@@ -415,8 +415,8 @@ async def read_pty_until(fd, expected, timeout=8):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ending", ["native_exit", "signal"])
 async def test_raw_bridge_real_pty_input_paste_resize_and_terminal_restore(terminal_stack, ending):
-    from cairnmind.terminal_bridge import RawTerminalBridge
-    from cairnmind.terminal_client import BrokerClient
+    from cairnmind.terminal.terminal_bridge import RawTerminalBridge
+    from cairnmind.terminal.terminal_client import BrokerClient
 
     stack = terminal_stack
     run = stack.start_clients()[0]
@@ -463,7 +463,7 @@ async def test_raw_bridge_real_pty_input_paste_resize_and_terminal_restore(termi
 
 @pytest.fixture
 def outer_workspace(terminal_stack):
-    from cairnmind.workspace import WorkspaceManager
+    from cairnmind.terminal.workspace import WorkspaceManager
 
     manager = WorkspaceManager(terminal_stack.settings, tmux_binary=terminal_stack.tmux)
     manager.create(start_supervisor=False)
@@ -554,9 +554,9 @@ async def wait_async(predicate, timeout=10, seen=None):
 
 @pytest.mark.asyncio
 async def test_actual_textual_graph_live_source_selection_opens_exact_inspector_source(terminal_stack):
-    from cairnmind.terminal_graph import GraphApp
-    from cairnmind.terminal_inspector import InspectorApp
-    from cairnmind.workspace_state import WorkspaceState
+    from cairnmind.terminal.terminal_graph import GraphApp
+    from cairnmind.terminal.terminal_inspector import InspectorApp
+    from cairnmind.terminal.workspace_state import WorkspaceState
 
     stack = terminal_stack
     project = stack.projects[0]
@@ -593,8 +593,8 @@ async def test_actual_textual_graph_live_source_selection_opens_exact_inspector_
 
 @pytest.mark.asyncio
 async def test_actual_sidebar_clone_snapshot_preflight_requires_confirmation_and_preserves_scope(terminal_stack, tmp_path):
-    from cairnmind.terminal_panels import SidebarApp
-    from cairnmind.terminal_published_import import archive_replaced
+    from cairnmind.terminal.terminal_panels import SidebarApp
+    from cairnmind.terminal.terminal_published_import import archive_replaced
 
     source = terminal_stack
     project = source.projects[0]
@@ -683,7 +683,7 @@ async def test_attached_outer_terminal_prefix_unicode_paste_compact_resize_and_d
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 55, 180, 0, 0))
     attributes = terminal_attributes(slave)
     environment = {**os.environ, "TERM": "xterm-256color"}
-    process = subprocess.Popen([sys.executable, "-I", "-m", "cairnmind.native_worker", "--attach",
+    process = subprocess.Popen([sys.executable, "-I", "-m", "cairnmind.terminal.native_worker", "--attach",
         "--tmux-bin", stack.tmux, "--socket", str(manager.socket), "--session", "cairnmind-ui"],
         stdin=slave, stdout=slave, stderr=slave, env=environment, start_new_session=True)
     drain = None
@@ -718,7 +718,7 @@ async def test_attached_outer_terminal_prefix_unicode_paste_compact_resize_and_d
                     "input": [row.get("text") for row in stack.trace("input")][-6:],
                     # A focus process still running is a slow focus, not a lost key.
                     "focus_processes": [line for line in subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout.splitlines()
-                                        if "cairnmind.workspace" in line and "--focus" in line],
+                                        if "cairnmind.terminal.workspace" in line and "--focus" in line],
                     "client1_tail": manager.tmux("capture-pane", "-p", "-t", panes["client1"], check=False).stdout.rstrip()[-300:]}
 
         def root_table():
@@ -799,7 +799,7 @@ class OuterTerminalClient:
         script = """import fcntl, sys, termios
 from pathlib import Path
 from cairnmind.config import Settings
-from cairnmind.workspace import WorkspaceManager
+from cairnmind.terminal.workspace import WorkspaceManager
 fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 manager = WorkspaceManager(Settings.load(Path(sys.argv[1])), tmux_binary=sys.argv[2])
 raise SystemExit(manager.attach(takeover=sys.argv[3] == 'yes'))

@@ -19,7 +19,7 @@ from typer.testing import CliRunner
 
 from cairnmind.cli import app
 from cairnmind.config import Settings, env_names
-from cairnmind.mcp_server import ServiceClient, create_server
+from cairnmind.mcp.mcp_server import ServiceClient, create_server
 from cairnmind.store import ORIGIN_METADATA, Store
 import test_resume_mcp_protocol
 from test_resume_mcp_protocol import ack_arguments, local_service, rejected, tool_result
@@ -176,7 +176,7 @@ async def test_the_cursor_scenario_ask_packet_ack_remember(tmp_path, clean_env, 
 
 
 async def test_an_unknown_native_transcript_keeps_the_external_client_from_writing(tmp_path, clean_env):
-    from cairnmind.ingest import import_history
+    from cairnmind.scip.ingest import import_history
 
     root = repository(tmp_path / "repo")
     settings = Settings.load(tmp_path / "memory", create=True)

@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from cairnmind import workspace as ws
+from cairnmind.terminal import workspace as ws
 from cairnmind.config import Settings
-from cairnmind.terminal_client import BrokerError
+from cairnmind.terminal.terminal_client import BrokerError
 from conftest import own_time
 
 
@@ -96,7 +96,7 @@ def test_workspace_launch_detach_stop_and_run_helpers(tmp_path, monkeypatch):
     # Windows launch_workspace delegates to run_standalone
     monkeypatch.setattr(ws.sys, "stdin", SimpleNamespace(isatty=lambda: True))
     monkeypatch.setattr(ws.sys, "platform", "win32")
-    monkeypatch.setattr("cairnmind.terminal_standalone.run_standalone", lambda s: 42)
+    monkeypatch.setattr("cairnmind.terminal.terminal_standalone.run_standalone", lambda s: 42)
     assert ws.launch_workspace(settings) == 42
 
     # POSIX launch_workspace paths: inside own tmux pane & join workspace cancel/takeover
@@ -115,9 +115,9 @@ def test_workspace_launch_detach_stop_and_run_helpers(tmp_path, monkeypatch):
 
     monkeypatch.delenv("TMUX", raising=False)
     monkeypatch.setattr(mgr, "clients", lambda: [{"readonly": False}])
-    monkeypatch.setattr("cairnmind.terminal_commands.JoinWorkspaceApp", lambda s: SimpleNamespace(run=lambda: None))
+    monkeypatch.setattr("cairnmind.terminal.terminal_commands.JoinWorkspaceApp", lambda s: SimpleNamespace(run=lambda: None))
     assert ws.launch_workspace(settings, takeover=False) == 0
-    monkeypatch.setattr("cairnmind.terminal_commands.JoinWorkspaceApp", lambda s: SimpleNamespace(run=lambda: "takeover"))
+    monkeypatch.setattr("cairnmind.terminal.terminal_commands.JoinWorkspaceApp", lambda s: SimpleNamespace(run=lambda: "takeover"))
     assert ws.launch_workspace(settings, takeover=False) == 7
 
     # detach_workspace absent vs running
@@ -182,9 +182,9 @@ def test_workspace_main_flag_dispatch(tmp_path, monkeypatch):
         toggle_zoom=lambda: called.append(("zoom",)),
     )
     monkeypatch.setattr(ws, "WorkspaceManager", lambda *a, **k: fake_mgr)
-    monkeypatch.setattr("cairnmind.terminal_commands.CommandPaletteApp", lambda m, help_only=False: SimpleNamespace(run=lambda: "help"))
-    monkeypatch.setattr("cairnmind.terminal_commands.dispatch_command", lambda m, c: called.append(("dispatch", c)))
-    monkeypatch.setattr("cairnmind.workspace_finding.run_finding_form", lambda m, tty: called.append(("finding_ui", tty)))
+    monkeypatch.setattr("cairnmind.terminal.terminal_commands.CommandPaletteApp", lambda m, help_only=False: SimpleNamespace(run=lambda: "help"))
+    monkeypatch.setattr("cairnmind.terminal.terminal_commands.dispatch_command", lambda m, c: called.append(("dispatch", c)))
+    monkeypatch.setattr("cairnmind.terminal.workspace_finding.run_finding_form", lambda m, tty: called.append(("finding_ui", tty)))
 
     for flags in (
         ["--palette-ui"],

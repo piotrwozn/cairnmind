@@ -65,7 +65,7 @@ class Text:
 
 def embed_all(store, embedder) -> None:
     """Run every embed job as the service does: the model embeds the chunk and the job completes."""
-    from cairnmind.retrieval import Retriever
+    from cairnmind.agents.retrieval import Retriever
     retriever = Retriever(store, store.settings, embedder)
 
     async def drain():
@@ -81,7 +81,7 @@ def measured(store, scratch: Path, step: str, units: int, unit: str, settle=None
     ``settle`` runs first when given and returns the size of the database directory: the engine keeps files it has
     not yet written while it runs (a 20 MiB difference on a nearly empty store), so the script stops it, reads the
     directory and starts it again."""
-    from cairnmind import store_size
+    from cairnmind.storage import store_size
     on_disk = settle() if settle else None
     report = store_size.measure(store)
     collections = {row["name"]: {"rows": row["rows"], "bytes": row["bytes"]} for row in report["collections"]}
@@ -107,7 +107,7 @@ def per_unit(steps: list[dict]) -> None:
 def grow(store, scratch, *, events: int = 500, event_sizes=EVENT_SIZES, files: int = 10, file_sizes=FILE_SIZES,
          revisions: int = 20, dimension: int = DIMENSION, seed: int = 1, settle=None) -> dict:
     """Write the events and the revisions into ``store`` and return the steps. ``scratch`` must lie outside its data directory."""
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
     scratch = Path(scratch)
     root = scratch / "project"
     root.mkdir(parents=True, exist_ok=True)
@@ -190,9 +190,9 @@ def main() -> int:
     parser.add_argument("--dimension", type=int, default=DIMENSION, help="numbers in a fake vector (default 1024)")
     parser.add_argument("--json", type=Path, help="also write the whole report here")
     arguments = parser.parse_args()
-    from cairnmind import process_identity
+    from cairnmind.pal import process_identity
     from cairnmind.config import Settings, env_value
-    from cairnmind.engine import install_engine, start_engine, stop_engine
+    from cairnmind.storage.engine import install_engine, start_engine, stop_engine
     from cairnmind.store import Store
     with tempfile.TemporaryDirectory(prefix="cairnmind-growth-") as temporary:
         base = Path(temporary)

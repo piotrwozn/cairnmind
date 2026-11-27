@@ -10,9 +10,9 @@ import time
 
 import pytest
 
-from cairnmind.cockpit_state import CockpitState
-from cairnmind.terminal_i18n import tr
-from cairnmind.workspace import HINT_KEYS, HINT_SHORT, border_hint, tmux_chrome
+from cairnmind.terminal.cockpit_state import CockpitState
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.workspace import HINT_KEYS, HINT_SHORT, border_hint, tmux_chrome
 from test_workspace import manager as manager  # noqa: F401
 
 STYLE = re.compile(r"#\[[^]]*\]")
@@ -38,7 +38,7 @@ def expanded(workspace, terminal, pane):
 @pytest.mark.parametrize("language", ["en", "pl"])
 @pytest.mark.parametrize(("size", "expected"), [((80, 24), HINT_SHORT), ((180, 55), HINT_KEYS)])
 def test_real_tmux_draws_the_keys_on_the_active_border_only(manager, language, size, expected):  # noqa: F811
-    from cairnmind.terminal_preview import PreviewTerminal
+    from cairnmind.terminal.terminal_preview import PreviewTerminal
     workspace, _, project = manager
     CockpitState(workspace.settings).update({"view": "focus", "language": language})
     workspace.create(start_supervisor=False)
@@ -73,7 +73,7 @@ def test_real_tmux_draws_the_keys_on_the_active_border_only(manager, language, s
 
 
 def test_a_read_only_terminal_is_told_only_how_to_leave(manager):  # noqa: F811
-    from cairnmind.terminal_preview import PreviewTerminal
+    from cairnmind.terminal.terminal_preview import PreviewTerminal
     workspace, _, project = manager
     CockpitState(workspace.settings).update({"view": "focus"})
     workspace.create(start_supervisor=False)
@@ -146,8 +146,8 @@ def test_every_word_on_a_border_follows_the_language_without_a_restart(manager):
 
 
 def test_the_widest_polish_border_fits_beside_the_key_at_80_columns(manager):  # noqa: F811
-    from cairnmind.terminal_preview import PreviewTerminal
-    from cairnmind.workspace import STALE_WORDS
+    from cairnmind.terminal.terminal_preview import PreviewTerminal
+    from cairnmind.terminal.workspace import STALE_WORDS
     workspace, _, project = manager
     CockpitState(workspace.settings).update({"view": "focus", "language": "pl"})
     workspace.create(start_supervisor=False)
@@ -187,13 +187,13 @@ def test_the_widest_polish_border_fits_beside_the_key_at_80_columns(manager):  #
     ("resume_required: another session continued this one", "continuity"),
 ])
 def test_a_stale_ack_is_given_a_fixed_reason(message, code):
-    from cairnmind.sessions import STALE_REASONS, stale_reason
+    from cairnmind.memory.sessions import STALE_REASONS, stale_reason
     assert stale_reason(message) == code and code in STALE_REASONS
 
 
 def test_every_stale_reason_has_words_in_both_languages():
-    from cairnmind.sessions import STALE_REASONS
-    from cairnmind.workspace import STALE_WORDS, stale_badge
+    from cairnmind.memory.sessions import STALE_REASONS
+    from cairnmind.terminal.workspace import STALE_WORDS, stale_badge
     assert set(STALE_WORDS) == set(STALE_REASONS)
     for reason in STALE_REASONS:
         assert stale_badge(reason, "en").startswith("stale: ") and stale_badge(reason, "pl") != stale_badge(reason, "en")

@@ -19,11 +19,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from cairnmind import cockpit, engine, process_identity, verification
-from cairnmind.agent_tools import ToolExecutor
-from cairnmind.arcade import ArcadeError
+from cairnmind.terminal import cockpit
+from cairnmind.storage import engine
+from cairnmind.pal import process_identity
+from cairnmind.memory import verification
+from cairnmind.agents.agent_tools import ToolExecutor
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.config import Settings
-from cairnmind.mcp_host import McpServer
+from cairnmind.mcp.mcp_host import McpServer
 
 linux = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="procfs is read on Linux only")
 RUNNING, ZOMBIE = 2, 5  # SRUN, SZOMB of <sys/proc.h>

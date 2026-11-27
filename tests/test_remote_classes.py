@@ -12,11 +12,11 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from cairnmind import memory_egress, memory_models
-from cairnmind.agent import KnowledgeAgent
+from cairnmind.memory import memory_egress, memory_models
+from cairnmind.agents.agent import KnowledgeAgent
 from cairnmind.config import Settings
-from cairnmind.ollama import OllamaUnavailable
-from cairnmind.retrieval import Retriever
+from cairnmind.agents.ollama import OllamaUnavailable
+from cairnmind.agents.retrieval import Retriever
 from cairnmind.service import schedule_embeddings
 from cairnmind.store import Store
 
@@ -242,7 +242,7 @@ def test_a_chat_record_recited_to_a_project_file_stays_out_of_an_answer(workspac
 
 
 def test_the_plan_node_of_an_external_plan_edited_natively_stays_out_of_the_graph(workspace):
-    from cairnmind.plans import PlanManager
+    from cairnmind.memory.plans import PlanManager
     store, project, data = workspace
     pid, root = project["id"], project["root"]
     external = {"origin_client": "external", "origin_session_id": "x1", "origin_history": "unarchived",
@@ -332,7 +332,7 @@ def test_by_default_only_project_text_goes_to_a_remote_model_server(tmp_path):
 
 
 def test_the_unknown_an_answer_gets_is_a_fixed_sentence_with_a_polish_translation():
-    from cairnmind.terminal_i18n import tr
-    from cairnmind.terminal_i18n_messages import fixed_message
+    from cairnmind.terminal.terminal_i18n import tr
+    from cairnmind.terminal.terminal_i18n_messages import fixed_message
     polish = fixed_message(memory_egress.HELD_BACK_UNKNOWN, lambda text: tr(text, "pl"))
     assert polish != memory_egress.HELD_BACK_UNKNOWN and "memory_remote_classes" in polish

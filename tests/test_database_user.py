@@ -15,10 +15,10 @@ import uuid
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.cli import app
 from cairnmind.config import Settings
-from cairnmind.ingest import index_project
+from cairnmind.scip.ingest import index_project
 from cairnmind.store import Store
 from test_database_credentials import certificate_authority
 
@@ -130,7 +130,7 @@ def test_an_existing_user_gets_no_second_database_and_nothing_is_left_behind(ded
     with closing(ArcadeClient(replace(arcade_test_engine[0], arcade_database=second))) as root:
         assert root.database_exists() is False
     # The installation's own check says the same thing instead of "does not exist, run create-user".
-    from cairnmind.database_mode import missing_database
+    from cairnmind.storage.database_mode import missing_database
     said = " ".join(missing_database(Settings.load(data)).split())
     assert f"or the user {name} has no rights on it" in said and "each database gets its own user" in said
 

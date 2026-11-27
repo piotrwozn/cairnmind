@@ -7,10 +7,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
-from cairnmind import conflicts
-from cairnmind.evidence import evidence_states
-from cairnmind.inspector import Inspector, InspectorNotFound
-from cairnmind.inspector_api import attach_inspector_routes
+from cairnmind.memory import conflicts
+from cairnmind.memory.evidence import evidence_states
+from cairnmind.terminal.inspector import Inspector, InspectorNotFound
+from cairnmind.terminal.inspector_api import attach_inspector_routes
 from cairnmind.store import Store
 
 from conftest import as_person

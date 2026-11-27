@@ -8,12 +8,13 @@ import sys
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, importers
+from cairnmind import cli
+from cairnmind.memory import importers
 from cairnmind.config import Settings
-from cairnmind.evidence import evidence_states
-from cairnmind.inspector import Inspector
-from cairnmind.retrieval import Retriever
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.evidence import evidence_states
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.agents.retrieval import Retriever
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
 
 runner = CliRunner()

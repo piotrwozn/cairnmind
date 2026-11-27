@@ -13,7 +13,10 @@ from fastapi.testclient import TestClient
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, doctor_attention, integrations, migration, sqlite_telemetry
+from cairnmind import cli
+from cairnmind.cli_cmds import doctor_attention
+from cairnmind.memory import integrations
+from cairnmind.storage import migration, sqlite_telemetry
 from cairnmind.config import Settings
 from cairnmind.service import create_app
 from cairnmind.store import Store

@@ -9,12 +9,12 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.cockpit import create_cockpit_app
-from cairnmind.cockpit_state import CockpitState
+from cairnmind.terminal.cockpit import create_cockpit_app
+from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.config import Settings
-from cairnmind.plans import PlanManager
+from cairnmind.memory.plans import PlanManager
 from cairnmind.store import Store
-from cairnmind.terminal_client import BrokerClient as RealBrokerClient
+from cairnmind.terminal.terminal_client import BrokerClient as RealBrokerClient
 from test_cockpit_server import ORIGIN, Runtime, login
 
 STAGES = {"implement": "codex", "review": "claude", "test": "unit"}
@@ -143,7 +143,7 @@ def test_cli_prints_a_launch_command_only_when_it_does_exactly_what_the_map_says
 
 def running_cockpit(monkeypatch, answer):
     """`stage next` while a cockpit runs: the real broker client, its answers from `answer`."""
-    from cairnmind import terminal_client
+    from cairnmind.terminal import terminal_client
     seen, real = [], RealBrokerClient
 
     def handler(request):
@@ -157,7 +157,7 @@ def running_cockpit(monkeypatch, answer):
         if answer == "timeout":
             raise httpx.ReadTimeout("slow", request=request)
         return answer(request)
-    monkeypatch.setattr("cairnmind.cockpit.cockpit_status", lambda settings: {
+    monkeypatch.setattr("cairnmind.terminal.cockpit.cockpit_status", lambda settings: {
         "available": True, "url": "http://127.0.0.1:9", "version_matches": True})
     monkeypatch.setattr(terminal_client, "BrokerClient",
                         lambda settings, **kwargs: real(settings, transport=httpx.MockTransport(handler)))
@@ -175,7 +175,7 @@ def running_cockpit(monkeypatch, answer):
     ("timeout", "unknown"), ("unreachable", "unknown")])
 def test_cli_readiness_asks_the_running_cockpit_and_an_error_answer_is_not_startable(
         tmp_path, monkeypatch, answer, credential):
-    from cairnmind.api_runtime import STATUS_TIMEOUT, cli_stage_readiness
+    from cairnmind.agents.api_runtime import STATUS_TIMEOUT, cli_stage_readiness
     settings = Settings.load(tmp_path / "data", create=True)
     seen = running_cockpit(monkeypatch, answer)
     profile = {"id": "api-cloud", "client": "api", "label": "Cloud API", "credential_ref": "profile:api-cloud"}
@@ -232,11 +232,11 @@ def test_cli_describes_an_agent_stage_and_prints_no_command_for_it(planned, monk
     assert value["credential"] == "configured_unchecked" and "fixture-not-a-real-key" not in output
 
     CockpitState(settings).update({"project_stages": {project["id"]: {"implement": PILOT}}})
-    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
+    monkeypatch.setattr("cairnmind.agents.copilot_adapter.runtime_status", lambda settings=None: {
         "available": False, "code": "copilot_sdk_missing"})
     output = ask()
     assert "GitHub Copilot is not prepared on this computer." in output and "Model: default model" in output
-    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
+    monkeypatch.setattr("cairnmind.agents.copilot_adapter.runtime_status", lambda settings=None: {
         "available": True, "code": "ready"})
     value = json.loads(ask("--json"))
     assert (value["action"], value["command"], value["command_reason"]) == ("start_slot", None, "agent_client")
@@ -294,8 +294,8 @@ def test_cockpit_stage_is_read_only_and_never_starts_an_assistant(cockpit):
 
 def test_two_step_plan_hands_implement_to_codex_and_review_to_claude_each_with_its_own_ack(tmp_path):
     """The acceptance scenario with a fake runner: the router picks, the launcher's packet is ACKed."""
-    from cairnmind.sessions import SessionManager
-    from cairnmind.stages import project_routing, resolve_stage
+    from cairnmind.memory.sessions import SessionManager
+    from cairnmind.terminal.stages import project_routing, resolve_stage
     from test_brief import repository
     root = repository(tmp_path / "repo")
     store = Store(tmp_path / "memory")
@@ -379,11 +379,11 @@ def test_cockpit_stage_reads_an_agent_credential_and_runtime_without_starting_an
     assert "FIXTURE-SESSION-KEY" not in json.dumps(value)
 
     CockpitState(settings).update({"project_stages": {project["id"]: {"review": PILOT}}})
-    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
+    monkeypatch.setattr("cairnmind.agents.copilot_adapter.runtime_status", lambda settings=None: {
         "available": False, "code": "copilot_sdk_missing"})
     value = stage()
     assert (value["action"], value["problem"], value["runtime"]) == ("none", "runtime_missing", "copilot_sdk_missing")
-    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
+    monkeypatch.setattr("cairnmind.agents.copilot_adapter.runtime_status", lambda settings=None: {
         "available": True, "code": "ready"})
     value = stage()
     assert (value["action"], value["client"], value["credential"], value["runtime"]) == (

@@ -9,8 +9,8 @@ from uuid import uuid4
 
 import pytest
 
-from cairnmind import memory as portable
-from cairnmind.quote_healing import (
+from cairnmind.memory import memory as portable
+from cairnmind.memory.quote_healing import (
     DiffHunk,
     QuoteCASConflict,
     ast_enclosing_scope,
@@ -23,10 +23,10 @@ from cairnmind.quote_healing import (
     tokenize_code,
     validate_quote_checksum,
 )
-from cairnmind.sql import utc_now
-from cairnmind.terminal_detail import QUOTE_HEALING_LABELS, evidence_parts, joined
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_theme import TOKENS, evidence_style
+from cairnmind.storage.sql import utc_now
+from cairnmind.terminal.terminal_detail import QUOTE_HEALING_LABELS, evidence_parts, joined
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_theme import TOKENS, evidence_style
 
 
 def _git(root: Path, *args: str) -> str:

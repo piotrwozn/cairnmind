@@ -8,9 +8,9 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from cairnmind import cockpit
+from cairnmind.terminal import cockpit
 from cairnmind.config import Settings
-from cairnmind.terminal_client import BrokerClient, BrokerError
+from cairnmind.terminal.terminal_client import BrokerClient, BrokerError
 
 
 ORIGIN = "http://127.0.0.1:8766"

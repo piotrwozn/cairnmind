@@ -11,8 +11,8 @@ def checkpoint(fixture, client, state):
 
 
 def test_a_native_checkpoint_after_an_external_one_is_not_marked(fixture):
-    from cairnmind.brief import build_brief
-    from cairnmind.evidence import evidence_states
+    from cairnmind.memory.brief import build_brief
+    from cairnmind.memory.evidence import evidence_states
 
     external = checkpoint(fixture, "external", {"summary": "From an external editor", "blockers": ["external"]})
     assert fixture.record(external["id"])["metadata"]["origin_evidence"] == "degraded"
@@ -133,10 +133,10 @@ def test_an_external_plan_save_marks_only_what_it_changes(fixture):
 
 
 def test_an_external_plan_and_task_reach_a_native_session_marked(fixture):
-    from cairnmind.mcp_server import _next_task_view, _plan_header
-    from cairnmind.plans import PlanManager
-    from cairnmind.retrieval import Retriever
-    from cairnmind.sessions import format_packet
+    from cairnmind.mcp.mcp_server import _next_task_view, _plan_header
+    from cairnmind.memory.plans import PlanManager
+    from cairnmind.agents.retrieval import Retriever
+    from cairnmind.memory.sessions import format_packet
 
     native = fixture.manager.prepare(fixture.project["id"], "codex", timeout=0)["packet"]
     assert format_packet(native).startswith("Cairnmind verified resume bootstrap")
@@ -160,9 +160,9 @@ def test_an_external_plan_and_task_reach_a_native_session_marked(fixture):
 
 
 def test_a_search_hit_from_an_external_source_carries_the_mark(fixture):
-    from cairnmind.agent import KnowledgeAgent
-    from cairnmind.ingest import index_pending_sources
-    from cairnmind.retrieval import Retriever
+    from cairnmind.agents.agent import KnowledgeAgent
+    from cairnmind.scip.ingest import index_pending_sources
+    from cairnmind.agents.retrieval import Retriever
 
     checkpoint(fixture, "external", {"summary": "zephyrquill migration was decided in the editor"})
     fixture.store.snapshot(fixture.project["id"], "manual://native-zephyrquill", "zephyrquill notes by a person",

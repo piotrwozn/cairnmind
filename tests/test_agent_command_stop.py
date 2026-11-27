@@ -10,9 +10,10 @@ import time
 
 import pytest
 
-from cairnmind import agent_tools, process_identity
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.agent_tools import ToolExecutor
+from cairnmind.agents import agent_tools
+from cairnmind.pal import process_identity
+from cairnmind.agents.agent_journal import AgentJournal
+from cairnmind.agents.agent_tools import ToolExecutor
 from cairnmind.config import Settings
 
 pytestmark = pytest.mark.skipif(

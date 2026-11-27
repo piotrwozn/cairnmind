@@ -7,9 +7,9 @@ import json
 import httpx
 import pytest
 
-from cairnmind import mcp_server
+from cairnmind.mcp import mcp_server
 from cairnmind.config import Settings
-from cairnmind.mcp_server import ServiceClient, _next_task_view, _saved_plan_view, _saved_record_view, create_server
+from cairnmind.mcp.mcp_server import ServiceClient, _next_task_view, _saved_plan_view, _saved_record_view, create_server
 
 from conftest import plain_words
 

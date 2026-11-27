@@ -16,7 +16,7 @@ if str(ROOT / "tests") not in sys.path:
     sys.path.insert(0, str(ROOT / "tests"))
 
 from cairnmind.config import Settings  # noqa: E402
-from cairnmind.engine import ensure_engine, install_engine, stop_engine  # noqa: E402
+from cairnmind.storage.engine import ensure_engine, install_engine, stop_engine  # noqa: E402
 from contract_store_fixture import (  # noqa: E402
     build_contract_environment,
     capture_cli_json_contracts,

@@ -10,12 +10,13 @@ from fastapi.testclient import TestClient
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import answer_log, ingest
+from cairnmind.agents import answer_log
+from cairnmind.scip import ingest
 from cairnmind.config import Settings
-from cairnmind.ingest import forget_index_signature
+from cairnmind.scip.ingest import forget_index_signature
 from cairnmind.service import create_app
 from cairnmind.store import Store
-from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
+from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 
 
 class LocalModel:
@@ -308,7 +309,7 @@ def test_an_unexpected_log_error_is_only_a_warning(workspace, monkeypatch, caplo
 def test_forgetting_a_project_deletes_its_answer_log(workspace):
     settings, store, project, _ = workspace
     answer_log.append(settings, {**_entry(settings, "Logged?"), "project_id": project["id"]})
-    from cairnmind import project_forget  # the command line refuses since #347; the workspace's route calls this
+    from cairnmind.memory import project_forget  # the command line refuses since #347; the workspace's route calls this
     result = project_forget.delete(settings, store, project["id"])
     assert result["answer_log_deleted"] is True
     assert not answer_log.log_path(settings, project["id"]).parent.exists()

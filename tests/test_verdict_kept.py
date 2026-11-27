@@ -15,15 +15,15 @@ from uuid import uuid4
 
 import pytest
 
-from cairnmind import confirmation, conflicts
-from cairnmind.agent import KnowledgeAgent
-from cairnmind.confirmation import VerdictKept, confirmation_of, confirmation_text, kept_verdict
-from cairnmind.extraction_input import extractor_stamp
-from cairnmind.inspector import Inspector
-from cairnmind.memory_acts import confirm_plan
-from cairnmind.plans import PlanManager
-from cairnmind.retrieval import public_record
-from cairnmind.sql import update_document
+from cairnmind.memory import confirmation, conflicts
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.memory.confirmation import VerdictKept, confirmation_of, confirmation_text, kept_verdict
+from cairnmind.agents.extraction_input import extractor_stamp
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.memory.memory_acts import confirm_plan
+from cairnmind.memory.plans import PlanManager
+from cairnmind.agents.retrieval import public_record
+from cairnmind.storage.sql import update_document
 from cairnmind.store import Store, degraded_origin
 
 from conftest import as_person, confirmed_before_rule, plain_words
@@ -471,7 +471,7 @@ def test_plan_save_and_adopt_in_a_person_terminal_cannot_change_a_confirmed_step
                                                                                 person_terminal):
     # #214: a terminal on both ends is what a person's terminal is, and what a program can fake. No save is a
     # person's act; the person disputes the step in the inspector first.
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     run, data = cli(tmp_path)
     document = tmp_path / "plan.json"
@@ -528,7 +528,7 @@ def test_plan_save_and_adopt_in_a_person_terminal_cannot_change_a_confirmed_step
 
 def test_adopting_tasks_a_person_confirmed_into_a_plan_is_refused_until_the_person_disputes_them(
         tmp_path, monkeypatch, person_terminal):
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     run, data = cli(tmp_path)
     added = run("task", "add", "demo", "Ship the importer", "--plan", "old-group")
@@ -555,7 +555,7 @@ def test_adopting_tasks_a_person_confirmed_into_a_plan_is_refused_until_the_pers
 
 
 def test_plan_adopt_still_adopts_a_group_without_a_persons_confirmation(tmp_path, monkeypatch, person_terminal):
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     run, data = cli(tmp_path)
     task = json.loads(run("task", "add", "demo", "Write the docs", "--plan", "new-group").stdout)

@@ -11,12 +11,12 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.evidence import evidence_states, unanchored
-from cairnmind.ingest import current_source, index_project
-from cairnmind.inspector import Inspector
-from cairnmind.inspector_api import attach_inspector_routes
-from cairnmind.plans import PlanManager
-from cairnmind.sessions import MAX_PACKET_BYTES, SessionManager
+from cairnmind.memory.evidence import evidence_states, unanchored
+from cairnmind.scip.ingest import current_source, index_project
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.terminal.inspector_api import attach_inspector_routes
+from cairnmind.memory.plans import PlanManager
+from cairnmind.memory.sessions import MAX_PACKET_BYTES, SessionManager
 from cairnmind.store import Store
 
 PASSAGE = "LOGIN_ERRORS = {'expired': 401, 'locked': 423}"

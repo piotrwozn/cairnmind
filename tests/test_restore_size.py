@@ -16,9 +16,9 @@ import time
 
 import pytest
 
-from cairnmind import process_identity
+from cairnmind.pal import process_identity
 from cairnmind.config import env_names
-from cairnmind.engine import stop_engine
+from cairnmind.storage.engine import stop_engine
 from cairnmind.store import Store
 
 from conftest import prepare_engine
@@ -104,7 +104,7 @@ def _restore_through_a_slow_link(store, backup, engine, monkeypatch, NODES, EDGE
     """The same restore again, as a connect-only installation through a relay that delays each request by 20 ms (the
     trial's network: 18.5 ms). The trial's clients gave up with a read timeout on ONE request that the server was still
     working on; here no request of the restore comes near the client's wait, a commit included."""
-    from cairnmind import arcade
+    from cairnmind.storage import arcade
     from database_relay import Relay
     monkeypatch.delenv("CAIRNMIND_ARCADE_URL")
     monkeypatch.setenv("CAIRNMIND_ARCADE_DATABASE", store.settings.arcade_database)

@@ -9,9 +9,10 @@ from fastapi.testclient import TestClient
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, ui_server
-from cairnmind.ui_auth import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE, UiSessionAuth
-from cairnmind.ui_server import (
+from cairnmind import cli
+from cairnmind.ui import ui_server
+from cairnmind.ui.ui_auth import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE, UiSessionAuth
+from cairnmind.ui.ui_server import (
     LiveUiAdapter,
     UiEventBus,
     create_ui_app,
@@ -378,16 +379,16 @@ def test_live_adapter_with_fake_store(tmp_path, monkeypatch):
                 }]
             return []
 
-    monkeypatch.setattr("cairnmind.evidence.evidence_states", lambda s, pid, recs, quotes=True: {
+    monkeypatch.setattr("cairnmind.memory.evidence.evidence_states", lambda s, pid, recs, quotes=True: {
         r["id"]: {"evidence_state": "anchored", "quote_survives": True} for r in recs
     })
-    monkeypatch.setattr("cairnmind.verification.capture_code_state", lambda s, pid, root: {
+    monkeypatch.setattr("cairnmind.memory.verification.capture_code_state", lambda s, pid, root: {
         "branch": "main", "head": "1234567890ab", "fingerprint": file_sha,
     })
-    monkeypatch.setattr("cairnmind.verification.verification_status", lambda s, task, root: {"stale": False})
-    monkeypatch.setattr("cairnmind.ingest.index_project_if_changed", lambda s, pid: {"errors": []})
-    monkeypatch.setattr("cairnmind.sql.update_document", lambda tx, tbl, doc, where, params: sessions.__setitem__(0, doc))
-    monkeypatch.setattr("cairnmind.sql.insert_document", lambda tx, tbl, doc: doc)
+    monkeypatch.setattr("cairnmind.memory.verification.verification_status", lambda s, task, root: {"stale": False})
+    monkeypatch.setattr("cairnmind.scip.ingest.index_project_if_changed", lambda s, pid: {"errors": []})
+    monkeypatch.setattr("cairnmind.storage.sql.update_document", lambda tx, tbl, doc, where, params: sessions.__setitem__(0, doc))
+    monkeypatch.setattr("cairnmind.storage.sql.insert_document", lambda tx, tbl, doc: doc)
 
     bus = UiEventBus()
     adapter = LiveUiAdapter(FakeStore(), SimpleNamespace(), bus, default_project="p1")
@@ -561,7 +562,7 @@ def test_ui_server_additional_edge_branches(tmp_path, monkeypatch):
                 ]
             return []
 
-    monkeypatch.setattr("cairnmind.evidence.evidence_states", lambda s, pid, recs, quotes=True: {
+    monkeypatch.setattr("cairnmind.memory.evidence.evidence_states", lambda s, pid, recs, quotes=True: {
         "c-missing": {"evidence_state": "orphaned", "quote_survives": False},
         "c-mutated": {"evidence_state": "evidence_replaced", "quote_survives": False},
         "c-drift": {"evidence_state": "evidence_replaced", "quote_survives": True},
@@ -569,8 +570,8 @@ def test_ui_server_additional_edge_branches(tmp_path, monkeypatch):
         "t-fail": {"evidence_state": "unverified", "quote_survives": None},
         "t-stale": {"evidence_state": "unverified", "quote_survives": None},
     })
-    monkeypatch.setattr("cairnmind.verification.capture_code_state", lambda s, pid, root: {"branch": None, "head": None, "fingerprint": None})
-    monkeypatch.setattr("cairnmind.verification.verification_status", lambda s, task, root: {"stale": task["id"] == "t-stale"})
+    monkeypatch.setattr("cairnmind.memory.verification.capture_code_state", lambda s, pid, root: {"branch": None, "head": None, "fingerprint": None})
+    monkeypatch.setattr("cairnmind.memory.verification.verification_status", lambda s, task, root: {"stale": task["id"] == "t-stale"})
 
     drift_adapter = LiveUiAdapter(DriftStore(), SimpleNamespace(), UiEventBus())
     snap = drift_adapter.snapshot()
@@ -809,7 +810,7 @@ def test_cockpit_phases_1_to_4_mock_and_project_prefix():
 
 def test_cockpit_read_only_mode_and_redaction_gate(monkeypatch):
     """Verify --read-only disables mutations (403) and redaction gate scrubs secrets."""
-    from cairnmind.ui_cockpit import scan_and_redact_payload
+    from cairnmind.ui.ui_cockpit import scan_and_redact_payload
 
     redacted, gate = scan_and_redact_payload({
         "token": "Bearer supersecrettokenvalue1234567890abcdef",
@@ -922,7 +923,7 @@ def test_live_adapter_cockpit_endpoints_respect_person_proof(tmp_path, monkeypat
                 records_tbl.append(doc)
             return doc
         def update_where(self, tbl, *, set_fields=None, remove_fields=(), where=()):
-            from cairnmind.storage_query import normalize_where
+            from cairnmind.storage.storage_query import normalize_where
             target_id = next((c.value for c in normalize_where(where) if getattr(c, "field", None) == "id"), None)
             if tbl == "plans" and set_fields:
                 for i, p in enumerate(plans_tbl):
@@ -942,7 +943,7 @@ def test_live_adapter_cockpit_endpoints_respect_person_proof(tmp_path, monkeypat
             return FakeTx()
 
         def find(self, collection, where=(), *, columns=None, order_by=(), limit=None, distinct=False):
-            from cairnmind.storage_query import normalize_where
+            from cairnmind.storage.storage_query import normalize_where
             conds = normalize_where(where)
             target_id = next((c.value for c in conds if getattr(c, "field", None) == "id" and getattr(c, "op", None) == "="), None)
             if collection == "projects":
@@ -977,14 +978,14 @@ def test_live_adapter_cockpit_endpoints_respect_person_proof(tmp_path, monkeypat
                 return [{"id": "s-1", "uri": str(mod), "kind": "code", "sha256": mod_sha, "is_current": True, "metadata": {"path": "engine.py"}}]
             return []
 
-    monkeypatch.setattr("cairnmind.evidence.evidence_states", lambda s, pid, recs, quotes=True: {
+    monkeypatch.setattr("cairnmind.memory.evidence.evidence_states", lambda s, pid, recs, quotes=True: {
         r["id"]: {"evidence_state": "anchored", "quote_survives": True} for r in recs
     })
-    monkeypatch.setattr("cairnmind.verification.capture_code_state", lambda s, pid, root: {
+    monkeypatch.setattr("cairnmind.memory.verification.capture_code_state", lambda s, pid, root: {
         "branch": "main", "head": "abcdef123456", "fingerprint": mod_sha,
     })
-    monkeypatch.setattr("cairnmind.verification.verification_status", lambda s, task, root: {"stale": False})
-    monkeypatch.setattr("cairnmind.ingest.index_project_if_changed", lambda s, pid: {"changed": 1, "errors": []})
+    monkeypatch.setattr("cairnmind.memory.verification.verification_status", lambda s, task, root: {"stale": False})
+    monkeypatch.setattr("cairnmind.scip.ingest.index_project_if_changed", lambda s, pid: {"changed": 1, "errors": []})
 
     app = create_ui_app(store=LiveFakeStore(), settings=SimpleNamespace(knowledge_agent="disabled"), default_project="proj1")
     client, headers = _auth_client(app)
@@ -1038,7 +1039,7 @@ def test_live_adapter_cockpit_endpoints_respect_person_proof(tmp_path, monkeypat
 
 def test_cockpit_edge_branches_and_coverage(tmp_path, monkeypatch):
     """Cover error, filter, clone, diff, fingerprint, and read-only store edge branches in ui_cockpit."""
-    from cairnmind import ui_cockpit
+    from cairnmind.ui import ui_cockpit
 
     # Origin classification, diff, and safe_file_fingerprint branches
     assert ui_cockpit.classify_record_origin({"origin_evidence": "degraded"})["category"] == "MCP_DEGRADED"
@@ -1163,11 +1164,11 @@ def test_cockpit_edge_branches_and_coverage(tmp_path, monkeypatch):
                 return [{"id": "chk-1", "task_id": "rec-t1", "profile_id": "unit", "passed": False}]
             return []
 
-    monkeypatch.setattr("cairnmind.evidence.evidence_states", lambda s, pid, recs, quotes=True: {
+    monkeypatch.setattr("cairnmind.memory.evidence.evidence_states", lambda s, pid, recs, quotes=True: {
         r["id"]: {"evidence_state": "evidence_replaced", "quote_survives": False} for r in recs
     })
-    monkeypatch.setattr("cairnmind.verification.capture_code_state", lambda s, pid, root: {"branch": "main", "head": "1234567", "fingerprint": "abc"})
-    monkeypatch.setattr("cairnmind.verification.verification_status", lambda s, task, root: {"stale": True})
+    monkeypatch.setattr("cairnmind.memory.verification.capture_code_state", lambda s, pid, root: {"branch": "main", "head": "1234567", "fingerprint": "abc"})
+    monkeypatch.setattr("cairnmind.memory.verification.verification_status", lambda s, task, root: {"stale": True})
 
     ro_adapter = LiveUiAdapter(ReadOnlyStore(), None, UiEventBus(), default_project="p1")
     assert ro_adapter.capabilities()["writable"] is False

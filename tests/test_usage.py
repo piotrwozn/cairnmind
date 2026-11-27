@@ -5,11 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from cairnmind import usage as usage_module
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.api_agent import AgentEngine
+from cairnmind.cli_cmds import usage as usage_module
+from cairnmind.agents.agent_journal import AgentJournal
+from cairnmind.agents.api_agent import AgentEngine
 from cairnmind.config import Settings
-from cairnmind.usage import build_usage, parse_since
+from cairnmind.cli_cmds.usage import build_usage, parse_since
 
 NOW = datetime(2026, 11, 13, 12, 0, tzinfo=timezone.utc)
 PROJECT = {"id": "p1", "name": "My App"}
@@ -732,7 +732,7 @@ def test_codex_weeks_use_the_same_iso_weeks(data):
 
 def test_a_parked_line_that_comes_back_on_a_later_page_is_counted_once(monkeypatch):
     # Import parks a line again under the same id with a new time, so paging by time can return it twice.
-    from cairnmind import codex_usage
+    from cairnmind.cli_cmds import codex_usage
     line = json.dumps({"type": "token_usage_record", "payload": {}})
     rows = [{"id": "a", "created_at": "2026-01-01T00:00:00", "cwd": None, "raw": line},
             {"id": "b", "created_at": "2026-01-01T00:00:01", "cwd": None, "raw": line},

@@ -24,11 +24,11 @@ import uvicorn
 from websockets.sync.client import connect
 
 from cairnmind import __version__
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.api_credentials import CredentialStore
-from cairnmind.api_runtime import RuntimeSupervisor
-from cairnmind.cockpit import _birth, create_cockpit_app, instance_id
-from cairnmind.cockpit_state import CockpitState, _atomic
+from cairnmind.agents.agent_journal import AgentJournal
+from cairnmind.agents.api_credentials import CredentialStore
+from cairnmind.agents.api_runtime import RuntimeSupervisor
+from cairnmind.terminal.cockpit import _birth, create_cockpit_app, instance_id
+from cairnmind.terminal.cockpit_state import CockpitState, _atomic
 from cairnmind.config import Settings
 from cairnmind.service import create_app
 from cairnmind.store import Store

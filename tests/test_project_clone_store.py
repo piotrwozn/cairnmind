@@ -7,7 +7,9 @@ import subprocess
 
 from typer.testing import CliRunner
 
-from cairnmind import cli, ingest, project_clone
+from cairnmind import cli
+from cairnmind.scip import ingest
+from cairnmind.memory import project_clone
 from cairnmind.store import Store
 
 

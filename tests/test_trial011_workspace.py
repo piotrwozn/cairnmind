@@ -7,13 +7,13 @@ import pytest
 from textual.widgets import Button, DataTable, Static, TextArea
 
 from cairnmind.config import Settings
-from cairnmind.terminal_commands import JoinWorkspaceApp
-from cairnmind.terminal_detail import joined, record_parts
-from cairnmind import terminal_i18n
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_inspector import InspectorApp
-from cairnmind.terminal_panels import ConfirmModal, SidebarApp
-from cairnmind.terminal_ui import FormModal, MessageModal
+from cairnmind.terminal.terminal_commands import JoinWorkspaceApp
+from cairnmind.terminal.terminal_detail import joined, record_parts
+from cairnmind.terminal import terminal_i18n
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_inspector import InspectorApp
+from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
+from cairnmind.terminal.terminal_ui import FormModal, MessageModal
 from consent_steps import consent_drawn
 from test_api_panels import ProfileBroker
 from test_terminal_panels import settle, setup
@@ -40,7 +40,7 @@ def body_of(app):
 def inspector(tmp_path, monkeypatch, language):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
     languages = [language]
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: languages[0])
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: languages[0])
     return InspectorApp(settings, broker=broker, workspace=workspace), broker, languages
 
 
@@ -165,7 +165,7 @@ async def test_a_language_switch_keeps_an_import_check_on_screen_with_apply(tmp_
     from textual.widgets import Input
     settings, broker, workspace = setup(tmp_path, monkeypatch, project=False)
     languages = ["en"]
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: languages[0])
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: languages[0])
     app = InspectorApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=size) as pilot:
         await settle(app, pilot)
@@ -277,7 +277,7 @@ def test_a_count_of_items_takes_the_form_its_number_needs(count, en, pl):
 async def test_the_count_and_the_hints_of_the_inspector_stay_out_of_notices(tmp_path, monkeypatch, size, language):
     app, _, _ = inspector(tmp_path, monkeypatch, language)
     published = []
-    monkeypatch.setattr("cairnmind.terminal_notice_feed.publish",
+    monkeypatch.setattr("cairnmind.terminal.terminal_notice_feed.publish",
                         lambda settings, workspace_id, role, rows: published.append(deepcopy(rows)))
     async with app.run_test(size=size) as pilot:
         await settle(app, pilot)
@@ -330,7 +330,7 @@ async def test_only_a_task_shows_its_metadata_state_in_the_list(tmp_path, monkey
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.parametrize(("language", "hint"), [("en", "Enter: select · Esc: back"), ("pl", "Enter: wybierz · Esc: wstecz")])
 async def test_the_join_dialog_moves_with_the_arrows_and_names_its_keys(tmp_path, monkeypatch, size, language, hint):
-    monkeypatch.setattr("cairnmind.terminal_i18n.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_i18n.language_for", lambda settings: language)
     settings = Settings(data_dir=tmp_path / "data")
     app = JoinWorkspaceApp(settings)
     async with app.run_test(size=size) as pilot:
@@ -363,7 +363,7 @@ MISSING_KEY = {
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_start_work_without_a_key_says_what_to_do_once(tmp_path, monkeypatch, size, language):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=size) as pilot:
         await settle(app, pilot)
@@ -388,7 +388,7 @@ async def test_start_work_without_a_key_says_what_to_do_once(tmp_path, monkeypat
     ("pl", "credential_invalid", "Klucz API tego połączenia nie jest poprawnym kluczem.")])
 async def test_check_connection_explains_a_missing_or_invalid_key(tmp_path, monkeypatch, language, code, sentence):
     settings, inner, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     profile = {"id": "api-p", "label": "OpenAI", "client": "api", "provider": "openai", "credential_ref": "profile:api-p"}
 
     class Status(ProfileBroker):
@@ -407,7 +407,7 @@ async def test_check_connection_explains_a_missing_or_invalid_key(tmp_path, monk
         await settle(app, pilot)
         await app.profile_connection(profile)
     result = shown[-1].value
-    from cairnmind.terminal_ui import summary_text
+    from cairnmind.terminal.terminal_ui import summary_text
     text = summary_text(result, language)
     # Second trial: the sentence alone; the bare code is kept for a report under Technical details.
     assert text.splitlines()[0].startswith(sentence) and code not in text
@@ -425,7 +425,7 @@ async def test_check_connection_explains_a_missing_or_invalid_key(tmp_path, monk
     ("en", "command_timeout_seconds", "zero", "Command timeout (seconds): Enter a whole number from 1 to 3600.")])
 async def test_an_out_of_range_limit_names_its_field_and_range(tmp_path, monkeypatch, language, field, value, message):
     settings, inner, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     profile = {"id": "ollama-p", "label": "ollama", "client": "api", "provider": "ollama", "model": "coder",
                "base_url": "http://127.0.0.1:11434"}
     broker = ProfileBroker(inner, [profile])
@@ -448,7 +448,7 @@ async def test_an_out_of_range_limit_names_its_field_and_range(tmp_path, monkeyp
 # pass. Unknown check profile'
 
 def test_an_unknown_check_profile_is_named_with_the_declared_ones():
-    from cairnmind.verification import unknown_profile_message
+    from cairnmind.memory.verification import unknown_profile_message
     assert unknown_profile_message("nope", {"unit": {}, "lint": {}}) == (
         "Unknown check profile: nope. This worktree declares: lint, unit. See cairnmind check profiles PROJECT.")
     assert unknown_profile_message("x\x1b[2J", {}) == (
@@ -464,9 +464,9 @@ def test_the_unknown_check_profile_sentence_reads_in_the_panel_language(declared
     # Review: the sentence the check gives existed in English only.
     from types import SimpleNamespace
 
-    from cairnmind.check_profile_messages import check_error_text
-    from cairnmind.verification import unknown_profile_message
-    from cairnmind.workspace_stage import _outcome, check_summary
+    from cairnmind.memory.check_profile_messages import check_error_text
+    from cairnmind.memory.verification import unknown_profile_message
+    from cairnmind.terminal.workspace_stage import _outcome, check_summary
     english = unknown_profile_message("nope", declared)
     error = "Error: Cairnmind: " + english  # as `cairnmind check run` writes it on stderr
     translate = lambda text: tr(text, "pl")  # noqa: E731
@@ -485,7 +485,7 @@ def test_the_unknown_check_profile_sentence_reads_in_the_panel_language(declared
 def test_a_check_that_never_ran_is_not_reported_as_failed(language):
     from types import SimpleNamespace
 
-    from cairnmind.workspace_stage import _outcome, check_summary
+    from cairnmind.terminal.workspace_stage import _outcome, check_summary
     translate = lambda text: tr(text, language)  # noqa: E731
     never = {"passed": False, "outcome": None, "error": "Error: Cairnmind: Unknown check profile: nope."}
     text = check_summary(never, translate)
@@ -509,7 +509,7 @@ def notice_rows(app):
 @pytest.mark.parametrize("size", [(80, 24), (120, 40), (45, 40)])
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_a_started_stage_names_its_stage_and_assistant_on_the_notice_line(tmp_path, monkeypatch, size, language):
-    from cairnmind import workspace_stage
+    from cairnmind.terminal import workspace_stage
     from test_terminal_ux080 import setup_ui
     from test_workspace_stage import answer_stage, decision
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)

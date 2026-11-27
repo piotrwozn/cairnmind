@@ -12,9 +12,10 @@ import time
 import pytest
 
 from conftest import make_symlink_or_skip
-from cairnmind import agent_tools, process_identity
-from cairnmind.agent_journal import AgentJournal, JournalError
-from cairnmind.agent_tools import MAX_COMMAND_OUTPUT_BYTES, ToolExecutor
+from cairnmind.agents import agent_tools
+from cairnmind.pal import process_identity
+from cairnmind.agents.agent_journal import AgentJournal, JournalError
+from cairnmind.agents.agent_tools import MAX_COMMAND_OUTPUT_BYTES, ToolExecutor
 from cairnmind.config import Settings
 
 IS_WINDOWS = sys.platform == "win32"
@@ -98,7 +99,7 @@ async def test_create_read_patch_and_delete_record_effect_before_result(executor
 
 async def test_read_file_names_the_last_line_it_delivered_whole(executor):
     # #157: a result cut by characters must not let a reader think it holds the line it ends in.
-    from cairnmind.agent_tools import MAX_TEXT_CHARS
+    from cairnmind.agents.agent_tools import MAX_TEXT_CHARS
     line = "x" * 999 + "\n"
     (executor.worktree / "big.txt").write_text(line * (MAX_TEXT_CHARS // 1000 + 5), encoding="utf-8", newline="\n")
     whole = MAX_TEXT_CHARS // 1000
@@ -353,7 +354,7 @@ async def test_command_runs_in_the_verified_directory_after_its_path_is_swapped(
 
 
 async def test_other_profile_custom_credential_env_never_reaches_shell(executor, monkeypatch):
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal.cockpit_state import CockpitState
     state = CockpitState(executor.settings)
     profiles = state.load()["profiles"]
     state.update({"profiles": [*profiles, {"id": "other-vendor", "client": "api", "label": "Other vendor",

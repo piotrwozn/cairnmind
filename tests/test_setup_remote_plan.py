@@ -14,8 +14,9 @@ import pytest
 from typer.testing import CliRunner
 
 from conftest import plain_words
-from cairnmind import cli, database_credentials
-from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind import cli
+from cairnmind.storage import database_credentials
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings, is_own_variable
 
 USER_SECRET = "User-password-for-the-plan-1"

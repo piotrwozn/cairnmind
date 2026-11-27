@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from cairnmind import ingest
-from cairnmind.parsing import analyze_code
+from cairnmind.scip import ingest
+from cairnmind.scip.parsing import analyze_code
 
 
 def write(root: Path, name: str, text: str) -> None:

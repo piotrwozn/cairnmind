@@ -9,9 +9,9 @@ from uuid import uuid4
 
 import pytest
 
-from cairnmind import memory as portable
-from cairnmind.memory import MemoryConflict, MemoryManager, inspect_snapshot
-from cairnmind.plans import PlanManager
+from cairnmind.memory import memory as portable
+from cairnmind.memory.memory import MemoryConflict, MemoryManager, inspect_snapshot
+from cairnmind.memory.plans import PlanManager
 from cairnmind.store import Store
 
 

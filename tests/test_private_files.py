@@ -7,7 +7,7 @@ import sys
 import pytest
 
 from conftest import make_symlink_or_skip
-from cairnmind import private_files
+from cairnmind.pal import private_files
 
 
 def test_make_private_and_is_private_stat_for_file_and_directory(tmp_path):
@@ -142,10 +142,10 @@ def test_write_durable_private_creates_private_file_atomically(tmp_path):
 
 def test_product_secret_files_have_real_private_permissions(tmp_path):
     """Verify real ACL/mode on config.json, engine root-password, installation.json, and API credentials (#436)."""
-    from cairnmind.api_credentials import CredentialStore
+    from cairnmind.agents.api_credentials import CredentialStore
     from cairnmind.config import Settings
-    from cairnmind.engine import write_root_password
-    from cairnmind.store_writer import installation
+    from cairnmind.storage.engine import write_root_password
+    from cairnmind.storage.store_writer import installation
 
     data_dir = tmp_path / "data"
     settings = Settings.load(data_dir, create=True)

@@ -8,7 +8,8 @@ import re
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, ingest
+from cairnmind import cli
+from cairnmind.scip import ingest
 from cairnmind.cli import app
 from cairnmind.config import Settings
 from cairnmind.store import Store
@@ -99,7 +100,7 @@ def codex_totals(settings, name, *args):
 
 def test_codex_usage_comes_from_what_import_stored_for_the_project(tmp_path, monkeypatch):
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
-    monkeypatch.setattr("cairnmind.codex_usage.PAGE", 2)  # three records: the second page is read too
+    monkeypatch.setattr("cairnmind.cli_cmds.codex_usage.PAGE", 2)  # three records: the second page is read too
     settings, pid = workspace(tmp_path)
     rollout = codex_rollout(tmp_path / "rollout.jsonl", tmp_path / "repo")
     assert ingest.import_history(Store(settings.data_dir), rollout, pid, "codex")["errors"] == []
@@ -185,7 +186,7 @@ def test_only_usage_records_of_the_period_in_the_inbox_make_the_report_partial(t
 
 def test_inbox_pages_are_all_read(tmp_path, monkeypatch):
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
-    monkeypatch.setattr("cairnmind.codex_usage.PAGE", 2)
+    monkeypatch.setattr("cairnmind.cli_cmds.codex_usage.PAGE", 2)
     settings, _ = workspace(tmp_path)
     store = Store(settings.data_dir)
     for number in range(5):
@@ -213,8 +214,8 @@ class RemovingAfterFirstPage:
 
 def test_a_row_leaving_the_inbox_between_pages_hides_no_later_row(tmp_path, monkeypatch):
     # usage reads without a lock; import may assign a parked row to a project while the pages are read.
-    from cairnmind.codex_usage import waiting_in_inbox
-    monkeypatch.setattr("cairnmind.codex_usage.PAGE", 2)
+    from cairnmind.cli_cmds.codex_usage import waiting_in_inbox
+    monkeypatch.setattr("cairnmind.cli_cmds.codex_usage.PAGE", 2)
     settings, pid = workspace(tmp_path)
     store, now = Store(settings.data_dir), datetime.now(timezone.utc)
     for number in range(5):
@@ -226,8 +227,8 @@ def test_a_row_leaving_the_inbox_between_pages_hides_no_later_row(tmp_path, monk
 
 
 def test_a_stored_line_that_stops_being_current_between_pages_hides_no_later_line(tmp_path, monkeypatch):
-    from cairnmind.codex_usage import stored_records
-    monkeypatch.setattr("cairnmind.codex_usage.PAGE", 2)
+    from cairnmind.cli_cmds.codex_usage import stored_records
+    monkeypatch.setattr("cairnmind.cli_cmds.codex_usage.PAGE", 2)
     settings, pid = workspace(tmp_path)
     store = Store(settings.data_dir)
     ids = [store.snapshot(pid, f"transcript://codex/r/{number}", json.dumps({"type": "token_usage_record", "n": number}),
@@ -282,7 +283,7 @@ def test_the_default_threshold_comes_from_the_checks_file_and_the_option_wins(tm
     over = json.loads(run(settings, "demo", "--warn-over", "5", "--json").output)
     assert over["warning"]["threshold_tokens"] == 5
     # The check profiles beside it are read as before.
-    from cairnmind.verification import load_profiles
+    from cairnmind.memory.verification import load_profiles
     assert list(load_profiles(Store(settings.data_dir), pid)) == ["unit"]
 
 
@@ -324,7 +325,7 @@ def test_other_problems_of_the_checks_file_do_not_stop_the_report_either(tmp_pat
 
 
 def test_load_profiles_still_raises_the_errors_it_raised_before(tmp_path, monkeypatch):
-    from cairnmind.verification import load_profiles
+    from cairnmind.memory.verification import load_profiles
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
     settings, pid = workspace(tmp_path)
     store, root = Store(settings.data_dir), tmp_path / "repo"

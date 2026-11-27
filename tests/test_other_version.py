@@ -9,9 +9,11 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import __version__, cli, integrations, mcp_server
+from cairnmind import __version__, cli
+from cairnmind.memory import integrations
+from cairnmind.mcp import mcp_server
 from cairnmind.config import Settings
-from cairnmind.service_version import OTHER_VERSION, instance_id
+from cairnmind.cli_cmds.service_version import OTHER_VERSION, instance_id
 from test_external_mcp_start import Network
 
 runner = CliRunner()
@@ -86,8 +88,8 @@ def test_stop_and_doctor_still_reach_a_service_of_another_version(tmp_path, monk
     assert ran.exit_code == 1  # required and missing, so doctor exits 1 by #313's rule
     assert " ".join(sentence(settings).split()) in [" ".join(line.split()) for line in report["environment_notes"]]
     # In a terminal it is listed as required and not working, once, and the next step is to fix it (#319).
-    from cairnmind.doctor_attention import summary
-    from cairnmind.first_start import NEXT_FIX, REQUIRED_MISSING
+    from cairnmind.cli_cmds.doctor_attention import summary
+    from cairnmind.cli_cmds.first_start import NEXT_FIX, REQUIRED_MISSING
     assert report["environment_blockers"] == [sentence(settings)]
     lines = summary(report)
     shown = [index for index, line in enumerate(lines) if line == f"  - {' '.join(sentence(settings).split())}"]
@@ -139,7 +141,7 @@ def test_an_external_server_that_starts_a_service_names_a_version_it_meets(tmp_p
 
 
 def test_the_workspace_refuses_a_service_of_another_version_before_a_broker_starts(tmp_path, monkeypatch):
-    from cairnmind import cockpit
+    from cairnmind.terminal import cockpit
     settings = Settings.load(tmp_path / "data", create=True)
     old_service(monkeypatch, settings)
     monkeypatch.setattr(cockpit.subprocess, "Popen", forbidden)

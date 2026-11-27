@@ -13,10 +13,13 @@ import types
 import httpx
 import pytest
 
-from cairnmind import engine, integrations, platform_hints, workspace
-from cairnmind.client_runtime import NativeRuntime
+from cairnmind.storage import engine
+from cairnmind.memory import integrations
+from cairnmind.pal import platform_hints
+from cairnmind.terminal import workspace
+from cairnmind.agents.client_runtime import NativeRuntime
 from cairnmind.config import Settings
-from cairnmind.terminal_i18n import tr
+from cairnmind.terminal.terminal_i18n import tr
 
 
 @pytest.fixture
@@ -43,7 +46,7 @@ def quiet_doctor(settings, monkeypatch, system):
     monkeypatch.setattr(platform_hints, "host_system", lambda *a, **k: system)
     monkeypatch.setattr(integrations, "_probe_cli", lambda client, *a, **k: integrations_probe(client))
     monkeypatch.setattr(integrations.shutil, "which", lambda *a, **k: None)
-    from cairnmind import runtime_selection
+    from cairnmind.terminal import runtime_selection
     monkeypatch.setattr(runtime_selection.shutil, "which", lambda *a, **k: None)
     real_client = httpx.Client
     monkeypatch.setattr(integrations.httpx, "Client", lambda **kwargs: real_client(
@@ -187,7 +190,7 @@ def test_only_the_wsl_texts_mention_wsl_and_only_the_mac_ones_brew(topic):
 
 @pytest.mark.parametrize("name", ["wsl", "linux", "darwin"])
 def test_the_places_that_print_a_hint_ask_for_the_system_they_run_on(settings, monkeypatch, tmp_path, name):
-    from cairnmind import runtime_selection
+    from cairnmind.terminal import runtime_selection
     monkeypatch.setattr(platform_hints, "host_system", lambda *a, **k: name)
     monkeypatch.setattr(integrations.shutil, "which", lambda *a, **k: None)
     monkeypatch.setattr(runtime_selection.shutil, "which", lambda *a, **k: None)
@@ -213,7 +216,7 @@ def test_the_places_that_print_a_hint_ask_for_the_system_they_run_on(settings, m
 
 
 def test_a_missing_client_and_a_missing_java_ask_for_the_system_they_run_on(settings, monkeypatch, tmp_path):
-    from cairnmind import client_auth
+    from cairnmind.agents import client_auth
     (tmp_path / "lib").mkdir()
     monkeypatch.setattr(engine, "engine_status", lambda s: {"available": False})
     monkeypatch.setattr(engine, "runtime_dir", lambda s: tmp_path)

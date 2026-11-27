@@ -1,4 +1,4 @@
-"""Fast-tier edge-case and error-handling coverage tests for cairnmind.api_providers."""
+"""Fast-tier edge-case and error-handling coverage tests for cairnmind.agents.api_providers."""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -7,8 +7,8 @@ import json
 import httpx
 import pytest
 
-from cairnmind import api_providers as ap
-from cairnmind.api_providers import ProviderError, make_provider
+from cairnmind.agents import api_providers as ap
+from cairnmind.agents.api_providers import ProviderError, make_provider
 
 
 @contextmanager

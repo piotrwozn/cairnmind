@@ -4,8 +4,8 @@ from copy import deepcopy
 import pytest
 from textual.widgets import Input, Static, Switch
 
-from cairnmind.terminal_panels import CredentialModal, SidebarApp, profile_fields, profile_from_form
-from cairnmind.terminal_ui import FormModal
+from cairnmind.terminal.terminal_panels import CredentialModal, SidebarApp, profile_fields, profile_from_form
+from cairnmind.terminal.terminal_ui import FormModal
 from test_terminal_panels import setup, settle
 
 
@@ -147,7 +147,7 @@ async def test_a_setting_picker_is_titled_with_the_setting(tmp_path, monkeypatch
 @pytest.mark.asyncio
 @pytest.mark.parametrize("answer,saved", [("off", False), ("on", True)])
 async def test_the_activity_column_switch_is_saved_as_a_preference(tmp_path, monkeypatch, answer, saved):
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal.cockpit_state import CockpitState
     settings, broker, workspace = setup(tmp_path, monkeypatch)
     if saved:
         CockpitState(settings).update({"activity_column": False})

@@ -15,7 +15,7 @@ from cairnmind import cli
 
 
 def workspace_stub(monkeypatch, calls):
-    module = ModuleType("cairnmind.workspace")
+    module = ModuleType("cairnmind.terminal.workspace")
 
     def launch(settings, takeover=False):
         assert settings.token
@@ -42,7 +42,7 @@ def workspace_stub(monkeypatch, calls):
     module.workspace_status = status
     module.detach_workspace = detach
     module.stop_workspace = stop
-    monkeypatch.setitem(sys.modules, "cairnmind.workspace", module)
+    monkeypatch.setitem(sys.modules, "cairnmind.terminal.workspace", module)
 
 
 @pytest.mark.parametrize("arguments", [[], ["tui"], ["workspace", "takeover"]])
@@ -148,7 +148,7 @@ POLISH_ALLOWED_MODULES = frozenset({
     "terminal_setup_change.py",
     "terminal_ui.py",
     "topology.py",
-    "ui_cockpit.py",
+    "mock_state.py",
     "upgrade_mark.py",
 })
 
@@ -190,7 +190,9 @@ def test_no_message_in_non_i18n_modules_is_polish():
     """Guard cli.py, the 12 modules of #60, and all other non-i18n modules against Polish literals."""
     from pathlib import Path
     pkg_dir = Path(cli.__file__).parent
-    all_modules = {p.name: p for p in sorted(pkg_dir.glob("*.py"))}
+    all_modules = {
+        p.name: p for p in sorted(pkg_dir.rglob("*.py")) if p.name != "__init__.py"
+    }
     assert ENGLISH_ONLY_GUARDED_MODULES <= set(all_modules)
     assert ENGLISH_ONLY_GUARDED_MODULES.isdisjoint(POLISH_ALLOWED_MODULES)
 

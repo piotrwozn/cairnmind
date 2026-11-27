@@ -10,15 +10,16 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import person_proof, record_kinds
+from cairnmind.terminal import person_proof
+from cairnmind.memory import record_kinds
 from cairnmind.cli import app
-from cairnmind.confirmation import confirmation_of, import_mark, local_verdict
-from cairnmind.inspector import Inspector
-from cairnmind.memory_acts import confirm_plan
-from cairnmind.plans import PlanManager
-from cairnmind.restore_claims import BackupClaims
-from cairnmind.restore_staged import RestoreFailed
-from cairnmind.sql import update_document
+from cairnmind.memory.confirmation import confirmation_of, import_mark, local_verdict
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.memory.memory_acts import confirm_plan
+from cairnmind.memory.plans import PlanManager
+from cairnmind.storage.restore_claims import BackupClaims
+from cairnmind.storage.restore_staged import RestoreFailed
+from cairnmind.storage.sql import update_document
 from cairnmind.store import Store
 
 from conftest import as_person, confirmed_before_rule

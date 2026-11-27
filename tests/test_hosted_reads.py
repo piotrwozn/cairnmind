@@ -16,14 +16,14 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 import pytest
 
-from cairnmind import memory_egress
-from cairnmind.agent import KnowledgeAgent
-from cairnmind.agent_memory import AgentMemoryClient
-from cairnmind.api_agent import AgentEngine
+from cairnmind.memory import memory_egress
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.agents.agent_memory import AgentMemoryClient
+from cairnmind.agents.api_agent import AgentEngine
 from cairnmind.config import Settings
-from cairnmind.knowledge_mode import text_matches
+from cairnmind.agents.knowledge_mode import text_matches
 from cairnmind.service import create_app
-from cairnmind.terminal_i18n_messages import AGENT_MESSAGES, ASK_MESSAGES
+from cairnmind.terminal.terminal_i18n_messages import AGENT_MESSAGES, ASK_MESSAGES
 
 from test_agent_memory import ack, workspace as workspace  # noqa: F401 - a fixture
 from test_api_agent import Memory, ScriptedProvider, call, reply, tools_results

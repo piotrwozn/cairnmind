@@ -115,9 +115,9 @@ def _inner_driver_code() -> str:
         from pathlib import Path
 
         from cairnmind.config import Settings
-        from cairnmind.ingest import index_project
-        from cairnmind.memory import MemoryManager
-        from cairnmind.sql import clean_row
+        from cairnmind.scip.ingest import index_project
+        from cairnmind.memory.memory import MemoryManager
+        from cairnmind.storage.sql import clean_row
         from cairnmind.store import Store
 
         work = Path(sys.argv[1])
@@ -158,7 +158,7 @@ def _inner_driver_code() -> str:
             metadata={"origin": "workspace_finding", "root": str(repo)},
         )
         try:
-            from cairnmind import person_proof
+            from cairnmind.terminal import person_proof
             person_proof._PROVEN.set(True)
         except (ImportError, AttributeError):
             pass
@@ -174,7 +174,7 @@ def _inner_driver_code() -> str:
             [src_note["id"], src_app["id"]],
         )
         try:
-            from cairnmind.inspector import Inspector
+            from cairnmind.terminal.inspector import Inspector
             Inspector(store).review(pid, rec["id"], "confirm", rec["version"])
         except (ImportError, AttributeError, ValueError):
             pass
@@ -200,7 +200,7 @@ def _inner_driver_code() -> str:
         # Published team memory (added in 0.11.0 / #170)
         has_published = False
         try:
-            from cairnmind.memory_published import Publisher
+            from cairnmind.memory.memory_published import Publisher
             published_res = Publisher(store).publish(pid, repo)
             assert published_res["records"] >= 1, published_res
             published_dst = out / "published_memory"
@@ -258,7 +258,7 @@ def _inner_driver_code() -> str:
 
 
 def _start_ephemeral_engine(settings):
-    from cairnmind.engine import ensure_engine, install_engine
+    from cairnmind.storage.engine import ensure_engine, install_engine
 
     dist = os.environ.get("CAIRNMIND_ARCADE_DIST")
     if dist:
@@ -268,7 +268,7 @@ def _start_ephemeral_engine(settings):
 
 def build_from_wheel(version: str, wheel_path: Path, wheel_sha256: str, output_dir: Path) -> Path:
     from cairnmind.config import Settings
-    from cairnmind.engine import stop_engine
+    from cairnmind.storage.engine import stop_engine
 
     dest = output_dir / version
     dest.mkdir(parents=True, exist_ok=True)
@@ -322,10 +322,10 @@ def build_from_wheel(version: str, wheel_path: Path, wheel_sha256: str, output_d
 
 def build_schema_v3_fixture(output_dir: Path) -> Path:
     """Create a synthetic schema_version=3 raw fixture to test 3 -> 4 DDL upgrade and before-schema backup."""
-    from cairnmind.arcade import ArcadeClient
+    from cairnmind.storage.arcade import ArcadeClient
     from cairnmind.config import Settings
-    from cairnmind.engine import stop_engine
-    from cairnmind.sql import clean_row
+    from cairnmind.storage.engine import stop_engine
+    from cairnmind.storage.sql import clean_row
     from cairnmind.store import (
         EXPORT_TYPES,
         LEGACY_DOCUMENT_TYPES,

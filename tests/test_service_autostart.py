@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from cairnmind import service_autostart
+from cairnmind.pal import service_autostart
 from cairnmind.config import Settings
 
 

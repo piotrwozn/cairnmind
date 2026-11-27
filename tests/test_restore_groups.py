@@ -9,11 +9,11 @@ import json
 
 import pytest
 
-from cairnmind import arcade
-from cairnmind.journal import JournalTransaction
-from cairnmind.restore_groups import DOCUMENT_BYTES_PER_REQUEST, GRAPH_BYTES_HELD, GraphGroups
-from cairnmind.restore_staged import RestoreFailed
-from cairnmind.sql import clean_row, insert_document, json_text, quote_name
+from cairnmind.storage import arcade
+from cairnmind.storage.journal import JournalTransaction
+from cairnmind.storage.restore_groups import DOCUMENT_BYTES_PER_REQUEST, GRAPH_BYTES_HELD, GraphGroups
+from cairnmind.storage.restore_staged import RestoreFailed
+from cairnmind.storage.sql import clean_row, insert_document, json_text, quote_name
 from cairnmind.store import DOCUMENT_TYPES, Store
 
 from test_backup_restore_stream import FIXTURE_0_10_0, _backup_payload, _variants, comparable
@@ -39,7 +39,7 @@ def _row_by_row(self, source, claims=None):
         self.command(f"CREATE INDEX IF NOT EXISTS ON {quote_name(name)}(vector) LSM_VECTOR METADATA "
                      f"{{dimensions:{dimension},similarity:'COSINE',idPropertyName:'id'}}")
     with self.transaction() as tx:
-        from cairnmind.journal import Journal
+        from cairnmind.storage.journal import Journal
         Journal.reset(tx, reason="restore")
         for row in tx.query("SELECT FROM vector_indexes"):
             if row.get("type_name", "").startswith("vector_"):

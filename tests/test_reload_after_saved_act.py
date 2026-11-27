@@ -17,10 +17,10 @@ from test_person_acts_consent import ACTS
 from test_workspace_stage_scope import wait_until
 from textual.worker import NoActiveWorker, get_current_worker
 
-from cairnmind.terminal_client import BrokerError, BrokerUnreachable
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_person_act import NOT_RELOADED
-from cairnmind.terminal_record_kinds import ACCEPT_UNCLEAR, NOT_ACCEPTED, NOT_WITHDRAWN, WITHDRAW_UNCLEAR
+from cairnmind.terminal.terminal_client import BrokerError, BrokerUnreachable
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_person_act import NOT_RELOADED
+from cairnmind.terminal.terminal_record_kinds import ACCEPT_UNCLEAR, NOT_ACCEPTED, NOT_WITHDRAWN, WITHDRAW_UNCLEAR
 
 TEAM = ("Team memory imported: {written} records written, {replaced} of them in place of a verdict given on this "
         "computer. Nothing imported is verified here.")

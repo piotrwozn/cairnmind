@@ -13,7 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from cairnmind import first_start, integrations
+from cairnmind.cli_cmds import first_start
+from cairnmind.memory import integrations
 from cairnmind.config import Settings
 
 ROOT = Path(__file__).resolve().parents[1]

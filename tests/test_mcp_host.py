@@ -11,8 +11,9 @@ import pytest
 
 import conftest
 
-from cairnmind import mcp_host, process_identity
-from cairnmind.mcp_host import MAX_DESCRIPTION, McpHost
+from cairnmind.mcp import mcp_host
+from cairnmind.pal import process_identity
+from cairnmind.mcp.mcp_host import MAX_DESCRIPTION, McpHost
 
 FIXTURE = conftest.MCP_FIXTURE  # this pytest process's own copy (see conftest)
 

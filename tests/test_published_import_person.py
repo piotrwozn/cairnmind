@@ -9,11 +9,11 @@ import re
 
 import pytest
 
-from cairnmind import person_proof
-from cairnmind.confirmation import REPLACED_CHANGED
-from cairnmind.inspector import Inspector
-from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
-from cairnmind.memory_published_import import PublishedImporter
+from cairnmind.terminal import person_proof
+from cairnmind.memory.confirmation import REPLACED_CHANGED
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
+from cairnmind.memory.memory_published_import import PublishedImporter
 from cairnmind.store import Store
 
 from test_confirmed_by_person import fixture  # noqa: F401 (the fixture)

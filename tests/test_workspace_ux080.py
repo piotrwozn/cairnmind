@@ -1,9 +1,9 @@
 """User intent, keyboard navigation and additive UI settings for 0.8."""
 import pytest
 
-from cairnmind.cockpit_state import CockpitState
+from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.config import Settings
-from cairnmind.workspace_state import WorkspaceState
+from cairnmind.terminal.workspace_state import WorkspaceState
 from test_workspace import manager as manager
 
 
@@ -131,8 +131,8 @@ def test_popup_targets_exact_initiating_writer_and_is_not_timed_out(manager, mon
 def test_status_literal_width_and_cached_negative_evidence(language):
     import re
     from rich.cells import cell_len
-    from cairnmind.terminal_i18n import tr
-    from cairnmind.workspace import workspace_status_lines
+    from cairnmind.terminal.terminal_i18n import tr
+    from cairnmind.terminal.workspace import workspace_status_lines
 
     selected = {"project_name": "#{pid}#(true)#[fg=red]\x1b\u202e日本語e\u0301" * 5,
                 "broker_available": True}
@@ -159,7 +159,7 @@ def test_status_literal_width_and_cached_negative_evidence(language):
 def row_with_chips(language, place):
     """The first row without chips, and the row given ``place``: its width condition and the chips inside it."""
     import re
-    from cairnmind.workspace import workspace_status_lines
+    from cairnmind.terminal.workspace import workspace_status_lines
     arguments = ({"project_name": "payments-api", "broker_available": True}, {},
                  {"run_id": "run-7f3a9c", "client": "codex", "lifecycle": "running"}, "controller", language)
     plain, _ = workspace_status_lines(*arguments)
@@ -175,8 +175,8 @@ def test_status_row_shows_storage_and_models_only_where_they_fit(language, tmp_p
     import re
     from rich.cells import cell_len
     from cairnmind.config import Settings
-    from cairnmind.terminal_i18n import tr
-    from cairnmind.topology import topology
+    from cairnmind.terminal.terminal_i18n import tr
+    from cairnmind.cli_cmds.topology import topology
 
     plain, width, chips = row_with_chips(language, topology(Settings.load(tmp_path / "data", create=True)))
     visible = lambda text: re.sub(r"#\[[^]]*\]", "", text)  # noqa: E731
@@ -188,7 +188,7 @@ def test_status_row_shows_storage_and_models_only_where_they_fit(language, tmp_p
 
 def test_a_host_with_branch_characters_cannot_end_a_tmux_branch(tmp_path):
     from cairnmind.config import Settings
-    from cairnmind.topology import status_words, topology
+    from cairnmind.cli_cmds.topology import status_words, topology
 
     settings = Settings.load(tmp_path / "data", create=True)
     settings.arcade_connect_url = settings.arcade_url = "https://a,b}c:2490"
@@ -207,7 +207,7 @@ def test_a_host_with_branch_characters_cannot_end_a_tmux_branch(tmp_path):
     ({"error_code": "auth_status_timeout"}, "Unknown"),
 ])
 def test_status_connection_never_infers_network_or_credentials_from_live_run(auth, expected):
-    from cairnmind.workspace import workspace_status_lines
+    from cairnmind.terminal.workspace import workspace_status_lines
     _, line = workspace_status_lines({"broker_available": True},
         {"profiles": [{"id": "p", "client": "codex"}], "auth": {"codex": auth}},
         {"profile_id": "p", "client": "codex", "run_id": "running", "lifecycle": "running"}, None)
@@ -222,8 +222,8 @@ def test_real_tmux_status_visible_in_every_focus_and_each_terminal(manager, lang
     import re
     import time
     from rich.cells import cell_len
-    from cairnmind.terminal_i18n import tr
-    from cairnmind.terminal_preview import PreviewTerminal
+    from cairnmind.terminal.terminal_i18n import tr
+    from cairnmind.terminal.terminal_preview import PreviewTerminal
 
     workspace, broker, project = manager
     CockpitState(workspace.settings).update({"view": "focus", "language": language})
@@ -361,7 +361,7 @@ def test_operational_auth_run_is_never_adopted_by_coding_slot(manager):
 def test_cockpit_minimum_terminal_includes_both_status_rows(manager):
     import os
     import time
-    from cairnmind.terminal_preview import PreviewTerminal
+    from cairnmind.terminal.terminal_preview import PreviewTerminal
     workspace, _, _ = manager
     CockpitState(workspace.settings).update({"view": "cockpit"})
     workspace.create(start_supervisor=False)

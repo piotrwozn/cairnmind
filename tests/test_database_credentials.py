@@ -18,8 +18,8 @@ import threading
 import httpx
 import pytest
 
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.agents.agent_journal import AgentJournal
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
 
 SECRET = "Db-secret-7f3a9c41e2b8d6"
@@ -35,7 +35,7 @@ def no_database_environment(monkeypatch):
 
 
 def config(root: Path, **values) -> Path:
-    from cairnmind import private_files
+    from cairnmind.pal import private_files
     if sys.platform == "win32":
         if not root.exists():
             private_files.ensure_private_dir(root)
@@ -47,7 +47,7 @@ def config(root: Path, **values) -> Path:
 
 
 def private_file(path: Path, text: str, mode: int = 0o600) -> Path:
-    from cairnmind import private_files
+    from cairnmind.pal import private_files
     from conftest import make_world_readable
     path.write_text(text, encoding="utf-8")
     if sys.platform == "win32":
@@ -366,7 +366,7 @@ def test_the_password_is_not_part_of_the_settings_repr(tmp_path):
 # --- What doctor says, and that no secret reaches it, an error or the journal ---------------------
 
 def doctor_block(settings, monkeypatch, answer):
-    from cairnmind import database_credentials
+    from cairnmind.storage import database_credentials
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", lambda self, request: answer(request))
     return database_credentials.doctor_block(settings, timeout=1.5)
 
@@ -524,7 +524,7 @@ def test_an_empty_current_spelling_does_not_hide_the_earlier_one(tmp_path, monke
 # --- A server on another host is never started here ---------------------------------------------------
 
 def test_an_unreachable_remote_server_is_reported_and_nothing_is_started_or_written(tmp_path, monkeypatch):
-    from cairnmind import engine
+    from cairnmind.storage import engine
 
     def unreachable(self, request):
         raise httpx.ConnectError("no route", request=request)

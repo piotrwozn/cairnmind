@@ -8,9 +8,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
-from cairnmind.inspector import Inspector, InspectorNotFound
-from cairnmind.inspector_api import attach_inspector_routes
-from cairnmind.plans import PlanManager
+from cairnmind.terminal.inspector import Inspector, InspectorNotFound
+from cairnmind.terminal.inspector_api import attach_inspector_routes
+from cairnmind.memory.plans import PlanManager
 from cairnmind.store import Store
 
 
@@ -42,9 +42,9 @@ def normalized_export(store):
 
 def test_read_only_paging_details_and_literal_source_slices_do_not_change_memory(workspace, monkeypatch):
     store, project, root, private, private_record, source, record, client, headers = workspace
-    from cairnmind.agent import KnowledgeAgent
-    import cairnmind.ingest as ingest
-    import cairnmind.verification as verification
+    from cairnmind.agents.agent import KnowledgeAgent
+    import cairnmind.scip.ingest as ingest
+    import cairnmind.memory.verification as verification
 
     def forbidden(*args, **kwargs):
         raise AssertionError("Inspector reads must not run models, indexers or recovery")
@@ -273,7 +273,7 @@ def test_unassigned_inbox_is_visible_only_in_global_views_without_assignment(wor
 
 
 def test_graph_watermark_is_read_in_the_same_database_transaction(workspace, monkeypatch):
-    from cairnmind.journal import Journal
+    from cairnmind.storage.journal import Journal
 
     store, project, root, private, private_record, source, record, client, headers = workspace
     original = Journal.cursor

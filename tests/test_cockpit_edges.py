@@ -1,4 +1,4 @@
-"""Fast-tier coverage tests for cairnmind.cockpit routes, WebSocket terminal, and lifecycle helpers."""
+"""Fast-tier coverage tests for cairnmind.terminal.cockpit routes, WebSocket terminal, and lifecycle helpers."""
 from __future__ import annotations
 
 import asyncio
@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 
-from cairnmind import cockpit
+from cairnmind.terminal import cockpit
 from cairnmind.config import Settings
 
 
@@ -109,7 +109,7 @@ def test_cockpit_routes_discovery_plans_events_and_control(tmp_path, monkeypatch
     assert client.delete("/api/discovery", headers=headers).status_code == 200
 
     # Auth probe & unsupported login client
-    monkeypatch.setattr("cairnmind.client_auth.probe_client", lambda c, force=False: {"client": c, "ok": True})
+    monkeypatch.setattr("cairnmind.agents.client_auth.probe_client", lambda c, force=False: {"client": c, "ok": True})
     assert client.get("/api/auth", params={"client": "codex"}).json()["ok"] is True
     assert client.post("/api/auth/login", json={"client": "bad"}, headers=headers).status_code == 422
     assert client.post("/api/auth/login", json={"client": "codex"}, headers=headers).status_code == 200
@@ -195,7 +195,7 @@ def test_cockpit_status_stop_and_serve_locked_helpers(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)
 
     # Bad URL in server.json refused safely
-    from cairnmind.private_files import ensure_private_dir, make_private
+    from cairnmind.pal.private_files import ensure_private_dir, make_private
 
     runtime_file = cockpit._runtime_file(settings)
     ensure_private_dir(runtime_file.parent)

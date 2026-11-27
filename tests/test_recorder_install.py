@@ -9,9 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from cairnmind import integrations, mcp_server, recorder_agent, sessions, terminal_i18n
+from cairnmind.memory import integrations, sessions
+from cairnmind.mcp import mcp_server
+from cairnmind.agents import recorder_agent
+from cairnmind.terminal import terminal_i18n
 from cairnmind.config import Settings
-from cairnmind.mcp_server import ServiceClient
+from cairnmind.mcp.mcp_server import ServiceClient
 
 PATH = recorder_agent.RECORDER_PATH
 
@@ -321,7 +324,8 @@ def test_every_recorder_sentence_has_polish():
 
 
 def test_the_recorders_file_is_known_to_the_managed_file_lists(settings, project, probe):
-    from cairnmind import ingest, project_removal, scope
+    from cairnmind.scip import ingest
+    from cairnmind.memory import project_removal, scope
     integrations.install_integrations(settings, project)
     lines = (Path(project["root"]) / PATH).read_text(encoding="utf-8").splitlines()
     assert scope._MANAGED.match_file(PATH) and PATH in project_removal.INSTALLED_FILES

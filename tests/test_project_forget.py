@@ -5,15 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from cairnmind import answer_log, client_runtime, project_forget, project_removal as removal
-from cairnmind.confirmation import ConfirmationRefused
-from cairnmind.ingest import index_project
-from cairnmind.memory import MemoryManager
-from cairnmind.person_proof import FORGET_REFUSED
-from cairnmind.sessions import SessionManager
-from cairnmind.sql import insert_document
+from cairnmind.agents import answer_log, client_runtime
+from cairnmind.memory import project_forget, project_removal as removal
+from cairnmind.memory.confirmation import ConfirmationRefused
+from cairnmind.scip.ingest import index_project
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.terminal.person_proof import FORGET_REFUSED
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.storage.sql import insert_document
 from cairnmind.store import DOCUMENT_TYPES, EXPORT_TYPES, Store
-from cairnmind.store_writer import StoreNotWriter
+from cairnmind.storage.store_writer import StoreNotWriter
 
 from conftest import as_person, person_unproven
 
@@ -44,7 +45,7 @@ def world(tmp_path):
     confirmed = as_person(store, pid, {"kind": "decision", "key": "k", "content": "Use X."}, [source])
     osource = store.query("SELECT id FROM sources WHERE project_id=:p LIMIT 1", {"p": oid})[0]["id"]
     record = store.remember(oid, {"kind": "decision", "key": "o", "content": "Use Z."}, [osource])
-    from cairnmind.inspector import Inspector
+    from cairnmind.terminal.inspector import Inspector
     Inspector(store).review(oid, record["id"], "confirm", record["version"])
     store.enqueue("embed", pid, {"chunk_id": "c"}, "job-1")
     SessionManager(store, store.settings).prepare(pid, "api", timeout=0)
@@ -203,7 +204,7 @@ def test_a_new_project_with_the_same_name_and_folder_starts_clean(world):
 
 
 def test_other_projects_back_up_restore_snapshot_and_publish_unchanged(world, monkeypatch, tmp_path):
-    from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
+    from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
     monkeypatch.setenv(PUBLICATION_SWITCH, "1")
     store, project, other, root, confirmed = world
     oid = other["id"]

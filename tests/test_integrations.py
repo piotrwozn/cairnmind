@@ -17,9 +17,9 @@ import pytest
 from conftest import plain_words
 
 from cairnmind.config import Settings
-from cairnmind import integrations
-from cairnmind.store_writer import StoreNotWriter
-from cairnmind.mcp_server import ServiceClient, create_server
+from cairnmind.memory import integrations
+from cairnmind.storage.store_writer import StoreNotWriter
+from cairnmind.mcp.mcp_server import ServiceClient, create_server
 
 TOOLS = {"ask", "remember", "checkpoint", "save_plan", "next_task", "resume_context", "ack_resume", "check_status"}
 
@@ -64,7 +64,8 @@ def prepared(project):
 
 @pytest.fixture
 def native_backend(monkeypatch):
-    from cairnmind import ingest, store
+    from cairnmind.scip import ingest
+    from cairnmind import store
     monkeypatch.setattr(store, "Store", lambda *a: object())
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
 
@@ -331,7 +332,7 @@ def test_new_native_configuration_is_private_while_new_instructions_follow_umask
 
 
 def test_new_empty_scope_recognizes_exact_session_forwarding_config(settings, project, installed):
-    from cairnmind.sessions import _managed_empty_file
+    from cairnmind.memory.sessions import _managed_empty_file
 
     integrations.install_integrations(settings, project)
     root = Path(project["root"])
@@ -476,7 +477,7 @@ def test_probe_does_not_claim_verified_binding_for_unknown_or_shared_process(mon
 
 def test_native_launch_preserves_args_stdio_and_permissions(settings, project, installed, prepared,
                                                            native_backend, monkeypatch):
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
 
     monkeypatch.setattr(integrations.shutil, "which", lambda name: f"/native/{name}")
     monkeypatch.setattr(integrations, "_prepare_session", lambda *a: copy.deepcopy(prepared))
@@ -535,7 +536,7 @@ def test_each_native_launch_binds_new_ids_without_persisting_them(settings, proj
 
 def test_first_native_launch_installs_project_memory_before_client_starts(settings, project, installed, prepared, native_backend,
                                                                          monkeypatch, capsys):
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
 
     root = Path(project["root"])
     probes = []
@@ -634,7 +635,8 @@ def test_verified_launch_refuses_remote_server_before_preparing(settings, projec
 
 
 def test_prepare_session_ensures_service_and_preserves_selected_worktree(settings, project, prepared, monkeypatch):
-    from cairnmind import cli, sessions, store
+    from cairnmind import cli, store
+    from cairnmind.memory import sessions
 
     calls = []
     root = Path(project["root"])
@@ -774,7 +776,7 @@ def test_end_hook_retains_explicit_watermark_capture_failure(settings, tmp_path,
 
 
 def test_spool_drain_records_logical_receipt_before_removing_event(settings, tmp_path, monkeypatch):
-    from cairnmind import sessions
+    from cairnmind.memory import sessions
     from cairnmind.store import Store
 
     root = tmp_path / "repo"
@@ -857,7 +859,7 @@ def test_session_start_returns_exact_prepared_packet(settings, project, prepared
 def test_start_hook_exact_http_read_preserves_packet_when_project_state_changed(settings, project, monkeypatch):
     from fastapi.testclient import TestClient
     from cairnmind.service import create_app
-    from cairnmind.sessions import SessionManager
+    from cairnmind.memory.sessions import SessionManager
 
     root = Path(project["root"])
     (root / "app.py").write_text("VALUE = 1\n")
@@ -1123,7 +1125,7 @@ async def test_service_bridge_uses_bearer_and_local_transport(settings, monkeypa
         assert kwargs["trust_env"] is False
         return real_client(**kwargs, transport=httpx.MockTransport(handler))
 
-    monkeypatch.setattr("cairnmind.mcp_server.httpx.AsyncClient", client_factory)
+    monkeypatch.setattr("cairnmind.mcp.mcp_server.httpx.AsyncClient", client_factory)
     result = await ServiceClient(settings).post("/ask", {"project": "demo", "question": "what?"})
     assert result["status"] == "complete"
     assert seen[0].headers["Authorization"] == f"Bearer {settings.token}"
@@ -1133,7 +1135,7 @@ async def test_service_bridge_uses_bearer_and_local_transport(settings, monkeypa
 @pytest.mark.asyncio
 async def test_service_bridge_reports_http_error_without_token(settings, monkeypatch):
     real_client = httpx.AsyncClient
-    monkeypatch.setattr("cairnmind.mcp_server.httpx.AsyncClient", lambda **kwargs: real_client(
+    monkeypatch.setattr("cairnmind.mcp.mcp_server.httpx.AsyncClient", lambda **kwargs: real_client(
         **kwargs, transport=httpx.MockTransport(lambda req: httpx.Response(401, json={"detail": "Unauthorized"}))))
     with pytest.raises(RuntimeError, match="401") as error:
         await ServiceClient(settings, session_id="logical-session", packet_id="packet-one").post("/remember", {})
@@ -1143,14 +1145,14 @@ async def test_service_bridge_reports_http_error_without_token(settings, monkeyp
 @pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", ["/remember", "/checkpoint", "/plans/save", "/sessions/context", "/sessions/ack"])
 async def test_unbound_mcp_cannot_use_manual_admin_write_path(settings, monkeypatch, endpoint):
-    monkeypatch.setattr("cairnmind.mcp_server.httpx.AsyncClient", lambda **kw: pytest.fail("Unbound client reached HTTP"))
+    monkeypatch.setattr("cairnmind.mcp.mcp_server.httpx.AsyncClient", lambda **kw: pytest.fail("Unbound client reached HTTP"))
     with pytest.raises(RuntimeError, match="resume_required"):
         await ServiceClient(settings).post(endpoint, {})
 
 
 @pytest.mark.asyncio
 async def test_bound_bridge_rejects_forged_session_identity(settings, monkeypatch):
-    monkeypatch.setattr("cairnmind.mcp_server.httpx.AsyncClient", lambda **kw: pytest.fail("Forged session reached HTTP"))
+    monkeypatch.setattr("cairnmind.mcp.mcp_server.httpx.AsyncClient", lambda **kw: pytest.fail("Forged session reached HTTP"))
     client = ServiceClient(settings, session_id="logical-session", packet_id="packet-one")
     with pytest.raises(RuntimeError, match="Session mismatch"):
         await client.post("/checkpoint", {"session_id": "different", "state": {}})
@@ -1171,7 +1173,7 @@ async def test_bound_project_reads_include_session_scope_without_requiring_ack(s
         assert payload["session_id"] == "logical-session"
         return httpx.Response(200, json={"ok": True})
 
-    monkeypatch.setattr("cairnmind.mcp_server.httpx.AsyncClient", lambda **kwargs: real_client(
+    monkeypatch.setattr("cairnmind.mcp.mcp_server.httpx.AsyncClient", lambda **kwargs: real_client(
         **kwargs, transport=httpx.MockTransport(backend)))
     client = ServiceClient(settings, session_id="logical-session", packet_id="packet-one")
     body = {"project": "demo", "question": "What differs on this branch?"}
@@ -1204,7 +1206,7 @@ async def test_bound_bridge_refreshes_packet_then_requires_explicit_real_ack(set
         assert kwargs["timeout"] in {15, 45}
         return real_client(**kwargs, transport=httpx.MockTransport(backend))
 
-    monkeypatch.setattr("cairnmind.mcp_server.httpx.AsyncClient", factory)
+    monkeypatch.setattr("cairnmind.mcp.mcp_server.httpx.AsyncClient", factory)
     client = ServiceClient(settings, session_id="logical-session", packet_id="packet-one")
     await client.post("/sessions/context", {})
     assert client.packet_id == "packet-new"
@@ -1222,7 +1224,7 @@ async def test_bound_bridge_refreshes_packet_then_requires_explicit_real_ack(set
 @pytest.mark.asyncio
 async def test_bound_bridge_rejects_cross_session_context_response(settings, monkeypatch):
     real_client = httpx.AsyncClient
-    monkeypatch.setattr("cairnmind.mcp_server.httpx.AsyncClient", lambda **kwargs: real_client(
+    monkeypatch.setattr("cairnmind.mcp.mcp_server.httpx.AsyncClient", lambda **kwargs: real_client(
         **kwargs, transport=httpx.MockTransport(lambda req: httpx.Response(200, json={
             "session_id": "another-session", "packet": {"id": "bad", "hash": "bad"}}))))
     client = ServiceClient(settings, session_id="logical-session", packet_id="packet-one")
@@ -1232,7 +1234,7 @@ async def test_bound_bridge_rejects_cross_session_context_response(settings, mon
 
 
 def test_plan_tool_views_bound_context_without_echoing_source_contents():
-    from cairnmind.mcp_server import _next_task_view, _saved_plan_view
+    from cairnmind.mcp.mcp_server import _next_task_view, _saved_plan_view
 
     tasks = [{"id": f"task-{n}", "version": 1, "content": "code" * 10000,
               "source_ids": ["source-a"], "metadata": {"state": "todo", "step_key": str(n),
@@ -1401,7 +1403,7 @@ def test_mcp_capability_requires_the_command_word_not_a_flag(help_text, expected
 
 
 def test_a_block_of_an_earlier_version_converted_by_install_still_counts_as_generated(settings, project, installed):
-    from cairnmind.sessions import _managed_empty_file
+    from cairnmind.memory.sessions import _managed_empty_file
 
     path = Path(project["root"]) / ".codex/config.toml"
     path.parent.mkdir()
@@ -1417,7 +1419,7 @@ def test_a_block_of_an_earlier_version_converted_by_install_still_counts_as_gene
 
 
 def test_codex_waits_for_a_tool_as_long_as_the_question_budget_allows(settings, project, installed):
-    from cairnmind.sessions import _managed_empty_file
+    from cairnmind.memory.sessions import _managed_empty_file
 
     path = Path(project["root"]) / ".codex/config.toml"
     integrations.install_integrations(settings, project, clients=("codex",))
@@ -1443,3 +1445,74 @@ def test_a_table_renamed_by_hand_under_the_earlier_markers_is_accepted(settings,
     assert path.read_text().startswith("# BEGIN CAIRNMIND\n") and "DEVBRAIN\n" not in path.read_text().replace("_SESSION", "")
     assert tomllib.loads(path.read_text())["mcp_servers"]["cairnmind"]["command"] == sys.executable
     assert not integrations._merge_toml_mcp(path, settings)
+
+
+def _earlier_args(arguments):
+    return ["devbrain" if value == "cairnmind" else value for value in arguments]
+
+
+def test_new_entries_start_the_new_module_and_entries_of_both_names_are_recognised(settings):
+    command = integrations._command(settings, "mcp")
+    assert command[1:4] == ["-I", "-m", "cairnmind"]
+    assert integrations._is_ours({"args": command[1:]}) and integrations._is_ours({"args": _earlier_args(command[1:])})
+    assert not integrations._is_ours({"args": ["-m", "another_tool", "mcp"]})
+    hook = " ".join(integrations._command(settings, "hook", "--client", "codex"))
+    assert integrations._managed_hook({"command": hook}, "codex")
+    assert integrations._managed_hook({"command": hook.replace("-m cairnmind ", "-m devbrain ")}, "codex")
+    assert not integrations._managed_hook({"command": hook.replace("-m cairnmind ", "-m another_tool ")}, "codex")
+
+
+def test_install_rewrites_entries_written_under_the_earlier_name(settings, tmp_path):
+    mcp = tmp_path / "project" / ".mcp.json"
+    mcp.parent.mkdir()
+    old_args = _earlier_args(integrations._command(settings, "mcp")[1:])
+    mcp.write_text(json.dumps({"mcpServers": {"devbrain": {"command": "/old/python", "args": old_args},
+                                              "other": {"command": "keep"}}}))
+    assert integrations._merge_json_mcp(mcp, settings) is True
+    written = json.loads(mcp.read_text())["mcpServers"]
+    assert list(written) == ["cairnmind", "other"]
+    assert written["cairnmind"]["args"] == integrations._command(settings, "mcp")[1:] and written["other"] == {"command": "keep"}
+
+    hooks = tmp_path / "project" / "hooks.json"
+    old_hook = " ".join(_earlier_args(integrations._command(settings, "hook", "--client", "claude")))
+    hooks.write_text(json.dumps({"hooks": {"SessionStart": [
+        {"hooks": [{"type": "command", "command": old_hook}, {"type": "command", "command": "echo user hook"}]}]}}))
+    assert integrations._merge_hooks(hooks, settings, "claude") is True
+    commands = [handler["command"] for group in json.loads(hooks.read_text())["hooks"]["SessionStart"]
+                for handler in group["hooks"]]
+    assert "echo user hook" in commands and old_hook not in commands
+    assert sum("-m cairnmind " in command for command in commands) == 1
+
+
+def test_untouched_files_generated_under_the_earlier_name_still_count_as_ours(settings, tmp_path):
+    from cairnmind.memory.sessions import _managed_empty_file
+    project = {"id": "project-a", "name": "Example", "root": str(tmp_path / "project")}
+    for builder in (integrations._command, integrations._earlier_command):
+        command = builder(settings, "mcp")
+        for key, forwarded in (("cairnmind", integrations.SESSION_ENV_VARS),
+                               ("devbrain", integrations.EARLIER_SESSION_ENV_VARS)):
+            generated = json.dumps({"mcpServers": {key: {
+                "command": command[0], "args": command[1:], "env": {name: "${" + name + ":-}" for name in forwarded}}}})
+            assert _managed_empty_file(".mcp.json", generated.encode(), settings, project) is True
+            toml = (("# BEGIN CAIRNMIND\n" if key == "cairnmind" else "# BEGIN DEVBRAIN\n") + f"[mcp_servers.{key}]\n"
+                    f"command = {json.dumps(command[0])}\nargs = {json.dumps(command[1:])}\n"
+                    f"env_vars = {json.dumps(list(forwarded))}\nstartup_timeout_sec = 15\ntool_timeout_sec = 75\n"
+                    + ("# END CAIRNMIND\n" if key == "cairnmind" else "# END DEVBRAIN\n"))
+            assert _managed_empty_file(".codex/config.toml", toml.encode(), settings, project) is True
+    mixed = json.dumps({"mcpServers": {"devbrain": {"command": command[0], "args": command[1:], "env": {
+        name: "${" + name + ":-}" for name in integrations.SESSION_ENV_VARS}}}})
+    assert _managed_empty_file(".mcp.json", mixed.encode(), settings, project) is False
+    foreign = json.dumps({"mcpServers": {"devbrain": {"command": sys.executable, "args": ["-m", "another_tool"]}}})
+    assert _managed_empty_file(".mcp.json", foreign.encode(), settings, project) is False
+    assert _managed_empty_file(".mcp.json", b"not json", settings, project) is False
+
+
+def test_an_unmarked_codex_entry_under_the_earlier_name_is_left_working(settings, tmp_path):
+    path = tmp_path / "project" / ".codex" / "config.toml"
+    path.parent.mkdir(parents=True)
+    original = ('model = "keep"\n[mcp_servers.devbrain]\ncommand = ' + json.dumps(sys.executable)
+                + "\nargs = " + json.dumps(_earlier_args(integrations._command(settings, "mcp")[1:]))
+                + '\nenv_vars = ["DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID"]\n')
+    path.write_text(original)
+    assert integrations._merge_toml_mcp(path, settings) is False
+    assert path.read_text() == original

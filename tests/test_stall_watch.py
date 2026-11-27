@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 import stall_watch
-from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
 
 

@@ -8,10 +8,10 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from cairnmind import terminal_notice_feed as feed
+from cairnmind.terminal import terminal_notice_feed as feed
 from cairnmind.config import Settings
-from cairnmind.terminal_notices import NoticeHistory
-from cairnmind.terminal_panels import SidebarApp
+from cairnmind.terminal.terminal_notices import NoticeHistory
+from cairnmind.terminal.terminal_panels import SidebarApp
 from test_terminal_panels import settle
 from test_terminal_ux080 import setup_ui
 

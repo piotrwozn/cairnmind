@@ -10,12 +10,13 @@ import shutil
 
 import pytest
 
-from cairnmind import arcade, ingest, store_writer
-from cairnmind.arcade import ArcadeError
+from cairnmind.storage import arcade, store_writer
+from cairnmind.scip import ingest
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.config import Settings
-from cairnmind.restore_staged import RestoreFailed
+from cairnmind.storage.restore_staged import RestoreFailed
 from cairnmind.store import Store
-from cairnmind.store_readonly import StoreNotReady
+from cairnmind.storage.store_readonly import StoreNotReady
 from test_connect_only import data_directory, test_engine  # noqa: F401 - a fixture
 from test_connect_only_network import MARK_ROW, contents, direct, relay, whole_transactions_only  # noqa: F401
 from test_index_batching import tree

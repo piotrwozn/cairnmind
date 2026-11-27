@@ -15,7 +15,7 @@ import pytest
 from textual import events, on
 from textual.widgets import DataTable, Input
 
-from cairnmind.terminal_panels import SidebarApp
+from cairnmind.terminal.terminal_panels import SidebarApp
 from test_terminal_panels import settle
 from test_terminal_ux080 import setup_ui
 

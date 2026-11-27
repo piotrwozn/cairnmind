@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from cairnmind.config import Settings
-from cairnmind.ollama import Ollama, OllamaUnavailable
+from cairnmind.agents.ollama import Ollama, OllamaUnavailable
 
 
 @pytest.mark.parametrize("status,message,category", [
@@ -152,7 +152,7 @@ def _no_structured_output(settings, *, reply='{"ok": true}', status=501, body=ML
 
 
 async def test_a_server_without_structured_output_is_asked_again_with_the_schema_in_the_prompt(tmp_path):
-    from cairnmind import structured_output
+    from cairnmind.agents import structured_output
     settings = Settings(data_dir=tmp_path)
     respond, requests = _no_structured_output(settings)
     messages = [{"role": "system", "content": "Reply with JSON only."}, {"role": "user", "content": "Return ok."}]
@@ -189,7 +189,7 @@ async def test_a_fenced_json_reply_without_format_is_unwrapped_and_nothing_else_
     (400, {"error": "invalid format"}, "invalid_request"),
 ])
 async def test_other_refusals_of_a_structured_request_are_still_unavailable(tmp_path, status, body, code):
-    from cairnmind import structured_output
+    from cairnmind.agents import structured_output
     settings = Settings(data_dir=tmp_path)
     respond, requests = _no_structured_output(settings, status=status, body=body)
     async with httpx.AsyncClient(base_url=settings.ollama_url, transport=httpx.MockTransport(respond)) as client:
@@ -214,7 +214,7 @@ async def test_the_refusal_of_a_request_without_format_is_not_retried(tmp_path):
 
 
 async def test_an_openai_compatible_server_without_structured_output_gets_the_schema_in_the_prompt(tmp_path):
-    from cairnmind.memory_openai import OpenAICompatible
+    from cairnmind.memory.memory_openai import OpenAICompatible
     settings = Settings(data_dir=tmp_path)
     respond, requests = _no_structured_output(settings, body={"error": {"message": "Structured output is unavailable"}})
     profile = {"provider": "openai_compatible", "base_url": "http://127.0.0.1:8080/v1"}

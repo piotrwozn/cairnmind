@@ -13,15 +13,15 @@ import tracemalloc
 
 import pytest
 
-from cairnmind import store_backup
-from cairnmind.arcade import ArcadeClient
+from cairnmind.storage import store_backup
+from cairnmind.storage.arcade import ArcadeClient
 from cairnmind.config import BACKUP_FORMATS
-from cairnmind.journal import JournalTransaction
-from cairnmind.retrieval import Retriever
+from cairnmind.storage.journal import JournalTransaction
+from cairnmind.agents.retrieval import Retriever
 from cairnmind.service import daily_backups
-from cairnmind.sql import json_text
+from cairnmind.storage.sql import json_text
 from cairnmind.store import EXPORT_TYPES, Store
-from cairnmind.store_size import _backups
+from cairnmind.storage.store_size import _backups
 
 from conftest import as_person
 
@@ -271,7 +271,7 @@ def test_truncated_backup_is_refused_before_any_change(store, tmp_path, cut):
 KILLED_BACKUP = """
 import os, sys, time
 from pathlib import Path
-from cairnmind import store_backup
+from cairnmind.storage import store_backup
 from cairnmind.store import Store
 store_backup.PAGE_ROWS, store_backup.WRITE_BYTES = 10, 1
 pages = store_backup._pages

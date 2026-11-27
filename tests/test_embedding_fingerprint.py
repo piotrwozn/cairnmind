@@ -14,11 +14,11 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import memory_fingerprint, memory_models
+from cairnmind.memory import memory_fingerprint, memory_models
 from cairnmind.config import Settings
-from cairnmind.memory_openai import OpenAICompatible
-from cairnmind.ollama import Ollama, OllamaUnavailable
-from cairnmind.retrieval import Retriever
+from cairnmind.memory.memory_openai import OpenAICompatible
+from cairnmind.agents.ollama import Ollama, OllamaUnavailable
+from cairnmind.agents.retrieval import Retriever
 from cairnmind.store import Store
 
 from test_knowledge import document
@@ -145,7 +145,7 @@ def test_the_service_start_with_the_local_ollama_sends_no_extra_request(tmp_path
         return httpx.Response(200, json={"models": [{"name": "x", "digest": "a" * 64}]})
 
     real = httpx.AsyncClient
-    monkeypatch.setattr("cairnmind.ollama.httpx.AsyncClient",
+    monkeypatch.setattr("cairnmind.agents.ollama.httpx.AsyncClient",
                         lambda **kwargs: real(**kwargs, transport=httpx.MockTransport(ollama)))
     Store(tmp_path / "data")
     settings = Settings.load(tmp_path / "data", create=True)
@@ -169,7 +169,7 @@ def test_the_service_checks_at_start_and_holds_new_vectors_while_changed(tmp_pat
     from cairnmind.service import create_app
     server = Server(OLD)
     real = httpx.AsyncClient
-    monkeypatch.setattr("cairnmind.ollama.httpx.AsyncClient",
+    monkeypatch.setattr("cairnmind.agents.ollama.httpx.AsyncClient",
                         lambda **kwargs: real(**kwargs, transport=httpx.MockTransport(server)))
     Store(tmp_path / "data")
     settings = replace(Settings.load(tmp_path / "data", create=True), embedding_model="text-embed",
@@ -324,7 +324,7 @@ def test_rebuild_vectors_checks_first_and_accepts_the_new_weights(tmp_path, monk
     from cairnmind import cli
     server = Server(OLD)
     real = httpx.AsyncClient
-    monkeypatch.setattr("cairnmind.ollama.httpx.AsyncClient",
+    monkeypatch.setattr("cairnmind.agents.ollama.httpx.AsyncClient",
                         lambda **kwargs: real(**kwargs, transport=httpx.MockTransport(server)))
     data, root = tmp_path / "data", tmp_path / "project"
     root.mkdir()

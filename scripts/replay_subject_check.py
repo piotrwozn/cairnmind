@@ -29,8 +29,8 @@ from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 
-from cairnmind.agent import EXCERPT_CHARS
-from cairnmind.subject import missing_answer_names, missing_subject
+from cairnmind.agents.agent import EXCERPT_CHARS
+from cairnmind.agents.subject import missing_answer_names, missing_subject
 
 REPORT_QUOTE_CHARS = 300  # where repository_evaluation.case_result cuts a quote
 REPORT_ANSWER_CHARS = 600  # where case_result cuts an answer; one this long may be cut (a quote of exactly 300 likewise)

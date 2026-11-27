@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 from conftest import mcp_fixture_processes
-from cairnmind import cockpit, native_worker, verification
+from cairnmind.terminal import cockpit, native_worker
+from cairnmind.memory import verification
 
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"),
                                 reason="the name cut at 15 bytes into /proc/<pid>/stat is Linux's; macOS reads no name")

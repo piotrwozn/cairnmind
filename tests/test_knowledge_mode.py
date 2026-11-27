@@ -11,10 +11,12 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, first_start, knowledge_mode
+from cairnmind import cli
+from cairnmind.cli_cmds import first_start
+from cairnmind.agents import knowledge_mode
 from cairnmind.config import Settings
-from cairnmind.knowledge_mode import missing_models as REAL_PROBE
-from cairnmind.terminal_i18n import tr
+from cairnmind.agents.knowledge_mode import missing_models as REAL_PROBE
+from cairnmind.terminal.terminal_i18n import tr
 
 NEW_SENTENCES = [first_start.KNOWLEDGE_DISABLED, first_start.MODELS_NOT_CONFIGURED, first_start.GET_MODELS,
                  first_start.SERVER_DOWN, first_start.MODEL_MISSING, first_start.CHOSE_ENABLED,
@@ -100,7 +102,7 @@ def test_the_service_refuses_to_start_on_a_knowledge_agent_value_it_does_not_kno
 
 
 def test_the_ask_panel_shows_the_answer_in_polish_and_every_new_sentence_has_polish():
-    from cairnmind.terminal_commands import ask_summary
+    from cairnmind.terminal.terminal_commands import ask_summary
     found = {**NOTHING_FOUND, "matches": [a_match()], "held_back": {"classes": ["chat"], "chunks": 1}}
     shown = ask_summary(knowledge_mode.unavailable_answer(found), lambda text: tr(text, "pl"))
     assert first_start.MESSAGES[first_start.ASK_OFF] in shown
@@ -133,15 +135,15 @@ class Search:
         self.calls, self.warnings = [], []
 
     def search(self, *args, **kwargs):
-        from cairnmind.memory_egress import ASK
+        from cairnmind.memory.memory_egress import ASK
         self.calls.append((args, kwargs, ASK.get()))
         return ["hit"]
 
 
 async def test_text_matches_use_the_lexical_search_of_ask_and_ask_no_model(tmp_path):
     from types import SimpleNamespace
-    from cairnmind.agent import INITIAL_HITS
-    from cairnmind.memory_egress import ASK, Gate
+    from cairnmind.agents.agent import INITIAL_HITS
+    from cairnmind.memory.memory_egress import ASK, Gate
     from test_deterministic_mode import Untouched  # records every attribute asked of it
     remote = {"provider": "openai_compatible", "base_url": "https://models.example/v1", "allow_remote": True}
     model, seen = Untouched(), []
@@ -174,7 +176,7 @@ async def test_text_matches_use_the_lexical_search_of_ask_and_ask_no_model(tmp_p
 
 
 def test_the_ask_panel_lists_matches_under_their_own_heading_and_never_as_sources():
-    from cairnmind.terminal_commands import ask_summary
+    from cairnmind.terminal.terminal_commands import ask_summary
 
     def polish(text):
         return tr(text, "pl")
@@ -221,7 +223,7 @@ def _down(request):
 
 def _init(monkeypatch, tmp_path):
     """`cairnmind init` with the real probe, in tmp_path/memory, and no engine or store."""
-    from cairnmind import database_mode, engine_docker
+    from cairnmind.storage import database_mode, engine_docker
     monkeypatch.setattr(engine_docker, "choose_engine_mode", lambda settings: None)
     monkeypatch.setattr(database_mode, "connect_only", lambda settings: False)
     monkeypatch.setattr(database_mode, "engine_mode", lambda settings: "native")
@@ -362,7 +364,7 @@ def _model_server(monkeypatch, reply):
         return httpx.Response(200, json={"id": "x", "usage": {"prompt_tokens": 1, "completion_tokens": 1},
                                          "choices": [{"index": 0, "finish_reason": "stop",
                                                       "message": {"role": "assistant", "content": reply}}]})
-    monkeypatch.setattr("cairnmind.ollama.httpx.AsyncClient",
+    monkeypatch.setattr("cairnmind.agents.ollama.httpx.AsyncClient",
                         lambda **kwargs: real(**kwargs, transport=httpx.MockTransport(server)))
 
 
@@ -419,7 +421,7 @@ def test_doctor_says_disabled_as_information_and_exits_0_unless_the_value_is_inv
 
 
 def test_the_installer_view_lists_no_model_line_in_deterministic_mode_and_keeps_the_fault():
-    from cairnmind import doctor_attention
+    from cairnmind.cli_cmds import doctor_attention
     healthy = {"python": "3.12.3", "java": {"on_path": True, "executable": "/usr/bin/java", "compatible": True},
                "arcadedb": {"available": True, "database_available": True},
                "ollama": {"available": False, "url": "http://127.0.0.1:11434"},
@@ -436,15 +438,15 @@ def test_the_installer_view_lists_no_model_line_in_deterministic_mode_and_keeps_
     assert attention({**healthy, "knowledge_agent": invalid})[0] == invalid
 
 
-EVALUATIONS = [(["eval", "run"], "cairnmind eval run", "cairnmind.evaluation.run_evaluation"),
-               (["eval", "memory"], "cairnmind eval memory", "cairnmind.memory_evaluation.run_memory_evaluation"),
+EVALUATIONS = [(["eval", "run"], "cairnmind eval run", "cairnmind.agents.evaluation.run_evaluation"),
+               (["eval", "memory"], "cairnmind eval memory", "cairnmind.agents.memory_evaluation.run_memory_evaluation"),
                (["eval", "extraction"], "cairnmind eval extraction",
-                "cairnmind.extraction_evaluation.run_extraction_evaluation"),
+                "cairnmind.agents.extraction_evaluation.run_extraction_evaluation"),
                (["eval", "repository", "."], "cairnmind eval repository",
-                "cairnmind.repository_evaluation.run_repository_evaluation"),
+                "cairnmind.agents.repository_evaluation.run_repository_evaluation"),
                (["eval", "injection"], "cairnmind eval injection",
-                "cairnmind.injection_evaluation.run_injection_evaluation"),
-               (["eval", "replay", "demo"], "cairnmind eval replay", "cairnmind.answer_log.replay")]
+                "cairnmind.agents.injection_evaluation.run_injection_evaluation"),
+               (["eval", "replay", "demo"], "cairnmind eval replay", "cairnmind.agents.answer_log.replay")]
 
 
 @pytest.mark.parametrize("arguments, command, target", EVALUATIONS)
@@ -474,7 +476,7 @@ def test_rebuild_vectors_refuses_without_models(monkeypatch, tmp_path):
 
 
 def test_the_ask_panel_names_the_mode_apart_from_missing_evidence(monkeypatch):
-    from cairnmind.terminal_commands import ask_summary
+    from cairnmind.terminal.terminal_commands import ask_summary
     monkeypatch.setattr("shutil.which", lambda name, *a, **k: None)  # no coding assistant: ASK_NEXT is shown
     # #326: no heading of its own above the one line; the way to get models, then the next step.
     for language, missing in (("en", "Missing evidence"), ("pl", "Brakujące dowody")):

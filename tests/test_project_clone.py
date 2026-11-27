@@ -13,13 +13,17 @@ import pytest
 from textual.widgets import Input, Static
 from typer.testing import CliRunner
 
-from cairnmind import cli, first_start, ingest, knowledge_mode, project_clone, project_removal
-from cairnmind.cockpit import create_cockpit_app
+from cairnmind import cli
+from cairnmind.cli_cmds import first_start
+from cairnmind.scip import ingest
+from cairnmind.agents import knowledge_mode
+from cairnmind.memory import project_clone, project_removal
+from cairnmind.terminal.cockpit import create_cockpit_app
 from cairnmind.config import Settings
-from cairnmind.store_writer import StoreNotWriter
-from cairnmind.terminal_commands import COMMANDS, CommandPaletteApp, dispatch_command
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_panels import SidebarApp
+from cairnmind.storage.store_writer import StoreNotWriter
+from cairnmind.terminal.terminal_commands import COMMANDS, CommandPaletteApp, dispatch_command
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_panels import SidebarApp
 from consent_steps import form_ready
 from conftest import make_symlink_or_skip
 from test_terminal_panels import settle, setup as setup_panel
@@ -509,7 +513,7 @@ async def test_tui_clone_repository_form_validates_clones_and_hands_off_to_regis
 
 @pytest.mark.asyncio
 async def test_tui_clone_repository_hands_snapshot_to_existing_import_choice(tmp_path, monkeypatch):
-    from cairnmind.terminal_ui import ChoiceModal
+    from cairnmind.terminal.terminal_ui import ChoiceModal
     settings, broker, workspace = setup_panel(tmp_path, monkeypatch)
     parent = tmp_path / "src"
     parent.mkdir()

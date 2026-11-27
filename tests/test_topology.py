@@ -15,14 +15,16 @@ import pytest
 
 from typer.testing import CliRunner
 
-from cairnmind import cli, integrations, memory_models, store_writer
-from cairnmind import topology as topology_module
+from cairnmind import cli
+from cairnmind.memory import integrations, memory_models
+from cairnmind.storage import store_writer
+from cairnmind.cli_cmds import topology as topology_module
 from cairnmind.config import Settings, is_own_variable
-from cairnmind.database_credentials import problem as database_problem
-from cairnmind.database_mode import MODE_INVALID
-from cairnmind.first_start import KNOWLEDGE_INVALID
-from cairnmind.terminal_safe import safe_text
-from cairnmind.topology import (
+from cairnmind.storage.database_credentials import problem as database_problem
+from cairnmind.storage.database_mode import MODE_INVALID
+from cairnmind.cli_cmds.first_start import KNOWLEDGE_INVALID
+from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.cli_cmds.topology import (
     CHANGE_HINT, EVALUATED_NOT, EVALUATED_NOT_CHECKED, EVALUATED_PASSED, EVALUATED_RELEASE, EVALUATED_UNKNOWN, EVALUATED_UNREACHABLE,
     FROM_VARIABLE,
     ITEM_DATABASE_HERE, ITEM_ENGINE_DOCKER, ITEM_MODELS_EMBEDDING, ITEM_NO_SERVICE, ITEM_SERVICE_VARIABLE,
@@ -87,7 +89,7 @@ def test_everything_local_reads_as_three_lines(tmp_path, offline):
 
 def test_the_java_version_found_is_named_not_the_minimum(tmp_path, offline):
     """#368: JDK 22 runs the engine, so the lines say Java 22, in both languages; 21 stays Java 21."""
-    from cairnmind.topology import lines
+    from cairnmind.cli_cmds.topology import lines
     settings = make(tmp_path)
     for major in (22, 21):
         place = topology(settings, writer=WRITER, java_major=major)
@@ -291,7 +293,7 @@ def test_values_are_shown_literally(tmp_path, offline):
 
 
 def test_every_topology_sentence_has_polish_with_the_same_placeholders():
-    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal.terminal_i18n import tr
     names = {name for name, value in vars(topology_module).items() if isinstance(value, str) and (
         (name.isupper() and " " in value) or name.startswith(("WORD_", "STATUS_")))}
     sentences = {getattr(topology_module, name) for name in names}

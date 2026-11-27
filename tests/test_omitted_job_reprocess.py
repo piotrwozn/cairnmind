@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import JobNotFoundError, Store, job_diagnostics
 
 

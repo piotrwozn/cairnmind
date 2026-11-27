@@ -15,16 +15,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from cairnmind import agent_tools
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.agent_tools import ToolExecutor
+from cairnmind.agents import agent_tools
+from cairnmind.agents.agent_journal import AgentJournal
+from cairnmind.agents.agent_tools import ToolExecutor
 from cairnmind.config import Settings
-from cairnmind.ingest import current_source, index_project
-from cairnmind.mcp_servers import inside_worktree
-from cairnmind.memory_paths import (RESERVED_DIRECTORIES, is_memory_path, is_reserved_below, is_reserved_memory,
+from cairnmind.scip.ingest import current_source, index_project
+from cairnmind.mcp.mcp_servers import inside_worktree
+from cairnmind.memory.memory_paths import (RESERVED_DIRECTORIES, is_memory_path, is_reserved_below, is_reserved_memory,
                                     nested_reserved)
 from cairnmind.store import Store, validate_scope
-from cairnmind.verification import _input_patterns
+from cairnmind.memory.verification import _input_patterns
 
 
 def _ignores_case(directory):
@@ -225,7 +225,7 @@ async def test_a_listing_keeps_ordinary_names_with_those_characters(tmp_path):
 def test_a_journal_write_to_a_path_now_refused_marks_the_list_incomplete():
     # A journal from an older version may hold a completed write to a path this version refuses: the list
     # cannot show it, so the approval dialog says it may be incomplete instead of dropping it silently.
-    from cairnmind.agent_write_guard import ChangeLedger
+    from cairnmind.agents.agent_write_guard import ChangeLedger
 
     def completed(path):
         return {"type": "action_completed", "data": {"name": "write_file", "action_id": path,
@@ -381,7 +381,7 @@ def test_excluded_directories_are_compared_without_case(tmp_path):
 def test_a_checkout_for_published_memory_inside_a_project_spelled_with_other_case_is_refused(caseless, tmp_path):
     # The carrier of published memory (#173) refuses a checkout inside a project's files or sharing its
     # repository; `<...>/REPO/pkgs` for a project at `<...>/Repo` got through a comparison of text.
-    from cairnmind.memory_published_carrier import checkout_path
+    from cairnmind.memory.memory_published_carrier import checkout_path
 
     root = caseless / "Repo"
     (root / ".git").mkdir(parents=True)

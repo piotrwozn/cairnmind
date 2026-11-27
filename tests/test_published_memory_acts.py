@@ -10,13 +10,14 @@ from fastapi.testclient import TestClient
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, conflicts
-from cairnmind.findings import save_finding
-from cairnmind.inspector import Inspector, InspectorNotFound
-from cairnmind.memory_acts import confirm, covered_by_local_act
-from cairnmind.inspector_api import attach_inspector_routes
-from cairnmind.memory_published_format import definition_hash, identity_hash, plan_hash, task_fields
-from cairnmind.plans import PlanManager
+from cairnmind import cli
+from cairnmind.memory import conflicts
+from cairnmind.memory.findings import save_finding
+from cairnmind.terminal.inspector import Inspector, InspectorNotFound
+from cairnmind.memory.memory_acts import confirm, covered_by_local_act
+from cairnmind.terminal.inspector_api import attach_inspector_routes
+from cairnmind.memory.memory_published_format import definition_hash, identity_hash, plan_hash, task_fields
+from cairnmind.memory.plans import PlanManager
 from cairnmind.store import Store
 
 from conftest import as_person, person_edit

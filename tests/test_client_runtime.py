@@ -12,8 +12,9 @@ from uuid import uuid4
 
 import pytest
 
-from cairnmind import client_auth, integrations
-from cairnmind.client_runtime import NativeRuntime
+from cairnmind.agents import client_auth
+from cairnmind.memory import integrations
+from cairnmind.agents.client_runtime import NativeRuntime
 from cairnmind.config import Settings
 from json_wait import read_json_when_complete
 

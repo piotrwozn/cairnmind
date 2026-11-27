@@ -10,14 +10,15 @@ from fastapi.testclient import TestClient
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, conflicts
-from cairnmind.memory_published_release import release
+from cairnmind import cli
+from cairnmind.memory import conflicts
+from cairnmind.memory.memory_published_release import release
 from cairnmind.service import create_app
-from cairnmind.findings import save_finding
-from cairnmind.inspector import Inspector
-from cairnmind.inspector_api import attach_inspector_routes
-from cairnmind.memory_acts import act_context, confirm
-from cairnmind.plans import PlanManager
+from cairnmind.memory.findings import save_finding
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.terminal.inspector_api import attach_inspector_routes
+from cairnmind.memory.memory_acts import act_context, confirm
+from cairnmind.memory.plans import PlanManager
 from cairnmind.store import Store
 
 from conftest import as_person
@@ -97,7 +98,7 @@ def test_a_project_with_one_root_names_that_root_when_no_worktree_is_given(tmp_p
 
 def test_a_failed_branch_read_is_not_recorded_as_a_detached_head(two_worktrees, monkeypatch):
     store, pid, root, other = two_worktrees
-    import cairnmind.verification as verification
+    import cairnmind.memory.verification as verification
     real = verification._git
 
     def failing(path, *args):
@@ -215,7 +216,7 @@ def test_a_release_names_the_worktree_it_was_made_in(two_worktrees):
 def test_plan_save_on_the_command_line_stores_a_plan_and_a_confirm_plan_is_refused(two_worktrees, person_terminal,
                                                                                   tmp_path, monkeypatch):
     store, pid, root, other = two_worktrees
-    from cairnmind import confirmation
+    from cairnmind.memory import confirmation
     for name in ("CAIRNMIND_SESSION_ID", "CAIRNMIND_PACKET_ID", *confirmation.CLIENT_MARKERS):
         monkeypatch.delenv(name, raising=False)
     document = tmp_path / "plan.json"

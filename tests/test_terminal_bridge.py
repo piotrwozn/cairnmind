@@ -20,8 +20,8 @@ import pytest
 
 from conftest import status_flags, terminal_attributes
 from cairnmind.config import Settings
-from cairnmind import native_worker
-from cairnmind.terminal_bridge import CONTROL_STATES, PaneStatus, RawTerminalBridge, raw_terminal, terminal_dimensions
+from cairnmind.terminal import native_worker
+from cairnmind.terminal.terminal_bridge import CONTROL_STATES, PaneStatus, RawTerminalBridge, raw_terminal, terminal_dimensions
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX PTY terminal bridge")
 
@@ -308,7 +308,7 @@ def test_outer_pane_status_never_targets_unverified_workspace(tmp_path, monkeypa
         return SimpleNamespace(returncode=0, stdout=tag["value"] + "\n")
     manager.tmux = tmux
     manager.auth_finished = lambda *args: pytest.fail("Unverified auth pane was closed")
-    monkeypatch.setattr("cairnmind.workspace.WorkspaceManager", lambda *args, **kwargs: manager)
+    monkeypatch.setattr("cairnmind.terminal.workspace.WorkspaceManager", lambda *args, **kwargs: manager)
     monkeypatch.setenv("TMUX", "/tmp/not-our-socket,123,0")
     monkeypatch.setenv("TMUX_PANE", "%7")
     pane = PaneStatus(settings, "run-fixture", "default")
@@ -378,7 +378,7 @@ def test_native_attach_helper_drops_outer_tmux_markers(tmp_path, monkeypatch):
 @pytest.mark.parametrize("state", ["failed", "interrupted", "stale"])
 @pytest.mark.parametrize("path", ["initial_get", "websocket_status", "status_poll"])
 async def test_terminal_failure_feedback_survives_each_exit_path_after_restore(pty_pair, language, state, path):
-    from cairnmind.terminal_i18n import native_failure_notice
+    from cairnmind.terminal.terminal_i18n import native_failure_notice
     master, slave = pty_pair
     original = terminal_attributes(slave)
     client, pane = Client(), Pane()
@@ -431,7 +431,7 @@ async def test_terminal_failure_feedback_survives_each_exit_path_after_restore(p
 
 @pytest.mark.parametrize("code", [True, -1, 256, "1", {}, None])
 def test_failure_feedback_does_not_reflect_unknown_client_or_unbounded_exit_code(code):
-    from cairnmind.terminal_i18n import native_failure_notice
+    from cairnmind.terminal.terminal_i18n import native_failure_notice
     text = native_failure_notice({"client": "PRIVATE_CLIENT\x1b]52;value", "lifecycle": "failed",
                                   "exit_code": code, "error": "PRIVATE_ERROR"})
     assert text.startswith("Assistant failed.")
@@ -442,7 +442,7 @@ def test_failure_feedback_does_not_reflect_unknown_client_or_unbounded_exit_code
 @pytest.mark.parametrize("language", ["en", "pl"])
 @pytest.mark.parametrize("path", ["initial_get", "websocket_status", "status_poll"])
 async def test_auth_failure_keeps_connections_guidance_and_existing_post_restore_cleanup(pty_pair, language, path):
-    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal.terminal_i18n import tr
     master, slave = pty_pair
     original = terminal_attributes(slave)
     client, pane = Client(), Pane()
@@ -479,8 +479,8 @@ async def test_auth_failure_keeps_connections_guidance_and_existing_post_restore
 @pytest.mark.parametrize("language", ["en", "pl"])
 @pytest.mark.parametrize("status", [404, 409])
 async def test_stale_broker_rejection_shows_fixed_feedback_without_reattach(pty_pair, language, status):
-    from cairnmind.terminal_client import BrokerError
-    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal.terminal_client import BrokerError
+    from cairnmind.terminal.terminal_i18n import tr
     master, slave = pty_pair
     original = terminal_attributes(slave)
     client = Client()
@@ -501,8 +501,8 @@ async def test_stale_broker_rejection_shows_fixed_feedback_without_reattach(pty_
 @pytest.mark.asyncio
 async def test_a_run_the_broker_no_longer_knows_ends_as_stale_instead_of_offline(pty_pair):
     # #161: the broker answers 404 for an unknown run (it was 400, which kept the pane offline and retrying).
-    from cairnmind.terminal_client import BrokerError
-    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal.terminal_client import BrokerError
+    from cairnmind.terminal.terminal_i18n import tr
     master, slave = pty_pair
     client = Client()
 
@@ -525,7 +525,7 @@ def test_full_unread_terminal_cannot_block_final_feedback_or_terminal_restoratio
     import textwrap
     script = textwrap.dedent("""
         import asyncio, fcntl, json, os, sys, termios, time
-        from cairnmind.terminal_bridge import RawTerminalBridge, raw_terminal
+        from cairnmind.terminal.terminal_bridge import RawTerminalBridge, raw_terminal
         def terminal_attributes(fd):  # as in conftest: macOS sets PENDIN itself after a restore
             attributes = termios.tcgetattr(fd)
             if sys.platform == 'darwin':

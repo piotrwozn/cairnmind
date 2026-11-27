@@ -12,13 +12,13 @@ import hashlib
 
 import pytest
 
-from cairnmind import ingest
-from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.scip import ingest
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
-from cairnmind.sql import clean_row
-from cairnmind.restore_staged import RestoreFailed, RestoreUnfinished
+from cairnmind.storage.sql import clean_row
+from cairnmind.storage.restore_staged import RestoreFailed, RestoreUnfinished
 from cairnmind.store import SCHEMA_VERSION, Store
-from cairnmind.store_readonly import StoreNotReady
+from cairnmind.storage.store_readonly import StoreNotReady
 from database_relay import Relay
 from test_connect_only import connect, data_directory, no_engine_files, test_engine  # noqa: F401 - a fixture
 from test_index_batching import dump, tree

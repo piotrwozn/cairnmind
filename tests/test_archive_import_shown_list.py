@@ -13,14 +13,14 @@ import pytest
 from consent_steps import consent_drawn, form_ready
 from textual.widgets import Input, Static
 
-from cairnmind import person_proof
-from cairnmind.confirmation import REPLACED_CHANGED
-from cairnmind.memory import MemoryConflict, MemoryManager
+from cairnmind.terminal import person_proof
+from cairnmind.memory.confirmation import REPLACED_CHANGED
+from cairnmind.memory.memory import MemoryConflict, MemoryManager
 from cairnmind.store import Store
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_inspector import InspectorApp
-from cairnmind.terminal_panels import SidebarApp
-from cairnmind import terminal_published_import as published
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_inspector import InspectorApp
+from cairnmind.terminal.terminal_panels import SidebarApp
+from cairnmind.terminal import terminal_published_import as published
 
 from conftest import as_person
 from test_backup_restore_stream import comparable
@@ -145,7 +145,7 @@ class ArchiveBroker(FakeBroker):
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_the_memory_view_shows_every_replaced_verdict_and_sends_that_list(tmp_path, monkeypatch, language):
     settings, _, workspace = setup(tmp_path, monkeypatch, project=False)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     listed = sorted(str(uuid4()) for _ in range(250))
     broker = ArchiveBroker({"id": "project-a", "name": "Project A", "root": str(tmp_path / "project")}, listed)
     app = InspectorApp(settings, broker=broker, workspace=workspace)

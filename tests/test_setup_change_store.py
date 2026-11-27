@@ -21,12 +21,14 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli as cairnmind_cli
-from cairnmind import person_proof, setup_change, setup_mark, setup_profiles, store_writer, upgrade_mark
-from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.terminal import person_proof, setup_change, setup_mark, setup_profiles
+from cairnmind.storage import store_writer
+from cairnmind.cli_cmds import upgrade_mark
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.cli import app
 from cairnmind.config import Settings
-from cairnmind.confirmation import confirmation_of
-from cairnmind.database_mode import connect_only
+from cairnmind.memory.confirmation import confirmation_of
+from cairnmind.storage.database_mode import connect_only
 from cairnmind.store import Store
 from conftest import as_person
 from database_relay import Relay
@@ -54,7 +56,7 @@ def service_pids(settings) -> list[int]:
     if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
-        from cairnmind import process_identity
+        from cairnmind.pal import process_identity
         psapi = ctypes.WinDLL("psapi", use_last_error=True)
         buf = (wintypes.DWORD * 4096)()
         needed = wintypes.DWORD()

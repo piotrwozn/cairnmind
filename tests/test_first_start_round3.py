@@ -13,10 +13,14 @@ from typer.testing import CliRunner
 
 from conftest import plain_words
 
-from cairnmind import cli, doctor_attention, first_start, ingest, knowledge_mode, project_removal
-from cairnmind.terminal_commands import ask_summary
-from cairnmind.terminal_i18n import tr
-from cairnmind.topology import FROM_VARIABLE, WRITER_YES, _storage_line
+from cairnmind import cli
+from cairnmind.cli_cmds import doctor_attention, first_start
+from cairnmind.scip import ingest
+from cairnmind.agents import knowledge_mode
+from cairnmind.memory import project_removal
+from cairnmind.terminal.terminal_commands import ask_summary
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.cli_cmds.topology import FROM_VARIABLE, WRITER_YES, _storage_line
 from test_first_start_round2 import healthy
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "install-wsl.sh"
@@ -169,13 +173,13 @@ def test_the_storage_line_says_who_sets_the_address_and_who_writes_to_the_store(
 # --- 7: the brief's legend ----------------------------------------------------------------------------------------
 
 def test_the_brief_legend_names_only_the_marks_and_titles_the_lines_use(monkeypatch):
-    from cairnmind import brief as brief_module
+    from cairnmind.memory import brief as brief_module
 
     class Store:
         def resolve_project(self, project):
             return {"id": "p", "name": "demo"}
 
-    monkeypatch.setattr("cairnmind.verification._root", lambda store, pid, worktree: Path("/w"))
+    monkeypatch.setattr("cairnmind.memory.verification._root", lambda store, pid, worktree: Path("/w"))
     monkeypatch.setattr(brief_module, "_scoped_records", lambda *a: [])
     rows = {"lines": []}
     monkeypatch.setattr(brief_module, "_checkpoint", lambda *a: (None, rows["lines"]))

@@ -5,11 +5,11 @@ import asyncio
 import json
 from pathlib import Path
 
-from cairnmind.agent import KnowledgeAgent
+from cairnmind.agents.agent import KnowledgeAgent
 from cairnmind.config import Settings
-from cairnmind.extraction_evaluation import load_transcripts, transcript_sources
-from cairnmind.extraction_input import ASSISTANT_RULE, CONVERSATION_RULE, SYSTEM, extraction_request
-from cairnmind.integrations import DATA_NOT_INSTRUCTIONS, launch_prompt
+from cairnmind.agents.extraction_evaluation import load_transcripts, transcript_sources
+from cairnmind.agents.extraction_input import ASSISTANT_RULE, CONVERSATION_RULE, SYSTEM, extraction_request
+from cairnmind.memory.integrations import DATA_NOT_INSTRUCTIONS, launch_prompt
 
 SET = Path(__file__).resolve().parents[1] / "docs" / "evaluation" / "extraction-transcripts.json"
 
@@ -21,7 +21,7 @@ def agent_message(role, content, **data):
 
 
 def claude_line(role, blocks):
-    from cairnmind.ingest import _event_text
+    from cairnmind.scip.ingest import _event_text
     event = {"type": role, "sessionId": "s", "message": {"role": role, "content": blocks}}
     text, parsed_role, _, _ = _event_text(event, "auto")
     return {"id": "s2", "project_id": "p", "kind": "transcript", "content": json.dumps(event),
@@ -91,8 +91,8 @@ def test_a_claude_tool_call_is_left_out_of_what_extraction_reads():
 
 def test_every_quote_allowed_around_a_claude_tool_call_is_kept_at_commit():
     """The commit check (agent._commit_extraction) keeps a quote only when it is in ``source_text``."""
-    from cairnmind import agent as agent_module
-    from cairnmind.extraction_input import source_text
+    from cairnmind.agents import agent as agent_module
+    from cairnmind.agents.extraction_input import source_text
 
     long_text = "The scheduler computes the report date in local time. " * 12
     line = claude_line("assistant", [
@@ -112,9 +112,9 @@ def test_every_quote_allowed_around_a_claude_tool_call_is_kept_at_commit():
 def test_cairnminds_own_block_in_agents_md_is_not_read_as_project_knowledge(tmp_path):
     # Issue #241: `cairnmind install` writes the client protocol into AGENTS.md and CLAUDE.md between its
     # markers; extraction read it as project rules ("FIRST call resume_context ...", "Never invent an ACK.").
-    from cairnmind import agent as agent_module
-    from cairnmind.extraction_input import source_text
-    from cairnmind.integrations import EARLIER_BEGIN, EARLIER_END, _instructions
+    from cairnmind.agents import agent as agent_module
+    from cairnmind.agents.extraction_input import source_text
+    from cairnmind.memory.integrations import EARLIER_BEGIN, EARLIER_END, _instructions
 
     block = _instructions({"id": "p1"}, Settings(data_dir=tmp_path))
     assert "resume_context" in block
