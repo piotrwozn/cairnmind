@@ -344,6 +344,7 @@ def notice_of(app):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language,size", [("en", (80, 24)), ("en", (120, 35)), ("pl", (80, 24))])
 async def test_settings_opens_the_screen_with_one_read(tmp_path, monkeypatch, language, size):
+    monkeypatch.setattr(SidebarApp, "refresh_sidebar", lambda self: None)
     status = served(make(sub(tmp_path, "service")))
     app, broker = ui(tmp_path, monkeypatch, status, language)
     async with app.run_test(size=size) as pilot:

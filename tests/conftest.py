@@ -150,6 +150,10 @@ LEFT_OUT_ON_A_SERVER = {
         "`cairnmind eval memory` is refused on a connect-only installation",
     "test_graph_size":
         "starts an engine of its own with the default heap, which a run against a server does not own",
+    "test_release_contracts::test_upgrade_from_published_release_preserves_every_row_and_records_backup":
+        "loads a raw release database of its own name, which a connect-only installation never creates",
+    "test_release_contracts::test_frozen_cli_json_and_mcp_tool_examples_match_contract":
+        "checks the frozen status and doctor shapes of a managed installation, which a connect-only one reports as connect mode",
 }
 
 
@@ -455,6 +459,13 @@ def pytest_configure(config):
     copy.parent.mkdir(exist_ok=True)
     shutil.copyfile(MCP_FIXTURE_SOURCE, copy)
     MCP_FIXTURE = str(copy)
+    if sys.platform == "win32":
+        import textual._time as textual_clock
+        import textual._win_sleep as textual_win_sleep
+        # textual._win_sleep blocks default-executor threads in WaitForMultipleObjects(INFINITE) and cancels via a new
+        # task on the same bounded ThreadPoolExecutor, deadlocking for 10 minutes under parallel TUI load on Windows.
+        textual_win_sleep.sleep = textual_win_sleep.time_sleep_coro
+        textual_clock.win_sleep = textual_win_sleep.time_sleep_coro
 
 
 def pytest_addoption(parser):
