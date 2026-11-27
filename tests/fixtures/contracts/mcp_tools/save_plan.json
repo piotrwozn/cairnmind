@@ -1,0 +1,26 @@
+{
+  "omitted_tasks": 0,
+  "plan": {
+    "id": "<UUID_1>",
+    "origin_client": "external",
+    "origin_evidence": "degraded",
+    "origin_history": "unarchived",
+    "origin_session_id": "<UUID_2>",
+    "source_ids": [
+      "<UUID_3>"
+    ],
+    "step_count": 1,
+    "version": 1
+  },
+  "replayed": false,
+  "tasks": [
+    {
+      "id": "<UUID_4>",
+      "state": "todo",
+      "status": "proposed",
+      "step_key": "mcp-step-1",
+      "step_key_truncated": false,
+      "version": 1
+    }
+  ]
+}

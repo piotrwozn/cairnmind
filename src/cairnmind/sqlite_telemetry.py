@@ -21,6 +21,7 @@ from typing import Any, Callable, TextIO
 
 from .config import Settings, resolved_backend, sqlite_db_path
 from . import platform_hints
+from .private_files import make_private
 
 # Scale thresholds recommending migration from SQLite to ArcadeDB server (Faza 5).
 MAX_DB_BYTES = 500 * 1024 * 1024  # 500 MB
@@ -74,7 +75,7 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         try:
-            os.chmod(tmp, 0o600)
+            make_private(tmp)
         except OSError:
             pass
         tmp.replace(path)

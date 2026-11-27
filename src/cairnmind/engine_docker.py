@@ -20,8 +20,8 @@ from urllib.parse import urlparse
 from . import __version__, config
 from .arcade import ArcadeError
 from .database_mode import MODE_INVALID, connect_only, refusal
-from .platform_fs import current_uid
-from .platform_locks import lock_file
+from .file_locks import locked_path
+from .private_files import IS_WINDOWS, ensure_private_dir, make_private, open_no_follow
 from .terminal_safe import safe_text
 
 LABEL_INSTALLATION = "io.cairnmind.installation"
@@ -318,7 +318,7 @@ def container_recorded(settings) -> bool:
 def _check_record(settings, name: str) -> None:
     path = _state(settings) / "container.json"
     try:
-        recorded = json.loads(path.read_text()).get("name")
+        recorded = json.loads(path.read_text(encoding="utf-8")).get("name")
     except (OSError, ValueError, AttributeError):
         recorded = None
     if recorded != name:
@@ -375,6 +375,17 @@ def _publish_address(settings) -> tuple[str, int]:
     return ("[::1]" if parsed.hostname == "::1" else "127.0.0.1"), parsed.port or 2480
 
 
+def _unsafe_mount_path(path: Path) -> bool:
+    """Reject control characters and colons that break Docker volume mounts (allowing C:\\ on Windows)."""
+    text = str(path)
+    if any(ord(char) < 32 or ord(char) == 127 for char in text):
+        return True
+    if IS_WINDOWS:
+        rest = text[2:] if len(text) >= 2 and text[0].isalpha() and text[1] == ":" else text
+        return ":" in rest or "," in text
+    return ":" in text
+
+
 def start_docker_engine(settings, *, local: bool | None = None, build: bool = False, pull: bool = False) -> dict:
     """Start this installation's engine container, or return the engine that already answers.
 
@@ -385,9 +396,9 @@ def start_docker_engine(settings, *, local: bool | None = None, build: bool = Fa
         raise ConnectOnly(refusal(settings, "start an engine"))
     settings = replace(settings, engine_mode="docker")
     state = _state(settings)
-    if current_uid() == 0:
+    if not IS_WINDOWS and os.getuid() == 0:
         raise ArcadeError(ROOT_REFUSED)
-    if ":" in str(state) or any(ord(char) < 32 or ord(char) == 127 for char in str(state)):
+    if _unsafe_mount_path(state):
         raise ArcadeError(PATH_UNSAFE.format(path=safe_text(state, limit=200)))
     if len(settings.arcade_password) < 8:
         raise ArcadeError(SHORT_PASSWORD)
@@ -397,9 +408,8 @@ def start_docker_engine(settings, *, local: bool | None = None, build: bool = Fa
     if not local_image and config.ARCADE_IMAGE_DIGEST == "sha256:" + "0" * 64:
         raise ArcadeError(UNPUBLISHED)
     context = build_context() if build else None
-    settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with (settings.data_dir / "engine.lock").open("a") as lock:
-        lock_file(lock, exclusive=True)
+    ensure_private_dir(settings.data_dir)
+    with locked_path(settings.data_dir / "engine.lock"):
         return _start_locked(settings, image, local_image, context, pull)
 
 
@@ -456,27 +466,41 @@ def _start_locked(settings, image: str, local_image: bool, context: Path | None,
         if done.returncode != 0:
             raise ArcadeError(PULL_FAILED.format(image=image, code=done.returncode))
     state = _state(settings)
-    state.mkdir(exist_ok=True, mode=0o700)  # they must belong to this user before the mount, or Docker makes them root's
+    if not state.exists():
+        from .private_files import ensure_private_dir
+        ensure_private_dir(state)
     for folder in ("config", "databases", "backups", "log"):
-        (state / folder).mkdir(exist_ok=True, mode=0o700)
+        sub = state / folder
+        if not sub.exists():
+            from .private_files import ensure_private_dir
+            ensure_private_dir(sub)
     password_file = write_root_password(settings)
     host, port = _publish_address(settings)
     held = labels(settings)
     record = state / "container.json"
-    fd = os.open(record, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as handle:
+    fd = open_no_follow(record, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
         json.dump({"name": name, "installation": held[LABEL_INSTALLATION], "data_dir": str(settings.data_dir),
                    "image": image, "started_at": time.time()}, handle)
-    os.chmod(record, 0o600)
-    user_args = ["--user", f"{os.getuid()}:{os.getgid()}"] if hasattr(os, "getuid") and hasattr(os, "getgid") else []
-    done = run_docker(["run", "--detach", "--name", name,
-                       "--label", f"{LABEL_INSTALLATION}={held[LABEL_INSTALLATION]}",
-                       "--label", f"{LABEL_DATA_DIR}={held[LABEL_DATA_DIR]}",
-                       *user_args,
-                       "--publish", f"{host}:{port}:2480",
-                       "--volume", f"{state}:{CONTAINER_DATA}",
-                       "--volume", f"{password_file}:{CONTAINER_PASSWORD}:ro",
-                       "--env", JAVA_OPTIONS, "--pull", "never", image], timeout=120)
+    make_private(record)
+    run_args = ["run", "--detach", "--name", name,
+                "--label", f"{LABEL_INSTALLATION}={held[LABEL_INSTALLATION]}",
+                "--label", f"{LABEL_DATA_DIR}={held[LABEL_DATA_DIR]}"]
+    if not IS_WINDOWS:
+        run_args.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
+    run_args.extend(["--publish", f"{host}:{port}:2480"])
+    if IS_WINDOWS:
+        run_args.extend([
+            "--mount", f"type=bind,source={state},target={CONTAINER_DATA}",
+            "--mount", f"type=bind,source={password_file},target={CONTAINER_PASSWORD},readonly",
+        ])
+    else:
+        run_args.extend([
+            "--volume", f"{state}:{CONTAINER_DATA}",
+            "--volume", f"{password_file}:{CONTAINER_PASSWORD}:ro",
+        ])
+    run_args.extend(["--env", JAVA_OPTIONS, "--pull", "never", image])
+    done = run_docker(run_args, timeout=120)
     if done.returncode != 0:
         raise ArcadeError(RUN_FAILED.format(detail=_detail(done)))
     created = (done.stdout or "").strip()  # the Id of the container THIS start created
@@ -533,9 +557,8 @@ def stop_docker_engine(settings) -> dict:
 
 def store_engine_mode(settings, mode: str, *, build: bool) -> bool:
     """Save the engine mode (and whether the image is built here) in config.json; True when that changed it."""
-    settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with (settings.data_dir / "config.lock").open("a") as lock:
-        lock_file(lock, exclusive=True)
+    ensure_private_dir(settings.data_dir)
+    with locked_path(settings.data_dir / "config.lock"):
         stored = config.Settings.load(settings.data_dir)
         changed = stored.engine_mode != mode or stored.engine_docker_build != build
         stored.engine_mode, stored.engine_docker_build = mode, build

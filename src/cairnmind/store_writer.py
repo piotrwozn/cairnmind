@@ -68,8 +68,8 @@ import tempfile
 import time
 from uuid import UUID, uuid4
 
-from .platform_fs import windows_machine_guid
-from .platform_locks import lock_file
+from .file_locks import lock_exclusive
+from .private_files import atomic_replace, make_private
 from .sql import clean_row, insert_document, update_document, utc_now
 
 INSTALLATION_FILE = "installation.json"
@@ -135,14 +135,28 @@ def _darwin_identity() -> str | None:
     return _known_platform_uuid
 
 
+def _win32_identity() -> str | None:
+    """MachineGuid from the Windows registry: persists across reboots and hostname changes."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as key:
+            raw, _ = winreg.QueryValueEx(key, "MachineGuid")
+        if not isinstance(raw, str):
+            return None
+        parsed = str(UUID(raw.strip())).lower()
+        return None if parsed == str(UUID(int=0)) else parsed
+    except (OSError, ValueError, ImportError):
+        return None
+
+
 def machine_identity() -> str:
-    """What tells this machine from another: the platform UUID on macOS, MachineGuid on Windows, the systemd machine id on Linux, else
-    the host name."""
+    """What tells this machine from another: the platform UUID on macOS, MachineGuid on Windows,
+    the systemd machine id on Linux, else the host name."""
     if sys.platform == "darwin":
         value = _darwin_identity()
         return "platform-uuid:" + value if value else "host:" + socket.gethostname()
     if sys.platform == "win32":
-        value = windows_machine_guid()
+        value = _win32_identity()
         return "machine-guid:" + value if value else "host:" + socket.gethostname()
     for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
         try:
@@ -188,12 +202,12 @@ def _write_identity(path: Path, value: dict) -> None:
     fd, name = tempfile.mkstemp(prefix=".installation-", dir=path.parent)
     temporary = Path(name)
     try:
-        with os.fdopen(fd, "w") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(value, handle, indent=2)
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(temporary, 0o600)
-        temporary.replace(path)
+        make_private(temporary)
+        atomic_replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -203,8 +217,8 @@ def installation(data_dir: Path) -> Installation:
     data_dir = Path(data_dir).expanduser().resolve()
     data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = data_dir / INSTALLATION_FILE
-    with (data_dir / "config.lock").open("a") as lock:
-        lock_file(lock, exclusive=True)
+    with (data_dir / "config.lock").open("a", encoding="utf-8") as lock:
+        lock_exclusive(lock)
         fingerprint = _fingerprint(data_dir)
         stored = _read_identity(path)
         if stored and stored["bound_to"] == fingerprint:

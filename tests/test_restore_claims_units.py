@@ -114,7 +114,10 @@ def test_a_restored_claim_reads_as_the_backups_in_english_and_polish():
 
 
 def test_the_restore_asks_this_installations_workspace_socket(settings, monkeypatch):  # noqa: F811
-    expected = str(socket_directory("ui", workspace_namespace(settings.data_dir)) / "tmux.sock")
+    import sys
+    from cairnmind import person_pipe
+    expected = (person_pipe.pipe_name_for(settings.data_dir) if sys.platform == "win32"
+                else str(socket_directory("ui", workspace_namespace(settings.data_dir)) / "tmux.sock"))
     asked = []
     monkeypatch.setenv("TMUX", "/tmp/other,1,0")
 

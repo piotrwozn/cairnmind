@@ -127,6 +127,6 @@ def await_vertices(store, identifiers, *timeout):
                 still.extend(identifier for identifier in part if identifier not in found)
         missing = still
         if missing:
-            if time.monotonic() > deadline:
+            if time.monotonic() >= deadline:
                 raise RuntimeError(f"The database did not find {len(missing)} graph vertices it had committed")
             time.sleep(1)

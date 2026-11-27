@@ -54,7 +54,8 @@ UNCOVERED_METADATA = frozenset({
     "supersede_replaced_evidence_latest", "extraction_source_id", "extractor", "origin_client",
     "origin_session_id",
     "origin_history", "origin_evidence", "publication", "confirmation", "conflicts_resolved",
-    "conflict_decisions", "conflict_scope_note", "superseded_ids", "superseded_by", "possible_conflicts"})
+    "conflict_decisions", "conflict_scope_note", "superseded_ids", "superseded_by", "possible_conflicts",
+    "symbol_anchor", "comment_anchor", "adr_anchor", "trailer_anchor"})
 # On a task only: progress (state, reported evidence, check runs), a declared scope, a proposed command and
 # the placement in a plan. None of them is free text, except the path patterns of a scope.
 TASK_PROGRESS_METADATA = frozenset({

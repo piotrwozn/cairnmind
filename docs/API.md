@@ -37,7 +37,7 @@ The default base URLs are `https://api.openai.com/v1`, `https://api.anthropic.co
 
 **Set API key** opens an empty, masked field. A saved key is never displayed again. By default the key is kept in the memory of the current broker process and stops being available when that process exits. Simply detaching the terminal does not stop the broker.
 
-The **Remember on this computer** option is off by default. It stores the key in the private file `credentials/api-keys.json` in Cairnmind's local data directory. The directory has `0700` permissions and the file `0600`; **the file is not encrypted**. It is never included in the knowledge base, the administrative export or a project snapshot. Removing a locally stored key is a separate action in the connection menu.
+The **Remember on this computer** option is off by default. It stores the key in the private file `credentials/api-keys.json` in Cairnmind's local data directory. The directory has `0700` permissions and the file `0600` (owner-only NTFS DACL on Windows); **the file is not encrypted**. It is never included in the knowledge base, the administrative export or a project snapshot. Removing a locally stored key is a separate action in the connection menu.
 
 Instead of storing a key, you can enter a reference of the form `env:VARIABLE_NAME` in the connection's advanced settings, for example `env:OPENAI_API_KEY`. The variable must be visible to the broker process that runs the workspace. Changing the variable in a new shell does not update a broker that is already running. Keys are not passed to system commands executed by the agent.
 

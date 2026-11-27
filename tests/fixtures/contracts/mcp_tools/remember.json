@@ -1,0 +1,14 @@
+{
+  "id": "<UUID_1>",
+  "key": "mcp-fact",
+  "kind": "fact",
+  "origin_client": "external",
+  "origin_evidence": "degraded",
+  "origin_history": "unarchived",
+  "origin_session_id": "<UUID_2>",
+  "source_ids": [
+    "<UUID_3>"
+  ],
+  "status": "proposed",
+  "version": 1
+}

@@ -77,6 +77,13 @@ relative_files = true
 # A process ended by a signal, such as a pane killed with its tmux server, saves nothing.
 patch = ["subprocess"]
 
+[tool.coverage.paths]
+source = [
+    "src/cairnmind",
+    "*/src/cairnmind",
+    "*\\src\\cairnmind",
+]
+
 [tool.coverage.report]
 exclude_also = [
     "if TYPE_CHECKING:",

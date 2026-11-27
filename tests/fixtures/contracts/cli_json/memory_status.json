@@ -1,0 +1,138 @@
+{
+  "auto": {
+    "enabled": false,
+    "error": null,
+    "interval_minutes": 15,
+    "last_checked_at": null,
+    "last_success_at": null,
+    "worktree": "<WORKTREE>"
+  },
+  "earlier_package": null,
+  "last_import": null,
+  "latest": {
+    "active_plan_id": "<UUID_1>",
+    "completeness": {
+      "failed_analysis": 0,
+      "meaning": "committed_rows_only",
+      "models_required": false,
+      "pending_analysis": 1
+    },
+    "counts": {
+      "check_runs": 0,
+      "edges": 5,
+      "nodes": 7,
+      "plan_revisions": 1,
+      "plans": 1,
+      "record_revisions": 2,
+      "records": 2,
+      "sources": 4
+    },
+    "created_at": "<TIMESTAMP>",
+    "format_version": 1,
+    "manifest_path": "<WORKTREE>/.memory/cairnmind/manifest.json",
+    "objects_checked": false,
+    "origin_root": "<WORKTREE>",
+    "parent_id": null,
+    "path": "<WORKTREE>/.memory/cairnmind/manifest.json",
+    "processing": {
+      "embed": {
+        "completed": 0,
+        "failed": 0,
+        "pending": 2,
+        "running": 0
+      },
+      "extract": {
+        "completed": 0,
+        "failed": 0,
+        "pending": 1,
+        "running": 0
+      },
+      "import": {
+        "completed": 0,
+        "failed": 0,
+        "pending": 0,
+        "running": 0
+      }
+    },
+    "project": {
+      "id": "<UUID_2>",
+      "name": "contract-app"
+    },
+    "snapshot_id": "<SHA256_1>",
+    "state_hash": "<SHA256_2>",
+    "status": "manifest_valid"
+  },
+  "package_size": {
+    "age_seconds": 0,
+    "bytes": {
+      "fraction": 0.0,
+      "limit": 536870912,
+      "used": 0
+    },
+    "exact_bytes": true,
+    "manifest_bytes": {
+      "fraction": 0.0,
+      "limit": 33554432,
+      "used": 0
+    },
+    "measured": "estimate",
+    "object_bytes": {
+      "fraction": 0.0,
+      "limit": 16777216,
+      "used": 0
+    },
+    "rows": {
+      "fraction": 0.0,
+      "limit": 1000000,
+      "used": 0
+    },
+    "sources_bytes": {
+      "current": 0,
+      "replaced": 0,
+      "transcripts": 0
+    },
+    "warn_at": 0.7,
+    "warning": null
+  },
+  "path": "<WORKTREE>/.memory/cairnmind/manifest.json",
+  "processing": {
+    "embed": {
+      "completed": 0,
+      "failed": 0,
+      "pending": 4,
+      "running": 0
+    },
+    "extract": {
+      "completed": 0,
+      "failed": 0,
+      "pending": 1,
+      "running": 0
+    },
+    "import": {
+      "completed": 0,
+      "failed": 0,
+      "pending": 0,
+      "running": 0
+    }
+  },
+  "project_id": "<UUID_2>",
+  "published": {
+    "carrier": {
+      "kind": "repository"
+    },
+    "destination": "<WORKTREE>/.memory/cairnmind-published",
+    "files": 3,
+    "format_exists": true,
+    "format_project_id": "<UUID_2>",
+    "publication_id": "<UUID_2>",
+    "unreadable": []
+  },
+  "rebuilding": {
+    "chunks": 4,
+    "code_index_pending": false,
+    "embedding_rows": 0,
+    "model_required_to_read_memory": false
+  },
+  "verification": "Imported checks are historical; local execution and a new session ACK remain required.",
+  "write_path": "<WORKTREE>/.memory/cairnmind/manifest.json"
+}

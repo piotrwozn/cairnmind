@@ -1,0 +1,112 @@
+{
+  "epoch": 1,
+  "packet": {
+    "active_plan": {
+      "constraints": [
+        "Preserve field names across minor releases"
+      ],
+      "goal": "Freeze JSON/MCP shapes for 1.0.0",
+      "id": "<UUID_1>",
+      "source_ids": [
+        "<UUID_2>"
+      ],
+      "title": "Contract stabilization",
+      "version": 1
+    },
+    "active_task": {
+      "acceptance_criteria": [
+        "All frozen JSON fields match"
+      ],
+      "content": "Verify frozen CLI and MCP responses.",
+      "depends_on": [],
+      "id": "<UUID_3>",
+      "required_profiles": [],
+      "requires_review": false,
+      "requires_test": false,
+      "source_ids": [
+        "<UUID_2>"
+      ],
+      "state": "todo",
+      "version": 1
+    },
+    "archive": {
+      "scope": "captured EOFs only; this client's own conversation is not archived",
+      "status": "complete"
+    },
+    "archive_watermarks": [],
+    "blockers": [],
+    "client": "external",
+    "code": {
+      "branch": "main",
+      "fingerprint": "<SHA256_1>",
+      "head": "<GIT_SHA_SHORT>828475baa1899a45ef503e5c6fa1",
+      "manifest_hash": "<SHA256_2>",
+      "status": "fresh",
+      "unknowns": [],
+      "worktree": "<WORKTREE>"
+    },
+    "created_at": "<TIMESTAMP>",
+    "epoch": 1,
+    "evidence": "degraded",
+    "extraction": {
+      "counts": {
+        "pending": 1
+      },
+      "status": "pending"
+    },
+    "hash": "<SHA256_3>",
+    "history": "unarchived",
+    "id": "<UUID_4>",
+    "indexing": {
+      "counts": {
+        "pending": 5
+      },
+      "status": "pending"
+    },
+    "next_action": "ready",
+    "no_history": false,
+    "omitted_by_origin": {},
+    "omitted_records": 0,
+    "omitted_unknowns": 0,
+    "project_id": "<UUID_5>",
+    "records": [
+      {
+        "content": "Keep compute_total synchronous and deterministic.",
+        "content_truncated": false,
+        "id": "<UUID_6>",
+        "kind": "decision",
+        "origin": "unattributed",
+        "source_ids": [
+          "<UUID_7>",
+          "<UUID_8>"
+        ],
+        "status": "proposed",
+        "version": 1
+      },
+      {
+        "content": "Verify frozen CLI and MCP responses.",
+        "content_truncated": false,
+        "id": "<UUID_3>",
+        "kind": "task",
+        "origin": "unattributed",
+        "source_ids": [
+          "<UUID_2>"
+        ],
+        "status": "proposed",
+        "version": 1
+      }
+    ],
+    "schema_version": 2,
+    "session_id": "<UUID_9>",
+    "state_hash": "<SHA256_4>",
+    "status": "ready",
+    "unknowns": [],
+    "warnings": [
+      "External client: Cairnmind cannot read or archive this client's own conversation (history: unarchived), so nothing said in it can be verified (evidence: degraded). What this session records is kept as reported by an external session and is never shown or counted as verified."
+    ],
+    "worktree": "<WORKTREE>"
+  },
+  "session_id": "<UUID_9>",
+  "status": "ready",
+  "unknowns": []
+}

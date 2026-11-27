@@ -37,8 +37,10 @@ import stat
 import time
 from uuid import uuid4
 
-from .platform_fs import O_CLOEXEC, O_NOFOLLOW, owner_matches, pread_bytes, private_mode_ok
-from .platform_locks import lock_file
+from .file_locks import lock_exclusive
+from .private_files import (
+    atomic_replace, ensure_private_dir, is_private_stat, is_reparse_point, open_no_follow, pread_at,
+)
 
 FORMAT_VERSION = 1
 DIRECTORY = "answer-log"
@@ -51,10 +53,7 @@ log = logging.getLogger(__name__)
 
 
 def _private_dir(path: Path) -> None:
-    path.mkdir(mode=0o700, exist_ok=True)
-    info = path.lstat()
-    if not stat.S_ISDIR(info.st_mode) or not owner_matches(info) or not private_mode_ok(info, 0o700):
-        raise ValueError(f"{path} must be a private directory owned by this user")
+    ensure_private_dir(path, error=f"{path} must be a private directory owned by this user")
 
 
 def _project_dir(settings, project_id: str) -> Path:
@@ -72,16 +71,16 @@ def _locked(settings, project_id: str, create: bool):
     """The project's log directory under an exclusive lock; None when it does not exist and is not created."""
     folder = _project_dir(settings, project_id)
     root = Path(settings.data_dir)
-    if root.is_symlink():
+    if is_reparse_point(root):
         raise ValueError("The data directory cannot be a symbolic link")
     if not create and not folder.exists():
         yield None
         return
     for path in (root / DIRECTORY, folder):
         _private_dir(path)
-    fd = os.open(folder / "answers.lock", os.O_CREAT | os.O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
+    fd = open_no_follow(folder / "answers.lock", os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        lock_file(fd, exclusive=True)
+        lock_exclusive(fd)
         yield folder
     finally:
         os.close(fd)
@@ -143,23 +142,27 @@ def _parse(raw: bytes) -> tuple[list[dict], int]:
 
 def _read_file(path: Path) -> bytes:
     try:
-        fd = os.open(path, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        fd = open_no_follow(path, os.O_RDONLY, private_on_create=False)
     except FileNotFoundError:
         return b""
     with os.fdopen(fd, "rb") as handle:
         info = os.fstat(handle.fileno())
-        if not stat.S_ISREG(info.st_mode) or not owner_matches(info):
+        if not is_private_stat(info, path, directory=False, strict=False):
             raise ValueError(f"{path} is not a regular file owned by this user")
         return handle.read(MAX_LOG_BYTES * 2)
 
 
 def _rewrite(folder: Path, lines: list[bytes]) -> None:
     temporary = folder / f".answers-{uuid4().hex}.tmp"
-    with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | O_NOFOLLOW, 0o600), "wb") as handle:
+    with os.fdopen(open_no_follow(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as handle:
         handle.writelines(lines)
         handle.flush()
         os.fsync(handle.fileno())
-    os.replace(temporary, folder / "answers.jsonl")
+    atomic_replace(temporary, folder / "answers.jsonl")
+
+
+def _last_byte(fd: int, size: int) -> bytes:
+    return pread_at(fd, 1, size - 1)
 
 
 def append(settings, entry: dict) -> bool:
@@ -169,12 +172,12 @@ def append(settings, entry: dict) -> bool:
         return False
     with _locked(settings, entry["project_id"], create=True) as folder:
         path = folder / "answers.jsonl"
-        fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        fd = open_no_follow(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
         with os.fdopen(fd, "ab") as handle:
             info = os.fstat(handle.fileno())
             if not stat.S_ISREG(info.st_mode):
                 raise ValueError(f"{path} is not a regular file")
-            if info.st_size and pread_bytes(handle.fileno(), 1, info.st_size - 1) != b"\n":
+            if info.st_size and _last_byte(handle.fileno(), info.st_size) != b"\n":
                 # An earlier write was cut short: end its fragment so it does not swallow this entry.
                 line = b"\n" + line
             handle.write(line)
@@ -320,9 +323,10 @@ def replay(settings, project_id: str, ask, *, limit: int = 20, report_dir: Path 
               "compared": "the status and the set of cited source addresses; the wording is not compared",
               "answers": rows, "elapsed_seconds": round(time.monotonic() - started, 1)}
     output = Path(report_dir or Path(settings.data_dir) / "evaluations").expanduser().resolve()
-    output.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not output.exists():
+        ensure_private_dir(output)
     path = output / ("replay-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid4().hex[:8] + ".json")
-    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as handle:
+    with os.fdopen(open_no_follow(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
     report["report_path"] = str(path)

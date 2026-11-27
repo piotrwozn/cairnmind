@@ -7,18 +7,17 @@ import json
 import os
 from pathlib import Path
 import re
-import stat
 from uuid import uuid4
 
 from .cockpit_state import _atomic, _private_directory, _private_lock, normalize_path
-from .platform_fs import O_NOFOLLOW, owner_matches, private_mode_ok
+from .private_files import is_private_stat, is_reparse_point, open_no_follow
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 _PANES = {"sidebar", "client1", "client2", "inspector", "graph"}
 # The commands a sidebar can be asked to run: what the state accepts, what the command menu sends and
 # what `--ui-command` takes. New ones go last.
 UI_COMMANDS = ("search", "add_project", "start_work", "connections", "sessions", "memory", "ask", "brief",
-               "more", "settings", "next_stage", "notices")
+               "more", "settings", "next_stage", "notices", "clone_project")
 _FIELDS = {"project_id", "project_name", "worktree", "intent", "work_request", "handled_work_request",
            "selected_entity", "slots", "visible_slot_ids", "run_ids", "focus", "layout", "zoom",
            "pane_ids", "cached_projects", "launch_errors", "last_error", "broker_available", "auth_runs",
@@ -51,13 +50,12 @@ class WorkspaceState:
                 "requested_slot_ids": [], "command_request": None, "assistant_selections": []}
 
     def read(self):
-        if not self.path.exists() and not self.path.is_symlink():
+        if not self.path.exists() and not is_reparse_point(self.path):
             return self.defaults()
-        fd = os.open(self.path, os.O_RDONLY | O_NOFOLLOW)
-        with os.fdopen(fd) as handle:
+        fd = open_no_follow(self.path, os.O_RDONLY, private_on_create=False)
+        with os.fdopen(fd, encoding="utf-8") as handle:
             info = os.fstat(handle.fileno())
-            if (not stat.S_ISREG(info.st_mode) or not owner_matches(info)
-                    or not private_mode_ok(info, 0o600) or info.st_size > 2 * 1024 * 1024):
+            if not is_private_stat(info, self.path, directory=False) or info.st_size > 2 * 1024 * 1024:
                 raise ValueError("The workspace state must be a private file of the user.")
             value = json.load(handle)
         if (not isinstance(value, dict) or value.get("version") != 1

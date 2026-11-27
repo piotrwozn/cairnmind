@@ -12,7 +12,7 @@ cairnmind memory status my-app
 cairnmind memory auto my-app --disable
 ```
 
-Auto-save is off by default. When enabled, it saves changed memory while the service is running, including after the terminal UI is closed. It keeps the five most recent snapshots and shares identical objects between them. It does not run models, make commits or push anything to GitHub. Full conversations may contain private information: review the export before adding `.memory/cairnmind/` to the repository. Machine configuration, authentication files and configured keys are not exported; the content of saved conversations is not automatically anonymized.
+Auto-save is off by default. When enabled, it saves changed memory while the service is running, including after the terminal UI is closed. It keeps the five most recent snapshots and shares identical objects between them. It does not run models, make commits or push anything to GitHub. Full conversations may contain private information: review the export before adding `.memory/cairnmind/` to the repository. Machine configuration, authentication files and configured keys are not exported; the content of saved conversations is not automatically anonymized. Measured snapshot timings at 1,000 and 10,000 synthetic records are recorded in [evaluation/RESULTS.md](evaluation/RESULTS.md#memory-snapshot-at-size-169).
 
 On a second machine, after installing Cairnmind and cloning the repository:
 
@@ -42,6 +42,8 @@ Each record also has an evidence state, derived whenever it is read and never st
 ```bash
 cairnmind memory orphans my-app
 ```
+
+When a record is anchored to a function, class or method (`metadata.symbol_anchor`), Cairnmind compares the symbol's cross-OS normalised AST body hash rather than the whole file: edits elsewhere in the file or formatting (`ruff format`, `prettier`, comments, CRLF/LF) leave `symbol_state: unchanged` and keep `evidence_state: anchored`. Real body changes report `symbol_changed` (with the commit or timestamp of change) and deletions report `symbol_gone`, without ever mutating `record.status`. Projects may also opt in to at most one repository decision source (`off` by default) via `cairnmind memory decisions my-app [off|comments|adr|trailers]`, creating only `proposed` records idempotently and reporting `tag_removed` instead of deleting records when a tagged comment disappears. For serverless CI drift checks against a Git diff, see [Symbol-anchored evidence, opt-in decisions and `cairnmind scan`](WORKFLOW.md#symbol-anchored-evidence).
 
 ## How extraction fares in review
 

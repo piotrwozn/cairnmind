@@ -1,8 +1,13 @@
 """The pty drain thread is gone when stop() returns, so a closed descriptor number cannot be read by it (#419)."""
 import os
+import sys
 import threading
 
+import pytest
+
 from pty_drain import drain_pty
+
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX os.openpty PTY draining")
 
 
 def test_stop_ends_the_thread_before_the_descriptor_can_be_closed_and_reused():

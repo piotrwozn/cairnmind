@@ -1,0 +1,136 @@
+{
+  "jobs": [
+    {
+      "attempt_history_count": 0,
+      "attempts": 0,
+      "created_at": "<TIMESTAMP>",
+      "diagnostics": {},
+      "error": null,
+      "error_code": null,
+      "has_error": false,
+      "id": "<UUID_1>",
+      "kind": "embed",
+      "last_retry_at": null,
+      "lease_until": null,
+      "project_id": "<UUID_2>",
+      "retry_count": null,
+      "state": "pending",
+      "target": {
+        "chunk_id": "<SHA256_1>"
+      },
+      "updated_at": "<TIMESTAMP>",
+      "worker": null
+    },
+    {
+      "attempt_history_count": 0,
+      "attempts": 0,
+      "created_at": "<TIMESTAMP>",
+      "diagnostics": {},
+      "error": null,
+      "error_code": null,
+      "has_error": false,
+      "id": "<UUID_3>",
+      "kind": "embed",
+      "last_retry_at": null,
+      "lease_until": null,
+      "project_id": "<UUID_2>",
+      "retry_count": null,
+      "state": "pending",
+      "target": {
+        "chunk_id": "<SHA256_2>"
+      },
+      "updated_at": "<TIMESTAMP>",
+      "worker": null
+    },
+    {
+      "attempt_history_count": 0,
+      "attempts": 0,
+      "created_at": "<TIMESTAMP>",
+      "diagnostics": {},
+      "error": null,
+      "error_code": null,
+      "has_error": false,
+      "id": "<UUID_4>",
+      "kind": "embed",
+      "last_retry_at": null,
+      "lease_until": null,
+      "project_id": "<UUID_2>",
+      "retry_count": null,
+      "state": "pending",
+      "target": {
+        "chunk_id": "<SHA256_3>"
+      },
+      "updated_at": "<TIMESTAMP>",
+      "worker": null
+    },
+    {
+      "attempt_history_count": 0,
+      "attempts": 0,
+      "created_at": "<TIMESTAMP>",
+      "diagnostics": {},
+      "error": null,
+      "error_code": null,
+      "has_error": false,
+      "id": "<UUID_5>",
+      "kind": "extract",
+      "last_retry_at": null,
+      "lease_until": null,
+      "project_id": "<UUID_2>",
+      "retry_count": null,
+      "state": "pending",
+      "target": {
+        "source_id": "<UUID_6>"
+      },
+      "updated_at": "<TIMESTAMP>",
+      "worker": null
+    },
+    {
+      "attempt_history_count": 0,
+      "attempts": 0,
+      "created_at": "<TIMESTAMP>",
+      "diagnostics": {},
+      "error": null,
+      "error_code": null,
+      "has_error": false,
+      "id": "<UUID_7>",
+      "kind": "embed",
+      "last_retry_at": null,
+      "lease_until": null,
+      "project_id": "<UUID_2>",
+      "retry_count": null,
+      "state": "pending",
+      "target": {
+        "chunk_id": "<SHA256_4>"
+      },
+      "updated_at": "<TIMESTAMP>",
+      "worker": null
+    }
+  ],
+  "limit": 50,
+  "summary": {
+    "archive": {
+      "completed": 0,
+      "failed": 0,
+      "pending": 0,
+      "running": 0
+    },
+    "extraction": {
+      "completed": 0,
+      "failed": 0,
+      "pending": 1,
+      "running": 0
+    },
+    "indexing": {
+      "completed": 0,
+      "failed": 0,
+      "pending": 4,
+      "running": 0
+    },
+    "other": {
+      "completed": 0,
+      "failed": 0,
+      "pending": 0,
+      "running": 0
+    }
+  }
+}

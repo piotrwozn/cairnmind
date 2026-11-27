@@ -23,22 +23,60 @@ env:
   CAIRNMIND_LATENCY_SCALE: "4"
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        if: ${{ github.event_name == 'pull_request' }}
+        with:
+          fetch-depth: 0
+      - id: filter
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          changed=$(git diff --name-only "FETCH_HEAD...HEAD")
+          if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -qvE '^(docs/|.*\.md$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   lint:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
       - run: uv run ruff check src tests
 
   fast-tests:
     # Modules that need neither ArcadeDB/Java nor a real tmux server.
+    needs: changes
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
+      - run: test "${{ needs.changes.result }}" = success
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
-      - run: uv run pytest -n 4 -m "not arcade and not tmux" -q
+      - name: Fast tier
+        run: |
+          if [ "${{ needs.changes.outputs.code }}" = "false" ]; then
+            uv run pytest tests/test_doc_links.py tests/test_deployment.py -q
+          else
+            uv run pytest -n 4 -m "not arcade and not tmux" -q
+          fi
 
   eval-replay:
     # Deterministic VCR replay of evaluation suites without live Ollama/GPU (ADR-10).
@@ -58,20 +96,28 @@ jobs:
     # The same fast tier on an Apple silicon runner (macos-15 is arm64). macOS is supported since 0.12.0
     # (#237), so a failure here fails the workflow like the Linux tiers; the timeout stops a hang from
     # burning runner minutes. The pytest output and the JUnit XML are kept as an artifact.
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
     runs-on: macos-15
     timeout-minutes: 30
     steps:
+      - run: test "${{ needs.changes.result }}" = success
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
       # The hosted macOS runner has 3 cores. Every test has its own time limit (tests/run_guard.py,
       # 300 s by default); the step stops five minutes before the job so the report below is still kept.
       - name: Fast tier
         shell: bash
         timeout-minutes: 25
+        env:
+          COVERAGE_FILE: .coverage.macos-fast
         run: |
           set -o pipefail
-          uv run pytest -n 3 -m "not arcade and not tmux" -q -ra --junitxml=macos-junit.xml 2>&1 | tee macos-pytest.txt
+          uv run pytest -n 3 -m "not arcade and not tmux" -q -ra --cov --cov-report= --junitxml=macos-junit.xml 2>&1 | tee macos-pytest.txt
       - uses: actions/upload-artifact@v7
         if: ${{ always() }}
         with:
@@ -81,56 +127,142 @@ jobs:
             macos-pytest.txt
           if-no-files-found: warn
           retention-days: 7
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-part-macos-fast
+          path: .coverage.macos-fast
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 3
 
   windows-fast-tests:
-    # Native Windows lightweight mode (ADR-05): CLI, locks, filesystem guards, verification runner,
-    # snapshot privacy/audit, verdict cache, VCR replay, and Windows foundation tests.
+    # The fast tier on native Windows (Python 3.12+). Bounded so a hang cannot burn runner minutes;
+    # the pytest output and JUnit XML are kept as an artifact.
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
+      - run: if ("${{ needs.changes.result }}" -ne "success") { exit 1 }
+        shell: pwsh
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
-      - name: CLI smoke checks on native Windows
+      - run: uv run ruff check src tests
+      - name: Fast tier
         shell: pwsh
+        timeout-minutes: 25
+        env:
+          COVERAGE_FILE: .coverage.windows-fast
         run: |
-          uv run cairnmind --help | Out-Null
-          uv run cairnmind --data-dir "$env:RUNNER_TEMP\cm-win-smoke" doctor --json | Out-Null
-      - name: Windows foundation & cross-platform unit tests
-        shell: pwsh
-        run: |
-          uv run pytest -n 2 -q `
-            tests/test_phase5_windows_foundation.py `
-            tests/test_phase4b_sqlite_try.py `
-            tests/test_phase5_scale_telemetry.py `
-            tests/test_phase1_cli_demo.py `
-            tests/test_phase2_snapshot_privacy.py `
-            tests/test_phase3a_cache_vcr.py `
-            tests/test_phase3b_nli_cascade.py `
-            tests/test_citation_match.py `
-            tests/test_cli_messages.py `
-            tests/test_machine_identity.py `
-            tests/test_platform_hints.py
+          $ErrorActionPreference = "Continue"
+          uv run pytest -n 4 -m "not arcade and not tmux" -q -ra --cov --cov-report= --junitxml=windows-junit.xml 2>&1 | Tee-Object -FilePath windows-pytest.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: windows-fast-tests-report
+          path: |
+            windows-junit.xml
+            windows-pytest.txt
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-part-windows-fast
+          path: .coverage.windows-fast
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 3
 
-  tests:
-    # The whole suite in four parts that run at the same time, each on a runner of its own: real pinned
-    # ArcadeDB on Java 21 plus tmux, as on the target WSL host. `--shard I/4` picks a part by test id
-    # (tests/conftest.py); the parts are disjoint and together are the whole suite (tests/test_shards.py).
-    name: tests (${{ matrix.shard }} of 4)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+  windows-arcade-tests:
+    # Real pinned ArcadeDB on Java 21 on native Windows (excluding tmux-only modules), sharded in 6 parts.
+    name: windows-arcade-tests (${{ matrix.shard }} of 6)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
+    runs-on: windows-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
+      - run: if ("${{ needs.changes.result }}" -ne "success") { exit 1 }
+        shell: pwsh
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
-      - run: sudo apt-get update && sudo apt-get install -y tmux
       - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - run: uv sync --locked --extra dev
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/devbrain-arcade
+          key: arcadedb-windows-${{ hashFiles('src/cairnmind/config.py') }}
+      - name: Prepare pinned ArcadeDB
+        shell: pwsh
+        run: |
+          @'
+          import os
+          from pathlib import Path
+          from cairnmind.config import Settings
+          from cairnmind.engine import install_engine
+          settings = Settings.load(Path.home() / ".cache/devbrain-arcade", create=True)
+          path = install_engine(settings)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write(f"CAIRNMIND_ARCADE_DIST={path}\n")
+          '@ | uv run python -
+      - name: ArcadeDB tier
+        shell: pwsh
+        timeout-minutes: 35
+        run: |
+          $ErrorActionPreference = "Continue"
+          uv run pytest -n 4 -m "arcade and not tmux" -q -ra --shard ${{ matrix.shard }}/6 --junitxml=windows-arcade-junit.xml 2>&1 | Tee-Object -FilePath windows-arcade-pytest.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: windows-arcade-tests-report-${{ matrix.shard }}
+          path: |
+            windows-arcade-junit.xml
+            windows-arcade-pytest.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  tests:
+    # The whole suite in six parts that run at the same time, each on a runner of its own: real pinned
+    # ArcadeDB on Java 21 plus tmux, as on the target WSL host. `--shard I/6` picks a part by test id
+    # (tests/conftest.py); the parts are disjoint and together are the whole suite (tests/test_shards.py).
+    name: tests (${{ matrix.shard }} of 6)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - run: test "${{ needs.changes.result }}" = success
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: command -v tmux >/dev/null || (sudo apt-get update && sudo apt-get install -y tmux)
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
       - uses: actions/cache@v6
         with:
@@ -151,11 +283,12 @@ jobs:
       # The standard Linux runner of a public repository has 4 vCPUs: one test process for each,
       # all sharing one ArcadeDB engine (see tests/conftest.py). No coverage here: this decides the
       # required check, and a hiccup of coverage's tracer must never decide a merge.
-      - run: uv run pytest -n 4 -q --shard ${{ matrix.shard }}/4
+      - run: uv run pytest -n 4 -q --shard ${{ matrix.shard }}/6
 
   full-tests:
-    # The required check. It passes only when every part of `tests` passed; it always runs, because a
-    # skipped required check would count as passed.
+    # The required check. It passes only when every part of `tests` passed (or `tests` was skipped
+    # solely because `changes` confirmed a docs-only PR); it always runs, because a skipped required
+    # check would count as passed.
     needs: tests
     if: ${{ always() }}
     runs-on: ubuntu-24.04
@@ -163,28 +296,35 @@ jobs:
       - name: Every part of the suite passed
         env:
           RESULT: ${{ needs.tests.result }}
+          EVENT: ${{ github.event_name }}
         run: |
-          echo "tests: $RESULT"
-          test "$RESULT" = success
+          echo "tests: $RESULT (event: $EVENT)"
+          test "$RESULT" = success || (test "$EVENT" = pull_request && test "$RESULT" = skipped)
 
   coverage-tests:
-    # The same four parts with coverage, beside `tests`. Each part keeps its coverage data as an
+    # The same six parts with coverage, beside `tests`. Each part keeps its coverage data as an
     # artifact; `coverage` below combines them. Not required.
-    name: coverage tests (${{ matrix.shard }} of 4)
+    name: coverage tests (${{ matrix.shard }} of 6)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
+      - run: test "${{ needs.changes.result }}" = success
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
-      - run: sudo apt-get update && sudo apt-get install -y tmux
+      - run: command -v tmux >/dev/null || (sudo apt-get update && sudo apt-get install -y tmux)
       - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
       - uses: actions/cache@v6
         with:
@@ -204,7 +344,7 @@ jobs:
           PY
       # Branch coverage of src/cairnmind; the data of the workers and of the processes the tests
       # start is combined into one file per part.
-      - run: uv run pytest -n 4 -q --cov --cov-report= --shard ${{ matrix.shard }}/4
+      - run: uv run pytest -n 4 -q --cov --cov-report= --shard ${{ matrix.shard }}/6
         env:
           COVERAGE_FILE: .coverage.part${{ matrix.shard }}
       - uses: actions/upload-artifact@v7
@@ -217,12 +357,13 @@ jobs:
           retention-days: 3
 
   coverage:
-    # Coverage of the whole suite, combined from the four parts. Not a required check: it may go red
-    # without blocking anything. Reported in the log and the job summary; on a push to main its
-    # `badge` output goes to coverage-badge, which publishes it to the public `badges` branch for the
-    # README badge. No threshold fails the job.
-    needs: coverage-tests
-    if: ${{ !cancelled() }}
+    # Coverage of the whole suite, combined from the six Linux parts plus the Windows and macOS fast tiers
+    # (so platform-specific code such as Win32 DACLs/pipes/Job Objects is measured where it actually runs).
+    # Not a required check: it may go red without blocking anything. Reported in the log and the job summary;
+    # on a push to main its `badge` output goes to coverage-badge, which publishes it to the public `badges`
+    # branch for the README badge. No threshold fails the job.
+    needs: [coverage-tests, windows-fast-tests, macos-fast-tests]
+    if: ${{ !cancelled() && needs.coverage-tests.result != 'skipped' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
@@ -234,6 +375,9 @@ jobs:
           # checks out its merge commit at depth 1 by default, which has no history to find it in.
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
       - uses: actions/download-artifact@v8
         with:
@@ -241,8 +385,8 @@ jobs:
           merge-multiple: true
       - name: Combine the parts
         run: |
-          ls -la .coverage.part* || true
-          uv run coverage combine --keep .coverage.part*
+          ls -la .coverage.* || true
+          uv run coverage combine --keep .coverage.*
           uv run coverage xml
       - name: Coverage summary
         id: summary
@@ -272,10 +416,32 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: scope
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          changed=$(git diff --name-only "FETCH_HEAD...HEAD")
+          if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -qvE '^(docs/|.*\.md$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: astral-sh/setup-uv@v7
+        if: ${{ steps.scope.outputs.code == 'true' }}
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
+        if: ${{ steps.scope.outputs.code == 'true' }}
       - run: docker version && docker compose version
+        if: ${{ steps.scope.outputs.code == 'true' }}
       - run: uv run python scripts/deployment_check.py
+        if: ${{ steps.scope.outputs.code == 'true' }}
 
   server-tests:
     # The engine tests against a server this job does not own (#218), beside the other jobs and not a
@@ -287,13 +453,18 @@ jobs:
     # in the job summary. Not on pull requests: a run has not been timed against a production-mode server,
     # where every commit reaches the disk, and a long job on every push of a branch costs runner time for
     # little. It runs on main and by hand (`gh workflow run ci.yml --ref BRANCH`), so a change to the tests or
-    # to deploy/arcadedb can be tried before it is merged.
+    # to deploy/arcadedb can be tried before it is merged. Sharded in 4 parts on main.
+    name: server-tests (${{ matrix.shard }} of 4)
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y tmux
+      - run: command -v tmux >/dev/null || (sudo apt-get update && sudo apt-get install -y tmux)
       # Java 21 as in the tests job: tests that set up a managed installation of their own (a backup, a move to a
       # connect-only store and back) need it, and the pinned image runs the server, not those.
       - uses: actions/setup-java@v6
@@ -301,6 +472,9 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
       - name: Start the pinned image
         run: |
@@ -325,7 +499,7 @@ jobs:
             echo
             uv run python -c "import sys; sys.path.insert(0, 'tests'); from conftest import LEFT_OUT_ON_A_SERVER as t; [print(f'- \`{k}\`: {v}') for k, v in t.items()]"
           } | tee -a "$GITHUB_STEP_SUMMARY"
-      - run: uv run pytest -n 4 -q -rs -m arcade
+      - run: uv run pytest -n 4 -q -rs -m arcade --shard ${{ matrix.shard }}/4
       - name: The server's log
         if: ${{ always() }}
         run: docker logs --tail 200 cairnmind-server-tests
@@ -349,6 +523,9 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
       - uses: actions/cache@v6
         with:
@@ -418,9 +595,30 @@ jobs:
       KIND_VERSION: v0.27.0
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: scope
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          changed=$(git diff --name-only "FETCH_HEAD...HEAD")
+          if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -qvE '^(docs/|.*\.md$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: astral-sh/setup-uv@v7
+        if: ${{ steps.scope.outputs.code == 'true' }}
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
+        if: ${{ steps.scope.outputs.code == 'true' }}
       - name: kind and kubectl
+        if: ${{ steps.scope.outputs.code == 'true' }}
         # Both are on the hosted runner image; kind is fetched, and checked against the SHA-256 its
         # release publishes, only when it is missing.
         run: |
@@ -433,6 +631,8 @@ jobs:
           fi
           docker version && kind version && kubectl version --client
       - run: kind create cluster --name cairnmind-check --wait 180s
+        if: ${{ steps.scope.outputs.code == 'true' }}
       - run: uv run python scripts/kubernetes_check.py --kind-cluster cairnmind-check
-      - if: ${{ always() }}
+        if: ${{ steps.scope.outputs.code == 'true' }}
+      - if: ${{ always() && steps.scope.outputs.code == 'true' }}
         run: kind delete cluster --name cairnmind-check

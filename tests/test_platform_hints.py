@@ -202,6 +202,7 @@ def test_the_places_that_print_a_hint_ask_for_the_system_they_run_on(settings, m
     with pytest.raises(ValueError) as caught:
         workspace.WorkspaceManager._initialize(types.SimpleNamespace(diagnostics=lambda: {"available": False}))
     assert str(caught.value) == platform_hints.hint("tmux_workspace", name)
+    monkeypatch.setattr(workspace.sys, "platform", "darwin" if name == "darwin" else "linux")
     monkeypatch.setattr(workspace.sys, "stdin", types.SimpleNamespace(isatty=lambda: True))
     monkeypatch.setattr(workspace.sys, "stdout", types.SimpleNamespace(isatty=lambda: True))
     monkeypatch.setattr(workspace, "WorkspaceManager", lambda s: types.SimpleNamespace(

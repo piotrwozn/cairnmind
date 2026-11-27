@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 import pytest
 
@@ -20,7 +21,14 @@ def clean_environment(monkeypatch, tmp_path):
         monkeypatch.delenv(key)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     (tmp_path / "home").mkdir()
+    if sys.platform == "win32":
+        local = tmp_path / "home" / "AppData" / "Local"
+        monkeypatch.setenv("LOCALAPPDATA", str(local))
     return tmp_path / "home"
+
+
+def _default_base(home):
+    return home / "AppData" / "Local" if sys.platform == "win32" else home / ".local" / "share"
 
 
 def test_the_current_spelling_wins_and_the_earlier_one_is_still_read(monkeypatch):
@@ -141,15 +149,17 @@ def test_the_derived_database_is_the_name_a_fresh_directory_gets(tmp_path):
 
 
 def test_a_new_installation_starts_under_the_current_name(clean_environment):
-    assert default_data_dir() == (clean_environment / ".local/share/cairnmind").resolve()
+    base = _default_base(clean_environment)
+    assert default_data_dir() == (base / "cairnmind").resolve()
     assert data_dir_note() is None
-    assert not (clean_environment / ".local").exists()  # choosing a directory creates nothing
+    assert not base.exists()  # choosing a directory creates nothing
 
 
 def test_a_directory_created_by_an_earlier_version_is_used_where_it_is(clean_environment):
-    earlier = clean_environment / ".local/share/devbrain"
+    base = _default_base(clean_environment)
+    earlier = base / "devbrain"
     earlier.mkdir(parents=True)
-    assert default_data_dir() == (clean_environment / ".local/share/cairnmind").resolve()  # an empty directory is not a store
+    assert default_data_dir() == (base / "cairnmind").resolve()  # an empty directory is not a store
     (earlier / "arcade").mkdir()
     # A store that lost its configuration file is still the store: no second one is started beside it.
     assert default_data_dir() == earlier.resolve()
@@ -157,15 +167,16 @@ def test_a_directory_created_by_an_earlier_version_is_used_where_it_is(clean_env
     (earlier / "config.json").write_text(json.dumps({"token": "kept"}))
     assert default_data_dir() == earlier.resolve()
     assert Settings.load().token == "kept"
-    assert not (clean_environment / ".local/share/cairnmind").exists() and data_dir_note() is None
+    assert not (base / "cairnmind").exists() and data_dir_note() is None
     assert sorted(path.name for path in earlier.iterdir()) == ["config.json"]  # nothing was moved or copied
 
 
 def test_two_default_directories_are_reported_and_the_earlier_one_keeps_being_used(clean_environment):
+    base = _default_base(clean_environment)
     for name in ("devbrain", "cairnmind"):
-        (clean_environment / ".local/share" / name).mkdir(parents=True)
-        (clean_environment / ".local/share" / name / "config.json").write_text("{}")
-    assert default_data_dir() == (clean_environment / ".local/share/devbrain").resolve()
+        (base / name).mkdir(parents=True)
+        (base / name / "config.json").write_text("{}")
+    assert default_data_dir() == (base / "devbrain").resolve()
     assert "Both" in data_dir_note() and "CAIRNMIND_HOME" in data_dir_note()
 
 

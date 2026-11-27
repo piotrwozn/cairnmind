@@ -13,8 +13,8 @@ from contextlib import contextmanager
 import os
 from pathlib import Path
 
-from .platform_fs import O_NOFOLLOW
-from .platform_locks import lock_file
+from .file_locks import lock_exclusive
+from .private_files import open_no_follow
 
 from .memory_published_carrier import carrier_of, destination as carrier_destination, unbound_in_checkout
 from .memory_published_check import STATIC_FILES, check_files, format_bytes, read_tree, scan
@@ -205,9 +205,9 @@ class Publisher:
     def _lock(self, project_id):
         folder = self.store.data_dir / "runtime"
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-        descriptor = os.open(folder / f"publish-{project_id}.lock", os.O_CREAT | os.O_RDWR | O_NOFOLLOW, 0o600)
-        with os.fdopen(descriptor, "a") as handle:
-            lock_file(handle, exclusive=True)
+        descriptor = open_no_follow(folder / f"publish-{project_id}.lock", os.O_CREAT | os.O_RDWR, 0o600)
+        with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+            lock_exclusive(handle)
             yield
 
     def _collect(self, tx, project_id):

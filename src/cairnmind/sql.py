@@ -29,7 +29,7 @@ def parse_utc(value):
 ACT_NOTE_ORIGINS = ("local_user_review", "publication_review", "cli_person", "evaluation_seed")
 
 
-def evidence_time(tx, source_ids):
+def evidence_time(tx, source_ids, *, source_rows: dict | None = None):
     """When the record's evidence existed, from its immutable sources.
 
     A transcript's own timestamp is when the statement was made (`stated`). Any other
@@ -39,8 +39,15 @@ def evidence_time(tx, source_ids):
     """
     times, bases = [], set()
     for source_id in dict.fromkeys(source_ids):
-        row = one_row(tx, "SELECT created_at, metadata.source_timestamp AS stated, metadata.origin AS origin "
-                         "FROM sources WHERE id=:id", {"id": source_id}, False) or {}
+        cached = source_rows.get(source_id) if source_rows is not None else None
+        if cached is not None:
+            meta = cached.get("metadata") if isinstance(cached.get("metadata"), dict) else {}
+            row = {"created_at": cached.get("created_at"),
+                   "stated": meta.get("source_timestamp"),
+                   "origin": meta.get("origin")}
+        else:
+            row = one_row(tx, "SELECT created_at, metadata.source_timestamp AS stated, metadata.origin AS origin "
+                             "FROM sources WHERE id=:id", {"id": source_id}, False) or {}
         if row.get("origin") in ACT_NOTE_ORIGINS:
             continue  # Also a review published elsewhere (#170): when someone judged, not when evidence existed.
         stated = parse_utc(row.get("stated"))
@@ -84,14 +91,14 @@ def unregistered_root(root, project: dict) -> str:
     (#244). The project name and the path come from the user; they are quoted for the shell and made printable.
     The sentence stays bounded without losing the command: the shown folder and project keep their head and
     tail, and a command too long to paste names its two arguments instead of cutting them."""
-    import shlex
+    from .process_control import quote_arg
     from .terminal_safe import safe_text
 
     def middle(text: str, limit: int) -> str:
         return text if len(text) <= limit else text[:limit // 2 - 1] + "…" + text[-(limit // 2):]
 
     handle, folder = str(project.get("name") or project.get("id") or ""), str(root)
-    command = safe_text(f"cairnmind project root {shlex.quote(handle)} {shlex.quote(folder)}")
+    command = safe_text(f"cairnmind project root {quote_arg(handle)} {quote_arg(folder)}")
     if len(command) > 1000:
         command = "cairnmind project root <project> <folder>"
     return (f"{middle(safe_text(folder), 300)} is not a registered project root of {middle(safe_text(handle), 200)}; "

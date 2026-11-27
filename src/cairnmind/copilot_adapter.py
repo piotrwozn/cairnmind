@@ -117,19 +117,21 @@ def _runtime_root(settings):
 
 
 def _private(path):
-    from .platform_fs import owner_matches, private_mode_ok
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    info = path.lstat()
-    if not stat.S_ISDIR(info.st_mode) or not owner_matches(info) or not private_mode_ok(info, 0o700):
-        raise CopilotError("copilot_runtime_invalid")
+    from .private_files import ensure_private_dir
+    try:
+        ensure_private_dir(path, error="copilot_runtime_invalid")
+    except ValueError:
+        raise CopilotError("copilot_runtime_invalid") from None
 
 
 def _tree_manifest(root):
-    from .platform_fs import owner_matches
+    from .private_files import IS_WINDOWS, is_reparse_point
     rows = []
     for path in sorted(root.rglob("*")):
         info = path.lstat()
-        if not owner_matches(info):
+        if is_reparse_point(path):
+            raise CopilotError("copilot_runtime_invalid")
+        if not IS_WINDOWS and info.st_uid != os.getuid():
             raise CopilotError("copilot_runtime_invalid")
         if stat.S_ISDIR(info.st_mode):
             continue
@@ -148,12 +150,11 @@ def _runtime_path(settings):
     if not receipt.exists():
         raise CopilotError("copilot_runtime_missing")
     try:
-        from .platform_fs import owner_matches, private_mode_ok
+        from .private_files import is_private_stat
         info = receipt.lstat()
-        if (not stat.S_ISREG(info.st_mode) or not owner_matches(info)
-                or not private_mode_ok(info, 0o600) or info.st_size > 2 * 1024 * 1024):
+        if not is_private_stat(info, receipt, directory=False) or info.st_size > 2 * 1024 * 1024:
             raise ValueError
-        value = json.loads(receipt.read_text())
+        value = json.loads(receipt.read_text(encoding="utf-8"))
         bundle = directory / RUNTIME_VERSION
         # Timestamps can collide for consecutive writes (including on WSL).
         # Matching metadata is not proof that executable bytes are unchanged;
@@ -260,11 +261,12 @@ def _prepare_worker(settings):
             relative = entrypoint.relative_to(staged).as_posix()
             files = _tree_manifest(staged)
             if bundle.exists():
-                from .platform_fs import owner_matches
-                if bundle.is_symlink() or not owner_matches(bundle.lstat()):
+                from .private_files import IS_WINDOWS, atomic_replace, is_reparse_point
+                if is_reparse_point(bundle) or (not IS_WINDOWS and bundle.lstat().st_uid != os.getuid()):
                     raise CopilotError("copilot_runtime_invalid")
-                os.replace(bundle, previous)
-            os.replace(staged, bundle)
+                atomic_replace(bundle, previous)
+            from .private_files import atomic_replace
+            atomic_replace(staged, bundle)
             _atomic(root / "receipt.json", {"sdk_version": SDK_VERSION, "runtime_version": RUNTIME_VERSION,
                                            "entrypoint": relative, "files": files})
         finally:

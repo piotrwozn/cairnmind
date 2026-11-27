@@ -41,6 +41,7 @@ COMMANDS = (
     # New entries go last: the position of every existing command stays the same.
     ("Run next stage", "Show the project and move to its Run next stage button", "command", "next_stage"),
     ("Notices", "Read the notices that were replaced on the notice line", "command", "notices"),
+    ("Clone repository", "Clone from GitHub or Git and register", "command", "clone_project"),
 )
 
 

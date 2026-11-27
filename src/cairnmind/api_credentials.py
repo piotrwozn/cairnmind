@@ -5,13 +5,15 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
-import stat
 import tempfile
 import threading
 
 from .api_profiles import ENV_NAME, PROFILE_ID
-from .platform_fs import O_CLOEXEC, O_NOFOLLOW, owner_matches, private_mode_ok, sync_directory
-from .platform_locks import lock_file
+from .file_locks import lock_exclusive
+from .private_files import (
+    atomic_replace, ensure_private_dir, fsync_directory,
+    is_private_stat, is_reparse_point, make_private, open_no_follow,
+)
 
 
 def credential_environment_names():
@@ -48,24 +50,25 @@ class CredentialStore:
 
     def _directory(self, create=False):
         if create:
-            self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if not self.root.exists() and not self.root.is_symlink():
+            ensure_private_dir(self.root, error="The credential store must be a private folder of the user.")
+            return True
+        if not self.root.exists() and not is_reparse_point(self.root):
             return False
         info = self.root.lstat()
-        if (not stat.S_ISDIR(info.st_mode) or not owner_matches(info)
-                or not private_mode_ok(info, 0o700)):
+        if not is_private_stat(info, self.root, directory=True):
             raise ValueError("The credential store must be a private folder of the user.")
         return True
 
     @contextmanager
     def _lock(self):
         self._directory(create=True)
-        fd = os.open(self.root / "keys.lock", os.O_CREAT | os.O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        lock_path = self.root / "keys.lock"
+        fd = open_no_follow(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
             info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or not owner_matches(info) or not private_mode_ok(info, 0o600):
+            if not is_private_stat(info, lock_path, directory=False):
                 raise ValueError("The credential lock must be private.")
-            lock_file(fd, exclusive=True)
+            lock_exclusive(fd)
             yield
         finally:
             os.close(fd)
@@ -74,15 +77,14 @@ class CredentialStore:
         if not self._directory():
             return {}
         try:
-            fd = os.open(self.path, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+            fd = open_no_follow(self.path, os.O_RDONLY, private_on_create=False)
         except FileNotFoundError:
             return {}
         except OSError:
             raise ValueError("The credential store cannot be read safely.") from None
-        with os.fdopen(fd) as handle:
+        with os.fdopen(fd, encoding="utf-8") as handle:
             info = os.fstat(handle.fileno())
-            if (not stat.S_ISREG(info.st_mode) or not owner_matches(info)
-                    or not private_mode_ok(info, 0o600) or info.st_size > 1024 * 1024):
+            if not is_private_stat(info, self.path, directory=False) or info.st_size > 1024 * 1024:
                 raise ValueError("The credential file must be a private file of the user.")
             try:
                 value = json.load(handle)
@@ -101,13 +103,13 @@ class CredentialStore:
             raise ValueError("The credential store exceeds its size limit.")
         fd, temporary = tempfile.mkstemp(prefix=".api-keys-", dir=self.root)
         try:
-            with os.fdopen(fd, "w") as handle:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
                 handle.write(raw)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.chmod(temporary, 0o600)
-            os.replace(temporary, self.path)
-            sync_directory(self.root)
+            make_private(temporary)
+            atomic_replace(temporary, self.path)
+            fsync_directory(self.root)
         finally:
             Path(temporary).unlink(missing_ok=True)
 

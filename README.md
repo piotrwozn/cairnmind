@@ -33,9 +33,13 @@ Cairnmind runs as a separate local service that coding assistants connect to. It
 
 The full architecture taxonomy (`origin_evidence`, resume packets, plan versions, check profiles, guarantees and limits) lives in [docs/CONTRACTS.md](docs/CONTRACTS.md#architecture-taxonomy).
 
+![Cairnmind demo: a proposed decision and task survive a cold hand-off, then a one-line edit turns fresh test evidence stale.](docs/assets/handoff-demo.gif)
+
+**A decision survives a cold hand-off; a passing test does not survive a code change.** One session reads `DESIGN.md` and saves a proposed decision and a verification task; a fresh session starts cold and recovers the decision, the task and its source quote; `cairnmind check run` records `Checks fresh`, and a one-line edit in `checkout.py` turns that evidence `Checks stale` without running the test again.
+
 ## Quick start
 
-Cairnmind runs on Linux, macOS (Apple silicon), and native Windows (lightweight CLI/MCP/SQLite mode; the `tmux` terminal workspace and person-proof inspector run on Linux, macOS, and WSL2).
+Cairnmind runs on Linux, on Windows (natively on Windows 10/11 or inside WSL2 Ubuntu via `wsl --install -d Ubuntu`; Ubuntu 24.04 is the tested platform) and on macOS with Apple silicon.
 
 **1. Try the zero-setup sandbox (15 seconds):**
 
@@ -59,7 +63,7 @@ cairnmind ask my-app "When do accounts lock?"  # 5. finds it again; passages of 
 In a terminal, commands explain what happened and how to fix blocks in plain language; with `--json` (or in a pipe/script), `stdout` emits pure JSON while hints and warnings go strictly to `stderr` (`NO_COLOR=1` disables ANSI styling). `cairnmind doctor` repeats the installer's check at any time and exits 1 when something required is missing.
 
 - If the installer prints `Add this directory to PATH`, do what that line says and open a new terminal.
-- `my-app` is any name you choose; `~/src/my-app` stands for a project folder (a Git repo with at least one commit unlocks `impact`, coding sessions and commit history in `brief`).
+- `my-app` is any name you choose; `~/src/my-app` stands for a project folder (a Git repo with at least one commit unlocks `impact`, coding sessions and commit history in `brief`). To clone and register a repository in one step, use `cairnmind add --clone owner/repo` (or `cairnmind project add [NAME] [FOLDER] --clone REPO`, or an HTTPS/SSH URL directly).
 - Findings stored via CLI or assistants start as *proposed* and are immediately usable in `brief` and `ask`; you can confirm or dispute them later in the memory inspector (see [Optional integrations](#optional-integrations)).
 - Without local models, `ask` searches passages deterministically without fabricating an answer (`status: unavailable` in `--json`). Enable local models below to turn on cited answers.
 
@@ -91,9 +95,27 @@ cairnmind stop                   # the service reads the choice on next start
 
 `cairnmind models pull` enables cited answers, semantic vectors and background extraction. `cairnmind models set` points at another Ollama or an OpenAI-compatible HTTPS server ([docs/API.md](docs/API.md#the-knowledge-agents-models)).
 
-### Terminal workspace (tmux 3.4+)
+### Terminal workspace (tmux 3.4+ / Windows standalone)
 
-With tmux 3.4+ (`sudo apt install tmux`, or `brew install tmux` on macOS), `cairnmind` opens the multi-pane workspace beside Codex, Claude Code, the memory inspector and the graph ([docs/TERMINAL.md](docs/TERMINAL.md)). Press `Ctrl+B then i` to open the memory inspector and confirm or dispute proposed findings. Every other CLI command works without `tmux`.
+On Linux, WSL2 and macOS, with tmux 3.4+ (`sudo apt install tmux`, or `brew install tmux` on macOS), `cairnmind` opens the multi-pane workspace: Codex and Claude Code run in panes beside the projects, the memory inspector and the graph ([docs/TERMINAL.md](docs/TERMINAL.md)). On native Windows, `cairnmind` opens the standalone Textual workspace directly in Windows Terminal or PowerShell without requiring tmux, backed by an owner-only Windows Named Pipe for person-confirmed actions. In the POSIX workspace, `Ctrl+B then i` opens the memory inspector; in the native Windows standalone workspace, press `2` for Memory. Every other CLI command works without `tmux`.
+
+### Local web UI inspector (`cairnmind ui`)
+
+An optional loopback-only browser inspector (`http://127.0.0.1:4310`) for viewing OCC session alignment, task test gates, verbatim quote provenance with SHA-256 fingerprint diffs, the 4-column dependency & blast-radius graph, and the MCP guardrail audit log alongside a running Cairnmind workspace or service. Build the static frontend bundle once (requires Node.js 20+):
+
+```bash
+cd ui && npm install && npm run build
+```
+
+Then run `cairnmind ui` in a separate terminal alongside Cairnmind:
+
+```bash
+cairnmind ui --port 4310                    # live mode against your local Cairnmind store (latest project)
+cairnmind ui --port 4310 --project my-app   # inspect a specific registered project
+cairnmind ui --port 4310 --mock             # preview all states with deterministic sample data (no database needed)
+```
+
+Pass `--no-open` to skip opening a browser tab automatically. The server binds strictly to loopback (`127.0.0.1`, `localhost`, or `::1`), streams live updates over SSE (`/api/ui/events`), and provides `Ctrl+K` search and `j`/`k`/`1`–`4`/`Esc` keyboard navigation.
 
 ## How it compares
 
@@ -123,17 +145,19 @@ Measured with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an RTX 4080 Super in is
 
 Version 0.12.0 is the current release. See [CHANGELOG.md](CHANGELOG.md), [docs/UPGRADING.md](docs/UPGRADING.md) and the [roadmap issues](https://github.com/piotrwozn/cairnmind/issues?q=is%3Aissue+label%3Aroadmap).
 
-- [docs/CONTRACTS.md](docs/CONTRACTS.md): architecture taxonomy, guarantees, limits, implementation contracts and extension surfaces.
+- [docs/CONTRACTS.md](docs/CONTRACTS.md): architecture taxonomy, guarantees, limits, implementation contracts and [extension surfaces](docs/CONTRACTS.md#extension-surfaces).
 - [docs/INSTALL.md](docs/INSTALL.md): installation, native or Docker engine, models, verification and troubleshooting.
-- [docs/WORKFLOW.md](docs/WORKFLOW.md): plans, check profiles, code fingerprints, evidence states, MCP tools, `brief`, `usage` and `impact`.
+- [docs/WORKFLOW.md](docs/WORKFLOW.md): plans, check profiles, code fingerprints, evidence states, MCP tools, `brief`, `usage`, `impact`, [symbol-anchored evidence](docs/WORKFLOW.md#symbol-anchored-evidence), [opt-in code decisions](docs/WORKFLOW.md#opt-in-decisions-from-code-comments-adr-trailers) and [serverless CI `scan`](docs/WORKFLOW.md#serverless-ci-check-cairnmind-scan).
 - [docs/MEMORY.md](docs/MEMORY.md) & [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md): portable snapshots, team memory, secrets gate and import rules.
 - [docs/TERMINAL.md](docs/TERMINAL.md): terminal workspace, memory inspector and keyboard shortcuts.
 - [docs/EXTERNAL_CLIENTS.md](docs/EXTERNAL_CLIENTS.md): Cursor, Cline, Zed and other external MCP clients.
-- [docs/STORAGE_AND_MAINTENANCE.md](docs/STORAGE_AND_MAINTENANCE.md): data directory, backups, single writer and maintenance.
+- [docs/STORAGE_AND_MAINTENANCE.md](docs/STORAGE_AND_MAINTENANCE.md): data directory, backups, single writer, migration and maintenance.
 - [docs/API.md](docs/API.md): API, Ollama, Copilot connections, sensitivity classes and third-party MCP tools.
 - [docs/EVALUATION.md](docs/EVALUATION.md): explicit evaluations and measured results.
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): containers, remote servers, Kubernetes and connect-only installations.
+- [docs/UPGRADING.md](docs/UPGRADING.md): upgrading an existing installation.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): system architecture, dependencies, repository layout and dev commands.
+- [CHANGELOG.md](CHANGELOG.md): release history.
 
 ## Contributing
 

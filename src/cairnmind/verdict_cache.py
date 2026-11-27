@@ -23,6 +23,7 @@ import sqlite3
 import time
 from typing import Any
 
+from .private_files import make_private
 from .retrieval import json_value, secondary_source
 
 VERIFIER_VERSION = 1
@@ -145,7 +146,7 @@ class VerdictCache:
             )
             if not existed:
                 try:
-                    os.chmod(self.path, 0o600)
+                    make_private(self.path)
                 except OSError:
                     pass
             return conn

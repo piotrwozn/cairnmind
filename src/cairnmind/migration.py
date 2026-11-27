@@ -37,7 +37,8 @@ import httpx
 
 from . import store_writer
 from .config import Settings, resolved_backend, session_value, sqlite_db_path, tls_verify
-from .platform_locks import lock_file
+from .file_locks import lock_exclusive
+from .private_files import make_private
 from .restore_claims import BackupClaims
 from .sql import clean_row, json_text, quote_name, utc_now
 from .sqlite_telemetry import DEFAULT_THRESHOLDS, evaluate_sqlite_health
@@ -91,7 +92,7 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         try:
-            os.chmod(tmp, 0o600)
+            make_private(tmp)
         except OSError:
             pass
         tmp.replace(path)
@@ -421,9 +422,9 @@ def abort_migration(settings: Settings) -> dict[str, Any]:
     lock_path = data_dir / MIGRATION_LOCK_FILE
     data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     cleaned_target = False
-    with lock_path.open("a") as lock:
+    with lock_path.open("a", encoding="utf-8") as lock:
         try:
-            lock_file(lock, exclusive=True, blocking=False)
+            lock_exclusive(lock, blocking=False)
         except BlockingIOError as exc:
             raise MigrationRefused("Another migration process currently holds migration.lock.", code="lock_held") from exc
 
@@ -540,9 +541,9 @@ def migrate(
     source_store = None
     target_store = None
 
-    with lock_path.open("a") as lock:
+    with lock_path.open("a", encoding="utf-8") as lock:
         try:
-            lock_file(lock, exclusive=True, blocking=False)
+            lock_exclusive(lock, blocking=False)
         except BlockingIOError as exc:
             raise MigrationRefused(
                 "Another migration is currently running (migration.lock is held).",

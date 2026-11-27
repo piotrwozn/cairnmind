@@ -123,9 +123,10 @@ def test_only_files_git_tracks_are_copied_never_links_ignored_files_or_the_evalu
     (root / "reports" / "repository-old.json").write_text("{}")
     (root / "docs" / "evaluation" / "repository-questions.json").write_text("{}")
     (root / "docs" / "evaluation" / "RESULTS.md").write_text("results")
+    from conftest import make_symlink_or_skip
     outside = tmp_path / "outside.txt"
     outside.write_text("outside")
-    (root / "src" / "link.txt").symlink_to(outside)
+    make_symlink_or_skip(root / "src" / "link.txt", outside)
     git_repository(root)
     (root / "src" / "untracked.py").write_text("X = 1\n")
     files = tracked_files(root.resolve(), list(NOT_INDEXED))

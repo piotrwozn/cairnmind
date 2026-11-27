@@ -38,20 +38,23 @@ def test_server_mode_needs_the_address_and_the_password_file_together(monkeypatc
     monkeypatch.setenv("CAIRNMIND_TEST_ARCADE_SERVER_URL", "http://127.0.0.1:1")
     with pytest.raises(pytest.UsageError):
         server_under_test()
+    from cairnmind import private_files
+    from conftest import make_world_readable
     secret = tmp_path / "root-password"
-    secret.write_text("a-long-enough-secret\n")
-    secret.chmod(0o600)
+    secret.write_text("a-long-enough-secret\n", encoding="utf-8")
+    private_files.make_private(secret)
     monkeypatch.setenv("CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE", str(secret))
     assert server_under_test() == ("http://127.0.0.1:1", "a-long-enough-secret")
-    secret.chmod(0o644)
-    with pytest.raises(pytest.UsageError, match="0600"):
+    make_world_readable(secret)
+    with pytest.raises(pytest.UsageError, match="0600|owner-only"):
         server_under_test()
 
 
 def test_the_default_ports_of_an_installation_are_never_a_server_of_the_tests(monkeypatch, tmp_path):
+    from cairnmind import private_files
     secret = tmp_path / "root-password"
-    secret.write_text("a-long-enough-secret\n")
-    secret.chmod(0o600)
+    secret.write_text("a-long-enough-secret\n", encoding="utf-8")
+    private_files.make_private(secret)
     monkeypatch.setenv("CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE", str(secret))
     for port in (2480, 8765):
         monkeypatch.setenv("CAIRNMIND_TEST_ARCADE_SERVER_URL", f"http://127.0.0.1:{port}")

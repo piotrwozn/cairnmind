@@ -24,7 +24,9 @@ def healthy(**changes):
     return report
 
 
-def test_a_healthy_deterministic_report_lists_required_then_optional_then_the_next_step():
+def test_a_healthy_deterministic_report_lists_required_then_optional_then_the_next_step(monkeypatch):
+    from cairnmind import platform_hints
+    monkeypatch.setattr(platform_hints, "host_system", lambda *a, **k: "linux")
     lines = SUMMARY(healthy())
     assert lines[0] == "Memory is kept in /home/me/.local/share/cairnmind."
     assert lines[1] == first_start.REQUIRED_PRESENT
@@ -41,7 +43,9 @@ def test_a_healthy_deterministic_report_lists_required_then_optional_then_the_ne
     assert not any("None" in line or "cockpit" in line for line in lines)
 
 
-def test_a_missing_java_is_required_and_missing_and_the_next_step_is_to_fix_it():
+def test_a_missing_java_is_required_and_missing_and_the_next_step_is_to_fix_it(monkeypatch):
+    from cairnmind import platform_hints
+    monkeypatch.setattr(platform_hints, "host_system", lambda *a, **k: "linux")
     broken = healthy(java={"on_path": False, "compatible": False},
                      arcadedb={"mode": "managed", "engine": "native", "available": False, "url": "http://x:1",
                                "error": "ConnectError"})

@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import shlex
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -265,8 +266,7 @@ class WorkspaceManager:
         if self.config.is_symlink():
             raise ValueError("The workspace configuration must not be a link.")
         if not self.config.exists():
-            from .platform_fs import O_NOFOLLOW
-            fd = os.open(self.config, os.O_WRONLY | os.O_CREAT | os.O_EXCL | O_NOFOLLOW, 0o600)
+            fd = os.open(self.config, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "w") as handle:
                 handle.write("set -g prefix C-b\nunbind-key -a\nset -g mouse off\n"
                              "set -g default-terminal tmux-256color\nset -g status on\n"
@@ -276,8 +276,7 @@ class WorkspaceManager:
                              + "set -g remain-on-exit on\nset -g exit-empty off\nset -s set-clipboard off\n"
                              "set -g allow-passthrough off\nset -g history-limit 5000\n")
         info = self.config.stat()
-        from .platform_fs import owner_matches, private_mode_ok
-        if not owner_matches(info) or not private_mode_ok(info, 0o600):
+        if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
             raise ValueError("The workspace configuration must be a private file of the user.")
 
     def tmux(self, *args, check=True, timeout=8, input=None):
@@ -518,7 +517,7 @@ class WorkspaceManager:
         try:
             if path.is_symlink():
                 return None
-            info = json.loads(path.read_text())
+            info = json.loads(path.read_text(encoding="utf-8"))
             if (info.get("workspace_id") == self.workspace_id and info.get("birth")
                     and process_start(info["pid"]) == info["birth"]):
                 return info
@@ -1013,12 +1012,27 @@ class WorkspaceManager:
 
 
 def workspace_status(settings):
+    if sys.platform == "win32":
+        from . import person_pipe
+        pipe_name = person_pipe.pipe_name_for(settings.data_dir)
+        kind, _ = person_pipe.read_pipe_key(settings, pipe_name)
+        return {
+            "available": kind == "key",
+            "mode": "standalone",
+            "workspace_id": "default",
+            "pipe": pipe_name,
+            "person_key": "present" if kind == "key" else "unavailable",
+            "state": WorkspaceState(settings).read(),
+        }
     return WorkspaceManager(settings).status()
 
 
 def launch_workspace(settings, takeover=False):
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise ValueError("Cairnmind needs an interactive terminal. Use `cairnmind workspace status` to diagnose.")
+    if sys.platform == "win32":
+        from .terminal_standalone import run_standalone
+        return run_standalone(settings)
     manager = WorkspaceManager(settings)
     found = manager.diagnostics()
     if not found["available"]:

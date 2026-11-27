@@ -23,10 +23,10 @@ import tempfile
 import time
 from uuid import uuid4
 
-if sys.platform != "win32":
+try:
     import fcntl
     import termios
-else:  # pragma: no cover - tmux/PTY runtime is POSIX-only (ADR-05)
+except ImportError:
     fcntl = None  # type: ignore[assignment]
     termios = None  # type: ignore[assignment]
 
@@ -34,8 +34,11 @@ import httpx
 
 from . import platform_hints
 from .config import ENV_PREFIXES, Settings, tls_verify
-from .platform_fs import O_NOFOLLOW, owner_matches, private_mode_ok
-from .platform_locks import lock_file
+from .file_locks import lock_exclusive
+from .private_files import (
+    IS_WINDOWS, atomic_replace, ensure_private_dir, is_private_stat, is_reparse_point,
+    make_private, open_no_follow,
+)
 from .process_identity import start as process_start
 from .runtime_selection import resolve_tmux
 from .runtime_sockets import MAX_SOCKET_PATH, prepare_socket_base, socket_directory
@@ -70,12 +73,12 @@ ENDED_AUTH = "Session ended (#{?pane_dead_signal,signal #{pane_dead_signal},exit
 def _atomic(path: Path, data):
     fd, name = tempfile.mkstemp(prefix=".native-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(data, handle, ensure_ascii=False, allow_nan=False)
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(name, 0o600)
-        os.replace(name, path)
+        make_private(name)
+        atomic_replace(name, path)
     finally:
         if os.path.exists(name):
             os.unlink(name)
@@ -101,9 +104,6 @@ class NativeRuntime:
     def diagnostics(self):
         result = {"available": False, "minimum_version": "3.4", "backend": "tmux", "version": None,
                   "executable": self.binary}
-        if platform_hints.host_system() == "windows":
-            return {**result, "code": "tmux_unsupported_platform", "platform_supported": False,
-                    "action": platform_hints.hint("tmux_action", "windows")}
         if self._binary_error:
             return {**result, "code": "tmux_invalid_executable", "error": self._binary_error}
         if not self.binary:
@@ -120,40 +120,53 @@ class NativeRuntime:
     capabilities = diagnostics
 
     def _initialize(self):
+        if IS_WINDOWS:
+            try:
+                ensure_private_dir(self.directory)
+            except ValueError as exc:
+                raise ValueError("Native runtime directory must be owner-only") from exc
+            if self.config.is_symlink() or is_reparse_point(self.config):
+                raise ValueError("Native runtime configuration cannot be a symlink")
+            if not self.config.exists():
+                self.config.write_text(_CONFIG, encoding="utf-8", newline="\n")
+                make_private(self.config)
+            elif not is_private_stat(self.config.lstat(), self.config, directory=False):
+                raise ValueError("Native runtime configuration must be owner-only")
+            return
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         info = self.directory.lstat()
-        if stat.S_ISLNK(info.st_mode) or not owner_matches(info) or not private_mode_ok(info, 0o700):
+        if stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
             raise ValueError("Native runtime directory must be owner-only")
         prepare_socket_base()
         self.socket_directory.mkdir(exist_ok=True, mode=0o700)
         info = self.socket_directory.lstat()
-        if stat.S_ISLNK(info.st_mode) or not owner_matches(info) or not private_mode_ok(info, 0o700):
+        if stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
             raise ValueError("Native terminal socket directory must be owner-only")
         if len(os.fsencode(self.socket)) > MAX_SOCKET_PATH:
             raise ValueError("Native runtime Unix socket path is too long")
         if self.config.is_symlink():
             raise ValueError("Native runtime configuration cannot be a symlink")
         if not self.config.exists():
-            self.config.write_text(_CONFIG)
+            self.config.write_text(_CONFIG, encoding="utf-8")
             self.config.chmod(0o600)
-        elif not owner_matches(self.config.stat()) or not private_mode_ok(self.config.stat(), 0o600):
+        elif self.config.stat().st_uid != os.getuid() or stat.S_IMODE(self.config.stat().st_mode) != 0o600:
             raise ValueError("Native runtime configuration must be owner-only")
 
     @contextmanager
     def _locked(self):
         self._initialize()
-        fd = os.open(self.directory / "registry.lock", os.O_CREAT | os.O_RDWR | O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, "a") as handle:
-            lock_file(handle, exclusive=True)
+        fd = open_no_follow(self.directory / "registry.lock", os.O_CREAT | os.O_RDWR, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as handle:
+            lock_exclusive(handle)
             yield
 
     def _read(self):
         if not self.registry.exists():
             return []
-        fd = os.open(self.registry, os.O_RDONLY | O_NOFOLLOW)
-        with os.fdopen(fd) as handle:
+        fd = open_no_follow(self.registry, os.O_RDONLY, private_on_create=False)
+        with os.fdopen(fd, encoding="utf-8") as handle:
             info = os.fstat(handle.fileno())
-            if not owner_matches(info) or not private_mode_ok(info, 0o600):
+            if not is_private_stat(info, self.registry, directory=False):
                 raise ValueError("Native runtime registry must be owner-only")
             data = json.load(handle)
         if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("runs"), list):
@@ -164,8 +177,6 @@ class NativeRuntime:
         _atomic(self.registry, {"version": 1, "runs": rows})
 
     def _tmux(self, *args, check=True):
-        if platform_hints.host_system() == "windows":
-            raise ValueError(platform_hints.hint("tmux_code", "windows"))
         if self._binary_error:
             raise ValueError("tmux_invalid_executable: " + self._binary_error)
         if not self.binary:
@@ -437,7 +448,7 @@ class NativeRuntime:
             while not marker.exists() and time.monotonic() < deadline:
                 time.sleep(.01)
             if marker.exists():
-                identity = json.loads(marker.read_text())
+                identity = json.loads(marker.read_text(encoding="utf-8"))
                 row.update(pid=identity["pid"], process_start=identity["start"], pgid=identity["pgid"])
                 marker.unlink()
             self._refresh(row)

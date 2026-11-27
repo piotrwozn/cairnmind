@@ -107,6 +107,7 @@ class ArcadeClient:
         # Mutating the caller's settings must not redirect an existing session.
         self.settings = replace(settings)
         self._base_url = str(parsed).rstrip("/")
+        self._parsed_base = httpx.URL(self._base_url)
         self._administrator = bool(administrator)
         self.database = settings.arcade_database
         self.session_id = session_id
@@ -123,12 +124,13 @@ class ArcadeClient:
         if (not isinstance(path, str) or not path.startswith("/") or path.startswith("//")
                 or "\\" in path or any(ord(char) < 32 for char in path)):
             raise ValueError("ArcadeDB requests require a relative endpoint path")
-        target = httpx.URL(path)
-        base = httpx.URL(self._base_url)
-        resolved = base.join(target)
-        if (target.scheme or target.host or target.fragment
-                or (resolved.scheme, resolved.host, resolved.port) != (base.scheme, base.host, base.port)):
-            raise ValueError("ArcadeDB requests must stay on the configured HTTP origin")
+        if any(marker in path for marker in ("?", "#", ":", "@")):
+            target = httpx.URL(path)
+            base = getattr(self, "_parsed_base", None) or httpx.URL(self._base_url)
+            resolved = base.join(target)
+            if (target.scheme or target.host or target.fragment
+                    or (resolved.scheme, resolved.host, resolved.port) != (base.scheme, base.host, base.port)):
+                raise ValueError("ArcadeDB requests must stay on the configured HTTP origin")
         if kwargs.pop("follow_redirects", False) is not False:
             raise ValueError("ArcadeDB redirects are not permitted")
         headers = kwargs.pop("headers", {})
@@ -221,7 +223,9 @@ class ArcadeClient:
             json={"language": "sqlscript", "command": sql, "params": params or {}, "limit": -1}))
 
     def server_info(self) -> dict:
-        return self._request("GET", "/api/v1/server?mode=basic", timeout=2).json()
+        import sys
+        # Windows loopback TCP SYN retries take ~2.0s before WSAECONNREFUSED arrives.
+        return self._request("GET", "/api/v1/server?mode=basic", timeout=3.5 if sys.platform == "win32" else 2).json()
 
     def server_command(self, command: str) -> dict:
         return self._request("POST", "/api/v1/server", json={"command": command}).json()

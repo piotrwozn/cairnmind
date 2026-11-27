@@ -26,6 +26,8 @@ def settings(tmp_path):
 @pytest.fixture
 def workspace_socket(settings):
     """A real unix socket where this installation's workspace socket is: a private directory of the user."""
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("Unix domain sockets are POSIX-only (Windows uses Named Pipes in test_person_pipe.py)")
     prepare_socket_base()
     directory = socket_directory("ui", workspace_namespace(settings.data_dir))
     directory.mkdir(mode=0o700, parents=True)

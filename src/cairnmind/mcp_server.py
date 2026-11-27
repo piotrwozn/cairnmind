@@ -194,7 +194,6 @@ def start_service(settings: Settings) -> None:
     """Start this installation's knowledge service as `ask`, `run` and `context` do (cli.ensure_service), for an
     external client, which no launcher started it for (#258). Stdout belongs to MCP; a start it makes is said on
     standard error (#287)."""
-    import shlex
     from .cli import (ServiceOfOtherVersion, SetupInProgress, UpgradeInProgress, _data_dir_arguments, _os_error_text,
                       _service_unavailable, ensure_service, say_service_started)
     from .first_start import SERVICE_NOT_STARTED
@@ -218,7 +217,8 @@ def start_service(settings: Settings) -> None:
     except SetupInProgress as exc:
         raise RuntimeError(BRIDGE_SETUP.format(reason=str(exc))) from None  # a change of setup, not an upgrade (#339)
     except (ValueError, OSError) as exc:  # ServiceDidNotStart is a ValueError
-        command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "serve"])
+        from .process_control import format_command
+        command = format_command(["cairnmind", *_data_dir_arguments(settings.data_dir), "serve"])
         reason = (_os_error_text(exc) if isinstance(exc, OSError) else str(exc)).strip().rstrip(".") + "."
         raise RuntimeError(SERVICE_NOT_STARTED.format(reason=reason, command=command)) from None
 

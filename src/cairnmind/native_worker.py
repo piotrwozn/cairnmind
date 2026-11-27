@@ -9,13 +9,12 @@ import json
 import os
 from pathlib import Path
 import stat
-import sys
 import tempfile
 
-if sys.platform != "win32":
+try:
     import fcntl
     import termios
-else:  # pragma: no cover - tmux/PTY worker is POSIX-only (ADR-05)
+except ImportError:
     fcntl = None  # type: ignore[assignment]
     termios = None  # type: ignore[assignment]
 

@@ -26,6 +26,7 @@ def words(text):
     return plain_words(text)  # also drops the colour codes a forced-colour run puts inside option names
 
 
+@pytest.mark.skipif(not hasattr(os, "openpty"), reason="os.openpty is POSIX-only")
 def test_the_documented_pseudo_terminal_sequence_no_longer_confirms(tmp_path):
     # What docs/MEMORY_CONTRACTS.md named as the way past the terminal test: a pty on both ends, the session
     # variables unset. The command refuses before it opens any store, so no engine runs here.

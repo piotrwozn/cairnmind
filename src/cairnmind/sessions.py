@@ -10,7 +10,6 @@ import hashlib
 import json
 import math
 import os
-import shlex
 import time
 import tomllib
 from pathlib import Path
@@ -118,7 +117,7 @@ def _managed_empty_file(relative: str, raw: bytes, settings, project: dict) -> b
     from .integrations import BEGIN, END, _command, _earlier_command, _instructions
 
     try:
-        text = raw.decode("utf-8")
+        text = raw.decode("utf-8").replace("\r\n", "\n")
         if relative == RECORDER_PATH:
             return text == agent_file(settings, project)
         if relative in {"AGENTS.md", "CLAUDE.md"}:
@@ -161,8 +160,9 @@ def _managed_command_file(relative: str, text: str, settings, _command) -> bool:
                    for key, forwarded, begin, end in shapes for wait in waits)
     client = "codex" if relative == ".codex/hooks.json" else "claude"
     hooks = {}
+    from .process_control import format_command
     for event in ("SessionStart", "PreCompact", "Stop", "SessionEnd"):
-        handler = {"type": "command", "command": shlex.join(_command(settings, "hook", "--client", client)),
+        handler = {"type": "command", "command": format_command(_command(settings, "hook", "--client", client)),
                    "timeout": 10 if event == "SessionStart" else 3}
         if client == "codex" and event == "SessionStart":
             handler["additionalContextLimit"] = 0
@@ -470,13 +470,29 @@ class SessionManager:
         return sum(created > packet["created_at"] for created in state["automatic_created"])
 
     @staticmethod
+    def _encode_watermark(watermark):
+        """Encode 64-bit unsigned device/inode values for ArcadeDB JSON storage (#441)."""
+        if not isinstance(watermark, dict):
+            return watermark
+        from .private_files import decode_file_id, encode_file_id
+        encoded = dict(watermark)
+        for key in ("device", "inode"):
+            if key in encoded and decode_file_id(encoded[key]) is not None:
+                encoded[key] = encode_file_id(encoded[key])
+        return encoded
+
+    @staticmethod
     def _target(path: str, client: str, watermark: dict | None = None) -> dict:
+        from .private_files import decode_file_id, encode_file_id
         result = {"path": str(Path(path).expanduser().resolve()), "client": client}
         if isinstance(watermark, dict):
             for key in ("size", "device", "inode", "mtime_ns", "head_sha256", "head_bytes",
                         "observed_size", "pending_tail_bytes", "pending_tail_sha256", "stable"):
                 if key in watermark:
-                    result[key] = watermark[key]
+                    val = watermark[key]
+                    if key in ("device", "inode") and decode_file_id(val) is not None:
+                        val = encode_file_id(val)
+                    result[key] = val
         if "size" not in result:
             try:
                 from .integrations import _transcript_watermark
@@ -490,16 +506,17 @@ class SessionManager:
     @staticmethod
     def _same_generation(left: dict, right: dict) -> bool:
         """Short captured prefixes may grow on append without changing generation."""
-        if (left.get("path"), left.get("device"), left.get("inode")) != (
-                right.get("path"), right.get("device"), right.get("inode")):
+        from .private_files import decode_file_id
+        left_dev, left_ino = decode_file_id(left.get("device")), decode_file_id(left.get("inode"))
+        right_dev, right_ino = decode_file_id(right.get("device")), decode_file_id(right.get("inode"))
+        if (left.get("path"), left_dev, left_ino) != (right.get("path"), right_dev, right_ino):
             return False
         left_size = max(int(left.get("size", -1)), int(left.get("observed_size", -1)))
         right_size = max(int(right.get("size", -1)), int(right.get("observed_size", -1)))
         if left_size != right_size:
             try:
                 actual = Path(left["path"]).stat()
-                if (actual.st_size < max(left_size, right_size)
-                        or (actual.st_dev, actual.st_ino) != (left.get("device"), left.get("inode"))):
+                if actual.st_size < max(left_size, right_size) or (actual.st_dev, actual.st_ino) != (left_dev, left_ino):
                     return False
             except OSError:
                 return False
@@ -510,7 +527,7 @@ class SessionManager:
             try:
                 with Path(left["path"]).open("rb") as handle:
                     actual = os.fstat(handle.fileno())
-                    if (actual.st_dev, actual.st_ino) != (left.get("device"), left.get("inode")):
+                    if (actual.st_dev, actual.st_ino) != (left_dev, left_ino):
                         return False
                     for row in tails:
                         start = row.get("captured_tail_start", row.get("size"))
@@ -528,12 +545,12 @@ class SessionManager:
         if (left.get("head_bytes"), left.get("head_sha256")) == (
                 right.get("head_bytes"), right.get("head_sha256")):
             return True
-        if left.get("device") is None or left.get("inode") is None:
+        if left_dev is None or left_ino is None:
             return False
         try:
             with Path(left["path"]).open("rb") as handle:
                 actual = os.fstat(handle.fileno())
-                if (actual.st_dev, actual.st_ino) != (left["device"], left["inode"]):
+                if (actual.st_dev, actual.st_ino) != (left_dev, left_ino):
                     return False
                 head = handle.read(4096)
             return all(type(row.get("head_bytes")) is int and 0 <= row["head_bytes"] <= len(head)
@@ -563,8 +580,8 @@ class SessionManager:
                             amount = smaller.get("size")
                             if type(amount) is not int or not 0 <= amount <= 64 * 1024 * 1024:
                                 continue
-                            from .platform_fs import O_NOFOLLOW
-                            fd = os.open(smaller["path"], os.O_RDONLY | O_NOFOLLOW)
+                            from .private_files import open_no_follow
+                            fd = open_no_follow(smaller["path"], os.O_RDONLY, private_on_create=False)
                             with os.fdopen(fd, "rb") as handle:
                                 prefix = handle.read(amount)
                             if len(prefix) != amount or hashlib.sha256(prefix).hexdigest() != smaller.get("sha256"):
@@ -658,9 +675,10 @@ class SessionManager:
                 or observed - size > 2 * 1024 * 1024):
             raise ValueError("Captured unfinished JSONL tail has invalid bounds")
         with Path(target["path"]).open("rb") as handle:
+            from .private_files import decode_file_id
             actual = os.fstat(handle.fileno())
-            if ((target.get("device") is not None and target["device"] != actual.st_dev)
-                    or (target.get("inode") is not None and target["inode"] != actual.st_ino)):
+            if ((target.get("device") is not None and decode_file_id(target["device"]) != actual.st_dev)
+                    or (target.get("inode") is not None and decode_file_id(target["inode"]) != actual.st_ino)):
                 raise ValueError("Captured transcript generation was rotated or truncated")
             head = handle.read(int(target.get("head_bytes", min(4096, size))))
             if target.get("head_sha256") and hashlib.sha256(head).hexdigest() != target["head_sha256"]:
@@ -780,11 +798,12 @@ class SessionManager:
         watermark = captured["transcript_watermark"]
         if not isinstance(watermark, dict):
             return None
+        from .private_files import decode_file_id
         size, device, inode = (watermark.get("size"), watermark.get("device"), watermark.get("inode"))
         head_bytes, head_hash = watermark.get("head_bytes"), watermark.get("head_sha256")
         observed, pending = watermark.get("observed_size", size), watermark.get("pending_tail_bytes", 0)
         if (type(size) is not int or size <= 0
-                or type(device) is not int or device < 0 or type(inode) is not int or inode < 0
+                or decode_file_id(device) is None or decode_file_id(inode) is None
                 or type(head_bytes) is not int or head_bytes != min(4096, size)
                 or not isinstance(head_hash, str) or len(head_hash) != 64
                 or any(char not in "0123456789abcdef" for char in head_hash)
@@ -828,9 +847,10 @@ class SessionManager:
             return result
         path, size = Path(target["path"]), target["size"]
         try:
+            from .private_files import decode_file_id
             stat = path.stat()
-            if ((target.get("device") is not None and target["device"] != stat.st_dev)
-                    or (target.get("inode") is not None and target["inode"] != stat.st_ino)
+            if ((target.get("device") is not None and decode_file_id(target["device"]) != stat.st_dev)
+                    or (target.get("inode") is not None and decode_file_id(target["inode"]) != stat.st_ino)
                     or stat.st_size < size):
                 raise ValueError("Captured transcript generation was rotated or truncated")
             if target.get("head_sha256"):
@@ -871,9 +891,10 @@ class SessionManager:
         from .record_kinds import accepted, blocking_message, unknown_kind
         standing, named, first = accepted(self.store, session["project_id"]), set(), None
         try:
+            from .private_files import decode_file_id
             stat = path.stat()
-            if ((target.get("device") is not None and target["device"] != stat.st_dev)
-                    or (target.get("inode") is not None and target["inode"] != stat.st_ino)
+            if ((target.get("device") is not None and decode_file_id(target["device"]) != stat.st_dev)
+                    or (target.get("inode") is not None and decode_file_id(target["inode"]) != stat.st_ino)
                     or stat.st_size < size):
                 raise ValueError("Captured transcript generation was rotated or truncated")
             with path.open("rb") as handle:
@@ -1466,7 +1487,7 @@ class SessionManager:
                                            "session_id": session["id"], "native_session_id": native_id,
                                            "client": client, "hook_event_name": event,
                                            "resume_reason": reason, "transcript_path": payload.get("transcript_path"),
-                                           "transcript_watermark": payload.get("transcript_watermark"),
+                                           "transcript_watermark": self._encode_watermark(payload.get("transcript_watermark")),
                                            "applied_epoch": session["epoch"], "created_at": utc_now()})
             session.update(updated_at=utc_now())
             update_document(tx, "sessions", session, "id=:id", {"id": session["id"]})

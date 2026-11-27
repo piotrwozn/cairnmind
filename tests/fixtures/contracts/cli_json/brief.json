@@ -1,0 +1,36 @@
+{
+  "generated_at": "<TIMESTAMP>",
+  "lines": [
+    {
+      "basis": "machine",
+      "text": "No checkpoint has been saved for this project."
+    },
+    {
+      "basis": "machine",
+      "text": "A plan is active (version 1, 1 steps) | plan: Contract stabilization"
+    },
+    {
+      "basis": "machine",
+      "text": "Next task is ready | task: Verify frozen CLI and MCP responses."
+    },
+    {
+      "basis": "machine",
+      "text": "No task is in progress, waiting for a test or waiting for a review."
+    },
+    {
+      "basis": "machine",
+      "text": "1 proposed finding waiting for review:"
+    },
+    {
+      "basis": "reported",
+      "text": "  decision: Keep compute_total synchronous and deterministic."
+    }
+  ],
+  "next": "Next: nothing more is needed to go on; brief and ask already use proposed findings, marked as unconfirmed. A person can confirm or dispute them later, only in the memory inspector of the terminal workspace (cairnmind, then Ctrl+B i; needs tmux 3.4+): the command line confirms nothing.",
+  "project": {
+    "id": "<UUID_1>",
+    "name": "contract-app"
+  },
+  "text": "Brief for contract-app in <WORKTREE>\n[machine] = measured now by Cairnmind; [reported] = stored by an assistant or a person, not verified; text after | is a stored title\n[machine]  No checkpoint has been saved for this project.\n[machine]  A plan is active (version 1, 1 steps) | plan: Contract stabilization\n[machine]  Next task is ready | task: Verify frozen CLI and MCP responses.\n[machine]  No task is in progress, waiting for a test or waiting for a review.\n[machine]  1 proposed finding waiting for review:\n[reported]   decision: Keep compute_total synchronous and deterministic.",
+  "worktree": "<WORKTREE>"
+}

@@ -87,7 +87,7 @@ def _unreadable(path: Path, exc: Exception) -> str:
     shown = safe_text(str(path))
     if isinstance(exc, FileNotFoundError):
         return f"The question file {shown} does not exist."
-    if isinstance(exc, IsADirectoryError):
+    if isinstance(exc, IsADirectoryError) or (isinstance(exc, PermissionError) and Path(path).is_dir()):
         return f"The question file {shown} is a folder, not a file."
     if isinstance(exc, OSError):
         return f"Cannot read the question file {shown}: {exc.strerror or 'the system refused'}."

@@ -417,6 +417,65 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         present = await asyncio.to_thread(lambda: manifest.exists() or manifest.is_symlink())
         return {"root": str(root), "memory_snapshot": str(manifest.parent) if present else None}
 
+    @app.post("/api/projects/clone")
+    async def clone_project_repository(request: Request):
+        session_for(request)
+        value = await body(request)
+        fields(value, {"repo", "parent", "destination", "name", "via", "branch"}, {"repo"})
+        if not isinstance(value["repo"], str):
+            raise HTTPException(422, "Give a repository as owner/repo, HTTPS or SSH URL.")
+        from . import project_clone
+        via = value.get("via", "auto")
+        branch = value.get("branch")
+        raw_name = value.get("name")
+        if (not isinstance(via, str)
+                or (branch is not None and not isinstance(branch, str))
+                or (raw_name is not None and not isinstance(raw_name, str))):
+            raise HTTPException(422, "Invalid clone parameters.")
+        via = via.strip() or "auto"
+        branch = branch.strip() if isinstance(branch, str) and branch.strip() else None
+        raw_name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else None
+        try:
+            source = project_clone.parse_clone_source(value["repo"])
+            if branch is not None:
+                branch = project_clone.validate_branch(branch)
+            chosen_name = raw_name or source.default_name
+            if not chosen_name or len(chosen_name) > 256:
+                raise ValueError("Project name must be between 1 and 256 characters.")
+            if value.get("destination") is not None:
+                if not isinstance(value["destination"], str):
+                    raise ValueError("Give a valid folder path.")
+                target = await asyncio.to_thread(normalize_path, value["destination"])
+            elif value.get("parent") is not None:
+                if not isinstance(value["parent"], str):
+                    raise ValueError("Give a valid folder path.")
+                parent = await asyncio.to_thread(normalize_path, value["parent"])
+                if not await asyncio.to_thread(parent.is_dir):
+                    raise ValueError("The parent folder does not exist.")
+                target = parent / source.default_name
+            else:
+                raise ValueError("Give a parent or destination folder.")
+            destination = await asyncio.to_thread(project_clone.prepare_destination, target, settings.data_dir)
+            await asyncio.to_thread(project_clone.choose_tool, source, via)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        from .first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN
+        from .terminal_safe import safe_text
+        for row in await projects():
+            if row.get("name") == chosen_name:
+                raise HTTPException(409, PROJECT_NAME_TAKEN.format(
+                    name=safe_text(chosen_name), root=safe_text(row.get("root") or "")))
+            if row.get("root") and str(Path(row["root"]).resolve(strict=False)) == str(destination):
+                raise HTTPException(409, PROJECT_ROOT_TAKEN.format(
+                    name=safe_text(row.get("name") or ""), root=safe_text(str(destination))))
+        try:
+            cloned = await asyncio.to_thread(
+                project_clone.clone_repository, source, destination, via=via, branch=branch, interactive=False)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        found = await asyncio.to_thread(project_clone.inspect_cloned_memory, destination)
+        return {"cloned": cloned, "root": str(destination), "name": chosen_name, **found}
+
     @app.get("/api/settings")
     async def get_settings(request: Request):
         session_for(request)
@@ -953,7 +1012,7 @@ def cockpit_status(settings):
     try:
         if path.is_symlink():
             return result
-        info = json.loads(path.read_text())
+        info = json.loads(path.read_text(encoding="utf-8"))
         if (info.get("instance") != result["instance"] or not info.get("birth")
                 or info.get("birth") != _birth(info.get("pid"))):
             return result
@@ -1006,14 +1065,13 @@ def _start_broker(settings, started):
             drop_env(env, *SESSION_NAMES)
             for key in ("TMUX", "TMUX_PANE"):
                 env.pop(key, None)
-            from .platform_fs import IS_WINDOWS, O_NOFOLLOW
-            fd = os.open(folder / "server.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | O_NOFOLLOW, 0o600)
+            from .private_files import open_no_follow
+            from .process_control import detached_popen_kwargs
+            fd = open_no_follow(folder / "server.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             with os.fdopen(fd, "ab") as log:
-                popen_kwargs = ({"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
-                                if IS_WINDOWS else {"start_new_session": True})
                 subprocess.Popen([sys.executable, "-I", "-m", "cairnmind", "--data-dir", str(settings.data_dir), "cockpit", "serve"],
                                  cwd=settings.data_dir, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-                                 env=env, **popen_kwargs)
+                                 env=env, **detached_popen_kwargs())
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline:
                 status = cockpit_status(settings)
@@ -1033,14 +1091,14 @@ def _start_broker(settings, started):
 def _stop_for_upgrade(settings, reason, started=False):
     """An installer began while this broker started, maybe after its own `cockpit stop`: the broker is stopped here,
     and the service too when this call started it, so none runs the version being replaced (#319)."""
-    import shlex
     from .cli import UpgradeInProgress, _data_dir_arguments, _stop_started
     from .service_version import Sentence
     from .upgrade_mark import BROKER_STOP_FAILED
     try:
         stop_cockpit(settings)
     except (httpx.HTTPError, OSError):
-        command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "cockpit", "stop"])
+        from .process_control import format_command
+        command = format_command(["cairnmind", *_data_dir_arguments(settings.data_dir), "cockpit", "stop"])
         raise UpgradeInProgress(Sentence(BROKER_STOP_FAILED, command=command)) from None
     if started:
         _stop_started(settings)  # raises, with the stop command when the service does not stop
@@ -1095,7 +1153,7 @@ def _serve_locked(settings, folder, port):
             listener.close()
             path = _runtime_file(settings)
             try:
-                if json.loads(path.read_text()).get("pid") == os.getpid():
+                if json.loads(path.read_text(encoding="utf-8")).get("pid") == os.getpid():
                     path.unlink()
             except (OSError, ValueError):
                 pass

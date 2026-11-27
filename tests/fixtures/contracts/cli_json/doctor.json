@@ -1,0 +1,307 @@
+{
+  "accepted_record_kinds": [],
+  "arcadedb": {
+    "available": true,
+    "configured_version": "26.11.1",
+    "database": "<ARCADE_DB>",
+    "database_available": true,
+    "engine": "native",
+    "host": "<HOST>",
+    "installed": false,
+    "mode": "managed",
+    "notes": [],
+    "password_source": "environment",
+    "server_name": "ArcadeDB_0",
+    "transport": "http (loopback, not encrypted)",
+    "url": "http://127.0.0.1:<ARCADE_PORT>",
+    "user": "root",
+    "version": "<HOST_PROBED>",
+    "version_matches": true
+  },
+  "clients": {
+    "claude": {
+      "checks": {},
+      "hooks": false,
+      "installed": false,
+      "isolated_process": false,
+      "mcp": false,
+      "notes": [
+        "<HOST_PROBED>"
+      ],
+      "packet_passing": false,
+      "path": null,
+      "session_binding": false,
+      "verified_resume": false,
+      "version": null
+    },
+    "codex": {
+      "checks": {},
+      "hooks": false,
+      "installed": false,
+      "isolated_process": false,
+      "mcp": false,
+      "notes": [
+        "<HOST_PROBED>"
+      ],
+      "packet_passing": false,
+      "path": null,
+      "session_binding": false,
+      "verified_resume": false,
+      "version": null
+    }
+  },
+  "coding_profiles": {
+    "observed_only": true,
+    "profiles": [
+      {
+        "client": "codex",
+        "id": "codex",
+        "label": "Codex",
+        "status": {
+          "client": "codex",
+          "code": "native_client_status"
+        }
+      },
+      {
+        "client": "claude",
+        "id": "claude",
+        "label": "Claude",
+        "status": {
+          "client": "claude",
+          "code": "native_client_status"
+        }
+      }
+    ]
+  },
+  "data_dir": "<DATA_DIR>",
+  "environment_blockers": [],
+  "environment_notes": [],
+  "get_models": "To use models: `cairnmind models pull` downloads the local models into Ollama (about 7 GB); `cairnmind models set` chooses a model server.",
+  "gpu": {
+    "available": false
+  },
+  "java": {
+    "compatible": true,
+    "executable": "<HOST_PROBED>",
+    "major": 21,
+    "minimum_major": 21,
+    "on_path": true,
+    "version": "<HOST_PROBED>"
+  },
+  "knowledge_agent": "disabled (deterministic-only mode)",
+  "memory_models": {
+    "chat": {
+      "base_url": "http://127.0.0.1:11434",
+      "content_sent_to": "Memory content stays on this computer.",
+      "destination": "this computer",
+      "held_back": [],
+      "identity": "<MODEL_ID>",
+      "model": "qwen3.5:9b",
+      "model_available": false,
+      "provider": "ollama",
+      "reachable": false,
+      "sends": [
+        "project",
+        "conversation",
+        "third_party"
+      ]
+    },
+    "embedding": {
+      "base_url": "http://127.0.0.1:11434",
+      "content_sent_to": "Memory content stays on this computer.",
+      "destination": "this computer",
+      "held_back": [],
+      "identity": "<MODEL_ID>",
+      "model": "qwen3-embedding:0.6b",
+      "model_available": false,
+      "provider": "ollama",
+      "reachable": false,
+      "sends": [
+        "project",
+        "conversation",
+        "third_party"
+      ]
+    },
+    "evaluated": false,
+    "evaluations_passed": [],
+    "release_models": true,
+    "remote_classes": {
+      "setting": [
+        "project"
+      ]
+    }
+  },
+  "models_lock_present": false,
+  "ollama": {
+    "available": false,
+    "chat_model_installed": false,
+    "embedding_model_installed": false,
+    "models": [],
+    "running": [],
+    "url": "http://127.0.0.1:11434"
+  },
+  "openssl": "<HOST_PROBED>",
+  "platform": "<HOST>",
+  "project_folders": [],
+  "projects": 1,
+  "python": "<HOST_PROBED>",
+  "python_executable": "<PYTHON_EXE>",
+  "restore_unfinished": null,
+  "scip": {
+    "docker_available": false,
+    "docker_fallback": true,
+    "indexers": {
+      "rust-analyzer": {
+        "docker_image": null,
+        "executable": null,
+        "installed": false,
+        "languages": [
+          "rust"
+        ],
+        "missing_tools": [],
+        "mode": "<HOST_MODE>",
+        "version": "2026-11-23"
+      },
+      "scip-clang": {
+        "docker_image": "ghcr.io/sourcegraph/scip-clang:v0.4.3",
+        "executable": null,
+        "installed": false,
+        "languages": [
+          "c",
+          "cpp"
+        ],
+        "missing_tools": [],
+        "mode": "<HOST_MODE>",
+        "version": "v0.4.3"
+      },
+      "scip-dotnet": {
+        "docker_image": null,
+        "executable": null,
+        "installed": false,
+        "languages": [
+          "csharp"
+        ],
+        "missing_tools": [],
+        "mode": "<HOST_MODE>",
+        "version": "0.2.14"
+      },
+      "scip-go": {
+        "docker_image": null,
+        "executable": null,
+        "installed": false,
+        "languages": [
+          "go"
+        ],
+        "missing_tools": [],
+        "mode": "<HOST_MODE>",
+        "version": "v0.2.10"
+      },
+      "scip-java": {
+        "docker_image": null,
+        "executable": null,
+        "installed": false,
+        "languages": [
+          "java",
+          "kotlin"
+        ],
+        "missing_tools": [],
+        "mode": "<HOST_MODE>",
+        "version": "v0.14.2"
+      },
+      "scip-php": {
+        "docker_image": null,
+        "executable": null,
+        "installed": false,
+        "languages": [
+          "php"
+        ],
+        "missing_tools": [],
+        "mode": "<HOST_MODE>",
+        "version": "dev-main"
+      },
+      "scip-ruby": {
+        "docker_image": "ghcr.io/sourcegraph/scip-ruby:scip-ruby-v0.5.1",
+        "executable": null,
+        "installed": false,
+        "languages": [
+          "ruby"
+        ],
+        "missing_tools": [],
+        "mode": "<HOST_MODE>",
+        "version": "scip-ruby-v0.5.1"
+      }
+    },
+    "mode": "auto",
+    "platform": "<HOST>",
+    "runtime_dir": "<DATA_DIR>/runtime/scip",
+    "timeout": 300.0
+  },
+  "service": {
+    "available": true,
+    "health": {
+      "backend": "arcadedb",
+      "instance": "<INSTANCE_ID>",
+      "service": "cairnmind",
+      "version": "<VERSION>"
+    }
+  },
+  "service_running": true,
+  "service_url": "http://127.0.0.1:<PORT>",
+  "store_writer": {
+    "installation": "<ID32_1>",
+    "role": "writer",
+    "writer": {
+      "history": [
+        {
+          "at": "<TIMESTAMP>",
+          "host": "<HOST>",
+          "how": "first",
+          "installation_id": "<ID32_1>"
+        }
+      ],
+      "host": "<HOST>",
+      "installation": "<ID32_1>",
+      "since": "<TIMESTAMP>"
+    }
+  },
+  "tmux": {
+    "available": false,
+    "code": "<HOST_PROBED>"
+  },
+  "topology": {
+    "lines": [
+      "Storage: ArcadeDB on this machine at http://127.0.0.1:<ARCADE_PORT>, started and stopped by Cairnmind (native engine, Java <MAJOR>). The address is set by the environment variable CAIRNMIND_ARCADE_URL, for this process only. This installation is the one that writes to the store.",
+      "Memory models: none in use; the knowledge agent is disabled (deterministic-only mode).",
+      "On this machine: the knowledge service at http://127.0.0.1:<PORT>; the ArcadeDB engine (native, Java <MAJOR>)."
+    ],
+    "models": {
+      "evaluated": null,
+      "knowledge_agent": "disabled"
+    },
+    "storage": {
+      "engine": "native",
+      "host": "<HOST>",
+      "java_major": 21,
+      "mode": "managed",
+      "on_this_machine": true,
+      "setting": "arcade_url",
+      "source": "environment",
+      "url": "http://127.0.0.1:<ARCADE_PORT>",
+      "variable": "CAIRNMIND_ARCADE_URL",
+      "writer": {
+        "role": "writer"
+      }
+    },
+    "this_machine": [
+      {
+        "kind": "service",
+        "url": "http://127.0.0.1:<PORT>"
+      },
+      {
+        "engine": "native",
+        "java_major": 21,
+        "kind": "engine"
+      }
+    ]
+  }
+}

@@ -197,8 +197,9 @@ async def test_opened_from_the_more_menu(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_opened_from_the_command_menu_through_the_real_dispatch(tmp_path, monkeypatch):
-    assert COMMANDS[-1][3] == "notices" and COMMANDS[-1][2] == "command"
-    request = menu_request(tmp_path / "state", COMMANDS[-1])
+    notices = next(row for row in COMMANDS if row[3] == "notices")  # later entries are appended after it
+    assert notices[2] == "command"
+    request = menu_request(tmp_path / "state", notices)
     assert request["action"] == "notices" and request["target_role"] == "sidebar"
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
@@ -270,7 +271,8 @@ async def test_the_history_is_polish_and_empty_history_says_so(tmp_path, monkeyp
 
 
 def test_every_new_string_has_a_polish_entry():
-    for text in ("Notices", "No notices yet.", "No project", COMMANDS[-1][1]):
+    notices_help = next(row[1] for row in COMMANDS if row[3] == "notices")
+    for text in ("Notices", "No notices yet.", "No project", notices_help):
         assert text in CATALOG and tr(text, "pl") != text
 
 

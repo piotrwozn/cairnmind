@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "<PYTHON_EXE>",
+    "<CONVERTER_SCRIPT>"
+  ],
+  "created_at": "<TIMESTAMP>",
+  "name": "cli-conv",
+  "output_limit_bytes": 10485760,
+  "timeout_seconds": 120
+}

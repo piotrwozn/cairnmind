@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import errno
 import os
+from pathlib import Path
 import re
 import ssl
 import stat
@@ -26,8 +27,7 @@ from typing import Any
 import httpx
 
 from .config import env_names
-from .platform_fs import (IS_WINDOWS, O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW, O_NONBLOCK, no_group_other_access,
-                          owner_matches, private_mode_ok)
+from .private_files import IS_WINDOWS, is_private_stat, is_reparse_point, open_no_follow
 
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 # The longest password file read: a password is one line, and a larger file is not one.
@@ -49,8 +49,10 @@ def valid_password(value: str) -> bool:
     return bool(value) and len(value) <= FILE_LIMIT and all(33 <= ord(char) <= 126 for char in value)
 
 
-_READ = os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK
-_FOLDER = os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+_READ = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+         | getattr(os, "O_NONBLOCK", 0))
+_FOLDER = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+           | getattr(os, "O_CLOEXEC", 0))
 LINK_RULE = ("a link is followed only as Kubernetes mounts a secret: NAME -> ..data/NAME, and ..data -> a "
              "folder beside it whose name starts with ..; no other link is followed")
 
@@ -61,8 +63,6 @@ def _open_mounted_secret(path: str, setting: str) -> int:
     ``folder/..<time>/NAME``. The kubelet replaces ``..data`` when the secret changes and then removes
     the old folder, so a folder that vanished between the two steps is looked up once more."""
     refused = ValueError(f"{setting} names {path}, a symbolic link: {LINK_RULE}.")
-    if IS_WINDOWS:
-        raise refused
     folder, name = os.path.split(path)
     for attempt in (1, 2):
         try:
@@ -74,7 +74,7 @@ def _open_mounted_secret(path: str, setting: str) -> int:
         if "/" in version or not version.startswith("..") or version in ("..", "..data"):
             raise refused
         try:
-            parent = os.open(folder, os.O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+            parent = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         except OSError:
             raise refused from None
         try:
@@ -105,9 +105,20 @@ def read_private_file(path: str, setting: str) -> str:
     """
     if not path or not os.path.isabs(path):
         raise ValueError(f"{setting} must be an absolute path.")
+    target = Path(path)
     try:
-        mounted = stat.S_ISLNK(os.lstat(path).st_mode)
-        fd = _open_mounted_secret(path, setting) if mounted else os.open(path, _READ)
+        if IS_WINDOWS:
+            if is_reparse_point(target):
+                raise ValueError(f"{setting} names {path}, a symbolic link: {LINK_RULE}.")
+            if target.is_dir():
+                raise ValueError(f"{setting} names {path}, which must be a regular file of this user.")
+            mounted = False
+            fd = open_no_follow(target, os.O_RDONLY, private_on_create=False)
+        else:
+            mounted = stat.S_ISLNK(os.lstat(path).st_mode)
+            fd = _open_mounted_secret(path, setting) if mounted else os.open(path, _READ)
+    except ValueError:
+        raise
     except FileNotFoundError:
         raise ValueError(f"{setting} names {path}, which does not exist.") from None
     except OSError as error:
@@ -120,12 +131,11 @@ def read_private_file(path: str, setting: str) -> str:
     try:
         info = os.fstat(fd)
         if mounted:
-            if not owner_matches(info) or not no_group_other_access(info) or info.st_size > FILE_LIMIT:
+            if not is_private_stat(info, target, directory=False, strict=False) or info.st_size > FILE_LIMIT:
                 raise ValueError(f"{setting} names {path}, a mounted secret whose file must be a regular file of "
                                  f"this user that group and others cannot read (defaultMode 0400 in Kubernetes) "
                                  f"and at most {FILE_LIMIT} bytes.")
-        elif (not stat.S_ISREG(info.st_mode) or not owner_matches(info)
-                or not private_mode_ok(info, 0o600) or info.st_size > FILE_LIMIT):
+        elif not is_private_stat(info, target, directory=False, strict=True) or info.st_size > FILE_LIMIT:
             raise ValueError(f"{setting} names {path}, which must be a regular file of this user with mode 0600 "
                              f"(chmod 600) and at most {FILE_LIMIT} bytes.")
         handle = os.fdopen(fd, "rb")

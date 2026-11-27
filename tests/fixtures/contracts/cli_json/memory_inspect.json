@@ -1,0 +1,52 @@
+{
+  "active_plan_id": "<UUID_1>",
+  "completeness": {
+    "failed_analysis": 0,
+    "meaning": "committed_rows_only",
+    "models_required": false,
+    "pending_analysis": 1
+  },
+  "counts": {
+    "check_runs": 0,
+    "edges": 5,
+    "nodes": 7,
+    "plan_revisions": 1,
+    "plans": 1,
+    "record_revisions": 2,
+    "records": 2,
+    "sources": 4
+  },
+  "created_at": "<TIMESTAMP>",
+  "format_version": 1,
+  "manifest_path": "<WORKTREE>/.memory/cairnmind/manifest.json",
+  "origin_root": "<WORKTREE>",
+  "parent_id": null,
+  "path": "<WORKTREE>/.memory/cairnmind/manifest.json",
+  "processing": {
+    "embed": {
+      "completed": 0,
+      "failed": 0,
+      "pending": 2,
+      "running": 0
+    },
+    "extract": {
+      "completed": 0,
+      "failed": 0,
+      "pending": 1,
+      "running": 0
+    },
+    "import": {
+      "completed": 0,
+      "failed": 0,
+      "pending": 0,
+      "running": 0
+    }
+  },
+  "project": {
+    "id": "<UUID_2>",
+    "name": "contract-app"
+  },
+  "snapshot_id": "<SHA256_1>",
+  "state_hash": "<SHA256_2>",
+  "status": "valid"
+}

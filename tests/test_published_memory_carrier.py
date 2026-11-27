@@ -115,8 +115,10 @@ def test_a_checkout_path_is_validated_every_time_it_is_used(ada):
     git(tmp / "other" / ".memory" / "cairnmind", "init", "-q")
     (tmp / "plain").mkdir()
     os.symlink(memory, tmp / "linked")
+    import sys
     (memory / "sub").mkdir()
-    (memory / "nl\nname").mkdir()  # A real directory: the name alone is refused, not its absence.
+    if sys.platform != "win32":
+        (memory / "nl\nname").mkdir()  # A real directory: the name alone is refused, not its absence.
     mono = repository(tmp / "mono")  # #174: a project registered below the top level of its repository.
     (mono / "docs").mkdir()
     (mono / "beside").mkdir()
@@ -163,6 +165,9 @@ def test_a_checkout_path_is_validated_every_time_it_is_used(ada):
 
 def test_a_checkout_under_a_system_link_is_used_and_a_link_below_it_is_still_refused(ada, monkeypatch):
     # On macOS /tmp is a link to /private/tmp (#229); here a fake one stands for it.
+    import sys
+    if sys.platform == "win32":
+        pytest.skip("Tests POSIX/macOS root-owned system symlinks (/tmp -> /private/tmp)")
     from test_system_links import fake_system_link
     store, pid, tmp = ada["store"], ada["pid"], ada["tmp"]
     link, target = fake_system_link(tmp, monkeypatch)

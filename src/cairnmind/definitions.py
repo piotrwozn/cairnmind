@@ -149,7 +149,8 @@ def _match(question: str, symbol: dict, path: str) -> tuple[int, int, int, int, 
     # A full match needs two question words: port, question, MAX_TIMEOUT or DEFAULT_PORT is a
     # plain word match, not a name the question spells out.
     full = int(len(matched) >= 2 and not unmatched)
-    context = {_stem(word) for word in _words(str(symbol.get("owner", ""))) | _words(PurePosixPath(path).stem)}
+    context = {_stem(word) for word in _words(str(symbol.get("owner", "")))
+               | _words(PurePosixPath(str(path).replace("\\", "/")).stem)}
     # A filler word counts beside a question word of the name (DEFAULT_PORT), never by itself: a
     # constant called DEFAULT or MAX is not what a question about "the default ..." asks for.
     shared = frozenset(word for word in own if is_asked(word)) if matched else frozenset()

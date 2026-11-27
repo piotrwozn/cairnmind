@@ -32,9 +32,10 @@ from urllib.parse import urlsplit
 from . import (database_credentials, database_mode, engine, engine_docker, knowledge_mode, memory_egress,
                memory_models, store_writer, topology)
 from .arcade import ArcadeError
+from .file_locks import lock_exclusive
+from .private_files import atomic_replace, make_private
 from .config import Settings, derived_database, env_names, env_value
 from .ollama import OllamaUnavailable
-from .platform_locks import lock_file
 from .terminal_safe import safe_text
 
 PROFILES = ("local", "remote-db", "remote")
@@ -465,9 +466,9 @@ def save_storage(data_dir: Path, fields: dict) -> None:
     assert set(fields) <= set(STORAGE_FIELDS), fields
     path = data_dir / "config.json"
     data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with (data_dir / "config.lock").open("a") as lock:
-        lock_file(lock, exclusive=True)
-        values = json.loads(path.read_text()) if path.exists() else {}
+    with (data_dir / "config.lock").open("a", encoding="utf-8") as lock:
+        lock_exclusive(lock)
+        values = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         if not isinstance(values, dict):
             raise ValueError("config.json is not a settings object; nothing was saved.")
         values.update(fields)
@@ -476,16 +477,16 @@ def save_storage(data_dir: Path, fields: dict) -> None:
 
 def _put_back(path: Path, data: bytes) -> None:
     """config.json as it was, byte for byte: atomic, owner-readable, under the settings lock."""
-    with (path.parent / "config.lock").open("a") as lock:
-        lock_file(lock, exclusive=True)
+    with (path.parent / "config.lock").open("a", encoding="utf-8") as lock:
+        lock_exclusive(lock)
         descriptor, name = tempfile.mkstemp(prefix=".config-", dir=path.parent)
         try:
             with os.fdopen(descriptor, "wb") as handle:
                 handle.write(data)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.chmod(name, 0o600)
-            os.replace(name, path)
+            make_private(name)
+            atomic_replace(name, path)
         finally:
             Path(name).unlink(missing_ok=True)
 
@@ -493,7 +494,7 @@ def _put_back(path: Path, data: bytes) -> None:
 def _generated_password(path: Path, snapshot: bytes) -> str | None:
     """The managed password config.json gained since the snapshot, or None."""
     try:
-        before, now = json.loads(snapshot), json.loads(path.read_text())
+        before, now = json.loads(snapshot), json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     password = now.get("arcade_password") if isinstance(now, dict) and isinstance(before, dict) else None
@@ -502,9 +503,9 @@ def _generated_password(path: Path, snapshot: bytes) -> str | None:
 
 def _keep_password(path: Path, password: str) -> None:
     """After a put-back: the password a started engine uses stays, unless config.json already holds one."""
-    with (path.parent / "config.lock").open("a") as lock:
-        lock_file(lock, exclusive=True)
-        values = json.loads(path.read_text())
+    with (path.parent / "config.lock").open("a", encoding="utf-8") as lock:
+        lock_exclusive(lock)
+        values = json.loads(path.read_text(encoding="utf-8"))
         values.setdefault("arcade_password", password)
         memory_models._write_json(path, values)
 

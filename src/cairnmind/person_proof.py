@@ -23,8 +23,14 @@ import stat
 import subprocess
 import sys
 
+from . import person_pipe
 from .runtime_selection import resolve_tmux
 from .runtime_sockets import MAX_SOCKET_PATH, socket_base, socket_directory, workspace_namespace
+
+IS_WINDOWS = sys.platform == "win32"
+# In-process registry of open Windows standalone workspace Named Pipes (pipe_name -> True).
+# Kept only in the standalone UI process memory so CLI/MCP/agent processes never attach headers.
+_ACTIVE_PIPES: set[str] = set()
 
 OPTION = "@cairnmind_person_key"
 KEY_HEADER, SOCKET_HEADER = "X-Cairnmind-Person", "X-Cairnmind-Workspace"
@@ -80,11 +86,23 @@ def set_key_input(key: str) -> str:
     return f"set-option -g {OPTION} {key}\n"
 
 
-def workspace_socket(settings, value) -> Path | None:
-    """The socket of this installation's workspace, or None. All checks must hold: the shape of the path, a
-    private directory of the user (not a link), and a socket of the user."""
-    if sys.platform == "win32" or not hasattr(os, "getuid"):
-        return None
+def register_active_pipe(pipe_name: str) -> None:
+    """Mark a Windows Named Pipe as belonging to this running standalone UI process."""
+    _ACTIVE_PIPES.add(pipe_name)
+
+
+def unregister_active_pipe(pipe_name: str) -> None:
+    """Remove a Windows Named Pipe from this process's active workspace set."""
+    _ACTIVE_PIPES.discard(pipe_name)
+
+
+def workspace_socket(settings, value) -> Path | str | None:
+    """The socket (POSIX tmux) or Named Pipe (Windows standalone UI) of this installation's workspace, or None.
+
+    All checks must hold: the shape of the path/pipe, and on POSIX a private directory and socket of the user.
+    """
+    if IS_WINDOWS:
+        return value if person_pipe.is_valid_pipe_name(settings, value) else None
     if (not isinstance(value, str) or not value or "\0" in value or not os.path.isabs(value)
             or len(os.fsencode(value)) > MAX_SOCKET_PATH):
         return None
@@ -113,11 +131,14 @@ def _tmux(settings) -> str | None:
 
 
 def read_key(settings, socket, binary=None) -> tuple[str, str | None]:
-    """Ask the tmux server on `socket` for the key: ("key", key), ("no_key", None) or ("unavailable", None).
+    """Ask the open workspace (tmux server on POSIX, Named Pipe on Windows) for the key:
+    ("key", key), ("no_key", None) or ("unavailable", None).
 
-    Only a server that answers decides: no server, no tmux, a timeout or an answer of another shape is
+    Only a running workspace that answers decides: no server, no pipe, a timeout or an answer of another shape is
     `unavailable`, and nothing starts a server. `binary` is the tmux that started it, when the caller knows.
     """
+    if IS_WINDOWS:
+        return person_pipe.read_pipe_key(settings, str(socket))
     binary = binary or _tmux(settings)
     if not binary:
         return "unavailable", None
@@ -138,13 +159,15 @@ def read_key(settings, socket, binary=None) -> tuple[str, str | None]:
 def restore_proof(settings) -> str:
     """What `cairnmind restore` finds of this installation's open workspace: "key", "no_key" or "unavailable" (#214).
 
-    The socket is the one the workspace makes for this data directory, checked as the socket of a person's
-    request is (workspace_socket), and its tmux server is asked as the service asks it (read_key). Only "key"
-    lets a restore keep a person's confirmations; nothing a caller passes (an option, a file) decides it. The
-    environment does: on Linux and WSL TMPDIR decides where the socket directory is, and any tmux server of the
-    user's own at that place that holds a well-formed key answers "key" (docs/MEMORY_CONTRACTS.md).
+    On POSIX the socket is the one the workspace makes for this data directory, checked as the socket of a person's
+    request is (workspace_socket), and its tmux server is asked as the service asks it (read_key).
+    On Windows the Named Pipe of the open standalone workspace is queried (person_pipe.read_pipe_key).
+    Only "key" lets a restore keep a person's confirmations; nothing a caller passes (an option, a file) decides it.
     """
-    value = str(socket_directory("ui", workspace_namespace(settings.data_dir)) / "tmux.sock")
+    if IS_WINDOWS:
+        value = person_pipe.pipe_name_for(settings.data_dir)
+    else:
+        value = str(socket_directory("ui", workspace_namespace(settings.data_dir)) / "tmux.sock")
     socket = workspace_socket(settings, value)
     return "unavailable" if socket is None else read_key(settings, socket)[0]
 
@@ -153,8 +176,15 @@ def workspace_headers(settings, environ=None) -> dict:
     """The proof a panel of the open workspace sends with a person's request, read for this request only.
 
     Nothing outside this installation's workspace (a coding session's shell has the native server's socket or
-    none) sends anything; a workspace without a key sends only its socket, so that the service can say so.
+    none; on Windows another process has no active pipe registered) sends anything; a POSIX workspace without a
+    key sends only its socket, so that the service can say so.
     """
+    if IS_WINDOWS:
+        pipe_name = person_pipe.pipe_name_for(settings.data_dir)
+        if pipe_name not in _ACTIVE_PIPES:
+            return {}
+        kind, key = person_pipe.read_pipe_key(settings, pipe_name)
+        return {KEY_HEADER: key, SOCKET_HEADER: pipe_name} if kind == "key" else {}
     environ = os.environ if environ is None else environ
     socket = workspace_socket(settings, str(environ.get("TMUX", "")).split(",")[0])
     if socket is None:
@@ -183,7 +213,7 @@ def check(settings, headers, refusal=PROOF_MISSING) -> None:
     socket = workspace_socket(settings, value)
     if socket is None:
         raise PersonProofRefused(PROOF_REFUSED)
-    if not _tmux(settings):
+    if not IS_WINDOWS and not _tmux(settings):
         raise PersonProofRefused(TMUX_MISSING)
     kind, key = read_key(settings, socket)
     if kind == "no_key":

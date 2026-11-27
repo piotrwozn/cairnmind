@@ -125,7 +125,8 @@ def test_the_run_scores_every_extracted_message_and_writes_a_private_report(tmp_
     assert report["runs"][0]["summary"]["kept_lost"] == [] and report["runs"][0]["summary"]["rejected"] == 1
     written = Path(report["report_path"])
     assert json.loads(written.read_text(encoding="utf-8"))["status"] == "failed"
-    assert (written.stat().st_mode & 0o777) == 0o600
+    from conftest import assert_private
+    assert_private(written)
 
 
 class FailingOnProtocolOllama(EchoOllama):

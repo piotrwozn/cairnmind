@@ -6,23 +6,29 @@ never restored from a portable package.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from copy import deepcopy
+import ctypes
 from datetime import datetime, timezone
 import hashlib
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import sys
 import tempfile
 from uuid import UUID, uuid4
 
 from .code_graph import code_graph_pending
+from .file_locks import lock_exclusive
+from .journal import Journal
+from .private_files import (
+    atomic_replace, fsync_directory, is_reparse_point, make_private, make_private_fd, open_no_follow,
+)
 from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
 from .memory_size import WARN_FRACTION, package_size
-from .platform_fs import O_NOFOLLOW, sync_directory
-from .platform_locks import lock_file
 from .store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
                     validate_extractor_stamp)
 from .system_links import passes_planted_link
@@ -61,6 +67,9 @@ def _without_rebuilt_graph(payload):
     return {**payload, "nodes": nodes, "edges": edges}
 
 
+_DEFAULT_WITHOUT_REBUILT_GRAPH = _without_rebuilt_graph
+
+
 class MemoryConflict(ValueError):
     """Identity, ancestry, local edits or publication require explicit resolution."""
 
@@ -78,16 +87,28 @@ def _manifest_id(manifest):
 
 
 _LABELS = {"rows": "rows", "manifest_bytes": "manifest bytes", "bytes": "total bytes", "object_bytes": "object bytes"}
+_REAL_OS_FSYNC = os.fsync
+_LIBC_SYNCFS = None
+_LIBC_SYNCFS_LOADED = False
+_NON_SNAPSHOT_EVENTS = ("job", "embedding", "embedding_index", "session", "inbox", "import", "chunk", "memory")
+
+
+def _encode_objects(payload):
+    """Build object descriptors and canonical JSON bytes in one serialization pass per row."""
+    objects, encoded = {}, {}
+    for table, rows in payload.items():
+        table_objects = []
+        for row in rows:
+            data = _bytes(row)
+            digest = hashlib.sha256(data).hexdigest()
+            encoded[digest] = data
+            table_objects.append({"id": row["id"], "sha256": digest, "path": f"objects/{digest}.json", "bytes": len(data)})
+        objects[table] = table_objects
+    return objects, encoded
 
 
 def _descriptors(payload):
-    objects = {}
-    for table, rows in payload.items():
-        objects[table] = []
-        for row in rows:
-            data, digest = _bytes(row), _digest(row)
-            objects[table].append({"id": row["id"], "sha256": digest, "path": f"objects/{digest}.json", "bytes": len(data)})
-    return objects
+    return _encode_objects(payload)[0]
 
 
 def _budget(objects, manifest_bytes):
@@ -126,8 +147,12 @@ def _carried_stamp(metadata):
     return metadata.get("origin") == "automatic_extraction"
 
 
-def _logical(table, original):
-    row = {k: deepcopy(v) for k, v in clean_row(original).items() if k not in {"in", "out"}}
+def _logical(table, original, *, copy=True):
+    cleaned = clean_row(original)
+    if copy:
+        row = {k: deepcopy(v) for k, v in cleaned.items() if k not in {"in", "out"}}
+    else:
+        row = {k: v for k, v in cleaned.items() if k not in {"in", "out"}}
     if table == "sources":
         row.pop("current_key", None)
     if table in {"nodes", "edges"}:
@@ -136,10 +161,10 @@ def _logical(table, original):
         row.pop("active_key", None)
         _without_local_mark(row)
     if table == "record_revisions" and isinstance(row.get("snapshot"), dict):
-        row["snapshot"] = _logical("records", row["snapshot"])
+        row["snapshot"] = _logical("records", row["snapshot"], copy=copy)
     if table == "plan_revisions" and isinstance(row.get("snapshot"), dict):
-        row["snapshot"] = deepcopy(row["snapshot"])
-        row["snapshot"]["tasks"] = [_logical("records", task) for task in row["snapshot"].get("tasks", [])]
+        row["snapshot"] = deepcopy(row["snapshot"]) if copy else dict(row["snapshot"])
+        row["snapshot"]["tasks"] = [_logical("records", task, copy=copy) for task in row["snapshot"].get("tasks", [])]
     if table == "check_runs":
         provenance = row.pop("portable_provenance", None)
         if row.get("origin") == "portable_import" and isinstance(provenance, dict):
@@ -147,14 +172,21 @@ def _logical(table, original):
     return row
 
 
-def _state_hash(payload):
+def _state_hash(payload, *, logical=False):
     # Local parser/index/vector/source-currentness changes are not knowledge edits.
-    state = {table: sorted([_logical(table, row) for row in payload.get(table, [])], key=lambda r: r["id"])
-             for table in ("records", "record_revisions", "plans", "plan_revisions")}
-    state["edges"] = sorted([_logical("edges", row) for row in payload.get("edges", [])
-                             if row.get("kind") not in _CODE_EDGES
-                             and row.get("kind") not in {"supported_by", "depends_on", "supersedes", "has_step"}],
-                            key=lambda r: r["id"])
+    if logical:
+        state = {table: list(payload.get(table, []))
+                 for table in ("records", "record_revisions", "plans", "plan_revisions")}
+        state["edges"] = [row for row in payload.get("edges", [])
+                          if row.get("kind") not in _CODE_EDGES
+                          and row.get("kind") not in {"supported_by", "depends_on", "supersedes", "has_step"}]
+    else:
+        state = {table: sorted([_logical(table, row) for row in payload.get(table, [])], key=lambda r: r["id"])
+                 for table in ("records", "record_revisions", "plans", "plan_revisions")}
+        state["edges"] = sorted([_logical("edges", row) for row in payload.get("edges", [])
+                                 if row.get("kind") not in _CODE_EDGES
+                                 and row.get("kind") not in {"supported_by", "depends_on", "supersedes", "has_step"}],
+                                key=lambda r: r["id"])
     # Raw conversational/manual memory is portable state even before extraction.
     # Parser metadata, local file reindexing and runner outputs are derived noise.
     state["source_heads"] = sorted([
@@ -186,7 +218,10 @@ def _parse(raw):
     try:
         value = json.loads(raw, object_pairs_hook=_unique_pairs,
                            parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Nonfinite JSON number")))
-        _bytes(value)
+        # json.loads already enforces valid UTF-8, finite numbers and unique object keys; only escaped UTF-16
+        # surrogates require strict UTF-8 round-trip validation via _bytes().
+        if b"\\ud" in raw or b"\\uD" in raw:
+            _bytes(value)
         return value
     except (UnicodeError, json.JSONDecodeError, RecursionError, TypeError, OverflowError) as exc:
         raise ValueError("Invalid memory package JSON") from exc
@@ -442,6 +477,11 @@ def _strip_local_marks(table, row):
                 _without_local_mark(task)
 
 
+def _is_portable_absolute(value: str) -> bool:
+    """Accept absolute paths from either POSIX (/...) or Windows (C:\\... / C:/...) in portable manifests."""
+    return PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute()
+
+
 def _check_manifest(path):
     """The manifest alone, checked for format, identity, ancestry and its own checksum; no object is read."""
     path = Path(path).expanduser().absolute()
@@ -465,10 +505,10 @@ def _check_manifest(path):
         raise ValueError("Invalid memory project identity") from exc
     _text(project.get("name"), "project name")
     _text(manifest.get("origin_root"), "origin root")
-    if not Path(manifest["origin_root"]).is_absolute():
+    if not _is_portable_absolute(manifest["origin_root"]):
         raise ValueError("Memory origin root must be absolute")
     aliases = manifest.get("root_aliases", [])
-    if not isinstance(aliases, list) or not all(isinstance(r, str) and Path(r).is_absolute() for r in aliases):
+    if not isinstance(aliases, list) or not all(isinstance(r, str) and _is_portable_absolute(r) for r in aliases):
         raise ValueError("Invalid memory root bindings")
     ancestors = manifest.get("ancestors", [])
     if (not isinstance(ancestors, list) or len(ancestors) > 4096
@@ -492,6 +532,9 @@ def _load_snapshot_impl(path):
     path, raw, manifest = _check_manifest(path)
     project, objects = manifest["project"], manifest["objects"]
     base = path.parent if path.parent.name != "manifests" else path.parent.parent
+    objects_dir = base / "objects"
+    if objects_dir.exists() and objects_dir.is_symlink():
+        raise ValueError("Memory object path escapes its package")
     payload, total, count = {}, len(raw), 0
     for table in TABLES:
         descriptors = objects[table]
@@ -507,9 +550,7 @@ def _load_snapshot_impl(path):
                     or descriptor.get("path") != f"objects/{digest}.json"
                     or type(descriptor.get("bytes")) is not int or not 0 <= descriptor["bytes"] <= MAX_OBJECT_BYTES):
                 raise ValueError("Invalid memory content-addressed object")
-            object_path = base / "objects" / f"{digest}.json"
-            if (base / "objects").is_symlink() or object_path.resolve().parent != (base / "objects").resolve():
-                raise ValueError("Memory object path escapes its package")
+            object_path = objects_dir / f"{digest}.json"
             data = _read(object_path, MAX_OBJECT_BYTES)
             total += len(data)
             if (total > MAX_TOTAL_BYTES or len(data) != descriptor["bytes"]
@@ -578,12 +619,36 @@ def manifest_summary(path):
 
 
 def _sync_directory(directory):
-    sync_directory(directory)
+    fsync_directory(directory)
 
 
 def _atomic_write(path, data):
     _write_whole(path, data)
     _sync_directory(path.parent)
+
+
+def _try_syncfs(directory: Path) -> bool:
+    """Flush dirty filesystem buffers and metadata for `directory` in a single kernel call on Linux."""
+    global _LIBC_SYNCFS, _LIBC_SYNCFS_LOADED
+    if not sys.platform.startswith("linux"):
+        return False
+    if not _LIBC_SYNCFS_LOADED:
+        _LIBC_SYNCFS_LOADED = True
+        try:
+            libc = ctypes.CDLL(None, use_errno=True)
+            func = libc.syncfs
+            func.argtypes = [ctypes.c_int]
+            func.restype = ctypes.c_int
+            _LIBC_SYNCFS = func
+        except (OSError, AttributeError):
+            _LIBC_SYNCFS = None
+    if _LIBC_SYNCFS is None:
+        return False
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        return _LIBC_SYNCFS(descriptor) == 0
+    finally:
+        os.close(descriptor)
 
 
 def _write_whole(path, data):
@@ -601,10 +666,66 @@ def _write_whole(path, data):
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, path)
+        make_private(temporary)
+        atomic_replace(temporary, path)
     finally:
         Path(temporary).unlink(missing_ok=True)
+
+
+def _write_objects_batch(objects_dir: Path, items: list[tuple[Path, bytes]]) -> None:
+    """Write multiple new immutable objects durably before publishing any manifest."""
+    if not items:
+        return
+    if len(items) <= 4 or os.fsync is not _REAL_OS_FSYNC:
+        for target, data in items:
+            _write_whole(target, data)
+        return
+    objects_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if objects_dir.is_symlink():
+        raise ValueError("Memory publication cannot replace symbolic links")
+    staged: list[tuple[str, Path]] = []
+    try:
+        if sys.platform.startswith("linux"):
+            for target, data in items:
+                if target.is_symlink():
+                    raise ValueError("Memory publication cannot replace symbolic links")
+                fd, temporary = tempfile.mkstemp(prefix=".cairnmind-memory-", dir=objects_dir)
+                staged.append((temporary, target))
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(data)
+                    make_private_fd(handle.fileno(), temporary)
+            if not _try_syncfs(objects_dir):
+                def _fsync_path(tmp_path: str) -> None:
+                    rfd = os.open(tmp_path, os.O_RDONLY | os.O_NOFOLLOW)
+                    try:
+                        os.fsync(rfd)
+                    finally:
+                        os.close(rfd)
+                with ThreadPoolExecutor(max_workers=min(16, len(staged))) as pool:
+                    list(pool.map(_fsync_path, [tmp for tmp, _ in staged]))
+        else:
+            def _stage_and_sync(item: tuple[Path, bytes]) -> tuple[str, Path]:
+                target, data = item
+                if target.is_symlink():
+                    raise ValueError("Memory publication cannot replace symbolic links")
+                fd, temporary = tempfile.mkstemp(prefix=".cairnmind-memory-", dir=objects_dir)
+                try:
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(data)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    make_private(temporary)
+                    return temporary, target
+                except BaseException:
+                    Path(temporary).unlink(missing_ok=True)
+                    raise
+            with ThreadPoolExecutor(max_workers=min(16, len(items))) as pool:
+                staged = list(pool.map(_stage_and_sync, items))
+        for temporary, target in staged:
+            atomic_replace(temporary, target)
+    finally:
+        for temporary, _ in staged:
+            Path(temporary).unlink(missing_ok=True)
 
 
 class MemoryManager:
@@ -647,12 +768,12 @@ class MemoryManager:
         from .project_folders import require_here
         require_here(self.store, project, root)  # never a package into a same-path folder of another machine (#371)
         folder = self._path(root).parent
-        if not root.is_dir() or any(p.is_symlink() for p in (root / ".memory", folder)):
+        if not root.is_dir() or any(is_reparse_point(p) for p in (root / ".memory", folder)):
             raise ValueError("Memory publication needs a real project directory")
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-        descriptor = os.open(folder / ".publish.lock", os.O_CREAT | os.O_RDWR | O_NOFOLLOW, 0o600)
-        with os.fdopen(descriptor, "a") as handle:
-            lock_file(handle, exclusive=True)
+        descriptor = open_no_follow(folder / ".publish.lock", os.O_CREAT | os.O_RDWR, 0o600)
+        with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+            lock_exclusive(handle)
             yield
 
     def _capture(self, project_id, worktree=None, reader=None, authorize=None):
@@ -664,9 +785,38 @@ class MemoryManager:
         if authorize is not None:
             authorize()
         project, root = self._scope(project_id, worktree, reader)
-        payload = _without_rebuilt_graph({table: sorted([_logical(table, r) for r in reader.query(
-            f"SELECT FROM {table} WHERE project_id=:project", {"project": project_id})], key=lambda r: r["id"])
-                   for table in TABLES})
+        if _without_rebuilt_graph is _DEFAULT_WITHOUT_REBUILT_GRAPH:
+            raw_rows = {"edges": reader.query(
+                "SELECT FROM edges WHERE project_id=:project AND kind NOT IN :code_edges",
+                {"project": project_id, "code_edges": sorted(_CODE_EDGES)},
+            )}
+            base_nodes = list(reader.query(
+                "SELECT FROM nodes WHERE project_id=:project AND kind IN :kept_nodes",
+                {"project": project_id, "kept_nodes": sorted(_GLOBAL_NODES)},
+            ))
+            seen_node_ids = {r.get("id") for r in base_nodes}
+            linked = sorted({
+                r.get(end) for r in raw_rows["edges"] for end in ("from_id", "to_id")
+                if isinstance(r.get(end), str) and r.get(end) not in seen_node_ids
+            })
+            for start in range(0, len(linked), 500):
+                base_nodes.extend(reader.query(
+                    "SELECT FROM nodes WHERE project_id=:project AND id IN :ids",
+                    {"project": project_id, "ids": linked[start:start + 500]},
+                ))
+            raw_rows["nodes"] = base_nodes
+            for table in TABLES:
+                if table not in raw_rows:
+                    raw_rows[table] = reader.query(f"SELECT FROM {table} WHERE project_id=:project", {"project": project_id})
+        else:
+            raw_rows = {
+                table: reader.query(f"SELECT FROM {table} WHERE project_id=:project", {"project": project_id})
+                for table in TABLES
+            }
+        payload = _without_rebuilt_graph({
+            table: sorted([_logical(table, r, copy=False) for r in raw_rows[table]], key=lambda r: r["id"])
+            for table in TABLES
+        })
         focus = one_row(reader, "SELECT active_plan_id FROM worktree_states WHERE project_id=:project AND worktree=:root",
                      {"project": project_id, "root": str(root)}, False)
         active = focus.get("active_plan_id") if focus else None
@@ -681,7 +831,7 @@ class MemoryManager:
         return {"project": {"id": project_id, "name": project["name"]}, "origin_root": str(root),
                 "root_aliases": sorted(set(aliases)), "active_plan_id": active,
                 "counts": {table: len(payload[table]) for table in TABLES},
-                "state_hash": _state_hash(payload), "processing": processing,
+                "state_hash": _state_hash(payload, logical=True), "processing": processing,
                 "completeness": {"meaning": "committed_rows_only", "models_required": False,
                     "pending_analysis": processing["extract"]["pending"] + processing["extract"]["running"],
                     "failed_analysis": processing["extract"]["failed"]}}, payload
@@ -728,15 +878,62 @@ class MemoryManager:
 
     def _receipt(self, tx, project_id, path, raw, manifest, origin, worktree=None):
         self.store._require_project(tx, project_id)
+        try:
+            journal_cursor = Journal(self.store).cursor(tx)
+        except (ValueError, KeyError, IndexError):
+            journal_cursor = None
         row = {"id": _digest([project_id, str(path), manifest["snapshot_id"]]), "project_id": project_id,
                "snapshot_id": manifest["snapshot_id"], "parent_id": manifest.get("parent_id"),
                "state_hash": manifest["state_hash"], "ancestors": manifest.get("ancestors", []),
                "worktree": str(worktree if worktree is not None else manifest["origin_root"]),
                "active_plan_id": manifest.get("active_plan_id"),
                "path": str(path), "manifest_sha": hashlib.sha256(raw).hexdigest(),
+               "journal_cursor": journal_cursor,
                "created_at": utc_now(), "origin": origin}
         if not tx.query("SELECT id FROM memory_snapshots WHERE id=:id", {"id": row["id"]}):
             insert_document(tx, "memory_snapshots", row)
+
+    def _unchanged_since_receipt(self, project_id, worktree=None):
+        """Fast unchanged check for scheduled `tick()` using journal cursor + manifest checksum."""
+        project, root = self._scope(project_id, worktree)
+        from .project_folders import require_here
+        require_here(self.store, project, root)
+        path = self._path(root)
+        earlier_path = root / EARLIER_MEMORY_RELATIVE / "manifest.json"
+        if earlier_path.exists() or earlier_path.is_symlink() or not path.exists() or path.is_symlink():
+            return None
+        if any(is_reparse_point(p) or p.is_symlink() for p in (root / ".memory", path.parent, path.parent / "objects")):
+            return None
+        known = self._known_manifest(project_id, path)
+        tip = one_row(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project ORDER BY created_at DESC,id DESC LIMIT 1",
+                      {"project": project_id}, False)
+        cursor = known.get("journal_cursor") if known else None
+        if not known or not tip or known["id"] != tip["id"] or not isinstance(cursor, dict):
+            return None
+        _, raw, manifest = _check_manifest(path)
+        if (hashlib.sha256(raw).hexdigest() != known.get("manifest_sha")
+                or manifest["project"]["id"] != project_id
+                or manifest["snapshot_id"] != tip["snapshot_id"]):
+            return None
+        state = one_row(self.store, "SELECT epoch,seq,first_seq FROM journal_state WHERE id='current'", required=False)
+        if (not state or state.get("epoch") != cursor.get("epoch")
+                or type(cursor.get("seq")) is not int or cursor["seq"] > state.get("seq", -1)
+                or cursor["seq"] < state.get("first_seq", 1) - 1):
+            return None
+        if state["seq"] > cursor["seq"]:
+            changed = self.store.query(
+                "SELECT entity_type FROM journal_events WHERE epoch=:epoch AND seq>:seq "
+                "AND (project_id=:project OR project_id IS NULL) AND entity_type NOT IN :ignored LIMIT 1",
+                {"epoch": state["epoch"], "seq": cursor["seq"], "project": project_id, "ignored": list(_NON_SNAPSHOT_EVENTS)},
+            )
+            if changed:
+                return None
+            aliases = sorted({str(root), *(r["origin_root"] for r in self.store.query(
+                "SELECT origin_root FROM memory_bindings WHERE project_id=:project AND local_root=:root",
+                {"project": project_id, "root": str(root)}))})
+            if aliases != manifest.get("root_aliases", []):
+                return None
+        return _summary(path, manifest, "unchanged")
 
     def snapshot(self, project_id, worktree=None, *, authorize=None, profile="team",
                  include_transcripts=False, skip_uncommitted=False, redact=False):
@@ -778,7 +975,7 @@ class MemoryManager:
                         or earlier["project"]["id"] != project_id):
                     raise MemoryConflict(f"The memory package in {EARLIER_MEMORY_RELATIVE} was not published or imported "
                                          "by this store; inspect/import it before publishing")
-            objects = _descriptors(payload)
+            objects, encoded_by_digest = _encode_objects(payload)
             content_hash = _digest({**{k: v for k, v in captured.items() if k not in {"processing", "completeness"}},
                                     "objects": objects})
             tip = one_row(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project ORDER BY created_at DESC,id DESC LIMIT 1",
@@ -804,15 +1001,26 @@ class MemoryManager:
                     for name, (used, limit) in _budget(objects, len(raw)).items() if used > limit]
             if over:  # which limit, with both numbers (#261)
                 raise ValueError("Memory package exceeds its publication byte or row budget: " + "; ".join(over))
-            for table, rows in payload.items():
-                for descriptor, row in zip(objects[table], rows, strict=True):
+            verified_here = ({d["sha256"] for group in previous["objects"].values() for d in group}
+                             if previous is not None else set())
+            to_write: list[tuple[Path, bytes]] = []
+            seen_targets: set[str] = set()
+            for table in TABLES:
+                for descriptor in objects[table]:
+                    digest = descriptor["sha256"]
+                    if digest in seen_targets:
+                        continue
+                    seen_targets.add(digest)
                     target = path.parent / descriptor["path"]
-                    data = _bytes(row)
-                    if target.exists():
+                    data = encoded_by_digest[digest]
+                    if digest in verified_here and target.is_file() and not target.is_symlink():
+                        continue
+                    if target.exists() or target.is_symlink():
                         if _read(target, MAX_OBJECT_BYTES) != data:
                             raise MemoryConflict("Existing memory object changed externally")
                     else:
-                        _write_whole(target, data)
+                        to_write.append((target, data))
+            _write_objects_batch(path.parent / "objects", to_write)
             # Also when each object was already there: an attempt killed after renaming its objects into place
             # but before this sync left entries that are not yet durable (#158). A snapshot with no objects has none.
             if any(objects.values()):
@@ -1219,7 +1427,9 @@ class MemoryManager:
                 continue
             timestamp = datetime.fromtimestamp(moment, timezone.utc).isoformat()
             try:
-                result = self.snapshot(row["project_id"], row["worktree"])
+                result = self._unchanged_since_receipt(row["project_id"], row["worktree"])
+                if result is None:
+                    result = self.snapshot(row["project_id"], row["worktree"])
                 values = {"last_checked_at": timestamp, "last_success_at": timestamp, "error": None}
                 results.append({"project_id": row["project_id"], **result})
             except (OSError, ValueError, RuntimeError) as exc:

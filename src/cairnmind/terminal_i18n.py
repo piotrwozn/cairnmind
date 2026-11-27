@@ -7,6 +7,7 @@ from .engine_docker import MESSAGES as ENGINE_DOCKER_MESSAGES
 from .first_start import MESSAGES as FIRST_START_MESSAGES
 from .memory_models import MESSAGES as MEMORY_MODELS_MESSAGES
 from .platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
+from .project_clone import MESSAGES as PROJECT_CLONE_MESSAGES
 from .project_forget import MESSAGES as PROJECT_FORGET_MESSAGES
 from .project_folders import MESSAGES as PROJECT_FOLDER_MESSAGES
 from .project_removal import MESSAGES as PROJECT_REMOVAL_MESSAGES
@@ -199,6 +200,19 @@ CATALOG = {
         "{letter} zapisano później, ale czas jego dowodów to tylko górna granica.",
     "The order of the evidence cannot be compared.": "Kolejności dowodów nie da się porównać.",
     "Evidence": "Dowody",
+    "Symbol": "Symbol",
+    "Comment tag": "Tag komentarza",
+    "unchanged ({symbol} in {path})": "bez zmian ({symbol} w {path})",
+    "needs review: {symbol} changed in commit {commit} ({date})":
+        "wymaga przeglądu: {symbol} zmienił się w commicie {commit} ({date})",
+    "needs review: {symbol} changed in commit {commit}":
+        "wymaga przeglądu: {symbol} zmienił się w commicie {commit}",
+    "needs review: {symbol} changed ({date})":
+        "wymaga przeglądu: {symbol} zmienił się ({date})",
+    "needs review: {symbol} changed in {path}":
+        "wymaga przeglądu: {symbol} zmienił się w {path}",
+    "{symbol} is gone from {path}": "{symbol} nie istnieje już w {path}",
+    "the {tag}: comment was removed from {path}": "komentarz {tag}: został usunięty z {path}",
     "at least one supporting source still stands": "co najmniej jedno źródło nadal obowiązuje",
     "imported file evidence has not been compared with local files yet":
         "zaimportowanych dowodów z plików nie porównano jeszcze z lokalnymi plikami",
@@ -647,14 +661,14 @@ CATALOG.update({
     "LD_* and DYLD_*, PYTHONPATH, PYTHONSTARTUP, PYTHONHOME, PYTHONUSERBASE, PYTHONPLATLIBDIR, "
     "NODE_PATH, NODE_OPTIONS, PERL5LIB, PERL5OPT, PERLLIB, RUBYLIB, RUBYOPT, GEM_HOME, GEM_PATH, "
     "BASH_ENV, ENV, CLASSPATH, JAVA_TOOL_OPTIONS, _JAVA_OPTIONS, JDK_JAVA_OPTIONS, XDG_CONFIG_HOME, "
-    "XDG_DATA_HOME. A server whose program, an argument or a value names a path inside this project "
-    "folder is not started.":
+    "XDG_DATA_HOME, PATHEXT, COMSPEC, PSMODULEPATH. A server whose program, an argument or a value "
+    "names a path inside this project folder is not started.":
         "Niedozwolone nazwy zmiennych, bo zmieniają kod wczytywany przez program: PATH, HOME, SHELL, "
         "LD_* i DYLD_*, PYTHONPATH, PYTHONSTARTUP, PYTHONHOME, PYTHONUSERBASE, PYTHONPLATLIBDIR, "
         "NODE_PATH, NODE_OPTIONS, PERL5LIB, PERL5OPT, PERLLIB, RUBYLIB, RUBYOPT, GEM_HOME, GEM_PATH, "
         "BASH_ENV, ENV, CLASSPATH, JAVA_TOOL_OPTIONS, _JAVA_OPTIONS, JDK_JAVA_OPTIONS, XDG_CONFIG_HOME, "
-        "XDG_DATA_HOME. Serwer, którego program, argument lub wartość wskazuje ścieżkę w katalogu tego "
-        "projektu, nie zostanie uruchomiony.",
+        "XDG_DATA_HOME, PATHEXT, COMSPEC, PSMODULEPATH. Serwer, którego program, argument lub wartość "
+        "wskazuje ścieżkę w katalogu tego projektu, nie zostanie uruchomiony.",
     "A historical version cannot be reviewed.": "Wersja historyczna nie podlega ocenie.",
     "Raw record": "Surowy zapis",
     # The keys on the border of the active view (workspace.border_hint, #161).
@@ -679,6 +693,24 @@ CATALOG.update({
     "This session has ended.": "Ta sesja się zakończyła.",
     "This session has ended. Resume it or start a new one.":
         "Ta sesja się zakończyła. Wznów ją albo rozpocznij nową.",
+    # Cloning a repository into a project from the workspace (terminal_panels, terminal_commands).
+    "Clone repository": "Sklonuj repozytorium",
+    "Clone from GitHub or Git and register": "Sklonuj z GitHuba lub Gita i zarejestruj",
+    "Repository (owner/repo, HTTPS or SSH URL)": "Repozytorium (owner/repo, URL HTTPS lub SSH)",
+    "Parent folder (Windows or WSL)": "Folder nadrzędny (Windows lub WSL)",
+    "Name (optional; defaults to repository name)": "Nazwa (opcjonalnie; domyślnie nazwa repozytorium)",
+    "Tool: auto, gh or git": "Narzędzie: auto, gh albo git",
+    "Branch or tag (optional)": "Gałąź lub tag (opcjonalnie)",
+    "Clones into a new subfolder named after the repository, using gh (if signed in) or git. No assistant is started.":
+        "Klonuje do nowego podfolderu o nazwie repozytorium przez gh (jeśli zalogowano) albo git. Żaden asystent nie jest uruchamiany.",
+    "Cloning repository…": "Klonowanie repozytorium…",
+    "Team published memory found; import it under Memory → Team memory.":
+        "Wykryto opublikowaną pamięć zespołu; zaimportuj ją w Pamięć → Pamięć zespołu.",
+    "The parent folder does not exist.": "Folder nadrzędny nie istnieje.",
+    "Give a parent or destination folder.": "Podaj folder nadrzędny lub docelowy.",
+    "Give a repository as owner/repo, HTTPS or SSH URL.": "Podaj repozytorium jako owner/repo, URL HTTPS albo SSH.",
+    "Invalid clone parameters.": "Niepoprawne parametry klonowania.",
+    "Project name must be between 1 and 256 characters.": "Nazwa projektu musi mieć od 1 do 256 znaków.",
 })
 CATALOG.update(MESSAGES)  # fixed backend messages (#153)
 CATALOG.update(MCP_FAILURE_MESSAGES)  # a third-party MCP server that did not start (#209)
@@ -711,6 +743,7 @@ CATALOG.update(PROJECT_FORGET_MESSAGES)  # deleting a project's memory: the comm
 CATALOG.update(PROJECT_FORGET_VIEW_MESSAGES)  # deleting a project's memory in the workspace (#347)
 CATALOG.update(RECORDER_MESSAGES)  # the recorder subagent install writes for Claude Code (#376)
 CATALOG.update(PROJECT_FOLDER_MESSAGES)  # a project's folder this machine cannot read (#371)
+CATALOG.update(PROJECT_CLONE_MESSAGES)  # cloning a repository from GitHub or Git during project add
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 

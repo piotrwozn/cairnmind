@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 
 import httpx
@@ -59,7 +60,11 @@ def test_a_request_the_test_engine_does_not_answer_says_what_it_waited_for(tmp_p
     assert "ENGINE UNAVAILABLE after " in shown and "CREATE PROPERTY probe.name" in shown
     assert "load average" in shown and "engine.log ends:" in shown
     # The engine's own threads, asked of the real test engine: what it was doing is the cause when it stalls.
-    assert "engine threads:" in shown and "Full thread dump" in shown
+    assert "engine threads:" in shown
+    if sys.platform == "win32":
+        assert "Full thread dump" in shown or "(not captured on Windows" in shown
+    else:
+        assert "Full thread dump" in shown
 
 
 def test_the_engine_fixture_wraps_requests_in_the_stall_watch():

@@ -19,14 +19,15 @@ import typer
 from typer.core import TyperArgument, TyperGroup
 
 from cairnmind.cli_arguments import (
-    AnswerIdArg, ClientArg, ExportArg, FolderArg, GroupArg, JobIdArg, PacketHashArg, PacketIdArg, PlanIdArg,
-    ProfileArg, ProjectArg, ProjectNameArg, ProjectRootArg, QuestionArg, ReadbackArg, RecordIdArg, RepositoryArg,
-    SessionClientArg, SessionIdArg, SnapshotArg, SourceIdArg, StateArg, StateFileArg, TaskIdArg, TitleArg,
-    TranscriptArg)
+    AnswerIdArg, ClientArg, ExportArg, FolderArg, GroupArg, JobIdArg, OptionalProjectNameArg,
+    OptionalProjectRootArg, PacketHashArg, PacketIdArg, PlanIdArg, ProfileArg, ProjectArg, QuestionArg,
+    ReadbackArg, RecordIdArg, RepositoryArg, SessionClientArg, SessionIdArg, SnapshotArg, SourceIdArg, StateArg,
+    StateFileArg, TaskIdArg, TitleArg, TranscriptArg)
 from cairnmind.config import SERVICE_NAMES, Settings, drop_env, session_value, tls_verify
+from cairnmind.file_locks import lock_exclusive, unlock
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.arcade import ArcadeError
-from cairnmind.platform_locks import lock_file
+from cairnmind.process_control import detached_popen_kwargs
 
 class _ProjectFirstGroup(TyperGroup):
     """A command whose first argument is the project and that is given only one: the error says the project comes
@@ -69,6 +70,10 @@ store_app = typer.Typer(help="How large the store is, which installation writes 
 db_app = typer.Typer(help="Access to a database on another host: its own user (#72).")
 answers_app = typer.Typer(help="The opt-in log of ask answers and the evidence they cited.")
 cache_app = typer.Typer(help="Inspect or clear the local verification verdict cache.")
+service_app = typer.Typer(help="Background knowledge service autostart management.")
+autostart_app = typer.Typer(help="Per-user service autostart at logon (Windows Task Scheduler).")
+scip_app = typer.Typer(help="Multi-language SCIP code indexing (Go, Rust, Java, Kotlin, C/C++, C#, PHP, Ruby).")
+service_app.add_typer(autostart_app, name="autostart")
 app.add_typer(projects_app, name="project")
 app.add_typer(tasks_app, name="task")
 app.add_typer(models_app, name="models")
@@ -86,6 +91,8 @@ app.add_typer(store_app, name="store")
 app.add_typer(db_app, name="db")
 app.add_typer(answers_app, name="answers")
 app.add_typer(cache_app, name="cache")
+app.add_typer(service_app, name="service")
+app.add_typer(scip_app, name="scip")
 
 
 def output(value) -> None:
@@ -178,12 +185,12 @@ def _pasteable(message: str) -> str:
     arguments = _data_dir_arguments(_INVOCATION.get("data_dir"))
     if not arguments:
         return message
-    import shlex
+    from cairnmind.process_control import format_command
     from cairnmind.terminal_safe import safe_text
     # `cairnmind restore` (the refusal of an unfinished restore, #362) and `cairnmind store takeover` replace or take
     # over a whole store: pasted bare they would act on the default installation.
     for command in ("project root ", "restore ", "store takeover "):
-        message = message.replace(f"`cairnmind {command}", f"`cairnmind {safe_text(shlex.join(arguments))} {command}")
+        message = message.replace(f"`cairnmind {command}", f"`cairnmind {safe_text(format_command(arguments))} {command}")
     return message
 
 
@@ -209,10 +216,13 @@ def _os_error_text(exc: OSError) -> str:
         return str(exc)
     import os
     path = _shortened(os.fsdecode(exc.filename) if isinstance(exc.filename, bytes) else str(exc.filename))
+    if (exc.errno == errno.ENAMETOOLONG
+            or getattr(exc, "winerror", None) == 206
+            or (getattr(exc, "winerror", None) == 123
+                and any(len(part) > 255 for part in Path(os.fsdecode(exc.filename)).parts))):
+        return f"The path is too long for this system: {path}"
     if exc.errno == errno.ENOENT:
         return f"{path} does not exist."
-    if exc.errno == errno.ENAMETOOLONG:
-        return f"The path is too long for this system: {path}"
     return f"{exc.strerror or 'The path cannot be used'}: {path}"
 
 
@@ -255,7 +265,9 @@ READ_KINDS = {
     "check profiles": _RESOLVE,
     "memory orphans": _RESOLVE | {"record", "source", "memory"},
     "memory extraction-stats": _RESOLVE | {"record"},
+    "memory decisions": _RESOLVE | {"memory"},
     "impact": _RESOLVE | {"record", "source", "memory", "node", "edge", "graph"},
+    "scan": _RESOLVE | {"record", "source", "memory", "node", "edge", "graph"},
     "usage": _RESOLVE,
     "proposed": _RESOLVE | {"record", "source", "memory"},
 }
@@ -316,14 +328,20 @@ def _service_stopped(settings: Settings, held: str, running: str):
     reason = setup_mark.refusal(settings.data_dir)
     if reason:
         refuse(str(reason))  # a change of setup holds this data directory (#339)
-    with (settings.data_dir / "service.lock").open("a") as lock:
+    with (settings.data_dir / "service.lock").open("a", encoding="utf-8") as lock:
         try:
-            lock_file(lock, exclusive=True, blocking=False)
+            lock_exclusive(lock, blocking=False)
         except BlockingIOError:
             refuse(held)
-        if service_alive(settings):
-            refuse(running)
-        yield
+        try:
+            if service_alive(settings):
+                refuse(running)
+            yield
+        finally:
+            try:
+                unlock(lock)
+            except OSError:
+                pass
 
 
 def last_log_line(path: Path) -> str:
@@ -384,7 +402,8 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
         if not background_inference:
             command.append("--defer-background-inference")
         process = subprocess.Popen(command,
-                                   stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True, env=env)
+                                   stdin=subprocess.DEVNULL, stdout=handle, stderr=handle,
+                                   env=env, **detached_popen_kwargs())
     try:
         return _wait_for_start(settings, process, log, started_at)
     except KeyboardInterrupt:
@@ -445,8 +464,8 @@ def _stop_started(settings: Settings) -> None:
             client.post(settings.url + "/shutdown",
                         headers={"Authorization": f"Bearer {settings.token}"}).raise_for_status()
     except httpx.HTTPError:
-        import shlex
-        command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "stop"])
+        from cairnmind.process_control import format_command
+        command = format_command(["cairnmind", *_data_dir_arguments(settings.data_dir), "stop"])
         raise UpgradeInProgress(upgrade_mark.UPGRADE_STOP_FAILED.format(command=command)) from None
     raise UpgradeInProgress(upgrade_mark.refusal() or upgrade_mark.UPGRADE_ENDED)
 
@@ -1198,21 +1217,71 @@ def migrate_command(
 
 
 @app.command()
+def ui(
+    ctx: typer.Context,
+    port: Annotated[int, typer.Option("--port", help="Loopback TCP port for the Cairnmind UI inspector.")] = 4310,
+    host: Annotated[str, typer.Option("--host", help="Loopback bind host (127.0.0.1, localhost, or ::1).")] = "127.0.0.1",
+    project: Annotated[str | None, typer.Option("--project", help="Default project id, name, or folder.")] = None,
+    mock: Annotated[bool, typer.Option("--mock", help="Serve the deterministic mock dataset without ArcadeDB.")] = False,
+    read_only: Annotated[bool, typer.Option("--read-only", help="Serve the cockpit in safe read-only preview mode (disables mutations).")] = False,
+    no_open: Annotated[bool, typer.Option("--no-open", help="Do not open a browser tab automatically.")] = False,
+):
+    """Serve the local Engineer Cockpit & Provenance Inspector web UI on localhost."""
+    import threading
+    import uvicorn
+    import webbrowser
+    from cairnmind.ui_server import create_ui_app
+
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        refuse("Cairnmind UI must bind to a loopback host (127.0.0.1, localhost, or ::1).")
+    if not 1 <= port <= 65535:
+        refuse("Port must be between 1 and 65535.")
+
+    store = None
+    settings = ctx.obj
+    if not mock:
+        if settings is None or not settings.token:
+            refuse("Initialize Cairnmind first (`cairnmind init`), or pass `--mock` to preview with sample data.")
+        store = store_for_read(settings) if read_only else store_for(settings)
+
+    api = create_ui_app(
+        store=store,
+        settings=settings,
+        default_project=project,
+        default_mock=mock,
+        read_only=read_only,
+    )
+    url = f"http://{host}:{port}" + ("/?mock=1" if mock else "/")
+    mode_tag = " [read-only]" if read_only else ""
+    typer.echo(f"Cairnmind UI serving on {url}{mode_tag}")
+    if not no_open:
+        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    server = uvicorn.Server(uvicorn.Config(api, host=host, port=port, log_level="info"))
+    server.run()
+
+
+@app.command()
 @initialized
 def serve(ctx: typer.Context, defer_background_inference: bool = False):
     """Run the local service (the single owner of the GPU and the queue)."""
     import uvicorn
     from cairnmind.service import create_app
     settings = ctx.obj
-    with (settings.data_dir / "service.lock").open("a") as lock:
+    with (settings.data_dir / "service.lock").open("a", encoding="utf-8") as lock:
         try:
-            lock_file(lock, exclusive=True, blocking=False)
+            lock_exclusive(lock, blocking=False)
         except BlockingIOError:
             refuse("The service is already running for this store.")
-        api = create_app(settings, background_inference=not defer_background_inference)
-        server = uvicorn.Server(uvicorn.Config(api, host=settings.host, port=settings.port, log_level="info"))
-        api.state.shutdown = lambda: setattr(server, "should_exit", True)
-        server.run()
+        try:
+            api = create_app(settings, background_inference=not defer_background_inference)
+            server = uvicorn.Server(uvicorn.Config(api, host=settings.host, port=settings.port, log_level="info"))
+            api.state.shutdown = lambda: setattr(server, "should_exit", True)
+            server.run()
+        finally:
+            try:
+                unlock(lock)
+            except OSError:
+                pass
 
 
 @app.command()
@@ -1238,55 +1307,169 @@ def stop(ctx: typer.Context, as_json: JSON_FLAG = False):
     _human_or_json(result, as_json, lambda: lines)
 
 
-@projects_app.command("add")
-@initialized
-def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, as_json: JSON_FLAG = False):
-    """Register a project: its name and the folder of its files, which are indexed."""
+_CLONE_OPT = Annotated[str | None, typer.Option(
+    "--clone", help="Clone a Git repository (owner/repo, HTTPS or SSH URL) before registering.")]
+_VIA_OPT = Annotated[str, typer.Option(
+    "--via", help="Clone tool used with --clone: auto (default), gh or git.")]
+_BRANCH_OPT = Annotated[str | None, typer.Option(
+    "--branch", "-b", help="Branch or tag to check out when cloning.")]
+_FRESH_OPT = Annotated[bool, typer.Option(
+    "--fresh", help="When cloning a repository that contains .memory/cairnmind/, register a new project identity anyway.")]
+_NO_SCIP_OPT = Annotated[
+    bool,
+    typer.Option("--no-scip", help="Skip enqueueing automatic background SCIP indexing for detected languages."),
+]
+
+
+def _run_project_add(ctx: typer.Context, name: str | None, root: str | None, clone: str | None,
+                     via: str, branch: str | None, fresh: bool, as_json: bool, no_scip: bool = False) -> None:
     import shlex
-    from cairnmind import first_start
+    from cairnmind import first_start, project_clone
     from cairnmind.brief import _git_out
+    from cairnmind.process_control import quote_arg
     from cairnmind.terminal_safe import safe_text
-    try:
-        root = root.expanduser().resolve(strict=True)  # the folder is checked before the store is opened
-    except FileNotFoundError:
-        given = safe_text(str(root.expanduser().absolute()))
-        raise ValueError(first_start.PROJECT_FOLDER_MISSING.format(root=given, quoted=shlex.quote(given))) from None
-    if not root.is_dir():
-        raise typer.BadParameter("The path must be a folder, not a file")
-    store = store_for(ctx.obj)
+
+    clone_spec = clone
+    dest_arg: str | None = root
+    chosen_name: str | None = name
+    if clone_spec is None:
+        if project_clone.is_explicit_remote_url(name):
+            clone_spec = name
+            chosen_name = None
+            dest_arg = root
+        elif project_clone.is_explicit_remote_url(root):
+            clone_spec = root
+            dest_arg = None
+
+    clone_info = None
+    found_memory = {"memory_snapshot": None, "published_memory": None}
+    if clone_spec is None:
+        if (via or "auto").strip().lower() != "auto":
+            raise typer.BadParameter(project_clone.CLONE_ONLY_OPTION.format(option="--via"), param_hint="--via")
+        if branch is not None:
+            raise typer.BadParameter(project_clone.CLONE_ONLY_OPTION.format(option="--branch"), param_hint="--branch")
+        if fresh:
+            raise typer.BadParameter(project_clone.CLONE_ONLY_OPTION.format(option="--fresh"), param_hint="--fresh")
+        if chosen_name is None:
+            raise typer.BadParameter("Missing argument 'NAME'.", param_hint="NAME")
+        if dest_arg is None:
+            raise typer.BadParameter("Missing argument 'ROOT'.", param_hint="ROOT")
+        root_path = Path(dest_arg)
+        try:
+            resolved_root = root_path.expanduser().resolve(strict=True)  # the folder is checked before the store is opened
+        except FileNotFoundError as exc:
+            if getattr(exc, "winerror", None) == 206:
+                raise
+            given = safe_text(str(root_path.expanduser().absolute()))
+            raise ValueError(first_start.PROJECT_FOLDER_MISSING.format(root=given, quoted=quote_arg(given))) from None
+        if not resolved_root.is_dir():
+            raise typer.BadParameter("The path must be a folder, not a file")
+        store = store_for(ctx.obj)
+    else:
+        source = project_clone.parse_clone_source(clone_spec)
+        chosen_branch = project_clone.validate_branch(branch) if branch is not None else None
+        chosen_name = source.default_name if chosen_name is None else chosen_name
+        raw_dest = Path(dest_arg) if dest_arg is not None else Path.cwd() / source.default_name
+        dest = project_clone.prepare_destination(raw_dest, ctx.obj.data_dir)
+        project_clone.choose_tool(source, via)
+        store = store_for(ctx.obj)
+        chosen_name = project_clone.check_store_preflight(store, chosen_name, dest)
+        interactive = not as_json and _stdout_is_terminal() and sys.stdin.isatty() and sys.stderr.isatty()
+        clone_info = project_clone.clone_repository(
+            source, dest, via=via, branch=chosen_branch, interactive=interactive)
+        resolved_root = dest.resolve(strict=True)
+        found_memory = project_clone.inspect_cloned_memory(resolved_root)
+        if found_memory["memory_snapshot"] and not fresh:
+            snap = found_memory["memory_snapshot"]
+            shown_root = safe_text(str(resolved_root))
+            shown_snap = safe_text(snap)
+            next_step = first_start.CLONE_SNAPSHOT_NEXT.format(
+                snapshot=quote_arg(shown_snap), root=quote_arg(shown_root),
+                project=quote_arg(safe_text(chosen_name)))
+            payload = {"status": "snapshot_found", "cloned": clone_info, "memory_snapshot": snap,
+                       "registered": False, "next": next_step}
+            _human_or_json(payload, as_json, lambda: [
+                first_start.PROJECT_CLONED.format(source=safe_text(source.raw), root=shown_root,
+                                                  tool=clone_info["tool"]),
+                first_start.CLONE_SNAPSHOT_FOUND.format(snapshot=shown_snap),
+                next_step,
+            ])
+            raise typer.Exit(1)
+
     from cairnmind import project_removal as removal
     known = {row["id"] for row in store.list_projects()}
     removed = removal.removed_rows(store)
-    project = store.add_project(name, root)
+    project = store.add_project(chosen_name, resolved_root, restore=False) if fresh else store.add_project(
+        chosen_name, resolved_root)
     from cairnmind.ingest import index_project, register_default_histories
     result = index_project(store, project["id"])
     discovery = register_default_histories(store, project["id"], Path(project["root"]))
+    if no_scip:
+        scip_info = {"mode": "skipped", "detected_languages": [], "queued": False, "job_id": None}
+    else:
+        from cairnmind.scip_ingest import enqueue_project_scip
+        scip_info = enqueue_project_scip(store, ctx.obj, project["id"], resolved_root)
     # Said, never silent (#327): whether a removed project came back, or one that keeps its memory did not.
     restored, kept, details = removal.add_outcome(removed, known, project)
-    quoted = shlex.quote(safe_text(name))
+    quoted = shlex.quote(safe_text(chosen_name))
     jobs, waiting_line = _jobs_after_add(ctx.obj, store, project["id"], quoted)
+    published = found_memory.get("published_memory")
 
     def sentences():
-        shown = safe_text(str(root))
+        shown = safe_text(str(resolved_root))
         existed = project["id"] in known
-        lines = (removal.restored_lines(project, restored, result.get("files", 0)) if restored else
-                 [folder["message"] for folder in result["unavailable"]] if result.get("unavailable") else
-                 [(first_start.PROJECT_EXISTED if existed else first_start.PROJECT_ADDED).format(
-                     project=quoted, root=shown, files=result.get("files", 0))])
-        if _git_out(root, "rev-parse", "--is-inside-work-tree") is None:
+        lines = []
+        if clone_info is not None:
+            lines.append(first_start.PROJECT_CLONED.format(
+                source=safe_text(clone_info["source"]), root=shown, tool=clone_info["tool"]))
+        lines.extend(
+            removal.restored_lines(project, restored, result.get("files", 0)) if restored else
+            [folder["message"] for folder in result["unavailable"]] if result.get("unavailable") else
+            [(first_start.PROJECT_EXISTED if existed else first_start.PROJECT_ADDED).format(
+                project=quoted, root=shown, files=result.get("files", 0))])
+        if _git_out(resolved_root, "rev-parse", "--is-inside-work-tree") is None:
             lines.append(first_start.NOT_GIT.format(root=shown))
-        elif _git_out(root, "rev-parse", "--verify", "-q", "HEAD") is None:
+        elif _git_out(resolved_root, "rev-parse", "--verify", "-q", "HEAD") is None:
             lines.append(first_start.NO_COMMIT.format(root=shown))
+        if scip_info.get("queued"):
+            langs = ", ".join(scip_info["detected_languages"])
+            lines.append(f"Queued background SCIP indexing for: {langs}.")
+        if published:
+            shown_pub = safe_text(published)
+            lines.append(first_start.CLONE_PUBLISHED_FOUND.format(
+                published=shown_pub, quoted_published=quote_arg(shown_pub), project=quoted))
         lines.extend(removal.not_brought_back(row) for row in kept)
         lines.extend([waiting_line] if waiting_line else [])
         # The warning comes before the next step, which stays last (#326).
         lines.append((first_start.PROJECT_EXISTED_NEXT if existed or restored else first_start.PROJECT_ADDED_NEXT)
                      .format(project=quoted))
         return lines
-    _human_or_json({"project": project, "indexed": result, "history": discovery, "jobs": jobs, **details},
-                   as_json, sentences)
+
+    scip_extra = {"scip": scip_info} if (scip_info.get("queued") or scip_info.get("detected_languages")) else {}
+    payload = {"project": project, "indexed": result, "history": discovery, "jobs": jobs, **scip_extra, **details}
+    if clone_info is not None:
+        payload["cloned"] = {**clone_info, **({"published_memory": published} if published else {})}
+    _human_or_json(payload, as_json, sentences)
     if result.get("unavailable"):  # a folder of another machine was not indexed: said above, and the exit code says so
         raise typer.Exit(1)
+
+
+@app.command("add")
+@initialized
+def add_project_shortcut(ctx: typer.Context, name: OptionalProjectNameArg = None, root: OptionalProjectRootArg = None,
+                         clone: _CLONE_OPT = None, via: _VIA_OPT = "auto", branch: _BRANCH_OPT = None,
+                         fresh: _FRESH_OPT = False, as_json: JSON_FLAG = False, no_scip: _NO_SCIP_OPT = False):
+    """Register a project folder, or clone a Git repository and register it (shortcut for `project add`)."""
+    _run_project_add(ctx, name, root, clone, via, branch, fresh, as_json, no_scip=no_scip)
+
+
+@projects_app.command("add")
+@initialized
+def project_add(ctx: typer.Context, name: OptionalProjectNameArg = None, root: OptionalProjectRootArg = None,
+                clone: _CLONE_OPT = None, via: _VIA_OPT = "auto", branch: _BRANCH_OPT = None,
+                fresh: _FRESH_OPT = False, as_json: JSON_FLAG = False, no_scip: _NO_SCIP_OPT = False):
+    """Register a project: its name and the folder of its files, which are indexed. With --clone (or an HTTPS/SSH Git URL) clones the repository first with gh or git."""
+    _run_project_add(ctx, name, root, clone, via, branch, fresh, as_json, no_scip=no_scip)
 
 
 def _jobs_after_add(settings: Settings, store, project_id: str, quoted: str) -> tuple[dict, str | None]:
@@ -1406,8 +1589,28 @@ def index(ctx: typer.Context, project: ProjectArg):
 
 @app.command("import")
 @initialized
-def import_command(ctx: typer.Context, path: TranscriptArg, project: str | None = None, client: str = "auto"):
-    """Import a client's JSONL; without a project, keep the history in the import inbox."""
+def import_command(
+    ctx: typer.Context,
+    path: TranscriptArg,
+    project: str | None = None,
+    client: str = "auto",
+    via: Annotated[
+        str | None,
+        typer.Option("--via", help="Registered external transcript converter name; runs outside any coding session."),
+    ] = None,
+):
+    """Import a client's JSONL; with --via, run a registered converter and archive as degraded history."""
+    if via is not None:
+        if client != "auto":
+            refuse("--via cannot be combined with --client.")
+        from cairnmind.importers import ImporterExecutionError, ImporterRefused, require_outside_session, run_converter_import
+        try:
+            require_outside_session()
+            store = store_for(ctx.obj)
+            output(run_converter_import(store, ctx.obj, path, via, project=project))
+        except (ImporterRefused, ImporterExecutionError) as exc:
+            refuse(str(exc))
+        return
     output(request(ctx.obj, "POST", "/import", json={"path": str(path.expanduser().resolve()),
                                                     "project": project, "client": client}))
 
@@ -1501,6 +1704,49 @@ def impact(ctx: typer.Context, project: ProjectArg,
         output(result)
     else:
         typer.echo(result["text"])
+
+
+@app.command()
+def scan(
+    ctx: typer.Context,
+    project: Annotated[
+        str | None,
+        typer.Argument(metavar="[PROJECT]", help="Project name, id or folder (default: current working directory)."),
+    ] = None,
+    diff: Annotated[
+        str,
+        typer.Option("--diff", help="Git commit, branch, tag or range (e.g. origin/main or origin/main...HEAD)."),
+    ] = ...,
+    worktree: Annotated[
+        Path | None,
+        typer.Option("--worktree", help="Registered worktree path to compare."),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the scan report as JSON.")] = False,
+):
+    """Check anchored records against a Git diff without a running service. Read-only; writes nothing.
+
+    Exit codes: 0 when clean, 1 when any anchored symbol changed or is gone, 2 on error or unready store.
+    """
+    from cairnmind.scan import scan_diff
+
+    target = project if project is not None else str((worktree or Path.cwd()).expanduser().resolve())
+    try:
+        store = store_for_read(ctx.obj)
+
+        def read():
+            pid = store.resolve_project(target)["id"]
+            return pid, scan_diff(store, pid, diff, actor_scope(store, pid, worktree))
+
+        result = store.read_consistently(read, READ_KINDS["scan"])
+    except (ValueError, RuntimeError, OSError, ArcadeError) as exc:
+        typer.echo(_pasteable(f"Cairnmind: {_os_error_text(exc) if isinstance(exc, OSError) else exc}"), err=True)
+        raise typer.Exit(2) from None
+    if as_json:
+        output(result)
+    else:
+        typer.echo(result["text"])
+    if result["exit_code"]:
+        raise typer.Exit(result["exit_code"])
 
 
 @app.command("impact-verdict")
@@ -2103,7 +2349,6 @@ def _project_handle(store, project: dict) -> str:
 def stage_next(ctx: typer.Context, project: ProjectArg, plan_id: str | None = None, worktree: Path | None = None,
                as_json: Annotated[bool, typer.Option("--json", help="Print the decision as JSON.")] = False):
     """Show the next plan step's stage and what is mapped to it. Changes no task and starts nothing."""
-    import shlex
     from cairnmind.api_runtime import cli_stage_readiness
     from cairnmind.cockpit_state import CockpitState
     from cairnmind.plans import PlanManager
@@ -2131,7 +2376,8 @@ def stage_next(ctx: typer.Context, project: ProjectArg, plan_id: str | None = No
         return
     typer.echo(safe_text(describe(decision)))
     if decision["command"]:
-        typer.echo("Next: " + safe_text(shlex.join(decision["command"])))
+        from cairnmind.process_control import format_command
+        typer.echo("Next: " + safe_text(format_command(decision["command"])))
     elif decision["command_reason"]:
         typer.echo(FROM_WORKSPACE)
     from cairnmind.workspace_stage import MAP_HINT, MAP_PROBLEMS
@@ -2542,6 +2788,49 @@ def memory_show(ctx: typer.Context, path: SnapshotArg,
                              expected_snapshot_id=expected))
 
 
+@memory_app.command("decisions")
+def memory_decisions(
+    ctx: typer.Context,
+    project: ProjectArg,
+    source: Annotated[
+        str | None,
+        typer.Argument(
+            metavar="[SOURCE]",
+            help="Single per-project decision source: off, comments, adr, or trailers. Omit to inspect.",
+        ),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the setting as JSON.")] = False,
+):
+    """Show or set the single per-project code decision source (off by default: off | comments | adr | trailers)."""
+    from cairnmind.code_decisions import DECISION_SOURCES, get_decision_source, set_decision_source
+
+    if source is None:
+        store = store_for_read(ctx.obj)
+
+        def read():
+            selected = store.resolve_project(project)
+            current = get_decision_source(store, selected["id"])
+            return selected["id"], {
+                "project_id": selected["id"],
+                "project": selected["name"],
+                "decision_source": current,
+                "allowed_sources": list(DECISION_SOURCES),
+            }
+
+        result = store.read_consistently(read, READ_KINDS["memory decisions"])
+    else:
+        ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
+        store = store_for(ctx.obj)
+        result = {**set_decision_source(store, project, source), "allowed_sources": list(DECISION_SOURCES)}
+    if as_json:
+        output(result)
+    else:
+        typer.echo(
+            f"Decision source for {result['project']}: {result['decision_source']} "
+            f"(allowed: {', '.join(DECISION_SOURCES)})"
+        )
+
+
 @memory_app.command("orphans")
 def memory_orphans(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None,
                    as_json: Annotated[bool, typer.Option("--json", help="Print the records as JSON.")] = False):
@@ -2666,6 +2955,11 @@ from cairnmind.cli_record_kinds import register as _register_record_kinds  # noq
 
 _register_record_kinds(app, initialized)
 
+# Out-of-process external transcript converter registry (#127).
+from cairnmind.cli_importers import register as _register_importers  # noqa: E402
+
+_register_importers(app)
+
 
 @app.command()
 @initialized
@@ -2688,7 +2982,7 @@ def install(ctx: typer.Context, project: ProjectArg, as_json: JSON_FLAG = False,
     from cairnmind import first_start
     from cairnmind.terminal_safe import safe_text
     root = Path(selected["root"]).resolve()
-    files = ", ".join(safe_text(os.path.relpath(path, root)) for path in result["changed"]) or first_start.NOTHING_WRITTEN
+    files = ", ".join(safe_text(Path(os.path.relpath(path, root)).as_posix()) for path in result["changed"]) or first_start.NOTHING_WRITTEN
     from cairnmind.integrations import missing_parts
     installed = {client: info for client, info in result["clients"].items() if info.get("installed")}
     # Connected is the rule a verified launch uses; an installed client that fails it is named with what it lacks.
@@ -3025,3 +3319,146 @@ def benchmark(ctx: typer.Context, project: ProjectArg, question: QuestionArg):
     except (OSError, subprocess.TimeoutExpired):
         gpu = "nvidia-smi unavailable"
     output({"runs": runs, "gpu": gpu})
+
+
+@autostart_app.command("status")
+def service_autostart_status(ctx: typer.Context):
+    """Show whether per-user logon autostart is registered for this data directory."""
+    from cairnmind.service_autostart import status as autostart_status
+    output(autostart_status(ctx.obj))
+
+
+@autostart_app.command("install")
+def service_autostart_install(ctx: typer.Context):
+    """Register per-user Windows Task Scheduler autostart (LogonTrigger + RestartOnFailure)."""
+    from cairnmind.service_autostart import install as autostart_install
+    try:
+        output(autostart_install(ctx.obj))
+    except ValueError as exc:
+        refuse(str(exc))
+
+
+@autostart_app.command("remove")
+def service_autostart_remove(ctx: typer.Context):
+    """Remove per-user Windows Task Scheduler autostart for this data directory."""
+    from cairnmind.service_autostart import remove as autostart_remove
+    try:
+        output(autostart_remove(ctx.obj))
+    except ValueError as exc:
+        refuse(str(exc))
+
+
+@scip_app.command("status")
+def scip_status_cmd(
+    ctx: typer.Context,
+    project: Annotated[
+        str | None,
+        typer.Argument(metavar="[PROJECT]", help="Optional project name or id to detect languages in."),
+    ] = None,
+    root: Annotated[Path | None, typer.Option("--root", help="Optional folder path to detect SCIP languages in.")] = None,
+):
+    """Show installed SCIP indexers, host toolchains, and detected languages. Read-only."""
+    from cairnmind.scip_manager import scip_status
+    target_root = root
+    if project and target_root is None:
+        store = store_for_read(ctx.obj)
+        target_root = Path(store.resolve_project(project)["root"])
+    output(scip_status(ctx.obj, target_root))
+
+
+@scip_app.command("install")
+@initialized
+def scip_install_cmd(
+    ctx: typer.Context,
+    targets: Annotated[
+        list[str] | None,
+        typer.Argument(
+            metavar="[TARGETS]...",
+            help="Languages (go, rust, java, kotlin, c, cpp, csharp, php, ruby) or indexer IDs. Omit for all.",
+        ),
+    ] = None,
+):
+    """Download and verify pinned SCIP indexers into Cairnmind's private runtime directory."""
+    from cairnmind.scip_manager import ScipError, ensure_indexer
+    from cairnmind.scip_registry import INDEXERS, LANGUAGE_TO_INDEXER
+
+    if not targets:
+        indexer_ids = list(INDEXERS.keys())
+    else:
+        indexer_ids = []
+        for item in targets:
+            key = item.strip().lower()
+            mapped = key if key in INDEXERS else LANGUAGE_TO_INDEXER.get(key)
+            if not mapped:
+                refuse(f"Unknown SCIP language or indexer: {item!r}")
+            if mapped not in indexer_ids:
+                indexer_ids.append(mapped)
+
+    results = {}
+    failed = False
+    for indexer_id in indexer_ids:
+        try:
+            installed = ensure_indexer(ctx.obj, indexer_id, allow_download=True)
+            results[indexer_id] = installed.to_dict()
+        except (ScipError, ValueError, OSError) as exc:
+            failed = True
+            results[indexer_id] = {"indexer_id": indexer_id, "status": "install_failed", "error": str(exc)}
+    output({"indexers": results})
+    if failed:
+        raise typer.Exit(1)
+
+
+@scip_app.command("index")
+@initialized
+def scip_index_cmd(
+    ctx: typer.Context,
+    project: ProjectArg,
+    lang: Annotated[
+        list[str] | None,
+        typer.Option("--lang", help="Limit indexing to specific language(s). Repeatable."),
+    ] = None,
+    worktree: Annotated[Path | None, typer.Option("--worktree", help="Registered project folder to index.")] = None,
+    no_download: Annotated[
+        bool, typer.Option("--no-download", help="Use only already-installed indexers; do not download.")
+    ] = False,
+):
+    """Run SCIP indexer(s) for a project and update its ArcadeDB code graph immediately."""
+    from cairnmind.scip_ingest import index_project_scip
+    store = store_for(ctx.obj)
+    result = index_project_scip(
+        store,
+        ctx.obj,
+        project,
+        languages=lang or None,
+        worktree=worktree,
+        allow_download=not no_download,
+    )
+    output(result)
+    if result.get("errors"):
+        raise typer.Exit(1)
+
+
+@scip_app.command("import")
+@initialized
+def scip_import_cmd(
+    ctx: typer.Context,
+    project: ProjectArg,
+    index_file: Annotated[
+        Path,
+        typer.Argument(
+            metavar="INDEX_FILE",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="Path to an externally or CI-generated binary SCIP index (index.scip).",
+        ),
+    ],
+    root: Annotated[Path | None, typer.Option("--root", help="Registered project folder the SCIP paths are relative to.")] = None,
+):
+    """Import an externally generated index.scip into a project's ArcadeDB code graph."""
+    from cairnmind.scip_ingest import apply_scip_index
+    store = store_for(ctx.obj)
+    proj = store.resolve_project(project)
+    target_root = root if root is not None else Path(proj["root"])
+    result = apply_scip_index(store, proj["id"], target_root, index_file.expanduser().resolve())
+    output(result)
