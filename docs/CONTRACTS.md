@@ -1,5 +1,14 @@
 # Cairnmind implementation contracts
 
+## Architecture taxonomy
+
+Cairnmind enforces four core concepts inside the service (never as prompts alone):
+
+- **Evidence-grounded answers & `origin_evidence`:** Every `ask` answer must cite verbatim passages verified against current sources; without verbatim confirmation it returns `unknown`. Writes from external MCP clients (`cairnmind mcp --client external`) or after third-party tool results carry server-set `origin_evidence: degraded` and are never counted or shown as verified.
+- **Resume packets & read-before-write ACK:** Each coding session receives a bounded, checksummed resume packet (`schema_version` 2) tied to a recomputed `state_hash`. Session writes are refused until the client acknowledges the exact packet, plan and task versions.
+- **Versioned plans & optimistic concurrency:** Plans and task steps are saved atomically with monotonic `version` numbers and `expected_version` / `expected_plan_version` CAS checks so concurrent sessions never silently overwrite each other.
+- **Named check profiles & code fingerprints:** Tasks with `requires_test` cannot transition to `done` without fresh local runs of every declared check profile in `.cairnmind/checks.toml`, bound to the task definition and to the worktree's current code fingerprint. Any later code change marks that check evidence stale.
+
 The active backend is **ArcadeDB 26.11.1**, using native document types, graph
 vertices/edges, FULL_TEXT/BM25 and LSM_VECTOR indexes. See
 [ARCADE_CONTRACTS.md](ARCADE_CONTRACTS.md) for component ownership and the HTTP DAL.

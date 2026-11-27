@@ -49,7 +49,10 @@ ReadbackArg = _path("READBACK_JSON", "A JSON file with the plan and task, each i
 StateFileArg = _path("STATE_FILE", "A JSON file with where work stands.")
 TranscriptArg = _path("PATH", "The client's JSONL transcript file.")
 SnapshotArg = _path("PATH", "The memory snapshot's folder.")
+OursSnapshotArg = _path("OURS", "First snapshot folder or manifest.json to merge.")
+TheirsSnapshotArg = _path("THEIRS", "Second snapshot folder or manifest.json to merge.")
 PublishedArg = _path("PATH", "The published memory directory.")
+AuditPathArg = Annotated[Path, typer.Argument(metavar="PATH", help="Repository root, snapshot folder or published memory directory to audit.")]
 RepositoryArg = _path("ROOT", "The repository's folder; it is copied, not changed.")
 ExportArg = _path("DESTINATION", "The file to write.")
 RevisionArg = _text("REVISION", "The Git commit, branch or tag.")

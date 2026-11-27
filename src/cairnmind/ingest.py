@@ -223,7 +223,10 @@ def _walk_args(store, root: Path, errors: list[OSError], links: list | None = No
 
 def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | None = None,
            nested: _NestedMemory | None = None, links: list | None = None):
-    """Walk with nested gitignore rules. Symlinks are deliberately not followed.
+    """Walk with nested `.gitignore` and `.cairnmindignore` rules. Symlinks are deliberately not followed.
+
+    Inside a Git worktree, candidate files are verified in one batched `git check-ignore --stdin -z --no-index`
+    call so Git negations (e.g. `!important.env`) and `.git/info/exclude` are honoured canonically.
 
     A directory that cannot be listed is appended to `errors`: the walk is then incomplete,
     and its caller must not treat the files it did not see as deleted. `nested`: the memory
@@ -231,7 +234,10 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
     (path, what it says) of every symlink in the directories the walk lists and leaves out: resolving an import follows
     them, so a link that is moved, added or removed moves an import (#451).
     """
-    rules: dict[Path, pathspec.GitIgnoreSpec] = {}
+    from cairnmind.ignore_rules import CAIRNMINDIGNORE, git_check_ignore, is_git_worktree
+
+    git_rules: dict[Path, pathspec.GitIgnoreSpec] = {}
+    cm_rules: dict[Path, pathspec.GitIgnoreSpec] = {}
     # Also by identity: on a file system that ignores case the root may be registered with other letter
     # case than the data directory is spelled with, and no text comparison sees that one lies in the other (#230).
     excluded_ids = {path_identity(base) for base in excluded} - {None}
@@ -255,6 +261,18 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
                 links.append((str(item), None))
         return True
 
+    def matches(rules_map: dict[Path, pathspec.GitIgnoreSpec], item: Path, is_dir: bool = False) -> bool:
+        answer = False
+        for base, spec in sorted(rules_map.items(), key=lambda row: len(row[0].parts)):
+            if item.is_relative_to(base):
+                relative = item.relative_to(base).as_posix() + ("/" if is_dir else "")
+                checked = spec.check_file(relative)
+                if checked.include is not None:
+                    answer = checked.include
+        return answer
+
+    use_git = is_git_worktree(root)
+    candidates: list[Path] = []
     for directory, dirs, names in os.walk(root, followlinks=False,
                                           onerror=errors.append if errors is not None else None):
         folder = Path(directory)
@@ -264,19 +282,15 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
         ignore = folder / ".gitignore"
         if ignore.is_file() and not ignore.is_symlink():
             try:
-                rules[folder] = pathspec.GitIgnoreSpec.from_lines(ignore.read_text(encoding="utf-8", errors="replace").splitlines())
+                git_rules[folder] = pathspec.GitIgnoreSpec.from_lines(ignore.read_text(encoding="utf-8", errors="replace").splitlines())
             except OSError:
                 pass
-
-        def ignored(item: Path, is_dir: bool = False) -> bool:
-            answer = False
-            for base, spec in sorted(rules.items(), key=lambda row: len(row[0].parts)):
-                if item.is_relative_to(base):
-                    relative = item.relative_to(base).as_posix() + ("/" if is_dir else "")
-                    checked = spec.check_file(relative)
-                    if checked.include is not None:
-                        answer = checked.include
-            return answer
+        cm_ignore = folder / CAIRNMINDIGNORE
+        if cm_ignore.is_file() and not cm_ignore.is_symlink():
+            try:
+                cm_rules[folder] = pathspec.GitIgnoreSpec.from_lines(cm_ignore.read_text(encoding="utf-8", errors="replace").splitlines())
+            except OSError:
+                pass
 
         dirs[:] = sorted(
             name for name in sorted(dirs)  # sorted before the links are noted: the same order every round
@@ -285,13 +299,27 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
             # and not text of this project: its rows are not indexed as sources.
             and not (folder.name.casefold() == ".memory" and name.casefold() in ("cairnmind", "devbrain"))
             and not left_out(folder / name)
-            and not ignored(folder / name, True)
+            and not matches(cm_rules, folder / name, True)
+            and not matches(git_rules, folder / name, True)
         )
         for name in sorted(names):
             path = folder / name
-            if link(path) or _is_secret(path) or _is_managed_mcp_config(path, root) or ignored(path):
+            if link(path) or _is_secret(path) or _is_managed_mcp_config(path, root) or matches(cm_rules, path):
                 continue
-            yield path
+            if use_git:
+                candidates.append(path)
+            elif not matches(git_rules, path):
+                yield path
+
+    if use_git and candidates:
+        rel_map = [(path, path.relative_to(root).as_posix()) for path in candidates]
+        git_ignored = git_check_ignore(root, [rel for _, rel in rel_map], no_index=True)
+        for path, rel in rel_map:
+            if git_ignored is not None:
+                if rel not in git_ignored:
+                    yield path
+            elif not matches(git_rules, path):
+                yield path
 
 
 MANAGED_FILES = frozenset({"AGENTS.md", "CLAUDE.md", "cairnmind-recorder.md"})  # where `cairnmind install` writes its block; the recorder subagent's body (#376)
@@ -1515,14 +1543,17 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
 
 
 def _save_cursor(store, path: Path, project_id: str | None, client: str, offset: int) -> None:
+    from .arcade_backend import ArcadeBackend
+    backend = getattr(store, "backend", None) or ArcadeBackend(store)
     with store.transaction() as tx:
         if project_id and not tx.query("SELECT id FROM projects WHERE id=:project", {"project": project_id}):
             raise ValueError("Project no longer exists; history cursor was not recreated")
-        tx.command(
-            "UPDATE import_cursors SET id=:id,path=:path,project_id=:project,client=:client,`offset`=:offset,"
-            "fingerprint=:fingerprint,updated_at=:updated UPSERT WHERE path=:path",
-            {"id": _identifier(path), "path": str(path), "project": project_id, "client": client,
-             "offset": offset, "fingerprint": _fingerprint(path, offset), "updated": _now()},
+        backend.upsert_document(
+            tx,
+            "import_cursors",
+            {"id": _identifier(path), "path": str(path), "project_id": project_id, "client": client,
+             "offset": offset, "fingerprint": _fingerprint(path, offset), "updated_at": _now()},
+            key_field="path",
         )
 
 
@@ -1899,14 +1930,17 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
                 counts["unknown"] += 1
                 reason = reason or UNKNOWN_TRANSCRIPT_WARNING
             if not resolved:
-                store.command(
-                    "UPDATE ingestion_inbox SET id=:id,path=:path,source_offset=:offset,sha256=:sha256,"
-                    "raw=:raw,client=:client,cwd=:cwd,reason=:reason,created_at=:created "
-                    "UPSERT WHERE id=:id",
-                    {"id": _identifier(path, event_offset, text), "path": str(path), "offset": event_offset,
-                     "sha256": hashlib.sha256(raw).hexdigest(), "raw": text, "client": detected, "cwd": cwd,
-                     "reason": reason or "No registered project matches working directory", "created": _now()},
-                )
+                from .arcade_backend import ArcadeBackend
+                backend = getattr(store, "backend", None) or ArcadeBackend(store)
+                with store.transaction() as inbox_tx:
+                    backend.upsert_document(
+                        inbox_tx,
+                        "ingestion_inbox",
+                        {"id": _identifier(path, event_offset, text), "path": str(path), "source_offset": event_offset,
+                         "sha256": hashlib.sha256(raw).hexdigest(), "raw": text, "client": detected, "cwd": cwd,
+                         "reason": reason or "No registered project matches working directory", "created_at": _now()},
+                        key_field="id",
+                    )
                 counts["inbox"] += 1
             else:
                 # Every complete source event is archived, including unrecognized records.

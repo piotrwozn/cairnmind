@@ -277,7 +277,10 @@ def server_now(tx) -> str:
     """The database server's time, in the format ``utc_now`` gives, read in the transaction that writes the writer
     row (#372): clocks of installations differ, the server's is one, so the history's times do not go backwards in
     the order of commits (two takeovers that overlap cannot both commit: the head fences them)."""
-    milliseconds = tx.query("SELECT sysdate().asLong() AS milliseconds")[0]["milliseconds"]
+    if hasattr(tx, "server_time_ms"):
+        milliseconds = tx.server_time_ms()
+    else:
+        milliseconds = tx.query("SELECT sysdate().asLong() AS milliseconds")[0]["milliseconds"]
     if not isinstance(milliseconds, int) or isinstance(milliseconds, bool):
         raise ValueError("The database server gave no time; the writer row was not changed.")
     return (datetime.fromtimestamp(0, timezone.utc) + timedelta(milliseconds=milliseconds)).isoformat(timespec="microseconds")
@@ -456,7 +459,11 @@ def take_over(store, note: str | None = None) -> dict:
     # one, the head are changed here; take_over_at then prepares the store as the writer and returns the jobs.
     ready = not getattr(store, "not_ready", None)
     with store._lock(), client.transaction() as native:
-        has_head = ready or "journal_state" in {row.get("name") for row in native.query("SELECT name FROM schema:types")}
+        has_head = ready or "journal_state" in (
+            store.backend.list_collections(native)
+            if hasattr(store, "backend")
+            else {row.get("name") for row in native.query("SELECT name FROM schema:types")}
+        )
         # The head first, as in settle: the stamp below changes it, so a claim or a takeover committed after
         # this read makes this commit fail, and one committed before it is seen in the writer row read next.
         heads = native.query("SELECT writer FROM journal_state WHERE id='current'") if has_head else []

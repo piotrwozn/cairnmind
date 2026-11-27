@@ -21,7 +21,7 @@ from .first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN, UNKNOWN_PROJECT
 from .terminal_safe import safe_text
 # The sensitivity class of a source and a record (#180): derived on every read, stored nowhere.
 from .sensitivity import record_sensitivity, source_sensitivity  # noqa: F401
-from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
+from .sql import (PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
                   quote_name, update_document, utc_now)
 from .arcade import REQUEST_TIMEOUT
 from .backup_reader import opened_backup
@@ -309,6 +309,18 @@ class Store:
     # What the one-time step that marks records confirmed before 0.11.0 did when it ran on this open or the
     # last restore ({"marked", "before_rule", "at"}, confirmation_upgrade, #215); None when it did not run.
     confirmations_before_rule = None
+    _backend = None
+
+    @property
+    def backend(self):
+        if self._backend is None:
+            from .arcade_backend import ArcadeBackend
+            self._backend = ArcadeBackend(self)
+        return self._backend
+
+    @backend.setter
+    def backend(self, value) -> None:
+        self._backend = value
     # After a restore: how many completed embed jobs it set back to pending because the backup brought no vectors
     # (#187); None when the backup brought them or nothing was restored.
     embed_jobs_requeued = None
@@ -332,10 +344,22 @@ class Store:
         from .store_readonly import read_consistently
         return read_consistently(self, read, kinds)
 
+    @classmethod
+    def open_memory(cls, data_dir: Path | None = None) -> Store:
+        """Open a fast ephemeral in-memory SQLite store (zero Java/Docker; used by ``cairnmind try``)."""
+        import tempfile
+        root = Path(data_dir).expanduser().resolve() if data_dir is not None else Path(tempfile.gettempdir()) / "cairnmind-memory"
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        settings = Settings(data_dir=root, storage_backend="sqlite", db_path=":memory:")
+        return cls(root, settings=settings, backend="sqlite", db_path=":memory:")
+
+    def close(self) -> None:
+        if hasattr(self, "backend") and self.backend is not None:
+            self.backend.close()
+
     def __init__(self, data_dir: Path, *, settings: Settings | None = None, for_takeover: bool = False,
-                 for_restore: bool = False):
-        from .arcade import ArcadeClient
-        from .engine import ensure_engine
+                 for_restore: bool = False, backend: str | None = None, db_path: Path | str | None = None):
+        from .config import resolved_backend, sqlite_db_path
         self._for_takeover = bool(for_takeover)
         self._for_restore = bool(for_restore)
         self.data_dir = Path(data_dir).expanduser().resolve()
@@ -345,9 +369,23 @@ class Store:
         self.settings = settings if settings is not None else Settings.load(self.data_dir, create=True)
         from .store_writer import installation
         self.installation = installation(self.data_dir)
-        ensure_engine(self.settings)
-        self.client = ArcadeClient(self.settings)
-        self.client.ensure_database()
+        chosen = (backend or "").strip().lower() or resolved_backend(self.settings)
+        if chosen == "sqlite":
+            from .sqlite_backend import SQLiteBackend
+            target_db = db_path if db_path is not None else sqlite_db_path(self.settings)
+            self.backend = SQLiteBackend(target_db, store=self)
+            self.client = self.backend.as_client_proxy()
+            self.backend.ensure_database()
+        elif chosen == "arcade":
+            from .arcade import ArcadeClient
+            from .arcade_backend import ArcadeBackend
+            from .engine import ensure_engine
+            ensure_engine(self.settings)
+            self.client = ArcadeClient(self.settings)
+            self.backend = ArcadeBackend(self)
+            self.client.ensure_database()
+        else:
+            raise ValueError(f"Unsupported storage backend: {chosen!r}")
         self._local = threading.local()
         self._stamp_lock = threading.Lock()
         self._stamp_cursor, self._stamp_base, self._stamp_global, self._stamp_seq = None, 0, 0, {}
@@ -563,7 +601,7 @@ class Store:
         from .arcade import ArcadeError
         from .store_writer import claimed_meanwhile, mixed_reason, read_fence, read_writer, settle
         with self._lock():
-            types = {row.get("name") for row in self.client.query("SELECT name FROM schema:types")}
+            types = self.backend.list_collections(self.client)
             writer, named = read_writer(self.client) if "devbrain_meta" in types else None, None
             if writer and "journal_state" in types:
                 writer, named = read_fence(self.client)
@@ -631,6 +669,9 @@ class Store:
 
     def _prepare_schema(self):
         """Create or upgrade the schema; called by init, with the writer lock held, when no other installation writes."""
+        if getattr(self.backend, "backend_kind", "arcade") == "sqlite":
+            self.backend.init_schema()
+            return
         self.client.command("CREATE DOCUMENT TYPE devbrain_meta IF NOT EXISTS")
         meta = {row.get("name"): row.get("value") for row in self.client.query(
             "SELECT FROM devbrain_meta WHERE name IN ['schema_version','lookup_indexes']")}
@@ -871,13 +912,7 @@ class Store:
         raise ValueError(f"Unknown project: {value}. {UNKNOWN_PROJECT_NEXT}")
 
     def _delete_old_vectors(self, tx, source_ids):
-        if not source_ids:
-            return
-        tx.command("DELETE FROM embeddings WHERE source_id IN :ids", {"ids": source_ids})
-        for row in tx.query("SELECT FROM vector_indexes"):
-            name = row.get("type_name")
-            if name and IDENTIFIER.fullmatch(name) and name.startswith("vector_"):
-                tx.command(f"DELETE FROM {quote_name(name)} WHERE source_id IN :ids", {"ids": source_ids})
+        self.backend.delete_vectors_for_sources(tx, source_ids)
 
     @staticmethod
     def drop_chunks(tx, source_ids):
@@ -1026,12 +1061,7 @@ class Store:
                 return self.upsert_node(node, native)
         node, existing = self._checked_node(tx, node)
         with self._keeping(tx) as known:
-            if existing:
-                # The project, checked above, lets a transaction that resets the project's graph skip reading
-                # the row before and after: the journal names no single node of a graph it reports as reset.
-                update_document(tx, "nodes", node, "id=:id", {"id": node["id"], "project_id": node["project_id"]})
-            else:
-                tx.command(f"CREATE VERTEX nodes CONTENT {json_text(node)}")
+            self.backend.upsert_vertex(tx, node, existing=bool(existing))
             if known is not None:
                 known["nodes"][node["id"]] = {"id": node["id"], "project_id": node["project_id"]}
         return node
@@ -1065,17 +1095,7 @@ class Store:
         with self._keeping(tx) as known:
             if known is not None:
                 known["edges"][edge["id"]] = {key: edge[key] for key in ("id", "project_id", "from_id", "to_id")}
-            if existing:
-                # The project is the checked one, as in upsert_node.
-                mine = {"id": edge["id"], "project_id": edge["project_id"]}
-                if any(existing.get(k) != edge[k] for k in ("project_id", "from_id", "to_id")):
-                    tx.command("DELETE FROM edges WHERE id=:id", mine)
-                else:
-                    update_document(tx, "edges", edge, "id=:id", mine)
-                    return edge
-            tx.command("CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:from_id) "
-                       f"TO (SELECT FROM nodes WHERE id=:to_id) CONTENT {json_text(edge)}",
-                       {"from_id": edge["from_id"], "to_id": edge["to_id"]})
+            self.backend.upsert_edge(tx, edge, existing=existing)
         return edge
 
     def _checked_edge(self, tx, edge):
@@ -1122,49 +1142,25 @@ class Store:
                 raise ValueError(f"Every graph {kind} of a grouped write belongs to its project")
             if len({item.get("id") for item in rows}) != len(rows):
                 raise ValueError(f"A grouped graph write names a {kind} twice")
-        created, updated = [], []
+        created_nodes, updated_nodes = [], []
         for item in nodes:
             node, existing = self._checked_node(tx, item)
-            (updated if existing else created).append(node)
+            (updated_nodes if existing else created_nodes).append(node)
             if tx.known is not None:
                 tx.known["nodes"][node["id"]] = {"id": node["id"], "project_id": node["project_id"]}
         with self._keeping(tx):
-            for offset in range(0, len(created), GRAPH_ROWS_PER_REQUEST):
-                part = created[offset:offset + GRAPH_ROWS_PER_REQUEST]
-                # The project names the reset graph, so the journal reads nothing for this statement.
-                stored = tx.command("CREATE VERTEX nodes CONTENT :rows", {"rows": part, "project_id": project_id})
-                if len(stored) != len(part):
-                    raise RuntimeError("The database did not create every graph vertex of a group")
-            for offset in range(0, len(updated), GRAPH_ROWS_PER_REQUEST):
-                statements, params = [], {}
-                for index, node in enumerate(updated[offset:offset + GRAPH_ROWS_PER_REQUEST]):
-                    statements.append(f"UPDATE nodes SET {','.join(f'{quote_name(key)}=:u{index}_{key}' for key in node)} "
-                                      f"WHERE id=:w{index}")
-                    params.update({f"u{index}_{key}": value for key, value in node.items()})
-                    params[f"w{index}"] = node["id"]
-                tx.script(statements, params, project_id)
-        created, existing_edges = [], []
+            self.backend.write_graph_batch(tx, project_id, created_nodes, updated_nodes, [])
+        created_edges, existing_edges = [], []
         for item in edges:
             edge, existing = self._checked_edge(tx, item)
             if existing:
                 existing_edges.append(item)
             else:
-                created.append(edge)
+                created_edges.append(edge)
                 if tx.known is not None:
                     tx.known["edges"][edge["id"]] = {key: edge[key] for key in ("id", "project_id", "from_id", "to_id")}
         with self._keeping(tx):
-            for offset in range(0, len(created), GRAPH_ROWS_PER_REQUEST):
-                part = created[offset:offset + GRAPH_ROWS_PER_REQUEST]
-                statements, params = [], {"ids": [edge["id"] for edge in part]}
-                for index, edge in enumerate(part):
-                    statements.append(f"CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:f{index}) "
-                                      f"TO (SELECT FROM nodes WHERE id=:t{index}) CONTENT :e{index}")
-                    params.update({f"f{index}": edge["from_id"], f"t{index}": edge["to_id"], f"e{index}": edge})
-                # CREATE EDGE writes nothing, without an error, when an endpoint is not found: count what it wrote.
-                statements.append("SELECT count(*) AS n FROM edges WHERE id IN :ids")
-                found = tx.script(statements, params, project_id)
-                if not found or found[0].get("n") != len(part):
-                    raise RuntimeError("The database did not create every graph edge of a group")
+            self.backend.write_graph_batch(tx, project_id, [], [], created_edges)
         for item in existing_edges:  # rare here: an edge that is kept is not written again
             self.upsert_edge(item, tx)
 
@@ -2045,8 +2041,7 @@ class Store:
 
     def delete_embeddings(self, project_id):
         with self.transaction() as tx:
-            self._delete_old_vectors(tx, [r["id"] for r in tx.query("SELECT id FROM sources WHERE project_id=:project", {"project": project_id})])
-            tx.command("DELETE FROM embeddings WHERE project_id=:project", {"project": project_id})
+            self.backend.delete_vectors_for_project(tx, project_id)
 
     def export(self, project_id=None):
         from .restore_staged import refuse_if_unfinished

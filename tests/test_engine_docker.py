@@ -251,7 +251,8 @@ def test_the_wheel_ships_deploy_arcadedb_as_the_build_context(tmp_path, monkeypa
     root = Path(__file__).resolve().parents[1]
     project = tomllib.loads((root / "pyproject.toml").read_text())
     shipped = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    assert shipped == {"deploy/arcadedb": "cairnmind/arcadedb_image"}
+    assert shipped["deploy/arcadedb"] == "cairnmind/arcadedb_image"
+    assert shipped["examples/sample-project"] == "cairnmind/sample_project"
     assert (root / "deploy" / "arcadedb" / "Dockerfile").is_file()  # what the mapping ships
     # The context is the package's own folder: an installed wheel has it, a source checkout does not.
     monkeypatch.setattr(engine_docker, "__file__", str(tmp_path / "package" / "engine_docker.py"))

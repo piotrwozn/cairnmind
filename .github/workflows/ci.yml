@@ -78,6 +78,20 @@ jobs:
             uv run pytest -n 4 -m "not arcade and not tmux" -q
           fi
 
+  eval-replay:
+    # Deterministic VCR replay of evaluation suites without live Ollama/GPU (ADR-10).
+    # Zero exit-3 (not_run) skips; any cassette miss or verification regression exits 1.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked --extra dev
+      - name: Replay extraction evaluation cassette
+        run: |
+          uv run cairnmind --data-dir "$RUNNER_TEMP/eval-replay" init
+          uv run cairnmind --data-dir "$RUNNER_TEMP/eval-replay" eval extraction --runs 1 --replay tests/cassettes/eval_extraction.json
+
   macos-fast-tests:
     # The same fast tier on an Apple silicon runner (macos-15 is arm64). macOS is supported since 0.12.0
     # (#237), so a failure here fails the workflow like the Linux tiers; the timeout stops a hang from

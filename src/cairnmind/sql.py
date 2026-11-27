@@ -116,6 +116,9 @@ def one_row(tx, sql, params=None, required=True):
 
 
 def insert_document(tx, collection, data):
+    if hasattr(tx, "insert_document"):
+        tx.insert_document(collection, data)
+        return
     tx.command(f"INSERT INTO {quote_name(collection)} CONTENT {json_text(data)}")
 
 
@@ -124,12 +127,17 @@ def insert_documents(tx, collection, rows):
 
     The engine returns each row it stored; fewer than were sent fails the transaction instead of losing rows.
     """
-    stored = tx.command(f"INSERT INTO {quote_name(collection)} CONTENT :rows", {"rows": rows})
+    if hasattr(tx, "insert_documents"):
+        stored = tx.insert_documents(collection, rows)
+    else:
+        stored = tx.command(f"INSERT INTO {quote_name(collection)} CONTENT :rows", {"rows": rows})
     if not isinstance(stored, list) or len(stored) != len(rows):
         raise RuntimeError(f"The database did not store every row of a group in {collection}")
 
 
 def update_document(tx, collection, data, where, params):
+    if hasattr(tx, "update_document"):
+        return tx.update_document(collection, data, where, params)
     assignments = ",".join(f"{quote_name(key)}=:value_{key}" for key in data)
     return tx.command(f"UPDATE {quote_name(collection)} SET {assignments} WHERE {where}",
                       {**params, **{f"value_{key}": value for key, value in data.items()}})

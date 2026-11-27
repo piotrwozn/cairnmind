@@ -29,6 +29,7 @@ VERIFY: dict[tuple[str, str], str] = {
     ("integrations.py", "_hook_startup_context"): "tls_verify(settings.url)",
     ("knowledge_mode.py", "missing_models"): "doctor_verify(settings)",
     ("mcp_server.py", "_client"): "tls_verify(self.settings.url)",
+    ("migration.py", "_notify_service_reload"): "tls_verify(settings.url)",
     ("ollama.py", "_new_client"): "tls_verify(self.base_url)",
     ("service_version.py", "refusal"): "tls_verify(settings.url)",
     ("setup_change.py", "_stop"): "tls_verify(settings.url)",

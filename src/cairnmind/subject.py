@@ -404,11 +404,9 @@ def _not_own(store, project_id: str, absent: list[str], spreads: list[str], infl
     for term in absent:
         if _key(term) in own or any(_without_prefix(term, spread, own, inflected) for spread in spreads):
             continue
-        folded = term.casefold()
-        rows = store.query(
-            "SELECT uri FROM sources WHERE project_id=:project AND is_current=true "
-            "AND uri.toLowerCase() LIKE :part LIMIT 200",
-            {"project": project_id, "part": "%" + folded + "%"}) if root else []
+        from .arcade_backend import ArcadeBackend
+        backend = getattr(store, "backend", None) or ArcadeBackend(store)
+        rows = backend.search_sources_by_uri_substring(project_id, term.casefold(), limit=200) if root else []
         # LIKE treats '_' as a wildcard, and the directories above the root are not parts of the project.
         inside = [str(row.get("uri", ""))[len(root):] for row in rows if str(row.get("uri", "")).startswith(root)]
         if not names_directory(term, inside):

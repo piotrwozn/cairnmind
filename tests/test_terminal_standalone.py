@@ -48,6 +48,8 @@ async def test_standalone_workspace_loads_projects_memory_activity_and_graph(tmp
     app = terminal_standalone.StandaloneWorkspaceApp(settings, broker=broker)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.05)
         pt = app.query_one("#projects-table", DataTable)
         assert pt.row_count == 1
         it = app.query_one("#inspector-table", DataTable)

@@ -79,6 +79,7 @@ class AskBody(BaseModel):
     log: bool | None = None
     # Classes a hosted built-in run must not receive (#183); they can only shrink what the answer reads.
     held_classes: list[Literal["project", "conversation", "third_party"]] | None = None
+    verifier: Literal["llm", "nli"] = "llm"
 
 
 class RememberBody(BaseModel):
@@ -205,6 +206,20 @@ class MemoryScopeBody(BaseModel):
 
 class MemorySnapshotBody(MemoryScopeBody):
     packet_id: str | None = None
+
+
+class MemoryPreviewBody(MemoryScopeBody):
+    profile: str = Field(default="team")
+    include_transcripts: bool = Field(default=False, strict=True)
+    skip_uncommitted: bool = Field(default=False, strict=True)
+    redact: bool = Field(default=False, strict=True)
+
+
+class MemorySnapshotExportBody(MemorySnapshotBody):
+    profile: str = Field(default="team")
+    include_transcripts: bool = Field(default=False, strict=True)
+    skip_uncommitted: bool = Field(default=False, strict=True)
+    redact: bool = Field(default=False, strict=True)
 
 
 class BackgroundInferenceBody(MemorySnapshotBody):
@@ -714,6 +729,27 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     app.state.inference = inference
     app.state.memory = memory
 
+    @app.middleware("http")
+    async def migration_quiesce_middleware(request: Request, call_next):
+        from fastapi.responses import JSONResponse
+        from cairnmind.migration import is_migration_in_progress
+
+        if request.url.path not in {"/health", "/shutdown", "/internal/reload-store"} and is_migration_in_progress(
+            settings.data_dir
+        ):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": "Storage migration is currently in progress; retry after cutover.",
+                    "error_code": "migration_in_progress",
+                },
+            )
+        return await call_next(request)
+
+    def _active_backend_label() -> str:
+        kind = getattr(getattr(store, "backend", None), "backend_kind", "arcade")
+        return "sqlite" if kind == "sqlite" else "arcadedb"
+
     async def authorize(authorization: str | None = Header(default=None)) -> None:
         expected = f"Bearer {settings.token}"
         if not authorization or not hmac.compare_digest(authorization, expected):
@@ -806,7 +842,35 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     @app.get("/health")
     async def health():
         return {"service": SERVICE_NAMES[0], "version": __version__, "instance": instance_id(settings),
-                "backend": "arcadedb"}
+                "backend": _active_backend_label()}
+
+    @app.post("/internal/reload-store", dependencies=auth)
+    async def reload_store():
+        nonlocal settings, store
+        reloaded_settings = Settings.load(settings.data_dir, create=False)
+        new_store = await asyncio.to_thread(Store, reloaded_settings.data_dir, settings=reloaded_settings)
+        new_store.relative_paths = False
+        if new_store.not_writer:
+            new_store.close()
+            raise StoreNotWriter(new_store.not_writer)
+        old_store = store
+        settings = reloaded_settings
+        store = new_store
+        retriever.store = new_store
+        retriever.settings = reloaded_settings
+        agent.store = new_store
+        agent.settings = reloaded_settings
+        plans.store = new_store
+        sessions.store = new_store
+        sessions.settings = reloaded_settings
+        memory.store = new_store
+        app.state.store = new_store
+        cache.clear()
+        try:
+            await asyncio.to_thread(old_store.close)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"reloaded": True, "backend": _active_backend_label()}
 
     @app.get("/projects", dependencies=auth)
     async def projects():
@@ -940,17 +1004,25 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         return require(), require
 
     @app.post("/memory/preview", dependencies=auth)
-    async def memory_preview(body: MemoryScopeBody):
+    async def memory_preview(body: MemoryPreviewBody):
         pid = project(body.project)["id"]
         scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
-        return await asyncio.to_thread(memory.preview, pid, scope)
+        return await asyncio.to_thread(
+            memory.preview, pid, scope,
+            profile=body.profile, include_transcripts=body.include_transcripts,
+            skip_uncommitted=body.skip_uncommitted, redact=body.redact,
+        )
 
     @app.post("/memory/snapshot", dependencies=auth)
-    async def memory_snapshot(body: MemorySnapshotBody):
+    async def memory_snapshot(body: MemorySnapshotExportBody):
         pid = project(body.project)["id"]
         scope, authorize = await asyncio.to_thread(
             memory_write_authorization, pid, body.worktree, body.session_id, body.packet_id)
-        return await asyncio.to_thread(memory.snapshot, pid, scope, authorize=authorize)
+        return await asyncio.to_thread(
+            memory.snapshot, pid, scope, authorize=authorize,
+            profile=body.profile, include_transcripts=body.include_transcripts,
+            skip_uncommitted=body.skip_uncommitted, redact=body.redact,
+        )
 
     @app.post("/memory/inspect", dependencies=auth)
     async def memory_inspect(body: MemoryInspectBody):
@@ -1349,7 +1421,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pending = await asyncio.to_thread(index_pending_sources, store)
         index_errors.extend(pending.get("errors", []))
         stamp = await asyncio.to_thread(store.cache_stamp, pid)
-        key = (pid, body.question, scope, stamp, identity, contract_key, also_held)
+        key = (pid, body.question, scope, stamp, identity, contract_key, also_held, body.verifier)
         hit = cache.get(key)
         if hit and identity is not None and not index_errors and time.monotonic() - hit[0] < 60:
             if keep:
@@ -1358,7 +1430,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         try:
             result = await asyncio.wait_for(
                 inference.submit(lambda: agent.ask(pid, body.question, worktree=scope,
-                                                   answer_schema=answer_schema, also_held=also_held), priority=0),
+                                                   answer_schema=answer_schema, also_held=also_held,
+                                                   verifier=body.verifier), priority=0),
                 timeout=settings.ask_timeout + 5,
             )
         except TimeoutError:

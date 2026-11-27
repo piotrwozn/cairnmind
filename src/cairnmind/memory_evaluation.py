@@ -131,6 +131,9 @@ async def _evaluate(stores: list[Store], roots: list[Path], settings: list[Setti
         try:
             await extractor.extract(job)
         except Exception as exc:
+            from .vcr import CassetteMissError
+            if isinstance(exc, CassetteMissError):
+                raise
             error = measured._error(exc)
         source_store.finish_job(job_id, "Synthetic extraction failed" if error else None,
                                 worker=job["worker"], expected_attempts=job["attempts"])
@@ -274,6 +277,9 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
         for field, model in (("chat", settings.chat_model), ("embedding", settings.embedding_model)):
             report["model_identities"][field] = await measured.model_identity(model)
 
+    from contextlib import nullcontext
+    from .vcr import CassetteMissError, VcrOllama, deterministic_uuid4
+
     try:
         asyncio.run(preflight())
         preflight_complete = True
@@ -294,7 +300,11 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
                 isolated = _fixture_settings(settings, temporary / f"data-{index}")
                 owned_settings.append(isolated)
                 stores.append(Store(isolated.data_dir, settings=isolated))
-            asyncio.run(_evaluate(stores, roots, owned_settings, measured, report))
+            seed_ctx = deterministic_uuid4("cairnmind-eval-memory-v1") if isinstance(ollama, VcrOllama) else nullcontext()
+            with seed_ctx:
+                asyncio.run(_evaluate(stores, roots, owned_settings, measured, report))
+    except CassetteMissError:
+        raise
     except OllamaUnavailable as exc:
         # An absent runtime is not evidence that extraction or transfer passed.
         report.update(status="failed" if preflight_complete else "not_run",

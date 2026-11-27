@@ -69,6 +69,7 @@ workspace_app = typer.Typer(help="The terminal workspace: status, detaching and 
 store_app = typer.Typer(help="How large the store is, which installation writes it, and removing rows that nothing reads.")
 db_app = typer.Typer(help="Access to a database on another host: its own user (#72).")
 answers_app = typer.Typer(help="The opt-in log of ask answers and the evidence they cited.")
+cache_app = typer.Typer(help="Inspect or clear the local verification verdict cache.")
 service_app = typer.Typer(help="Background knowledge service autostart management.")
 autostart_app = typer.Typer(help="Per-user service autostart at logon (Windows Task Scheduler).")
 scip_app = typer.Typer(help="Multi-language SCIP code indexing (Go, Rust, Java, Kotlin, C/C++, C#, PHP, Ruby).")
@@ -90,17 +91,38 @@ app.add_typer(workspace_app, name="workspace")
 app.add_typer(store_app, name="store")
 app.add_typer(db_app, name="db")
 app.add_typer(answers_app, name="answers")
+app.add_typer(cache_app, name="cache")
 app.add_typer(service_app, name="service")
 app.add_typer(scip_app, name="scip")
 app.add_typer(mcp_app, name="mcp")
 
 
 def output(value) -> None:
-    typer.echo(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    use_ascii = encoding.lower().replace("-", "") not in {"utf8", "utf8sig"}
+    typer.echo(json.dumps(value, ensure_ascii=use_ascii, indent=2, default=str))
 
 
 def _stdout_is_terminal() -> bool:
     return sys.stdout.isatty()
+
+
+def _stderr_is_terminal() -> bool:
+    return sys.stderr.isatty()
+
+
+def _format_cli_stderr(prefix: str, message: str) -> str:
+    """Format a stderr line, applying human remediation in interactive terminals and NO_COLOR hygiene."""
+    from cairnmind.cli_human import format_human_error, strip_ansi
+    shown = message
+    if not _INVOCATION.get("as_json") and _stderr_is_terminal():
+        human = format_human_error(message)
+        if human is not None:
+            shown = human
+    line = _pasteable(f"{prefix}{shown}")
+    if os.environ.get("NO_COLOR"):
+        line = strip_ansi(line)
+    return line
 
 
 JSON_FLAG = Annotated[bool, typer.Option(
@@ -123,6 +145,10 @@ def initialized(command):
     @wraps(command)
     def invoke(ctx, *args, **kwargs):
         ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
+        if _INVOCATION.get("backend"):
+            ctx.obj.storage_backend = _INVOCATION["backend"]
+        if _INVOCATION.get("db_path"):
+            ctx.obj.db_path = _INVOCATION["db_path"]
         if ctx.obj._origin.get("connect_saved"):
             from cairnmind.database_mode import saved_note
             typer.echo(f"Cairnmind: {saved_note(ctx.obj)}", err=True)
@@ -132,14 +158,15 @@ def initialized(command):
 
 def entrypoint() -> None:
     _NOTICES_SHOWN.clear()
+    _INVOCATION["as_json"] = "--json" in sys.argv[1:]
     try:
         app()
     except (ValueError, OSError, ArcadeError, httpx.HTTPError, OllamaUnavailable) as exc:
         from cairnmind.store_writer import StoreNotWriter
         if not (isinstance(exc, StoreNotWriter) and str(exc) in _NOTICES_SHOWN):
             # The reader's notice was printed when the store opened: the refusal is not said twice (#244).
-            typer.echo(_pasteable(f"Cairnmind: {_os_error_text(exc) if isinstance(exc, OSError) else exc}"),
-                       err=True)
+            raw = _os_error_text(exc) if isinstance(exc, OSError) else str(exc)
+            typer.echo(_format_cli_stderr("Cairnmind: ", raw), err=True)
         raise SystemExit(1) from None
 
 
@@ -210,7 +237,7 @@ def store_for(settings: Settings, *, notice: bool = True, for_restore: bool = Fa
     """The full store. notice=False for a command that only reads it on a reader, as backup and export do.
     for_restore=True opens a store that carries the mark of an unfinished restore, as only `restore` does (#362)."""
     from cairnmind.store import Store
-    store = Store(settings.data_dir, for_restore=for_restore)
+    store = Store(settings.data_dir, settings=settings, for_restore=for_restore)
     if store.not_writer and notice:
         # Another installation writes this database (#70): reads work, every write is refused with this reason.
         typer.echo(f"Cairnmind: {store.not_writer}", err=True)
@@ -525,7 +552,7 @@ def _refuse_other_version(settings: Settings) -> None:
 
 def refuse(message: str, code: int = 2):
     """A refusal that is not about the command line: no usage line and no "Invalid value" (#154)."""
-    typer.echo(_pasteable(f"Error: {message}"), err=True)
+    typer.echo(_format_cli_stderr("Error: ", message), err=True)
     raise typer.Exit(code)
 
 
@@ -668,10 +695,27 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
 
 
 @app.callback(invoke_without_command=True)
-def main(ctx: typer.Context, data_dir: Annotated[Path | None, typer.Option("--data-dir")] = None):
+def main(
+    ctx: typer.Context,
+    data_dir: Annotated[Path | None, typer.Option("--data-dir")] = None,
+    backend: Annotated[str | None, typer.Option("--backend", help="Storage backend: sqlite or arcade.")] = None,
+    db_path: Annotated[str | None, typer.Option("--db-path", help="Override SQLite database path (or :memory:).")] = None,
+):
+    from cairnmind.cli_human import color_enabled
+    ctx.color = color_enabled(sys.stdout)
     _INVOCATION.clear()
     ctx.obj = Settings.load(data_dir, create=False)
+    if backend is not None:
+        chosen = backend.strip().lower()
+        if chosen not in {"sqlite", "arcade"}:
+            refuse("Storage backend must be 'sqlite' or 'arcade'.")
+        ctx.obj.storage_backend = chosen
+        _INVOCATION["backend"] = chosen
+    if db_path is not None:
+        ctx.obj.db_path = db_path
+        _INVOCATION["db_path"] = db_path
     _INVOCATION["data_dir"] = ctx.obj.data_dir
+    _INVOCATION["as_json"] = "--json" in sys.argv[1:]
     if ctx.invoked_subcommand is None:
         _launch_terminal_workspace(ctx)
 
@@ -756,27 +800,73 @@ def cockpit_stop(ctx: typer.Context, clients: bool = False):
     output(stop_cockpit(ctx.obj, stop_clients=clients))
 
 
+@app.command("try")
+def try_command(
+    non_interactive: Annotated[
+        bool, typer.Option("--non-interactive", help="Run all walkthrough steps without waiting for Enter.")
+    ] = False,
+    as_json: JSON_FLAG = False,
+):
+    """Try Cairnmind in an ephemeral in-memory sandbox without touching your current directory.
+
+    Runs a 3-step proof on the bundled sample project using embedded SQLite in memory: unknown on missing evidence, blocked done after a code edit, and verified done after a fresh check run."""
+    from cairnmind.try_demo import run_try_sandbox
+
+    emit_json = as_json or not _stdout_is_terminal()
+    interactive = (not non_interactive) and (not emit_json) and _interactive_terminal()
+    try:
+        result = run_try_sandbox(
+            interactive=interactive,
+            echo=None if emit_json else typer.echo,
+            prompt=input if interactive else None,
+        )
+    except KeyboardInterrupt:
+        typer.echo("Cairnmind: try sandbox interrupted and cleaned up.", err=True)
+        raise typer.Exit(130) from None
+    if emit_json:
+        output(result)
+
+
 @app.command()
 @initialized
-def init(ctx: typer.Context, as_json: JSON_FLAG = False):
+def init(
+    ctx: typer.Context,
+    backend: Annotated[str | None, typer.Option("--backend", help="Storage backend to initialize: sqlite or arcade.")] = None,
+    as_json: JSON_FLAG = False,
+):
     """Create the store, or open the one a connect-only installation was given.
 
     Downloads no models and changes no client configuration."""
+    from cairnmind.config import resolved_backend
     from cairnmind.database_mode import connect_only, engine_mode
     from cairnmind.engine_docker import choose_engine_mode, start_docker_engine
-    chosen = choose_engine_mode(ctx.obj)  # the first run chooses where the engine runs, and says which (#272)
-    if chosen:
-        typer.echo(f"Cairnmind: {chosen}", err=True)
-    if not connect_only(ctx.obj) and engine_mode(ctx.obj) == "docker":
-        start_docker_engine(ctx.obj, pull=True)  # the first start downloads the image; ensure_engine never does
+
+    if backend is not None:
+        chosen_backend = backend.strip().lower()
+        if chosen_backend not in {"sqlite", "arcade"}:
+            refuse("Storage backend must be 'sqlite' or 'arcade'.")
+        ctx.obj.storage_backend = chosen_backend
+        ctx.obj.save()
+
+    active_backend = resolved_backend(ctx.obj)
+    if active_backend == "arcade":
+        chosen = choose_engine_mode(ctx.obj)  # the first run chooses where the engine runs, and says which (#272)
+        if chosen:
+            typer.echo(f"Cairnmind: {chosen}", err=True)
+        if not connect_only(ctx.obj) and engine_mode(ctx.obj) == "docker":
+            start_docker_engine(ctx.obj, pull=True)  # the first start downloads the image; ensure_engine never does
     store = store_for(ctx.obj)
     from cairnmind.knowledge_mode import choose, enabled
     said = choose(ctx.obj)  # the first run chooses whether the knowledge agent has models, and says which (#274)
     if said:
         typer.echo(f"Cairnmind: {said}", err=True)
-    result = {"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor, then cairnmind project add NAME FOLDER"}
+    result = {
+        "data_dir": str(ctx.obj.data_dir),
+        "storage_backend": active_backend,
+        "next": "cairnmind doctor, then cairnmind project add NAME FOLDER",
+    }
     result["knowledge_agent"] = "enabled" if enabled(ctx.obj) else "disabled"
-    if not connect_only(ctx.obj):
+    if active_backend == "arcade" and not connect_only(ctx.obj):
         result["engine_mode"] = engine_mode(ctx.obj)
     if getattr(store, "not_writer", None):
         result["writer"] = store.writer_state()
@@ -1128,6 +1218,72 @@ def setup(ctx: typer.Context,
         typer.echo("\n".join(setup_profiles.render(result)))
     if result["changes"] and not result["applied"]:
         raise typer.Exit(1)
+
+
+@app.command("migrate")
+@initialized
+def migrate_command(
+    ctx: typer.Context,
+    to: Annotated[str | None, typer.Option("--to", help="Target backend: server (ArcadeDB) or sqlite.")] = None,
+    resume: Annotated[bool, typer.Option("--resume", help="Resume an interrupted migration from its last checkpoint.")] = False,
+    abort: Annotated[bool, typer.Option("--abort", help="Abort an interrupted migration and clean partial target data.")] = False,
+    overwrite: Annotated[bool, typer.Option("--overwrite", help="Replace existing data in a non-empty target database.")] = False,
+    target_namespace: Annotated[str | None, typer.Option("--target-namespace", help="ArcadeDB database name to create or migrate into.")] = None,
+    include_cache: Annotated[bool, typer.Option("--include-cache", help="Verify and report verdict cache continuity alongside the migration.")] = False,
+    force: Annotated[bool, typer.Option("--force", help="Allow reverse migration to SQLite even when size thresholds are exceeded.")] = False,
+    batch_size: Annotated[int, typer.Option("--batch-size", help="Number of rows transferred per checkpointed batch.")] = 1000,
+    as_json: JSON_FLAG = False,
+):
+    """Migrate all Cairnmind data losslessly between embedded SQLite and ArcadeDB server.
+
+    Verifies exact per-collection counts and canonical SHA-256 parity before atomically switching config.json. Refused inside coding sessions."""
+    from cairnmind.migration import MigrationError, abort_migration, migrate as run_migration
+
+    if abort and (resume or to is not None):
+        raise typer.BadParameter("Use --abort by itself, without --to or --resume.")
+    if resume and to is not None:
+        raise typer.BadParameter("Use --resume without --to; the direction is read from the saved checkpoint.")
+    if not abort and not resume and to not in {"server", "sqlite"}:
+        raise typer.BadParameter("Specify --to server, --to sqlite, --resume, or --abort.")
+
+    try:
+        if abort:
+            result = abort_migration(ctx.obj)
+
+            def sentences():
+                return [f"Aborted migration {result.get('migration_id') or ''}; source store and config.json were left untouched."]
+
+            _human_or_json(result, as_json, sentences)
+            return
+
+        result = run_migration(
+            ctx.obj,
+            to=to,
+            resume=resume,
+            overwrite=overwrite,
+            target_namespace=target_namespace,
+            include_cache=include_cache,
+            force=force,
+            batch_size=batch_size,
+        )
+    except MigrationError as exc:
+        refuse(str(exc))
+
+    def sentences():
+        lines = [
+            f"Migrated {result['total_rows']} rows across {result['collections']} collections "
+            f"({result['source_backend']} -> {result['target_backend']}), SHA-256 {result['sha256'][:16]}."
+        ]
+        if result.get("archived_sqlite"):
+            lines.append(f"Archived previous SQLite database to {result['archived_sqlite']}.")
+        if result.get("person_confirmations") != "kept":
+            lines.append(
+                f"Source role was reader: {result.get('confirmations_turned_into_claims', 0)} confirmation(s) "
+                "were downgraded to migration claims."
+            )
+        return lines
+
+    _human_or_json(result, as_json, sentences)
 
 
 @app.command()
@@ -1535,10 +1691,20 @@ def ask(ctx: typer.Context, project: ProjectArg, question: QuestionArg, worktree
         answer_schema: Path | None = None,
         log: Annotated[bool, typer.Option("--log", help="Keep this answer and its citations in the project's "
                                           "answer log, for `cairnmind eval replay`.")] = False,
+        fast: Annotated[bool, typer.Option("--fast", help="Enable Tier-1 CPU NLI verification before escalating to Tier-2 LLM.")] = False,
+        verifier: Annotated[str | None, typer.Option("--verifier", help="Verification tier: llm (default, strict) or nli (opt-in Tier-1 NLI triage).")] = None,
+        strict_llm: Annotated[bool, typer.Option("--strict-llm", help="Force Tier-2 LLM verification (default).")] = False,
         as_json: JSON_FLAG = False):
     """Answer a question from the project's memory, with the sources it cites. Starts the service when needed."""
-    payload = {"project": project, "question": question,
-               "worktree": str(worktree.resolve()) if worktree else None}
+    if verifier is not None and verifier not in ("llm", "nli"):
+        raise typer.BadParameter("Choose 'llm' or 'nli'.", param_hint="--verifier")
+    if strict_llm and (fast or verifier == "nli"):
+        raise typer.BadParameter("--strict-llm cannot be combined with --fast or --verifier nli.")
+    chosen_verifier = "nli" if (fast or verifier == "nli") else "llm"
+    payload: dict[str, object] = {"project": project, "question": question,
+                                  "worktree": str(worktree.resolve()) if worktree else None}
+    if chosen_verifier != "llm":
+        payload["verifier"] = chosen_verifier
     if log:
         payload["log"] = True
     if answer_schema is not None:
@@ -1550,11 +1716,16 @@ def ask(ctx: typer.Context, project: ProjectArg, question: QuestionArg, worktree
     else:
         _refuse_unknown_project(ctx.obj, project)
     result = request(ctx.obj, "POST", "/ask", json=payload, matched=alive)  # matched: ensure_service would ask again
+    from cairnmind.cli_human import enrich_ask_json, has_degraded_origin
+    enriched = enrich_ask_json(result)
+    if (as_json or not _stdout_is_terminal()) and has_degraded_origin(enriched):
+        from cairnmind import first_start
+        typer.echo(f"Cairnmind: {first_start.DEGRADED_ORIGIN_NOTE}", err=True)
 
     def sentences():
         from cairnmind.terminal_commands import ask_summary  # the workspace's view of an answer
-        return ask_summary(result, str).split("\n")
-    _human_or_json(result, as_json, sentences)
+        return ask_summary(enriched, str).split("\n")
+    _human_or_json(enriched, as_json, sentences)
 
 
 @app.command()
@@ -1958,16 +2129,22 @@ def remember(ctx: typer.Context, project: ProjectArg,
         refuse(f"Record {exc.record_id} already holds the key {key!r} for a {kind}. Nothing was saved. Use "
                "another key, or dispute or decide that record in the inspector.")
 
+    from cairnmind.cli_human import has_degraded_origin
+    if (as_json or not _stdout_is_terminal()) and has_degraded_origin(result):
+        from cairnmind import first_start
+        typer.echo(f"Cairnmind: {first_start.DEGRADED_ORIGIN_NOTE}", err=True)
+
     def sentences():
         import shlex
         from cairnmind import first_start
         from cairnmind.terminal_safe import safe_text
         quoted = shlex.quote(safe_text(project))
+        extra = [first_start.DEGRADED_ORIGIN_NOTE] if has_degraded_origin(result) else []
         # brief lists a proposed record for review, except a task or a checkpoint, which it leaves out.
         if result.get("status") == "proposed" and kind not in {"task", "checkpoint"}:
-            return [first_start.REMEMBER_PROPOSED.format(kind=safe_text(kind), project=quoted)]
+            return [first_start.REMEMBER_PROPOSED.format(kind=safe_text(kind), project=quoted), *extra]
         return [first_start.REMEMBER_STORED.format(status=result.get("status"), kind=safe_text(kind),
-                                                   id=result.get("id"), project=quoted)]
+                                                   id=result.get("id"), project=quoted), *extra]
     _human_or_json(result, as_json, sentences)
 
 
@@ -2335,17 +2512,48 @@ def session_ack(ctx: typer.Context, session_id: SessionIdArg, packet_id: PacketI
         "readback": _json_file(readback_json)}))
 
 
+def _eval_vcr_client(settings, *, record: Path | None, replay: Path | None, suite: str):
+    if record is not None and replay is not None:
+        raise typer.BadParameter("Choose at most one of --record or --replay.")
+    if replay is not None:
+        from cairnmind.vcr import VcrOllama
+        try:
+            return VcrOllama.replay(replay), None
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--replay") from None
+    if record is not None:
+        from cairnmind.memory_models import from_settings
+        from cairnmind.vcr import VcrOllama
+        client = VcrOllama.record(from_settings(settings), record, suite=suite)
+        return client, client
+    return None, None
+
+
 @eval_app.command("run")
 @initialized
 def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None = None,
-             skip_claude: bool = False):
+             skip_claude: bool = False,
+             record: Annotated[Path | None, typer.Option("--record", help="Record model responses to a VCR cassette JSON file.")] = None,
+             replay: Annotated[Path | None, typer.Option("--replay", help="Replay model responses offline from a VCR cassette JSON file.")] = None):
+    """Run twenty isolated recall cases against local inference or a deterministic VCR cassette."""
     from cairnmind.evaluation import run_evaluation
+    from cairnmind.vcr import CassetteMissError
     if skip_claude and not clients:
         raise typer.BadParameter("--skip-claude requires --clients")
-    _not_run_without_models(ctx.obj, "cairnmind eval run")
+    vcr_client, recorder = _eval_vcr_client(ctx.obj, record=record, replay=replay, suite="eval_run")
+    if replay is None:
+        _not_run_without_models(ctx.obj, "cairnmind eval run")
     _managed_only(ctx.obj, "`cairnmind eval run`")
-    result = run_evaluation(ctx.obj, clients=clients, report_dir=report_dir, skip_claude=skip_claude)
-    _record_evaluation(ctx.obj, "recall", result)
+    try:
+        kwargs = {"ollama": vcr_client} if vcr_client is not None else {}
+        result = run_evaluation(ctx.obj, clients=clients, report_dir=report_dir, skip_claude=skip_claude, **kwargs)
+    except CassetteMissError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+    if recorder is not None:
+        recorder.save()
+    if replay is None:
+        _record_evaluation(ctx.obj, "recall", result)
     output(result)
     if result.get("status") == "failed":
         raise typer.Exit(1)
@@ -2355,13 +2563,26 @@ def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None 
 
 @eval_app.command("memory")
 @initialized
-def eval_memory(ctx: typer.Context, report_dir: Path | None = None):
-    """Explicitly check extraction, transfer and restoration of memory with the local Ollama."""
+def eval_memory(ctx: typer.Context, report_dir: Path | None = None,
+                record: Annotated[Path | None, typer.Option("--record", help="Record model responses to a VCR cassette JSON file.")] = None,
+                replay: Annotated[Path | None, typer.Option("--replay", help="Replay model responses offline from a VCR cassette JSON file.")] = None):
+    """Explicitly check extraction, transfer and restoration of memory with local Ollama or a VCR cassette."""
     from cairnmind.memory_evaluation import run_memory_evaluation
-    _not_run_without_models(ctx.obj, "cairnmind eval memory")
+    from cairnmind.vcr import CassetteMissError
+    vcr_client, recorder = _eval_vcr_client(ctx.obj, record=record, replay=replay, suite="eval_memory")
+    if replay is None:
+        _not_run_without_models(ctx.obj, "cairnmind eval memory")
     _managed_only(ctx.obj, "`cairnmind eval memory`")
-    result = run_memory_evaluation(ctx.obj, report_dir=report_dir)
-    _record_evaluation(ctx.obj, "memory", result)
+    try:
+        kwargs = {"ollama": vcr_client} if vcr_client is not None else {}
+        result = run_memory_evaluation(ctx.obj, report_dir=report_dir, **kwargs)
+    except CassetteMissError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+    if recorder is not None:
+        recorder.save()
+    if replay is None:
+        _record_evaluation(ctx.obj, "memory", result)
     output(result)
     if result.get("status") != "passed":
         raise typer.Exit(3 if result.get("status") == "not_run" else 1)
@@ -2370,18 +2591,29 @@ def eval_memory(ctx: typer.Context, report_dir: Path | None = None):
 @eval_app.command("extraction")
 @initialized
 def eval_extraction(ctx: typer.Context, transcripts: Path | None = None, runs: int = 3,
-                    report_dir: Path | None = None):
+                    report_dir: Path | None = None,
+                    record: Annotated[Path | None, typer.Option("--record", help="Record model responses to a VCR cassette JSON file.")] = None,
+                    replay: Annotated[Path | None, typer.Option("--replay", help="Replay model responses offline from a VCR cassette JSON file.")] = None):
     """Measure what extraction proposes from conversations against the records a person would keep.
 
-    TRANSCRIPTS defaults to docs/evaluation/extraction-transcripts.json of the current directory. Needs Ollama with the configured chat model, no engine; nothing is stored. Exits 3 without the model.
+    TRANSCRIPTS defaults to docs/evaluation/extraction-transcripts.json of the current directory. Needs Ollama with the configured chat model (or --replay CASSETTE), no engine; nothing is stored. Exits 3 without the model, or 1 on cassette miss or failure.
     """
     from cairnmind.extraction_evaluation import run_extraction_evaluation
-    _not_run_without_models(ctx.obj, "cairnmind eval extraction")
+    from cairnmind.vcr import CassetteMissError
+    vcr_client, recorder = _eval_vcr_client(ctx.obj, record=record, replay=replay, suite="eval_extraction")
+    if replay is None:
+        _not_run_without_models(ctx.obj, "cairnmind eval extraction")
     path = transcripts or Path("docs") / "evaluation" / "extraction-transcripts.json"
     try:
-        result = run_extraction_evaluation(ctx.obj, path, runs=runs, report_dir=report_dir)
+        kwargs = {"ollama": vcr_client} if vcr_client is not None else {}
+        result = run_extraction_evaluation(ctx.obj, path, runs=runs, report_dir=report_dir, **kwargs)
+    except CassetteMissError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
     except ValueError as exc:
         refuse(_shortened(str(exc), 1000))  # the file or the log, not the command line (#244)
+    if recorder is not None:
+        recorder.save()
     output({key: value for key, value in result.items() if key != "runs"}
            | {"runs": [{"run": run["run"], **run["summary"], "failures": run["failures"]} for run in result["runs"]]})
     if result.get("status") != "passed":
@@ -2392,20 +2624,32 @@ def eval_extraction(ctx: typer.Context, transcripts: Path | None = None, runs: i
 @initialized
 def eval_repository(ctx: typer.Context, root: RepositoryArg,
                     questions: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
-                    report_dir: Path | None = None):
+                    report_dir: Path | None = None,
+                    record: Annotated[Path | None, typer.Option("--record", help="Record model responses to a VCR cassette JSON file.")] = None,
+                    replay: Annotated[Path | None, typer.Option("--replay", help="Replay model responses offline from a VCR cassette JSON file.")] = None):
     """Ask questions with known answers about a real repository, in a throwaway copy and database.
 
-    QUESTIONS defaults to ROOT/docs/evaluation/repository-questions.json. Needs Ollama with the configured models and a running engine; exits 3 when the models are not available.
+    QUESTIONS defaults to ROOT/docs/evaluation/repository-questions.json. Needs Ollama with the configured models (or --replay CASSETTE) and a running engine; exits 3 when the models are not available, or 1 on cassette miss or failure.
     """
     from cairnmind.repository_evaluation import run_repository_evaluation
-    _not_run_without_models(ctx.obj, "cairnmind eval repository")
+    from cairnmind.vcr import CassetteMissError
+    vcr_client, recorder = _eval_vcr_client(ctx.obj, record=record, replay=replay, suite="eval_repository")
+    if replay is None:
+        _not_run_without_models(ctx.obj, "cairnmind eval repository")
     _managed_only(ctx.obj, "`cairnmind eval repository`")
     path = questions or Path(root) / "docs" / "evaluation" / "repository-questions.json"
     try:
-        result = run_repository_evaluation(ctx.obj, root, path, report_dir=report_dir)
+        kwargs = {"ollama": vcr_client} if vcr_client is not None else {}
+        result = run_repository_evaluation(ctx.obj, root, path, report_dir=report_dir, **kwargs)
+    except CassetteMissError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
     except ValueError as exc:
         refuse(_shortened(str(exc), 1000))  # the file or the log, not the command line (#244)
-    _record_evaluation(ctx.obj, "repository", result)
+    if recorder is not None:
+        recorder.save()
+    if replay is None:
+        _record_evaluation(ctx.obj, "repository", result)
     output(result)
     if result.get("status") != "passed":
         raise typer.Exit(3 if result.get("status") == "not_run" else 1)
@@ -2508,16 +2752,55 @@ def answers_prune(ctx: typer.Context, project: ProjectArg,
     output(prune(ctx.obj, pid, keep))
 
 
+@cache_app.command("clear")
+def cache_clear(ctx: typer.Context):
+    """Clear all cached verification verdicts without starting the engine or service."""
+    from cairnmind.verdict_cache import VerdictCache
+    output(VerdictCache(ctx.obj.data_dir).clear())
+
+
+@cache_app.command("status")
+def cache_status(ctx: typer.Context):
+    """Show the size and entry count of the local verification verdict cache. Read-only."""
+    from cairnmind.verdict_cache import VerdictCache
+    output(VerdictCache(ctx.obj.data_dir).stats())
+
+
 SNAPSHOT_WAIT_SECONDS = 1800
 
 
 @memory_app.command("snapshot")
 @initialized
-def memory_snapshot(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None, preview: bool = False):
-    """Save the project's full memory; --preview shows the scope without writing a snapshot."""
-    payload = {"project": project, "worktree": str(worktree.expanduser().resolve()) if worktree else None}
+def memory_snapshot(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None, preview: bool = False,
+                    profile: Annotated[str, typer.Option(
+                        "--profile", help="Snapshot profile: team (default, no transcripts, quote-by-reference) or full.")] = "team",
+                    include_transcripts: Annotated[bool, typer.Option(
+                        "--include-transcripts", help="Required with --profile full to export raw transcripts and full source contents.")] = False,
+                    skip_uncommitted: Annotated[bool, typer.Option(
+                        "--skip-uncommitted", help="In team profile, skip uncommitted or untracked file evidence instead of blocking.")] = False,
+                    redact: Annotated[bool, typer.Option(
+                        "--redact", help="Mask detected secrets with [REDACTED:...] markers instead of aborting export.")] = False):
+    """Save the project's portable memory snapshot; defaults to --profile team (fail-closed privacy).
+
+    Use --preview to inspect scope and size without writing. Use --profile full --include-transcripts only for private local backups that will not be pushed to a remote Git repository.
+    """
+    from cairnmind.snapshot_privacy import PROFILE_TEAM, validate_profile_options
+    try:
+        validate_profile_options(profile, include_transcripts)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    payload: dict[str, object] = {"project": project, "worktree": str(worktree.expanduser().resolve()) if worktree else None}
+    if profile != PROFILE_TEAM:
+        payload["profile"] = profile
+    if include_transcripts:
+        payload["include_transcripts"] = True
+    if skip_uncommitted:
+        payload["skip_uncommitted"] = True
+    if redact:
+        payload["redact"] = True
     if preview:
-        output(request(ctx.obj, "POST", "/memory/preview", json=payload))
+        result = request(ctx.obj, "POST", "/memory/preview", json=payload)
+        output(result)
         return
     try:
         # A large project writes tens of thousands of objects: far longer than an ordinary request (#158).
@@ -2528,6 +2811,16 @@ def memory_snapshot(ctx: typer.Context, project: ProjectArg, worktree: Path | No
             f"No answer within {SNAPSHOT_WAIT_SECONDS // 60} minutes. The snapshot is still being written by "
             f"the service; leaving did not stop it. It is done when `cairnmind memory status {project}` shows "
             "the new snapshot; until then another snapshot waits for this one.") from None
+    if isinstance(result, dict):
+        if result.get("contains_transcripts"):
+            typer.echo(
+                "Warning: this snapshot includes raw transcripts (contains_transcripts=true). "
+                "Do not commit or push it to a remote Git repository.",
+                err=True,
+            )
+        if result.get("redacted") and result.get("redaction_counts"):
+            summary = ", ".join(f"{tag}={count}" for tag, count in sorted(result["redaction_counts"].items()))
+            typer.echo(f"Redacted secrets before writing snapshot: {summary}", err=True)
     output(result)
 
 
@@ -2778,6 +3071,8 @@ def install(ctx: typer.Context, project: ProjectArg, as_json: JSON_FLAG = False,
                                                    "subagent on again for the project and write it.")] = False,
             no_recorder: Annotated[bool, typer.Option("--no-recorder", help="Remove the cairnmind-recorder subagent "
                                                       "file Cairnmind wrote and keep it off for the project.")] = False,
+            pre_commit: Annotated[bool, typer.Option("--pre-commit", help="Add the cairnmind-memory-audit hook to "
+                                                     ".pre-commit-config.yaml in the project root.")] = False,
             mcp_client: Annotated[list[str] | None, typer.Option(
                 "--mcp-client",
                 help="Also generate and safely merge an MCP preset for this client (repeatable, e.g. cursor, vscode, zed).",
@@ -2788,7 +3083,8 @@ def install(ctx: typer.Context, project: ProjectArg, as_json: JSON_FLAG = False,
         raise typer.BadParameter("Choose one of --recorder and --no-recorder.")
     store = store_for(ctx.obj)
     selected = store.resolve_project(project)
-    result = install_integrations(ctx.obj, selected, recorder=True if recorder else False if no_recorder else None)
+    result = install_integrations(ctx.obj, selected, recorder=True if recorder else False if no_recorder else None,
+                                  pre_commit=pre_commit)
     import shlex
     from cairnmind import first_start
     from cairnmind.terminal_safe import safe_text

@@ -487,7 +487,7 @@ def run_injection_evaluation(settings: Settings, fixture_path: Path, *, runs: in
     output = Path(report_dir or settings.data_dir / "evaluations").expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = output / ("injection-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid4().hex[:8] + ".json")
-    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
     report["report_path"] = str(path)

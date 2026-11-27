@@ -208,6 +208,7 @@ def contract_text(probes: dict[str, dict[str, Any]]) -> str:
 def doctor(settings: Settings) -> dict[str, Any]:
     """Read-only diagnostics. No login, downloads, model sessions or secrets."""
     from .arcade import ArcadeError
+    from .config import resolved_backend
     from .database_credentials import doctor_block
     from .engine import managed_java_executable, resolve_java
     from .client_runtime import NativeRuntime
@@ -216,6 +217,7 @@ def doctor(settings: Settings) -> dict[str, Any]:
     host_system = platform_hints.host_system()
     on_a_mac = host_system == "darwin"
     on_windows = host_system == "windows"
+    active_backend = resolved_backend(settings)
     result: dict[str, Any] = {
         "python": platform.python_version(), "python_executable": str(Path(sys.executable).resolve()),
         "openssl": ssl.OPENSSL_VERSION, "platform": "Windows" if IS_WINDOWS else platform.system(),
@@ -224,8 +226,18 @@ def doctor(settings: Settings) -> dict[str, Any]:
         "clients": {name: _probe_cli(name) for name in CLIENTS},
         "ollama": {"available": False}, "service": {"available": False},
         # The database block is read through ArcadeClient, so its rules (#72) apply to doctor too.
-        "arcadedb": doctor_block(settings),
+        "arcadedb": (
+            {"needed": False, "available": None, "reason": "Embedded SQLite backend is active."}
+            if active_backend == "sqlite"
+            else doctor_block(settings)
+        ),
     }
+    if active_backend == "sqlite":
+        from .sqlite_telemetry import evaluate_sqlite_health, maybe_emit_scale_hint
+
+        result["storage_backend"] = "sqlite"
+        result["sqlite"] = evaluate_sqlite_health(settings)
+        maybe_emit_scale_hint(settings, result["sqlite"])
     if on_a_mac or on_windows:
         del result["wsl"]  # a flag that can only be False here, and the word the report should not carry
     result["java"] = {"on_path": bool(shutil.which("java")), "minimum_major": 21}
@@ -241,17 +253,19 @@ def doctor(settings: Settings) -> dict[str, Any]:
         result["cockpit"] = cockpit  # only the workspace needs tmux (#273): a warning, never a failure
     from .database_mode import connect_only, engine_mode
     try:
-        in_docker = not connect_only(settings) and engine_mode(settings) == "docker"
+        in_docker = active_backend == "arcade" and not connect_only(settings) and engine_mode(settings) == "docker"
     except ValueError:
         in_docker = False  # arcadedb.engine_problem names the wrong value
     try:
-        # Connect-only (#68) or the engine in Docker (#272): no Java engine runs here, so Java is neither needed
+        # SQLite, connect-only (#68) or the engine in Docker (#272): no Java engine runs here, so Java is neither needed
         # nor run to ask its version.
-        java = None if connect_only(settings) or in_docker else resolve_java(settings)
+        java = None if active_backend == "sqlite" or connect_only(settings) or in_docker else resolve_java(settings)
     except ArcadeError as exc:
         java = None
         result["java"].update(compatible=False, error=str(exc))
-    if connect_only(settings):
+    if active_backend == "sqlite":
+        result["java"] = {"needed": False, "reason": "Embedded SQLite backend is active; Java is not needed."}
+    elif connect_only(settings):
         result["java"] = {"needed": False, "reason": "This installation only connects to its database; no engine "
                                                      "runs on this machine."}
     elif in_docker:
@@ -678,8 +692,41 @@ def _merge_instructions(path: Path, project: dict[str, Any], settings: Settings)
     return _write_changed(path, updated.lstrip("\n").rstrip() + "\n")
 
 
+PRE_COMMIT_HOOK_ID = "cairnmind-memory-audit"
+_PRE_COMMIT_ENTRY = """  - repo: local
+    hooks:
+      - id: cairnmind-memory-audit
+        name: Cairnmind memory audit
+        entry: cairnmind memory audit
+        language: system
+        pass_filenames: false
+        files: (^|/)\\.memory/(cairnmind|cairnmind-published|devbrain)/
+"""
+
+
+def install_pre_commit_hook(root: Path) -> bool:
+    """Add `cairnmind-memory-audit` to `<root>/.pre-commit-config.yaml` idempotently."""
+    path = root / ".pre-commit-config.yaml"
+    if path.is_symlink():
+        raise ValueError(f"{path} must not be a symbolic link")
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+        if re.search(rf"^\s*-?\s*id:\s*{re.escape(PRE_COMMIT_HOOK_ID)}\s*$", text, re.M):
+            return False
+        if re.search(r"^\s*repos:\s*$", text, re.M):
+            updated = text.rstrip("\n") + "\n" + _PRE_COMMIT_ENTRY
+        elif not text.strip():
+            updated = "repos:\n" + _PRE_COMMIT_ENTRY
+        else:
+            updated = text.rstrip("\n") + "\nrepos:\n" + _PRE_COMMIT_ENTRY
+    else:
+        updated = "repos:\n" + _PRE_COMMIT_ENTRY
+    return _write_changed(path, updated)
+
+
 def install_integrations(settings: Settings, project: dict[str, Any],
-                         clients: tuple[str, ...] = CLIENTS, recorder: bool | None = None) -> dict[str, Any]:
+                         clients: tuple[str, ...] = CLIENTS, recorder: bool | None = None,
+                         pre_commit: bool = False) -> dict[str, Any]:
     """Merge only project-local files; report unsupported capabilities explicitly.
 
     `recorder` False or True turns the Claude Code recorder subagent off or on for the project and is remembered;
@@ -692,6 +739,14 @@ def install_integrations(settings: Settings, project: dict[str, Any],
         remember(settings, project, recorder)
     told = False  # a changed choice is always answered by one recorder sentence
     results: dict[str, Any] = {"project": project["id"], "clients": {}, "changed": [], "warnings": []}
+    if pre_commit:
+        try:
+            if install_pre_commit_hook(root):
+                results["changed"].append(str(root / ".pre-commit-config.yaml"))
+            results["pre_commit_configured"] = True
+        except (ValueError, OSError) as exc:
+            results["pre_commit_configured"] = False
+            results["warnings"].append(str(exc))
     for client in clients:
         if client not in CLIENTS:
             raise ValueError(f"Unsupported client: {client}")
