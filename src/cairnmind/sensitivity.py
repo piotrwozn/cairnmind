@@ -20,6 +20,8 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Iterable, Mapping
 
+from .storage_query import db_find, is_in
+
 CLASSES = ("project", "conversation", "third_party")
 _RANK = {name: rank for rank, name in enumerate(CLASSES)}
 PROJECT_KINDS = frozenset({"code", "document", "file", "check_output", "check_profile", "verification",
@@ -29,6 +31,12 @@ CONVERSATION_KINDS = frozenset({"transcript", "transcript_unknown", "agent_trans
                                 "findings"})
 # Only these fields of a source row are read; a caller selecting columns by hand selects these.
 SOURCE_FIELDS = "id,kind,metadata.origin_evidence AS origin_evidence,metadata.origin_history AS origin_history"
+SOURCE_COLUMNS = (
+    "id",
+    "kind",
+    ("metadata.origin_evidence", "origin_evidence"),
+    ("metadata.origin_history", "origin_history"),
+)
 
 
 def _metadata(value: Any) -> dict:
@@ -97,8 +105,12 @@ def earlier_source_ids(reader, record_ids: Iterable[str]) -> dict[str, set[str]]
     wanted = list(dict.fromkeys(i for i in record_ids if isinstance(i, str)))
     found: dict[str, set[str]] = {}
     for start in range(0, len(wanted), 500):
-        for row in reader.query("SELECT record_id,snapshot.source_ids AS source_ids FROM record_revisions "
-                                "WHERE record_id IN :ids", {"ids": wanted[start:start + 500]}):
+        for row in db_find(
+            reader,
+            "record_revisions",
+            is_in("record_id", wanted[start:start + 500]),
+            columns=("record_id", ("snapshot.source_ids", "source_ids")),
+        ):
             found.setdefault(row["record_id"], set()).update(_source_ids(row))
     return found
 
@@ -108,8 +120,12 @@ def source_rows(reader, ids: Iterable[str]) -> dict[str, dict]:
     wanted = list(dict.fromkeys(i for i in ids if isinstance(i, str)))
     rows: dict[str, dict] = {}
     for start in range(0, len(wanted), 500):
-        for row in reader.query(f"SELECT {SOURCE_FIELDS} FROM sources WHERE id IN :ids",
-                                {"ids": wanted[start:start + 500]}):
+        for row in db_find(
+            reader,
+            "sources",
+            is_in("id", wanted[start:start + 500]),
+            columns=SOURCE_COLUMNS,
+        ):
             rows[row["id"]] = row
     return rows
 

@@ -50,12 +50,18 @@ def valid_days(days) -> int | None:
     return days
 
 
+def _not_compacted_filter():
+    from .storage_query import any_of, field_ref, is_null, lt
+    return any_of(is_null("compacted_at"), lt("compacted_at", field_ref("updated_at")))
+
+
 def compact_old_jobs(store, older_than_days: int, *, now: datetime | None = None,
                      batch: int = JOBS_PER_TRANSACTION) -> dict:
     """Remove the attempt history of completed jobs last changed more than ``older_than_days`` ago.
 
     Returns ``{"compacted": jobs, "events": attempt events removed, "transactions": n, "cutoff": iso}``.
     Bounded and resumable: one page of at most ``batch`` jobs per transaction, re-checked inside it."""
+    from .storage_query import asc, db_find, eq, gt, lt
     if valid_days(older_than_days) is None:
         raise ValueError(f"older_than_days must be a whole number from 1 to {MAX_JOB_HISTORY_DAYS}")
     if type(batch) is not int or not 1 <= batch <= 1000:
@@ -63,11 +69,16 @@ def compact_old_jobs(store, older_than_days: int, *, now: datetime | None = None
     cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=older_than_days)).isoformat(timespec="microseconds")
     report = {"compacted": 0, "events": 0, "transactions": 0, "cutoff": cutoff}
     after = ""
+    not_compacted = _not_compacted_filter()
     while True:
-        page = store.query(
-            "SELECT id FROM jobs WHERE id > :position AND state='completed' "
-            f"AND updated_at < :cutoff AND {_NOT_COMPACTED} ORDER BY id LIMIT :limit",
-            {"position": after, "cutoff": cutoff, "limit": batch})
+        page = db_find(
+            store,
+            "jobs",
+            [gt("id", after), eq("state", "completed"), lt("updated_at", cutoff), not_compacted],
+            columns=("id",),
+            order_by=(asc("id"),),
+            limit=batch,
+        )
         if not page:
             return report
         after = page[-1]["id"]
@@ -80,20 +91,32 @@ def compact_old_jobs(store, older_than_days: int, *, now: datetime | None = None
 
 
 def _compact(store, ids, cutoff) -> tuple[int, int]:
-    from .sql import update_document, utc_now
+    from .sql import utc_now
+    from .storage_query import db_find, db_update_where, eq, is_in, lt
     compacted = events = 0
     at = utc_now()
+    not_compacted = _not_compacted_filter()
     with store.transaction() as tx:
         # Read again under the writer lock: a job retried or released since the page was read is pending now.
-        for row in tx.query("SELECT id, attempt_history, attempt_history_pruned FROM jobs WHERE id IN :ids "
-                            f"AND state='completed' AND updated_at < :cutoff AND {_NOT_COMPACTED}",
-                            {"ids": ids, "cutoff": cutoff}):
+        for row in db_find(
+            tx,
+            "jobs",
+            [is_in("id", ids), eq("state", "completed"), lt("updated_at", cutoff), not_compacted],
+            columns=("id", "attempt_history", "attempt_history_pruned"),
+        ):
             history = row.get("attempt_history") or []
             earlier = row.get("attempt_history_pruned")
             removed = len(history) if isinstance(history, list) else 1
-            update_document(tx, "jobs", {"attempt_history": [], "compacted_at": at,
-                                         "attempt_history_pruned": removed + (earlier if type(earlier) is int else 0)},
-                            "id=:id AND state='completed'", {"id": row["id"]})
+            db_update_where(
+                tx,
+                "jobs",
+                set_fields={
+                    "attempt_history": [],
+                    "compacted_at": at,
+                    "attempt_history_pruned": removed + (earlier if type(earlier) is int else 0),
+                },
+                where={"id": row["id"], "state": "completed"},
+            )
             compacted += 1
             events += removed
     return compacted, events
@@ -160,10 +183,11 @@ def named_by_a_restore(settings) -> set[str] | str:
     store cannot be opened."""
     from .arcade import ArcadeClient, ArcadeError
     from .restore_staged import unfinished
+    from .storage_query import db_list_collections
     try:
         client = ArcadeClient(settings)
         try:
-            if not client.database_exists() or not client.query("SELECT name FROM schema:types WHERE name='devbrain_meta'"):
+            if not client.database_exists() or "devbrain_meta" not in db_list_collections(client):
                 return set()  # no store here, so no restore of it
             mark = unfinished(client)
         finally:

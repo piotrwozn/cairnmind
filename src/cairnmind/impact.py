@@ -35,6 +35,7 @@ from cairnmind.evidence import THIRD_PARTY_WRITTEN, _FILE_KINDS, _QUOTE, _metada
 from cairnmind.impact_docs import documentation_lines, documentation_mentions, written_as_code
 from cairnmind.memory_paths import git_pathspec
 from cairnmind.parsing import analyze_code
+from cairnmind.storage_query import db_find, eq, is_in
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 _STATUS = {"A": "added", "M": "modified", "D": "deleted", "T": "modified", "R": "renamed", "C": "added"}
@@ -241,8 +242,8 @@ def build_impact(store, project_id, since, worktree=None, *, pending=False):
         raise ValueError(f"Git does not know the commit {_line(since, 80)!r} in {_line(root)}")
     changed = _changes(root, commit, nested_reserved(store, root))
     symbols = _symbol_changes(root, commit, changed)
-    roots = {Path(row["path"]).resolve() for row in store.query(
-        "SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})} | {root}
+    roots = {Path(row["path"]).resolve() for row in db_find(
+        store, "project_roots", {"project_id": project["id"]}, columns=("path",))} | {root}
     bindings = memory_bindings(store, project["id"])
 
     def local_name(path):
@@ -262,15 +263,15 @@ def build_impact(store, project_id, since, worktree=None, *, pending=False):
             links[record_id].append(link)
 
     # Links that extraction drew from a record to a file or a symbol named in its evidence.
-    edges = [edge for edge in store.query(
-        "SELECT from_id,to_id,status FROM edges WHERE project_id=:project AND kind='relates_to'",
-        {"project": project["id"]}) if str(edge.get("from_id", "")).startswith("record:")
+    edges = [edge for edge in db_find(
+        store, "edges", {"project_id": project["id"], "kind": "relates_to"},
+        columns=("from_id", "to_id", "status")) if str(edge.get("from_id", "")).startswith("record:")
         and edge["from_id"][7:] in records]
     nodes = {}
     for batch in _batches(sorted({edge["to_id"] for edge in edges})):
-        nodes.update({row["id"]: row for row in store.query(
-            "SELECT id,kind,label,metadata FROM nodes WHERE project_id=:project AND id IN :ids",
-            {"project": project["id"], "ids": batch})})
+        nodes.update({row["id"]: row for row in db_find(
+            store, "nodes", [eq("project_id", project["id"]), is_in("id", batch)],
+            columns=("id", "kind", "label", "metadata"))})
     for edge in edges:
         node = nodes.get(edge["to_id"])
         if not node or node.get("kind") not in ("file", "symbol"):
@@ -294,10 +295,10 @@ def build_impact(store, project_id, since, worktree=None, *, pending=False):
                     if isinstance(source_id, str)})
     sources = {}
     for batch in _batches(cited):
-        sources.update({row["id"]: row for row in store.query(
-            "SELECT id,uri,kind,sha256,metadata,is_current,created_at FROM sources "
-            "WHERE project_id=:project AND id IN :ids",
-            {"project": project["id"], "ids": batch}) if row.get("kind") in _FILE_KINDS})
+        sources.update({row["id"]: row for row in db_find(
+            store, "sources", [eq("project_id", project["id"]), is_in("id", batch)],
+            columns=("id", "uri", "kind", "sha256", "metadata", "is_current", "created_at"))
+            if row.get("kind") in _FILE_KINDS})
     digests = {}
 
     def worktree_digest(name):

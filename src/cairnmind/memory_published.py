@@ -25,7 +25,8 @@ from .memory_published_format import (
     clean_value, derive_covered, derive_plan_covered, path_of, plan_hash, projection, ref_class, render, same,
     sha256_text, task_fields, MAX_FILE_BYTES,
 )
-from .sql import clean_row, one_row, update_document
+from .sql import clean_row
+from .storage_query import db_find, db_find_one, db_update_where, eq, is_in, is_not_null
 from .store import degraded_origin
 from .terminal_safe import safe_text
 
@@ -39,10 +40,11 @@ class Held(Exception):
     """A record or plan that is not published, with the reason `memory publish` prints."""
 
 
-def _rows(reader, sql, ids, params=None):
+def _rows(reader, collection, field, ids, *, where=(), columns=None):
     ids, rows = sorted(set(ids)), []
     for start in range(0, len(ids), _BATCH):
-        rows += [clean_row(row) for row in reader.query(sql, {**(params or {}), "ids": ids[start:start + _BATCH]})]
+        filters = [*where, is_in(field, ids[start:start + _BATCH])]
+        rows += [clean_row(row) for row in db_find(reader, collection, filters, columns=columns)]
     return rows
 
 
@@ -211,32 +213,49 @@ class Publisher:
             yield
 
     def _collect(self, tx, project_id):
-        records = [clean_row(r) for r in tx.query("SELECT FROM records WHERE project_id=:project AND kind IN :kinds",
-                                                  {"project": project_id, "kinds": list(PUBLISHED_KINDS)})]
+        records = [
+            clean_row(r)
+            for r in db_find(tx, "records", [eq("project_id", project_id), is_in("kind", list(PUBLISHED_KINDS))])
+        ]
         versions = {}
-        for row in _rows(tx, "SELECT FROM record_revisions WHERE project_id=:project AND record_id IN :ids",
-                         [r["id"] for r in records], {"project": project_id}):
+        for row in _rows(
+            tx, "record_revisions", "record_id", [r["id"] for r in records], where=[eq("project_id", project_id)]
+        ):
             versions.setdefault(row["record_id"], []).append(row["snapshot"])
-        plans = [clean_row(r) for r in tx.query("SELECT FROM plans WHERE project_id=:project", {"project": project_id})]
+        plans = [clean_row(r) for r in db_find(tx, "plans", {"project_id": project_id})]
         plan_revisions = {}
-        for row in [clean_row(r) for r in tx.query("SELECT FROM plan_revisions WHERE project_id=:project",
-                                                   {"project": project_id})]:
+        for row in [clean_row(r) for r in db_find(tx, "plan_revisions", {"project_id": project_id})]:
             plan_revisions.setdefault(row["plan_id"], []).append(row)
         audits = {}
-        for row in tx.query("SELECT id,metadata.plan_id AS plan FROM sources WHERE project_id=:project "
-                            "AND metadata.origin='local_user_review' AND metadata.plan_id IS NOT NULL",
-                            {"project": project_id}):
+        for row in db_find(
+            tx,
+            "sources",
+            [
+                eq("project_id", project_id),
+                eq("metadata.origin", "local_user_review"),
+                is_not_null("metadata.plan_id"),
+            ],
+            columns=("id", ("metadata.plan_id", "plan")),
+        ):
             audits.setdefault(row["plan"], []).append(row["id"])
         wanted = {s for rows in versions.values() for row in rows for s in row.get("source_ids") or []}
         wanted |= {s for rows in plan_revisions.values() for row in rows
                    for s in row["snapshot"]["plan"].get("source_ids", [])}
         wanted |= {s for ids in audits.values() for s in ids}
-        sources = {row["id"]: row for row in _rows(
-            tx, "SELECT id,project_id,uri,kind,sha256,metadata,created_at FROM sources WHERE id IN :ids", wanted)
-            if row.get("project_id") == project_id}
+        sources = {
+            row["id"]: row
+            for row in _rows(
+                tx,
+                "sources",
+                "id",
+                wanted,
+                columns=("id", "project_id", "uri", "kind", "sha256", "metadata", "created_at"),
+            )
+            if row.get("project_id") == project_id
+        }
         bodies = [s for s, row in sources.items() if row["kind"] in ("code", "document", "file", "manual", "published")
                   or str(row.get("uri", "")).startswith("review://")]
-        for row in _rows(tx, "SELECT id,content FROM sources WHERE id IN :ids", bodies):
+        for row in _rows(tx, "sources", "id", bodies, columns=("id", "content")):
             sources[row["id"]]["content"] = row["content"]
         for row in versions.values():
             row.sort(key=lambda r: r["version"])
@@ -434,7 +453,7 @@ class Publisher:
                 _sync_directory(directory)
             if not project.get("publication_id"):
                 with self.store.transaction() as tx:
-                    update_document(tx, "projects", {"publication_id": identity}, "id=:id", {"id": project_id})
+                    db_update_where(tx, "projects", set_fields={"publication_id": identity}, where={"id": project_id})
             return result
 
     @staticmethod
@@ -583,6 +602,7 @@ def publication_status(store, project_id, worktree=None):
         except (ValueError, AttributeError):
             identity = None
     return {**carried, "destination": str(folder), "format_exists": "FORMAT.json" in files, "format_project_id": identity,
-            "publication_id": one_row(store, "SELECT publication_id FROM projects WHERE id=:id",
-                                      {"id": project_id}).get("publication_id"),
+            "publication_id": db_find_one(
+                store, "projects", {"id": project_id}, columns=("publication_id",), required=True
+            ).get("publication_id"),
             "files": len(files), "unreadable": [path for path, _ in errors]}

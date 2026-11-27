@@ -16,7 +16,6 @@ once they are a day old (``stale_temporaries``).
 """
 from __future__ import annotations
 
-import gc
 import gzip
 import hashlib
 import os
@@ -26,7 +25,7 @@ import time
 from typing import Callable, Iterable, Iterator
 
 from .config import BACKUP_FORMATS
-from .sql import clean_row, json_text, quote_name, utc_now
+from .sql import clean_row, json_text, utc_now
 
 # Rows are read in pages whose size adapts to the size of the rows: a page whose text is larger than
 # PAGE_BYTES halves the next page, a page much smaller doubles it, between 1 and PAGE_ROWS rows.
@@ -89,27 +88,22 @@ def payload_digest(payload) -> str:
 
 
 def _pages(tx, name: str) -> Iterator[str]:
-    """Every row of a type as canonical text, read in record id order a page at a time."""
-    limit, last = PAGE_ROWS, None
+    """Every row of a type as canonical text, paged natively by the active storage backend."""
+    if hasattr(tx, "iter_backup_pages") and callable(tx.iter_backup_pages):
+        yield from tx.iter_backup_pages(name, page_rows=PAGE_ROWS, page_bytes=PAGE_BYTES)
+        return
+    from .storage_query import asc, db_find, gt
+    after: str | None = None
     while True:
-        rows = tx.query(f"SELECT FROM {quote_name(name)}" + (" WHERE @rid > :rid" if last else "")
-                        + f" ORDER BY @rid LIMIT {limit}", {"rid": last} if last else {})
-        size = 0
+        where = [gt("id", after)] if after is not None else ()
+        rows = db_find(tx, name, where, order_by=(asc("id"),), limit=PAGE_ROWS)
         for row in rows:
-            text = json_text(clean_row(row))
-            size += len(text)
-            yield text
-        if len(rows) < limit:
+            yield json_text(clean_row(row))
+        if len(rows) < PAGE_ROWS:
             return
-        last = rows[-1]["@rid"]
-        if not isinstance(last, str) or not last.startswith("#"):
-            raise ValueError(f"ArcadeDB returned a row of {name} without a record id")
-        # Each HTTP response is held in a reference cycle (httpx binds its stream to the response), so the
-        # body of every page would otherwise stay in memory until the next full collection: measured,
-        # memory then grew with the number of pages read. Collecting here keeps one page alive at a time.
-        del rows
-        gc.collect()
-        limit =max(1, limit // 2) if size > PAGE_BYTES else min(PAGE_ROWS, limit * 2) if size < PAGE_BYTES // 4 else limit
+        after = rows[-1].get("id")
+        if not isinstance(after, str):
+            return
 
 
 def streamed_export(tx, collections: Iterable[str], format_version: int) -> dict:

@@ -18,14 +18,16 @@ import hashlib
 
 from .memory_published_format import RECORD_KINDS, covered_quotes, ref_class, sha256_text
 from .memory_published_git import MAX_CHECKED_BYTES, project_files, published_files, read_blobs
-from .sql import clean_row, update_document
+from .sql import clean_row
+from .storage_query import db_find, db_update_where, eq, is_in
 from .terminal_safe import safe_text
 
 
-def _rows(tx, sql, identifiers, params=None):
+def _rows(tx, collection, field, identifiers, *, where=(), columns=None):
     identifiers, rows = sorted(identifiers), []
     for start in range(0, len(identifiers), 500):
-        rows += [clean_row(row) for row in tx.query(sql, {**(params or {}), "ids": identifiers[start:start + 500]})]
+        filters = [*where, is_in(field, identifiers[start:start + 500])]
+        rows += [clean_row(row) for row in db_find(tx, collection, filters, columns=columns)]
     return rows
 
 
@@ -34,8 +36,11 @@ def recheck(tx, project_id, tree, root, commit, nested=()):
 
     `nested` are the reserved directories of projects registered below the root (#174), left out like its own."""
     targets = {source_id: source for source_id, source in tree["sources"].items() if ref_class(source["ref"]) == "file"}
-    stubs = {row["id"]: row for row in _rows(tx, "SELECT id,project_id,kind,metadata FROM sources WHERE id IN :ids",
-                                             targets) if row.get("project_id") == project_id}
+    stubs = {
+        row["id"]: row
+        for row in _rows(tx, "sources", "id", targets, columns=("id", "project_id", "kind", "metadata"))
+        if row.get("project_id") == project_id
+    }
     # A full local source with the same ID is this machine's own evidence, judged by its own indexing.
     targets = {source_id: source for source_id, source in targets.items()
                if stubs.get(source_id, {}).get("kind") == "published"}
@@ -70,7 +75,7 @@ def recheck(tx, project_id, tree, root, commit, nested=()):
         if isinstance(earlier, dict) and {k: v for k, v in earlier.items() if k != "commit"} == value:
             continue  # The same result: the commit it was first found at stays, and nothing is written.
         value["commit"] = commit
-        update_document(tx, "sources", {"metadata": {**metadata, "rechecked": value}}, "id=:id", {"id": source_id})
+        db_update_where(tx, "sources", set_fields={"metadata": {**metadata, "rechecked": value}}, where={"id": source_id})
         changed[source_id] = value
     return changed, unchecked
 
@@ -141,11 +146,16 @@ def import_commit(store, project_id, revision, *, worktree=None, dry_run=False, 
     result.update(base)
     result["rechecked"] = sorted(seen["changed"])
     result["unchecked"] = seen["unchecked"]
-    rows = _rows(store, "SELECT FROM records WHERE project_id=:project AND id IN :ids", tree["records"],
-                 {"project": project_id})
-    every = [clean_row(row) for row in store.query(
-        "SELECT id,kind,status,content,metadata FROM records WHERE project_id=:project AND kind IN :kinds",
-        {"project": project_id, "kinds": list(RECORD_KINDS)})]
+    rows = _rows(store, "records", "id", tree["records"], where=[eq("project_id", project_id)])
+    every = [
+        clean_row(row)
+        for row in db_find(
+            store,
+            "records",
+            [eq("project_id", project_id), is_in("kind", list(RECORD_KINDS))],
+            columns=("id", "kind", "status", "content", "metadata"),
+        )
+    ]
     withdrawn = [row for row in every if row["id"] not in tree["records"] and row.get("status") != "superseded"
                  and isinstance((row.get("metadata") or {}).get("publication"), dict)]
     result["withdrawn"] = [{"id": row["id"], "kind": row["kind"], "path": row["metadata"]["publication"].get("path"),

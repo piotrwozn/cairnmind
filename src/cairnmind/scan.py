@@ -21,6 +21,7 @@ from cairnmind.impact import _STATUS, _batches, _changes, _change_text, _new_tex
 from cairnmind.impact_docs import written_as_code
 from cairnmind.memory_paths import bound_metadata, git_pathspec, memory_bindings, nested_reserved
 from cairnmind.parsing import analyze_code
+from cairnmind.storage_query import db_find, eq, is_in
 from cairnmind.symbol_anchor import (
     SYMBOL_ANCHOR_KINDS,
     find_symbol_in_analysis,
@@ -115,7 +116,7 @@ def scan_diff(store, project_id: str, diff_rev: str, worktree=None) -> dict[str,
 
     roots = {
         Path(row["path"]).resolve()
-        for row in store.query("SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})
+        for row in db_find(store, "project_roots", {"project_id": project["id"]}, columns=("path",))
     } | {root}
     bindings = memory_bindings(store, project["id"])
 
@@ -220,9 +221,11 @@ def scan_diff(store, project_id: str, diff_rev: str, worktree=None) -> dict[str,
     # 2. Records without a symbol_anchor that still carry relates_to edges to symbol nodes.
     edges = [
         edge
-        for edge in store.query(
-            "SELECT from_id,to_id,status FROM edges WHERE project_id=:project AND kind='relates_to'",
-            {"project": project["id"]},
+        for edge in db_find(
+            store,
+            "edges",
+            {"project_id": project["id"], "kind": "relates_to"},
+            columns=("from_id", "to_id", "status"),
         )
         if str(edge.get("from_id", "")).startswith("record:")
         and edge["from_id"][7:] in records
@@ -232,9 +235,11 @@ def scan_diff(store, project_id: str, diff_rev: str, worktree=None) -> dict[str,
     for batch in _batches(sorted({edge["to_id"] for edge in edges})):
         nodes.update({
             row["id"]: row
-            for row in store.query(
-                "SELECT id,kind,label,metadata FROM nodes WHERE project_id=:project AND id IN :ids",
-                {"project": project["id"], "ids": batch},
+            for row in db_find(
+                store,
+                "nodes",
+                [eq("project_id", project["id"]), is_in("id", batch)],
+                columns=("id", "kind", "label", "metadata"),
             )
         })
     for edge in edges:

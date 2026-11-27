@@ -38,6 +38,25 @@ from cairnmind.path_spelling import has_alias, lies_in, path_identity, same_or_b
 from cairnmind.secret_mask import ingest_masker, masked_metadata
 from cairnmind import project_folders
 from cairnmind.sql import json_text as _json_text
+from cairnmind.storage_query import (
+    any_of,
+    asc,
+    col,
+    db_count,
+    db_delete_where,
+    db_find,
+    db_find_one,
+    db_group_counts,
+    db_insert_document,
+    db_update_where,
+    db_upsert_document,
+    eq,
+    is_in,
+    is_not_null,
+    is_null,
+    ne,
+    not_in,
+)
 from cairnmind.terminal_safe import safe_text
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -189,7 +208,7 @@ def _is_managed_mcp_config(path: Path, root: Path) -> bool:
 
 
 def _roots(store, project: dict) -> list[Path]:
-    rows = store.query("SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})
+    rows = db_find(store, "project_roots", {"project_id": project["id"]}, columns=("path",))
     return list(dict.fromkeys([Path(project["root"]).resolve(), *[Path(r["path"]).resolve() for r in rows]]))
 
 
@@ -369,15 +388,19 @@ def _chunks(text: str, uri: str = ""):
 def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: dict | None = None) -> int:
     with _ingestion_lock(store, "chunks", source_id):
         with store.transaction() as tx:
-            sources = tx.query("SELECT project_id,is_current,uri,kind,metadata FROM sources WHERE id=:source",
-                               {"source": source_id})
+            sources = db_find(
+                tx,
+                "sources",
+                {"id": source_id},
+                columns=("project_id", "is_current", "uri", "kind", "metadata"),
+            )
             if not sources or sources[0]["project_id"] != project_id:
                 raise ValueError("Chunk source does not belong to the requested project")
             if is_verdict_source(sources[0]) or is_mcp_source(sources[0]) or is_healing_audit_source(sources[0]):
                 return 0  # a person's verdict or healing audit note is never searchable text
             if sources[0].get("is_current") is False:
                 return 0  # replaced meanwhile: its chunks were deleted with it and are not written again (#186)
-            existing = tx.query("SELECT id,line_start,line_end FROM chunks WHERE source_id=:source", {"source": source_id})
+            existing = db_find(tx, "chunks", {"source_id": source_id}, columns=("id", "line_start", "line_end"))
             uri = sources[0]["uri"]
             if existing and PurePosixPath(uri.replace("\\", "/")).name in MANAGED_FILES and (
                     {(row["line_start"], row["line_end"]) for row in existing}
@@ -390,11 +413,19 @@ def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: d
             if not existing:
                 for number, (content, first, last) in enumerate(_chunks(text, uri)):
                     chunk_id = _identifier(project_id, source_id, number, first, last, content)
-                    tx.command(
-                        "INSERT INTO chunks SET id=:id,project_id=:project,source_id=:source,text=:text,"
-                        "line_start=:first,line_end=:last,metadata=:metadata,is_current=:current",
-                        {"id": chunk_id, "project": project_id, "source": source_id, "text": content,
-                         "first": first, "last": last, "metadata": metadata or {}, "current": sources[0]["is_current"]},
+                    db_insert_document(
+                        tx,
+                        "chunks",
+                        {
+                            "id": chunk_id,
+                            "project_id": project_id,
+                            "source_id": source_id,
+                            "text": content,
+                            "line_start": first,
+                            "line_end": last,
+                            "metadata": metadata or {},
+                            "is_current": sources[0]["is_current"],
+                        },
                     )
                     ids.append(chunk_id)
             else:
@@ -407,8 +438,8 @@ def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: d
 
 FILES_PER_TRANSACTION = 8
 EVENTS_PER_TRANSACTION = 200  # far below the number at which the journal stops naming single rows
-_KEPT_NODE_KINDS = "['source','decision','task','fact','constraint','question','preference','checkpoint']"
-_KEPT_EDGE_KINDS = "['supported_by','depends_on','supersedes']"
+_KEPT_NODE_KINDS = ("source", "decision", "task", "fact", "constraint", "question", "preference", "checkpoint")
+_KEPT_EDGE_KINDS = ("supported_by", "depends_on", "supersedes")
 
 
 class _TooManyEvents(Exception):
@@ -417,11 +448,25 @@ class _TooManyEvents(Exception):
 
 def _deactivate_together(store, tx, source_ids: list[str]) -> None:
     """What ``snapshot`` and ``_deactivate_source`` do to one replaced source, for several in one statement each."""
-    params = {"sources": source_ids}
-    tx.command("UPDATE sources SET is_current=false,current_key=null WHERE id IN :sources", params)
+    db_update_where(
+        tx,
+        "sources",
+        set_fields={"is_current": False, "current_key": None},
+        where=[is_in("id", source_ids)],
+    )
     store.drop_chunks(tx, source_ids)
-    tx.command(f"UPDATE nodes SET is_current=false WHERE source_id IN :sources AND kind NOT IN {_KEPT_NODE_KINDS}", params)
-    tx.command(f"UPDATE edges SET is_current=false WHERE source_id IN :sources AND kind NOT IN {_KEPT_EDGE_KINDS}", params)
+    db_update_where(
+        tx,
+        "nodes",
+        set_fields={"is_current": False},
+        where=[is_in("source_id", source_ids), not_in("kind", _KEPT_NODE_KINDS)],
+    )
+    db_update_where(
+        tx,
+        "edges",
+        set_fields={"is_current": False},
+        where=[is_in("source_id", source_ids), not_in("kind", _KEPT_EDGE_KINDS)],
+    )
     store._delete_old_vectors(tx, source_ids)
 
 
@@ -432,8 +477,11 @@ def _within_limit(tx, limit: int = EVENTS_PER_TRANSACTION) -> None:
 
 
 def _vector_tables(store) -> int:
-    return sum(1 for row in store.query("SELECT type_name FROM vector_indexes")
-               if str(row.get("type_name") or "").startswith("vector_"))
+    return sum(
+        1
+        for row in db_find(store, "vector_indexes", columns=("type_name",))
+        if str(row.get("type_name") or "").startswith("vector_")
+    )
 
 
 def _hanging_events(store, source_ids: list[str], vector_tables: int) -> dict[str, int]:
@@ -445,14 +493,19 @@ def _hanging_events(store, source_ids: list[str], vector_tables: int) -> dict[st
     weights = dict.fromkeys(source_ids, 1)
     if not source_ids:
         return weights
-    live = "(is_current=true OR is_current IS NULL)"
-    for table, condition, times in (
-            ("chunks", "true", 1),
-            ("nodes", f"{live} AND kind NOT IN {_KEPT_NODE_KINDS}", 1),
-            ("edges", f"{live} AND kind NOT IN {_KEPT_EDGE_KINDS}", 1),
-            ("embeddings", "true", 1 + vector_tables)):
-        for row in store.query(f"SELECT source_id,count(*) AS n FROM {table} WHERE source_id IN :sources AND {condition} "
-                               "GROUP BY source_id", {"sources": source_ids}):
+    live = any_of(eq("is_current", True), is_null("is_current"))
+    for table, extra_where, times in (
+            ("chunks", (), 1),
+            ("nodes", (live, not_in("kind", _KEPT_NODE_KINDS)), 1),
+            ("edges", (live, not_in("kind", _KEPT_EDGE_KINDS)), 1),
+            ("embeddings", (), 1 + vector_tables)):
+        for row in db_group_counts(
+            store,
+            table,
+            ("source_id",),
+            [is_in("source_id", source_ids), *extra_where],
+            count_alias="n",
+        ):
             if row.get("source_id") in weights:
                 weights[row["source_id"]] += int(row.get("n") or 0) * times
     return weights
@@ -524,9 +577,15 @@ def _write_files_once(store, project_id: str, batch: list[dict], limit: int = EV
     with store.transaction() as tx:
         store._require_project(tx, project_id)
         keys = {item["uri"]: _json_text([project_id, item["uri"]]) for item in batch if item.get("replaces")}
-        current = {row["current_key"]: row["id"] for row in tx.query(
-            "SELECT id,current_key FROM sources WHERE current_key IN :keys AND is_current=true",
-            {"keys": list(keys.values())})} if keys else {}
+        current = {
+            row["current_key"]: row["id"]
+            for row in db_find(
+                tx,
+                "sources",
+                [is_in("current_key", list(keys.values())), eq("is_current", True)],
+                columns=("id", "current_key"),
+            )
+        } if keys else {}
         # Replaced only when the source read before the walk is still the current one.
         replacing = {item["uri"]: item["replaces"] for item in batch
                      if item.get("replaces") and current.get(keys[item["uri"]]) == item["replaces"]}
@@ -543,11 +602,19 @@ def _write_files_once(store, project_id: str, batch: list[dict], limit: int = EV
                 continue
             for number, (content, first, last) in enumerate(item["chunks"]):
                 chunk_id = _identifier(project_id, source["id"], number, first, last, content)
-                tx.command(
-                    "INSERT INTO chunks SET id=:id,project_id=:project,source_id=:source,text=:text,"
-                    "line_start=:first,line_end=:last,metadata=:metadata,is_current=:current",
-                    {"id": chunk_id, "project": project_id, "source": source["id"], "text": content,
-                     "first": first, "last": last, "metadata": item["chunk_metadata"], "current": True},
+                db_insert_document(
+                    tx,
+                    "chunks",
+                    {
+                        "id": chunk_id,
+                        "project_id": project_id,
+                        "source_id": source["id"],
+                        "text": content,
+                        "line_start": first,
+                        "line_end": last,
+                        "metadata": item["chunk_metadata"],
+                        "is_current": True,
+                    },
                 )
                 store.enqueue_new(tx, "embed", project_id, {"chunk_id": chunk_id}, f"embed:{chunk_id}")
             if item["extract"]:
@@ -557,21 +624,30 @@ def _write_files_once(store, project_id: str, batch: list[dict], limit: int = EV
 
 
 def _source_before(store, project_id: str, uri: str):
-    rows = store.query(
-        "SELECT FROM sources WHERE project_id=:project AND uri=:uri AND is_current=true",
-        {"project": project_id, "uri": uri},
-    )
-    return rows[0] if rows else None
+    return db_find_one(store, "sources", {"project_id": project_id, "uri": uri, "is_current": True})
 
 
 def _deactivate_source(store, source_id: str) -> None:
     with store.transaction() as tx:
-        tx.command("UPDATE sources SET is_current=false,current_key=null WHERE id=:source", {"source": source_id})
+        db_update_where(
+            tx,
+            "sources",
+            set_fields={"is_current": False, "current_key": None},
+            where={"id": source_id},
+        )
         store.drop_chunks(tx, [source_id])
-        tx.command(f"UPDATE nodes SET is_current=false WHERE source_id=:source AND kind NOT IN {_KEPT_NODE_KINDS}",
-                   {"source": source_id})
-        tx.command(f"UPDATE edges SET is_current=false WHERE source_id=:source AND kind NOT IN {_KEPT_EDGE_KINDS}",
-                   {"source": source_id})
+        db_update_where(
+            tx,
+            "nodes",
+            set_fields={"is_current": False},
+            where=[eq("source_id", source_id), not_in("kind", _KEPT_NODE_KINDS)],
+        )
+        db_update_where(
+            tx,
+            "edges",
+            set_fields={"is_current": False},
+            where=[eq("source_id", source_id), not_in("kind", _KEPT_EDGE_KINDS)],
+        )
         store._delete_old_vectors(tx, [source_id])
 
 
@@ -589,16 +665,39 @@ def index_pending_sources(store, limit: int = 100) -> dict:
         raise ValueError("Pending source batch limit must be between 1 and 1000")
     known_kinds = ("manual", "checkpoint", "verification", "test_result", "plan")
     excluded_kinds = ("code", "file", "transcript", "transcript_unknown", "agent_answer", "generated_answer")
-    rows = store.query(
-        "SELECT FROM sources WHERE is_current=true AND project_id IS NOT NULL "
-        "AND kind NOT IN :excluded AND (kind IN :known OR metadata.path IS NULL) "
+    removed_projects = sorted({
+        row["id"]
+        for row in db_find(store, "projects", [is_not_null("removed_at")], columns=("id",))
+        if row.get("id") is not None
+    })
+    source_where = [
+        eq("is_current", True),
+        is_not_null("project_id"),
+        not_in("kind", excluded_kinds),
+        any_of(is_in("kind", known_kinds), is_null("metadata.path")),
         # Third-party MCP events (agent_memory.is_mcp_source) are never chunked: not even loaded here.
-        "AND (kind <> 'agent_transcript' OR metadata.origin_evidence IS NULL "
-        "OR metadata.origin_evidence <> 'degraded') "
-        "AND id NOT IN (SELECT source_id FROM chunks) "
-        "AND project_id NOT IN (SELECT id FROM projects WHERE removed_at IS NOT NULL) ORDER BY created_at,id",  # #327
-        {"excluded": list(excluded_kinds), "known": list(known_kinds)},
-    )
+        any_of(
+            ne("kind", "agent_transcript"),
+            is_null("metadata.origin_evidence"),
+            ne("metadata.origin_evidence", "degraded"),
+        ),
+    ]
+    if removed_projects:
+        source_where.append(not_in("project_id", removed_projects))
+    candidates = db_find(store, "sources", source_where, order_by=(asc("created_at"), asc("id")))  # #327
+    chunked: set[str] = set()
+    candidate_ids = [row["id"] for row in candidates if row.get("id") is not None]
+    for offset in range(0, len(candidate_ids), 400):
+        for chunk_row in db_find(
+            store,
+            "chunks",
+            [is_in("source_id", candidate_ids[offset:offset + 400])],
+            columns=("source_id",),
+            distinct=True,
+        ):
+            if chunk_row.get("source_id") is not None:
+                chunked.add(chunk_row["source_id"])
+    rows = [row for row in candidates if row.get("id") not in chunked]
     counts = {"sources": 0, "chunks": 0, "errors": []}
     for row in rows:
         if is_verdict_source(row) or is_mcp_source(row) or is_healing_audit_source(row):
@@ -803,10 +902,11 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
     files: dict[str, dict] = {}
     # Read before the walk: a remembered file is reused only while the database still holds
     # the very source that was remembered for it. Sources written below are all in `seen`.
-    every = store.query(
-        "SELECT id,uri,kind,sha256,metadata.path AS path,metadata.root AS root FROM sources "
-        "WHERE project_id=:project AND is_current=true",
-        {"project": project_id},
+    every = db_find(
+        store,
+        "sources",
+        {"project_id": project_id, "is_current": True},
+        columns=("id", "uri", "kind", "sha256", col("metadata.path", "path"), col("metadata.root", "root")),
     )
     rows = [row for row in every if row.get("kind") in ("code", "document")]
     current = {row["uri"]: row["id"] for row in rows}
@@ -950,9 +1050,11 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                 ) else None
                 if not analysis:
                     analysis = analyze_code(path, content)
-                    store.command(
-                        "UPDATE sources SET metadata.analysis=:analysis,metadata.analysis_version=:version WHERE id=:source",
-                        {"analysis": analysis, "version": parser_identity(), "source": source["id"]},
+                    db_update_where(
+                        store,
+                        "sources",
+                        set_fields={"metadata.analysis": analysis, "metadata.analysis_version": parser_identity()},
+                        where={"id": source["id"]},
                     )
                 counts["unchanged"] += 1
             else:
@@ -1053,9 +1155,12 @@ def _stored_analyses(store, source_ids: list[str]) -> dict[str, dict | None]:
     """The analysis stored with each source, or None where it is of another parser version or missing."""
     found: dict[str, dict | None] = {identifier: None for identifier in source_ids}
     for offset in range(0, len(source_ids), 500):
-        for row in store.query(
-                "SELECT id,metadata.analysis AS analysis,metadata.analysis_version AS version FROM sources "
-                "WHERE id IN :ids", {"ids": source_ids[offset:offset + 500]}):
+        for row in db_find(
+            store,
+            "sources",
+            [is_in("id", source_ids[offset:offset + 500])],
+            columns=("id", col("metadata.analysis", "analysis"), col("metadata.analysis_version", "version")),
+        ):
             version = row.get("version")
             if ((version == parser_identity() or (isinstance(version, str) and version.startswith("scip-v1:")))
                     and isinstance(row.get("analysis"), dict)):
@@ -1065,9 +1170,9 @@ def _stored_analyses(store, source_ids: list[str]) -> dict[str, dict | None]:
 
 def _graph_markers(store, project_id: str) -> dict:
     """What the graph markers of the project say, for a run that left the graph as it was."""
-    markers = store.query("SELECT graph_nodes,graph_edges FROM projects WHERE id=:project", {"project": project_id})
-    return {"nodes": int((markers[0].get("graph_nodes") if markers else 0) or 0),
-            "edges": int((markers[0].get("graph_edges") if markers else 0) or 0), "graph_unchanged": True}
+    marker = db_find_one(store, "projects", {"id": project_id}, columns=("graph_nodes", "graph_edges"))
+    return {"nodes": int((marker.get("graph_nodes") if marker else 0) or 0),
+            "edges": int((marker.get("graph_edges") if marker else 0) or 0), "graph_unchanged": True}
 
 
 def _resolve_import(path: Path, root: Path, module: str, indexed: dict[Path, dict]) -> Path | None:
@@ -1109,20 +1214,23 @@ def _graph_as_remembered(tx, project_id: str, remembered: dict | None) -> bool:
     """Whether the graph in the database is still the one this process wrote last."""
     if not remembered:
         return False
-    markers = tx.query("SELECT graph_fingerprint,graph_nodes,graph_edges FROM projects WHERE id=:project",
-                       {"project": project_id})
-    if not markers or markers[0].get("graph_fingerprint") != remembered["fingerprint"]:
+    marker = db_find_one(
+        tx,
+        "projects",
+        {"id": project_id},
+        columns=("graph_fingerprint", "graph_nodes", "graph_edges"),
+    )
+    if not marker or marker.get("graph_fingerprint") != remembered["fingerprint"]:
         return False
-    if (int(markers[0].get("graph_nodes") or 0), int(markers[0].get("graph_edges") or 0)) != remembered["counts"]:
+    if (int(marker.get("graph_nodes") or 0), int(marker.get("graph_edges") or 0)) != remembered["counts"]:
         return False
-    stored = tx.query("SELECT count(*) AS total FROM edges WHERE project_id=:project AND kind IN :kinds",
-                      {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)})
-    if not stored or int(stored[0].get("total") or 0) != remembered["counts"][1]:
+    if db_count(tx, "edges", [eq("project_id", project_id), is_in("kind", GRAPH_EDGE_KINDS)]) != remembered["counts"][1]:
         return False
     # The nodes that are not evidence nodes: counted, not read one by one, to know that none was added or taken (#426).
-    stored = tx.query("SELECT count(*) AS total FROM nodes WHERE project_id=:project AND kind IN :kinds",
-                      {"project": project_id, "kinds": list(GRAPH_NODE_KINDS)})
-    return bool(stored) and int(stored[0].get("total") or 0) == remembered["code_nodes"]
+    return (
+        db_count(tx, "nodes", [eq("project_id", project_id), is_in("kind", GRAPH_NODE_KINDS)])
+        == remembered["code_nodes"]
+    )
 
 
 def _code_nodes(digests: dict) -> int:
@@ -1355,19 +1463,27 @@ def _stored_graph_is(store, project_id: str, nodes: dict[str, dict], edges: dict
     reached through steers import resolution), so a computed graph is remembered as the
     stored one only after it was compared with what is stored.
     """
-    stored_edges = store.query(
-        "SELECT id,from_id,to_id,kind,source_id,status,is_current FROM edges "
-        "WHERE project_id=:project AND kind IN :kinds",
-        {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)})
+    stored_edges = db_find(
+        store,
+        "edges",
+        [eq("project_id", project_id), is_in("kind", GRAPH_EDGE_KINDS)],
+        columns=("id", "from_id", "to_id", "kind", "source_id", "status", "is_current"),
+    )
     # Every computed row belongs to a current source or to none, so a full replace writes it as current.
     if len(stored_edges) != len(edges) or any(
             row["id"] not in edges or row.get("is_current") is not True
             or any(row.get(key) != edges[row["id"]][key] for key in ("from_id", "to_id", "kind", "source_id", "status"))
             for row in stored_edges):
         return False
-    stored_nodes = {row["id"]: row for row in store.query(
-        "SELECT id,kind,label,source_id,metadata,is_current FROM nodes WHERE project_id=:project AND kind IN :kinds",
-        {"project": project_id, "kinds": [*GRAPH_NODE_KINDS, "source"]})}
+    stored_nodes = {
+        row["id"]: row
+        for row in db_find(
+            store,
+            "nodes",
+            [eq("project_id", project_id), is_in("kind", (*GRAPH_NODE_KINDS, "source"))],
+            columns=("id", "kind", "label", "source_id", "metadata", "is_current"),
+        )
+    }
     return all(
         identifier in stored_nodes and stored_nodes[identifier].get("is_current") is True
         and stored_nodes[identifier].get("kind") == item["kind"] and stored_nodes[identifier].get("label") == item["label"]
@@ -1390,17 +1506,19 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         + (f":{indexed[path]['analysis']['scip_version']}" if indexed[path]["analysis"].get("scip_version") else "")
         for path in sorted(indexed)
     ])
-    markers = store.query(
-        "SELECT graph_fingerprint,graph_nodes,graph_edges FROM projects WHERE id=:project",
-        {"project": project_id},
+    marker = db_find_one(
+        store,
+        "projects",
+        {"id": project_id},
+        columns=("graph_fingerprint", "graph_nodes", "graph_edges"),
     )
-    unchanged = bool(markers) and markers[0].get("graph_fingerprint") == fingerprint
+    unchanged = bool(marker) and marker.get("graph_fingerprint") == fingerprint
     ours = unchanged and bool(remembered) and remembered["fingerprint"] == fingerprint  # the stored graph is this process's
     if unchanged and (state is None or (ours and remembered.get("links", ()) == links)):
         if state is not None:
             state.update(remembered)
-        return {"nodes": int(markers[0].get("graph_nodes") or 0),
-                "edges": int(markers[0].get("graph_edges") or 0), "graph_unchanged": True}
+        return {"nodes": int(marker.get("graph_nodes") or 0),
+                "edges": int(marker.get("graph_edges") or 0), "graph_unchanged": True}
     # The last graph of this process is the start only for the very same files, and when the stored fingerprint
     # is not already ours (a graph that another writer made is compared row by row below).
     last = remembered or {}
@@ -1417,14 +1535,14 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         # The fingerprint said that the stored graph follows from these sources, and this
         # process has now seen that it does, row for row. Otherwise it is replaced in full below.
         state.update(written)
-        return {"nodes": int(markers[0].get("graph_nodes") or 0),
-                "edges": int(markers[0].get("graph_edges") or 0), "graph_unchanged": True}
+        return {"nodes": int(marker.get("graph_nodes") or 0),
+                "edges": int(marker.get("graph_edges") or 0), "graph_unchanged": True}
 
     # One transaction for a graph that fits in one; else bounded ones, the fingerprint cleared first (graph_transactions.py).
     batches = GraphTransactions(store, project_id)
     try:
         tx = batches.tx
-        if not tx.query("SELECT id FROM projects WHERE id=:project", {"project": project_id}):
+        if not db_find_one(tx, "projects", {"id": project_id}, columns=("id",)):
             raise ValueError("Project no longer exists; graph was not rebuilt")
         as_remembered = _graph_as_remembered(tx, project_id, remembered)  # reads the fingerprint: before it is cleared
         if reuse and not as_remembered:
@@ -1433,7 +1551,7 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             parts, nodes, edges = _graph_parts(project_id, indexed, {})
             digests, edge_ids = _union(parts)
             written.update(parts=parts, counts=(len(digests), len(edge_ids)), code_nodes=_code_nodes(digests))
-        tx.command("UPDATE projects SET graph_fingerprint=null WHERE id=:project", {"project": project_id})
+        db_update_where(tx, "projects", set_fields={"graph_fingerprint": None}, where={"id": project_id})
         if as_remembered:
             before, kept = _union(remembered["parts"])
             removed = sorted(kept - edge_ids)
@@ -1448,9 +1566,12 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             # full replace gives it is that edge, and it stays. Deleting every edge and writing the same ids again
             # left the engine's unique index holding entries of the deleted ones from about 40,000 edges on, and
             # the write failed (#385). Only the stored edges that are not in the computed graph are deleted.
-            stored = tx.query("SELECT id,from_id,to_id,kind,source_id,status,is_current FROM edges "
-                              "WHERE project_id=:project AND kind IN :kinds",
-                              {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)})
+            stored = db_find(
+                tx,
+                "edges",
+                [eq("project_id", project_id), is_in("kind", GRAPH_EDGE_KINDS)],
+                columns=("id", "from_id", "to_id", "kind", "source_id", "status", "is_current"),
+            )
             kept = {row["id"] for row in stored
                     if row["id"] in edges and row.get("is_current") is True
                     and all(row.get(key) == edges[row["id"]][key] for key in ("from_id", "to_id", "kind", "source_id", "status"))}
@@ -1459,18 +1580,16 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         # A whole transaction's rows in one request: with the project in the condition the engine scans the project's
         # index once per request, so groups of 500 made the scans, and the removal's cost, 80 times more (#385). By id
         # alone it finds each edge in the index of its id (25 ms for 1,000 edges of 110,000, not 230, #426); the id
-        # holds the project, and the count below fails the write when a group is not deleted in full. The journal
-        # takes the project from the parameter (Journal.command), so it reads none of the rows.
+        # holds the project, and the count below fails the write when a group is not deleted in full.
         group = graph_transactions.ROWS_PER_TRANSACTION
         for offset in range(0, len(removed), group):
             part = removed[offset:offset + group]
-            deleted = batches.tx.command("DELETE FROM edges WHERE id IN :ids", {"project": project_id, "ids": part})
+            deleted = store.backend.delete_graph_edges(batches.tx, project_id, part)
             count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
             if type(count) is int and count < len(part):
                 # The engine's index of ids missed rows (569 of 20,000 after two commits of the same write, the way
                 # it misses vertices committed a moment ago, graph_transactions.py): the project's index finds the rest.
-                rest = batches.tx.command("DELETE FROM edges WHERE project_id=:project AND kind IN :kinds AND id IN :ids",
-                                          {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS), "ids": part})
+                rest = store.backend.delete_graph_edges(batches.tx, project_id, part, kinds=GRAPH_EDGE_KINDS)
                 more = rest[0].get("count") if isinstance(rest, list) and rest and isinstance(rest[0], dict) else None
                 count = count + more if type(more) is int else None
             if type(count) is not int or count != len(part):
@@ -1498,9 +1617,11 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         if hasattr(tx, "known"):
             tx.known = None
         if doomed is None:
-            previous_nodes = tx.query(
-                "SELECT id FROM nodes WHERE project_id=:project AND kind IN :kinds",
-                {"project": project_id, "kinds": list(GRAPH_NODE_KINDS)},
+            previous_nodes = db_find(
+                tx,
+                "nodes",
+                [eq("project_id", project_id), is_in("kind", GRAPH_NODE_KINDS)],
+                columns=("id",),
             )
             doomed = [row["id"] for row in previous_nodes if row["id"] not in digests]
         # Knowledge-record relationships referencing a removed code node must not silently
@@ -1513,9 +1634,11 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         written.update(kept=frozenset(kept_nodes), code_nodes=_code_nodes(digests) + len(kept_nodes))
         # This marker commits with the last of the vertex/edge replacement, and until it does the graph is not built.
         # An interrupted/failed graph write can never claim completion.
-        batches.tx.command(
-            "UPDATE projects SET graph_fingerprint=:fingerprint,graph_nodes=:nodes,graph_edges=:edges WHERE id=:project",
-            {"fingerprint": fingerprint, "nodes": len(digests), "edges": len(edge_ids), "project": project_id},
+        db_update_where(
+            batches.tx,
+            "projects",
+            set_fields={"graph_fingerprint": fingerprint, "graph_nodes": len(digests), "graph_edges": len(edge_ids)},
+            where={"id": project_id},
         )
         batches.commit()
     except BaseException as exc:
@@ -1527,9 +1650,9 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         # endpoint, and the transaction was rolled back. The graph is written once more after a wait (the fingerprint
         # is cleared if an earlier transaction committed, so it is the whole write); a second refusal fails by name.
         if retried:
-            row = store.query("SELECT graph_fingerprint FROM projects WHERE id=:project", {"project": project_id})
+            row = db_find_one(store, "projects", {"id": project_id}, columns=("graph_fingerprint",))
             # Only a write of several transactions has committed anything: one that fits in one leaves the previous graph.
-            left = ("the code graph is marked not built" if not row or code_graph_pending(row[0]) else
+            left = ("the code graph is marked not built" if not row or code_graph_pending(row) else
                     "the previous code graph is kept, though it no longer matches the files")
             raise RuntimeError(f"The database's index of vertex ids still refused a graph vertex whose id was deleted "
                                f"shortly before, {graph_transactions.DUPLICATE_WAIT:g} s after the first refusal ({str(exc)[:300]}); "
@@ -1543,12 +1666,10 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
 
 
 def _save_cursor(store, path: Path, project_id: str | None, client: str, offset: int) -> None:
-    from .arcade_backend import ArcadeBackend
-    backend = getattr(store, "backend", None) or ArcadeBackend(store)
     with store.transaction() as tx:
-        if project_id and not tx.query("SELECT id FROM projects WHERE id=:project", {"project": project_id}):
+        if project_id and not db_find_one(tx, "projects", {"id": project_id}, columns=("id",)):
             raise ValueError("Project no longer exists; history cursor was not recreated")
-        backend.upsert_document(
+        db_upsert_document(
             tx,
             "import_cursors",
             {"id": _identifier(path), "path": str(path), "project_id": project_id, "client": client,
@@ -1741,12 +1862,20 @@ def _reparse_history_sources_locked(store, path: Path, project_id: str | None, c
                                     limit: int = 1000, *, deadline: float | None = None) -> dict:
     _validate_reparse_options(client, limit, deadline)
     counts = {"repaired": 0, "unchanged": 0, "errors": []}
-    sources = store.query(
-        "SELECT FROM sources WHERE is_current=true AND kind='transcript_unknown' "
-        "AND metadata.import_path=:path AND metadata.schema_warning=:warning "
-        + ("AND project_id=:project " if project_id else "")
-        + "ORDER BY metadata.byte_offset,id LIMIT :limit",
-        {"path": str(path), "project": project_id, "warning": UNKNOWN_TRANSCRIPT_WARNING, "limit": limit},
+    where = [
+        eq("is_current", True),
+        eq("kind", "transcript_unknown"),
+        eq("metadata.import_path", str(path)),
+        eq("metadata.schema_warning", UNKNOWN_TRANSCRIPT_WARNING),
+    ]
+    if project_id:
+        where.append(eq("project_id", project_id))
+    sources = db_find(
+        store,
+        "sources",
+        where,
+        order_by=(asc("metadata.byte_offset"), asc("id")),
+        limit=limit,
     )
     for source in sources:
         if deadline is not None and time.monotonic() >= deadline:
@@ -1796,14 +1925,17 @@ def _reparse_history_sources_locked(store, path: Path, project_id: str | None, c
         }
         with store.transaction() as tx:
             store._require_project(tx, source["project_id"])
-            current = tx.query("SELECT FROM sources WHERE id=:id AND project_id=:project AND is_current=true",
-                               {"id": source["id"], "project": source["project_id"]})
+            current = db_find(
+                tx,
+                "sources",
+                {"id": source["id"], "project_id": source["project_id"], "is_current": True},
+            )
             if (not current or current[0].get("kind") != "transcript_unknown"
                     or current[0].get("sha256") != digest or current[0].get("content") != content
                     or _metadata(current[0].get("metadata")) != metadata):
                 counts["errors"].append(f"Transcript source {source['id']}: source changed during reparse")
                 continue
-            chunks = tx.query("SELECT FROM chunks WHERE source_id=:source", {"source": source["id"]})
+            chunks = db_find(tx, "chunks", {"source_id": source["id"]})
             if (set(expected) != {chunk["id"] for chunk in chunks}
                     or any(chunk.get("project_id") != source["project_id"]
                            or not chunk.get("is_current")
@@ -1816,11 +1948,19 @@ def _reparse_history_sources_locked(store, path: Path, project_id: str | None, c
                        "transcript_reparse": {"previous_kind": "transcript_unknown",
                                               "previous_schema_warning": metadata["schema_warning"],
                                               "previous_parser_revision": metadata.get("transcript_parser_revision")}}
-            tx.command("UPDATE sources SET kind='transcript',metadata=:metadata WHERE id=:source",
-                       {"metadata": updated, "source": source["id"]})
+            db_update_where(
+                tx,
+                "sources",
+                set_fields={"kind": "transcript", "metadata": updated},
+                where={"id": source["id"]},
+            )
             for chunk in chunks:
-                tx.command("UPDATE chunks SET metadata=:metadata WHERE id=:id",
-                           {"metadata": {**_metadata(chunk.get("metadata")), "role": "metadata"}, "id": chunk["id"]})
+                db_update_where(
+                    tx,
+                    "chunks",
+                    set_fields={"metadata": {**_metadata(chunk.get("metadata")), "role": "metadata"}},
+                    where={"id": chunk["id"]},
+                )
         counts["repaired"] += 1
         counts["unchanged"] -= 1
     return counts
@@ -1869,8 +2009,7 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
     reparsed = _reparse_history_sources_locked(store, path, project_id, client)
     counts["errors"].extend(reparsed["errors"])
     counts["repaired"] = reparsed["repaired"]
-    cursors = store.query("SELECT FROM import_cursors WHERE path=:path", {"path": str(path)})
-    row = cursors[0] if cursors else None
+    row = db_find_one(store, "import_cursors", {"path": str(path)})
     offset = int(row["offset"]) if row else 0
     if row and row["fingerprint"] != _fingerprint(path, offset):
         offset = 0
@@ -1930,10 +2069,8 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
                 counts["unknown"] += 1
                 reason = reason or UNKNOWN_TRANSCRIPT_WARNING
             if not resolved:
-                from .arcade_backend import ArcadeBackend
-                backend = getattr(store, "backend", None) or ArcadeBackend(store)
                 with store.transaction() as inbox_tx:
-                    backend.upsert_document(
+                    db_upsert_document(
                         inbox_tx,
                         "ingestion_inbox",
                         {"id": _identifier(path, event_offset, text), "path": str(path), "source_offset": event_offset,
@@ -1972,9 +2109,10 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
                 # Assignment moves this exact event into the project's archive.
                 # Only remove its inbox copy after source/chunks/jobs are durable;
                 # a crash before this point safely replays without losing bytes.
-                store.command(
-                    "DELETE FROM ingestion_inbox WHERE path=:path AND source_offset=:offset AND sha256=:sha256",
-                    {"path": str(path), "offset": event_offset, "sha256": event_hash},
+                db_delete_where(
+                    store,
+                    "ingestion_inbox",
+                    {"path": str(path), "source_offset": event_offset, "sha256": event_hash},
                 )
             if reason:
                 counts["errors"].append(f"{path}:{event_offset}: {reason}")
@@ -1982,7 +2120,7 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
             _save_cursor(store, path, project_id, detected, end)
             offset = end
     # Register even empty or currently partial files so polling notices appends.
-    if not store.query("SELECT path FROM import_cursors WHERE path=:path", {"path": str(path)}):
+    if not db_find_one(store, "import_cursors", {"path": str(path)}, columns=("path",)):
         _save_cursor(store, path, project_id, client, offset)
     return counts
 
@@ -2005,7 +2143,7 @@ def _at_end(path: Path, cursor: dict) -> bool:
 
 def poll_imports(store) -> dict:
     from .project_removal import removed_ids
-    rows = store.query("SELECT path,project_id,client,`offset`,fingerprint FROM import_cursors")
+    rows = db_find(store, "import_cursors", columns=("path", "project_id", "client", "offset", "fingerprint"))
     result = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "errors": []}
     removed = removed_ids(store)  # a removed project's conversations are not archived until it is back (#327)
     try:  # local files only; when the secrets cannot be read no file is skipped, so each import refuses and says so
@@ -2135,9 +2273,11 @@ def current_source(store, source_id: str) -> dict:
         if not any(root.is_dir() for root in allowed_roots):
             # As in index_project: an unavailable root is not a deletion of its files.
             return {**source, "freshness_warning": "Project root is unavailable; the current file cannot be checked"}
-        active = store.query(
-            "SELECT id FROM sources WHERE project_id=:project AND uri=:uri AND is_current=true",
-            {"project": project["id"], "uri": source["uri"]},
+        active = db_find(
+            store,
+            "sources",
+            {"project_id": project["id"], "uri": source["uri"], "is_current": True},
+            columns=("id",),
         )
         for row in active:
             _deactivate_source(store, row["id"])

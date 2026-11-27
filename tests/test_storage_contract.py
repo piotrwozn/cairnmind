@@ -364,5 +364,138 @@ def test_contract_readonly_blocks_writes(contract_store: Store, tmp_path: Path):
         assert len(ro.list_projects()) >= 1
         with pytest.raises(RuntimeError):
             ro.command("DELETE FROM projects")
+        with pytest.raises(RuntimeError):
+            ro.delete_where("projects", {"id": "none"})
     finally:
         ro.backend.close()
+
+
+def test_contract_declarative_dal_find_count_group_update_delete(contract_store: Store, tmp_path: Path):
+    """Verify declarative find/find_one/count/group_counts/update_where/delete_where without raw SQL."""
+    from cairnmind.storage_query import any_of, desc, eq, is_in, ne
+
+    project, _ = _seed_project(contract_store, tmp_path, "dal_proj")
+    s1 = contract_store.snapshot(project["id"], "note://dal-1", "alpha", "note", {"origin": "unit", "tag": "a"})
+    s2 = contract_store.snapshot(project["id"], "note://dal-2", "beta", "note", {"origin": "unit", "tag": "b"})
+
+    rows = contract_store.find(
+        "sources",
+        [eq("project_id", project["id"]), is_in("id", [s1["id"], s2["id"]])],
+        columns=("id", ("metadata.tag", "tag")),
+        order_by=(desc("uri"),),
+    )
+    assert [r["id"] for r in rows] == [s2["id"], s1["id"]]
+    assert [r["tag"] for r in rows] == ["b", "a"]
+
+    assert contract_store.count("sources", [eq("project_id", project["id"]), ne("kind", "missing")]) == 2
+    grouped = contract_store.group_counts("sources", ("kind",), {"project_id": project["id"]})
+    assert grouped == [{"kind": "note", "total": 2}]
+
+    one = contract_store.find_one("sources", any_of(eq("id", "missing"), eq("id", s1["id"])), required=True)
+    assert one is not None and one["id"] == s1["id"]
+    with pytest.raises(ValueError, match="Source does not exist"):
+        contract_store.find_one("sources", {"id": "does-not-exist"}, required=True)
+
+    # Nested JSON update + field removal
+    contract_store.update_where(
+        "sources",
+        set_fields={"metadata.tag": "updated"},
+        where={"id": s1["id"]},
+    )
+    refreshed = contract_store.find_one("sources", {"id": s1["id"]})
+    assert refreshed is not None and refreshed["metadata"]["tag"] == "updated"
+
+    # Structured delete
+    contract_store.delete_where("sources", {"id": s2["id"]})
+    assert contract_store.count("sources", {"project_id": project["id"]}) == 1
+
+
+def test_sqlite_large_in_clause_temp_table_scaling(tmp_path: Path):
+    """SQLiteBackend must never hit SQLITE_MAX_VARIABLE_NUMBER even with 40,000+ eligible IDs."""
+    from cairnmind.storage_query import is_in, split_sql_statements
+
+    # Verify quote-aware SQL statement splitter ignores semicolons inside strings & comments
+    stmts = split_sql_statements("INSERT INTO a VALUES ('x; y'); -- comment; here\nSELECT 1; /* block; */ UPDATE b SET c=\"p;q\";")
+    assert len(stmts) == 3
+    assert "'x; y'" in stmts[0]
+    assert '"p;q"' in stmts[2]
+
+    data_dir = tmp_path / "sqlite_scale"
+    settings = Settings.load(data_dir, create=True)
+    settings.storage_backend = "sqlite"
+    settings.save()
+    store = Store(data_dir, settings=settings, backend="sqlite")
+    try:
+        project, root = _seed_project(store, tmp_path, "scale_proj")
+        src = store.snapshot(
+            project["id"],
+            f"file://{root / 'big.py'}",
+            "def needle_scaling_fn():\n    return 99\n",
+            "code",
+            {"root": str(root), "relative_path": "big.py", "path": str(root / "big.py")},
+        )
+        cid = str(uuid4())
+        with store.transaction() as tx:
+            store.backend.insert_document(
+                tx,
+                "chunks",
+                {
+                    "id": cid,
+                    "project_id": project["id"],
+                    "source_id": src["id"],
+                    "text": "def needle_scaling_fn(): return 99",
+                    "line_start": 1,
+                    "line_end": 2,
+                    "is_current": True,
+                    "metadata": {},
+                },
+            )
+            store.backend.upsert_vertex(
+                tx,
+                {
+                    "id": f"sym:{project['id']}:needle",
+                    "project_id": project["id"],
+                    "kind": "symbol",
+                    "label": "needle_scaling_fn",
+                    "source_id": src["id"],
+                    "is_current": True,
+                    "metadata": {"path": "big.py", "line_start": 1, "kind": "function"},
+                },
+            )
+        rec = store.remember(
+            project["id"],
+            {"kind": "fact", "key": "scale.needle", "content": "needle_scaling_fn handles 40k IDs"},
+            [src["id"]],
+        )
+        idx = store.backend.ensure_vector_index(project["id"], "test@v1", 4, "test")
+        with store.transaction() as tx:
+            store.backend.upsert_embedding(
+                tx,
+                {
+                    "id": f"emb:{cid}",
+                    "project_id": project["id"],
+                    "source_id": src["id"],
+                    "chunk_id": cid,
+                    "namespace": "test@v1",
+                    "dimension": 4,
+                    "vector": [1.0, 0.0, 0.0, 0.0],
+                    "is_current": True,
+                },
+                idx,
+            )
+
+        # 40,001 IDs exceeds SQLite's 32,766 SQLITE_MAX_VARIABLE_NUMBER limit!
+        huge_sources = [src["id"], *(f"dummy-src-{i}" for i in range(40_000))]
+        huge_records = [rec["id"], *(f"dummy-rec-{i}" for i in range(40_000))]
+        huge_nodes = [f"sym:{project['id']}:needle", *(f"dummy-node-{i}" for i in range(40_000))]
+
+        assert len(store.backend.search_chunks_fts(project["id"], ["needle_scaling_fn"], huge_sources, 5)) == 1
+        assert len(store.backend.search_records_fts(project["id"], ["needle_scaling_fn"], huge_records, 5)) == 1
+        present, neighbors, warn = store.backend.search_vectors(project["id"], "test@v1", [1.0, 0.0, 0.0, 0.0], huge_sources, 5)
+        assert present is True and warn is None and neighbors[0]["chunk_id"] == cid
+        assert len(store.backend.search_graph_seeds(project["id"], "", huge_sources, ["needle"], huge_nodes, 5)) == 1
+        assert len(store.backend.traverse_graph(project["id"], [huge_nodes[0]], huge_nodes, [], max_depth=2, limit=5)) == 1
+        assert len(store.backend.search_definition_nodes(project["id"], huge_sources, mode="code", names=["needle_scaling_fn"])) == 1
+        assert len(store.find("sources", is_in("id", huge_sources))) == 1
+    finally:
+        store.close()

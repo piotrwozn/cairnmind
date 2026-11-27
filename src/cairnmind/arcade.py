@@ -222,6 +222,54 @@ class ArcadeClient:
         return self._result(self._request("POST", f"/api/v1/command/{quote(self.database)}",
             json={"language": "sqlscript", "command": sql, "params": params or {}, "limit": -1}))
 
+    def list_collections(self) -> set[str]:
+        return {str(row.get("name")) for row in self.query("SELECT name FROM schema:types") if row.get("name")}
+
+    def server_time_ms(self) -> int:
+        rows = self.query("SELECT sysdate().asLong() AS milliseconds")
+        milliseconds = rows[0]["milliseconds"] if rows else None
+        if not isinstance(milliseconds, int) or isinstance(milliseconds, bool):
+            raise ValueError("The database server gave no time; the writer row was not changed.")
+        return milliseconds
+
+    def iter_backup_pages(
+        self,
+        collection: str,
+        *,
+        page_rows: int = 1000,
+        page_bytes: int = 2 * 1024 * 1024,
+    ) -> Iterator[str]:
+        """Every row of ``collection`` as canonical JSON text, paged by ArcadeDB ``@rid``."""
+        import gc
+        from .sql import clean_row, json_text, quote_name
+        limit, last = page_rows, None
+        while True:
+            rows = self.query(
+                f"SELECT FROM {quote_name(collection)}"
+                + (" WHERE @rid > :rid" if last else "")
+                + f" ORDER BY @rid LIMIT {limit}",
+                {"rid": last} if last else {},
+            )
+            size = 0
+            for row in rows:
+                text = json_text(clean_row(row))
+                size += len(text)
+                yield text
+            if len(rows) < limit:
+                return
+            last = rows[-1]["@rid"]
+            if not isinstance(last, str) or not last.startswith("#"):
+                raise ValueError(f"ArcadeDB returned a row of {collection} without a record id")
+            del rows
+            gc.collect()
+            limit = (
+                max(1, limit // 2)
+                if size > page_bytes
+                else min(page_rows, limit * 2)
+                if size < page_bytes // 4
+                else limit
+            )
+
     def server_info(self) -> dict:
         import sys
         # Windows loopback TCP SYN retries take ~2.0s before WSAECONNREFUSED arrives.

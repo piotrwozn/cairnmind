@@ -14,8 +14,18 @@ from uuid import uuid4
 
 from .confirmation import PLAN_CONTEXT_KEPT, ConfirmationRefused, VerdictKept, kept_step_refusal, kept_verdict
 from .store import ORIGIN_METADATA, outcome_changed
-from .sql import (clean_row, insert_document, json_text, one_row, unregistered_root, update_document,
-                  utc_now)
+from .sql import clean_row, json_text, unregistered_root, utc_now
+from .storage_query import (
+    asc,
+    db_delete_where,
+    db_find,
+    db_find_one,
+    db_insert_document,
+    db_update_where,
+    eq,
+    is_in,
+    ne,
+)
 
 
 _EVIDENCE_FIELDS = {
@@ -35,7 +45,8 @@ def _version(value, label):
         raise ValueError(f"{label} must be a positive integer")
 
 
-_ACTIVE_TASKS = "SELECT FROM records WHERE project_id=:project AND kind='task' AND status!='superseded'"
+def _active_tasks_where(project_id):
+    return [eq("project_id", project_id), eq("kind", "task"), ne("status", "superseded")]
 
 
 def _legacy_order(task):
@@ -44,7 +55,7 @@ def _legacy_order(task):
 
 def _legacy_tasks(tx, project_id, group):
     """The active tasks of an old `metadata.plan_id` group, as adopt_legacy adopts them."""
-    return [clean_row(row) for row in tx.query(_ACTIVE_TASKS, {"project": project_id})
+    return [clean_row(row) for row in db_find(tx, "records", _active_tasks_where(project_id))
             if row["metadata"].get("plan_id") == group]
 
 
@@ -56,7 +67,7 @@ def legacy_groups(store, project_id) -> dict:
     found = {}
     with store.transaction() as tx:
         store._require_project(tx, project_id)
-        for row in tx.query(_ACTIVE_TASKS, {"project": project_id}):
+        for row in db_find(tx, "records", _active_tasks_where(project_id)):
             task = clean_row(row)
             group = task["metadata"].get("plan_id")
             if isinstance(group, str) and group.strip():
@@ -74,9 +85,8 @@ def legacy_groups(store, project_id) -> dict:
 
 
 def _tasks(tx, project_id, plan):
-    rows = [clean_row(row) for row in tx.query(
-        "SELECT FROM records WHERE project_id=:project AND id IN :ids",
-        {"project": project_id, "ids": plan["step_ids"]},
+    rows = [clean_row(row) for row in db_find(
+        tx, "records", [eq("project_id", project_id), is_in("id", plan["step_ids"])],
     )] if plan["step_ids"] else []
     by_id = {task["id"]: task for task in rows}
     if set(by_id) != set(plan["step_ids"]):
@@ -91,9 +101,9 @@ def _plan_graph(store, tx, plan, tasks):
                        "label": plan["title"], "source_id": sources[-1] if sources else None,
                        "metadata": {"plan_id": plan["id"], "version": plan["version"],
                                     "goal": plan["goal"], "constraints": plan["constraints"]}}, tx)
-    tx.command("DELETE FROM edges WHERE from_id=:id AND kind IN ['has_step','supported_by']", {"id": node_id})
+    db_delete_where(tx, "edges", [eq("from_id", node_id), is_in("kind", ("has_step", "supported_by"))])
     for source_id in sources:
-        source = one_row(tx, "SELECT FROM sources WHERE id=:id", {"id": source_id})
+        source = db_find_one(tx, "sources", {"id": source_id}, required=True)
         target = f"source:{source_id}"
         store.upsert_node({"id": target, "project_id": plan["project_id"], "kind": "source",
                            "label": source["uri"], "source_id": source_id,
@@ -109,7 +119,7 @@ def _plan_graph(store, tx, plan, tasks):
 
 
 def _revision(store, tx, plan, tasks, reason):
-    insert_document(tx, "plan_revisions", {
+    db_insert_document(tx, "plan_revisions", {
         "id": f"{plan['id']}:{plan['version']}", "project_id": plan["project_id"],
         "plan_id": plan["id"], "version": plan["version"], "reason": reason,
         "snapshot": {"plan": plan, "tasks": tasks}, "recorded_at": utc_now(),
@@ -122,16 +132,14 @@ def note_task_mutation(store, tx, task: dict, expected_plan_version: int) -> Non
     plan_id = task.get("metadata", {}).get("plan_ref")
     if not plan_id:
         return
-    plan = one_row(tx, "SELECT FROM plans WHERE id=:id AND project_id=:project",
-                {"id": plan_id, "project": task["project_id"]}, False)
+    plan = db_find_one(tx, "plans", {"id": plan_id, "project_id": task["project_id"]})
     _version(expected_plan_version, "expected_plan_version")
     if not plan or plan["version"] != expected_plan_version:
         raise ValueError("Plan version conflict; read the current plan and retry")
     if task["id"] not in plan["step_ids"]:
         raise ValueError("Task is not an active member of its plan")
     plan.update(version=plan["version"] + 1, updated_at=utc_now(), **(store.current_origin() or {}))
-    update_document(tx, "plans", plan, "id=:id AND version=:version",
-         {"id": plan_id, "version": expected_plan_version})
+    db_update_where(tx, "plans", set_fields=plan, where={"id": plan_id, "version": expected_plan_version})
     _revision(store, tx, plan, _tasks(tx, task["project_id"], plan), "task_progress")
 
 
@@ -140,32 +148,29 @@ class PlanManager:
         self.store = store
 
     def _worktree(self, tx, project_id, worktree):
-        project = one_row(tx, "SELECT FROM projects WHERE id=:id", {"id": project_id})
+        project = db_find_one(tx, "projects", {"id": project_id}, required=True)
         root = str(Path(worktree if worktree is not None else project["root"]).expanduser().resolve())
-        if not tx.query("SELECT id FROM project_roots WHERE project_id=:project AND path=:path",
-                        {"project": project_id, "path": root}):
+        if not db_find(tx, "project_roots", {"project_id": project_id, "path": root}, columns=("id",)):
             raise ValueError(unregistered_root(root, project))
         return root
 
     def get(self, project_id, plan_id):
         with self.store.transaction() as tx:
             self.store._require_project(tx, project_id)
-            plan = one_row(tx, "SELECT FROM plans WHERE id=:id AND project_id=:project",
-                        {"id": plan_id, "project": project_id})
+            plan = db_find_one(tx, "plans", {"id": plan_id, "project_id": project_id}, required=True)
             return {"plan": plan, "tasks": _tasks(tx, project_id, plan)}
 
     def list(self, project_id):
         self.store._require_project(self.store, project_id)
-        return [clean_row(row) for row in self.store.query(
-            "SELECT FROM plans WHERE project_id=:project ORDER BY created_at,id", {"project": project_id})]
+        return [clean_row(row) for row in db_find(
+            self.store, "plans", {"project_id": project_id}, order_by=(asc("created_at"), asc("id")))]
 
     def activate(self, project_id, plan_id, worktree=None):
         with self.store.transaction() as tx:
             root = self._worktree(tx, project_id, worktree)
-            one_row(tx, "SELECT id FROM plans WHERE id=:id AND project_id=:project",
-                 {"id": plan_id, "project": project_id})
+            db_find_one(tx, "plans", {"id": plan_id, "project_id": project_id}, columns=("id",), required=True)
             state_id = _digest([project_id, root])
-            old = one_row(tx, "SELECT FROM worktree_states WHERE id=:id", {"id": state_id}, False)
+            old = db_find_one(tx, "worktree_states", {"id": state_id})
             if old and old["active_plan_id"] == plan_id:
                 return old
             now = utc_now()
@@ -173,9 +178,9 @@ class PlanManager:
                      "active_plan_id": plan_id, "version": old["version"] + 1 if old else 1,
                      "created_at": old["created_at"] if old else now, "updated_at": now}
             if old:
-                update_document(tx, "worktree_states", state, "id=:id", {"id": state_id})
+                db_update_where(tx, "worktree_states", set_fields=state, where={"id": state_id})
             else:
-                insert_document(tx, "worktree_states", state)
+                db_insert_document(tx, "worktree_states", state)
             return state
 
     def save(self, project_id, plan: dict, steps: list[dict], idempotency_key: str,
@@ -203,15 +208,14 @@ class PlanManager:
         with self.store.transaction() as tx:
             self.store._require_project(tx, project_id)
             root = self._worktree(tx, project_id, worktree)
-            request = one_row(tx, "SELECT FROM plan_requests WHERE id=:id", {"id": request_id}, False)
+            request = db_find_one(tx, "plan_requests", {"id": request_id})
             if request:
                 if request["payload_hash"] != payload_hash:
                     raise ValueError("Idempotency key was already used for a different payload")
                 return {**deepcopy(request["result"]), "replayed": True}
             old = None
             if plan.get("id"):
-                old = one_row(tx, "SELECT FROM plans WHERE id=:id AND project_id=:project",
-                           {"id": plan["id"], "project": project_id}, False)
+                old = db_find_one(tx, "plans", {"id": plan["id"], "project_id": project_id})
                 if not old:
                     raise ValueError("Cannot update an unknown plan")
             if old:
@@ -312,8 +316,7 @@ class PlanManager:
                 raise ValueError("Plan dependencies must not contain a cycle")
             removed = {task["id"]: task for task in previous if task["id"] not in used_ids}
             if removed:
-                for row in tx.query("SELECT FROM records WHERE project_id=:project AND kind='task' AND status!='superseded'",
-                                    {"project": project_id}):
+                for row in db_find(tx, "records", _active_tasks_where(project_id)):
                     if row["id"] not in existing_by_id and set(row["metadata"].get("depends_on", [])).intersection(removed):
                         raise ValueError("Cannot archive a step still required by an active task outside this plan")
             source = self.store.snapshot(project_id, f"plan://{plan_id}", json_text(payload),
@@ -327,7 +330,7 @@ class PlanManager:
                 if "worktree" in task["metadata"]:
                     fields["metadata"] = {key: value for key, value in task["metadata"].items()
                                           if key != "worktree"}
-                update_document(tx, "records", fields, "id=:id", {"id": task["id"]})
+                db_update_where(tx, "records", set_fields=fields, where={"id": task["id"]})
             saved, changed_steps = {}, False
             for key in order:
                 definition = definitions[key]
@@ -387,15 +390,15 @@ class PlanManager:
             kept = {key: old[key] for key in ORIGIN_METADATA if old and key in old}
             result_plan.update((plan_changed and self.store.current_origin()) or kept)
             if old:
-                update_document(tx, "plans", result_plan, "id=:id AND version=:version", {"id": plan_id, "version": expected_version})
+                db_update_where(tx, "plans", set_fields=result_plan, where={"id": plan_id, "version": expected_version})
             else:
-                insert_document(tx, "plans", result_plan)
+                db_insert_document(tx, "plans", result_plan)
             _revision(self.store, tx, result_plan, tasks, "legacy_adoption" if adoption else "save")
             if activate:
                 self.activate(project_id, plan_id, root)
             result = {"plan": result_plan, "tasks": tasks, "replayed": False}
-            insert_document(tx, "plan_requests", {"id": request_id, "project_id": project_id, "key": idempotency_key,
-                                          "payload_hash": payload_hash, "result": result, "created_at": now})
+            db_insert_document(tx, "plan_requests", {"id": request_id, "project_id": project_id, "key": idempotency_key,
+                                                     "payload_hash": payload_hash, "result": result, "created_at": now})
             return result
 
     def adopt_legacy(self, project_id, group: str, *, plan=None, idempotency_key,
@@ -409,11 +412,10 @@ class PlanManager:
             if not tasks or any(task["metadata"].get("plan_ref") for task in tasks):
                 # A repeated adoption request must still replay after membership
                 # changed, rather than fail before its idempotency record is read.
-                request = one_row(tx, "SELECT FROM plan_requests WHERE id=:id",
-                               {"id": _digest([project_id, idempotency_key])}, False)
+                request = db_find_one(tx, "plan_requests", {"id": _digest([project_id, idempotency_key])})
                 if request and request.get("result"):
-                    original = one_row(tx, "SELECT FROM sources WHERE id=:id",
-                                    {"id": request["result"]["plan"]["source_ids"][-1]})
+                    original = db_find_one(
+                        tx, "sources", {"id": request["result"]["plan"]["source_ids"][-1]}, required=True)
                     payload = json.loads(original["content"])
                     expected_plan = plan or {"title": group}
                     if payload.get("adoption") == group and payload["plan"] == expected_plan and payload["task_versions"] == task_versions and payload["worktree"] == (str(worktree) if worktree is not None else None) and payload["activate"] == activate:
@@ -438,8 +440,7 @@ class PlanManager:
         with self.store.transaction() as tx:
             root = self._worktree(tx, project_id, worktree)
             if plan_id is None:
-                state = one_row(tx, "SELECT FROM worktree_states WHERE id=:id",
-                             {"id": _digest([project_id, root])}, False)
+                state = db_find_one(tx, "worktree_states", {"id": _digest([project_id, root])})
                 if not state:
                     return {"plan": None, "task": None, "reason": "no_active_plan", "blocked": []}
                 plan_id = state["active_plan_id"]

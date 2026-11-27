@@ -24,6 +24,7 @@ import sys
 import time
 
 from .arcade import ArcadeError
+from .storage_query import db_find, is_in
 
 ROWS_PER_TRANSACTION = 20000
 VERTEX_WAIT = 60.0  # seconds the engine's index may take to find the vertices that were committed
@@ -123,7 +124,7 @@ def await_vertices(store, identifiers, *timeout):
         with store.transaction(*timeout) as tx:
             for offset in range(0, len(missing), 1000):
                 part = missing[offset:offset + 1000]
-                found = {row["id"] for row in tx.query("SELECT id FROM nodes WHERE id IN :ids", {"ids": part})}
+                found = {row["id"] for row in db_find(tx, "nodes", [is_in("id", part)], columns=("id",))}
                 still.extend(identifier for identifier in part if identifier not in found)
         missing = still
         if missing:

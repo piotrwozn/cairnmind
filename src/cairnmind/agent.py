@@ -27,6 +27,7 @@ from .memory_models import answer_label, context_tokens, from_settings
 from .ollama import OllamaUnavailable
 from .retrieval import (Retriever, json_value, last_warnings, public_metadata, public_record, public_source_metadata, terms,
                         with_source_origin)
+from .storage_query import any_of, asc, db_find, desc, eq, is_in, is_null, like, ne, not_in
 from .store import validate_task_state
 from . import subject as _subject
 from .subject import NAMES_GAP, SUBJECT_GAP, found_names, unnamed_answer_names, unnamed_subject
@@ -623,17 +624,20 @@ class KnowledgeAgent:
 
         if not isinstance(task_id, str) or not task_id:
             raise ValueError("task_id must be a nonempty string")
-        tasks = self.store.query("SELECT FROM records WHERE id=:id AND project_id=:project AND kind='task'",
-                                 {"id": task_id, "project": project_id})
+        tasks = db_find(self.store, "records", {"id": task_id, "project_id": project_id, "kind": "task"})
         if not tasks:
             raise ValueError("Task does not exist in this project")
         task = tasks[0]
         status = verification_status(self.store, task, worktree)
         project = self.store.resolve_project(project_id)
         root = str(Path(worktree if worktree is not None else project["root"]).expanduser().resolve())
-        rows = self.store.query(
-            "SELECT FROM check_runs WHERE project_id=:project AND task_id=:task AND worktree=:worktree "
-            "ORDER BY ended_at DESC,id LIMIT 6", {"project": project_id, "task": task_id, "worktree": root})
+        rows = db_find(
+            self.store,
+            "check_runs",
+            {"project_id": project_id, "task_id": task_id, "worktree": root},
+            order_by=(desc("ended_at"), asc("id")),
+            limit=6,
+        )
         runs, sources = [], {}
         for row in rows[:5]:
             run = public_metadata(row, (
@@ -742,8 +746,7 @@ class KnowledgeAgent:
             record_id = arguments.get("record_id")
             if not isinstance(record_id, str):
                 raise ValueError("record_id must be a string")
-            scoped = self.store.query("SELECT id FROM records WHERE id=:id AND project_id=:project",
-                                      {"id": record_id, "project": project_id})
+            scoped = db_find(self.store, "records", {"id": record_id, "project_id": project_id}, columns=("id",))
             if not scoped:
                 raise ValueError("Record does not exist in this project")
             revisions = await asyncio.to_thread(self.store.record_history, record_id)
@@ -845,9 +848,11 @@ class KnowledgeAgent:
         if checks:
             from .verification import verification_status
             for check in checks.values():
-                tasks = self.store.query(
-                    "SELECT FROM records WHERE id=:id AND project_id=:project AND status!='superseded'",
-                    {"id": check["task_id"], "project": project_id})
+                tasks = db_find(
+                    self.store,
+                    "records",
+                    [eq("id", check["task_id"]), eq("project_id", project_id), ne("status", "superseded")],
+                )
                 try:
                     current = verification_status(self.store, tasks[0], check["worktree"]) if tasks else {}
                 except (ValueError, OSError):
@@ -1733,21 +1738,43 @@ class KnowledgeAgent:
         # A constant or field is linked only when the quote writes a compound name (with "_" or
         # "."): every module may define a "logger" or "client", and prose uses PROJECT or ROOT
         # as placeholders, but SCHEMA_VERSION or Settings.port names one definition.
-        compound = [name for name in names if "_" in name or "." in name] or [""]
-        rows = self.store.query(
-            "SELECT id,label FROM nodes WHERE project_id=:project AND is_current=true "
-            "AND kind IN ['file','symbol'] AND label IN :names AND (kind='file' OR metadata.kind IS NULL "
-            "OR metadata.kind NOT IN ['constant','field'] OR label IN :compound) ORDER BY label, id LIMIT 200",
-            {"project": project_id, "names": names, "compound": compound},
+        compound = [name for name in names if "_" in name or "." in name]
+        symbol_filter = [
+            eq("kind", "file"),
+            is_null("metadata.kind"),
+            not_in("metadata.kind", ("constant", "field")),
+        ]
+        if compound:
+            symbol_filter.append(is_in("label", compound))
+        rows = db_find(
+            self.store,
+            "nodes",
+            [
+                eq("project_id", project_id),
+                eq("is_current", True),
+                is_in("kind", ("file", "symbol")),
+                is_in("label", names),
+                any_of(*symbol_filter),
+            ],
+            columns=("id", "label"),
+            order_by=(asc("label"), asc("id")),
+            limit=200,
         )
         seen = {row["id"] for row in rows}
         file_names = sorted({Path(token).name for token in tokens
                              if "." in Path(token).name and len(Path(token).name) >= 4})[:16]
-        for index, name in enumerate(file_names):
-            for row in self.store.query(
-                "SELECT id,label FROM nodes WHERE project_id=:project AND is_current=true "
-                f"AND kind='file' AND label LIKE :suffix{index} LIMIT 20",
-                {"project": project_id, f"suffix{index}": "%" + name},
+        for name in file_names:
+            for row in db_find(
+                self.store,
+                "nodes",
+                [
+                    eq("project_id", project_id),
+                    eq("is_current", True),
+                    eq("kind", "file"),
+                    like("label", "%" + name),
+                ],
+                columns=("id", "label"),
+                limit=20,
             ):
                 # LIKE treats '_' as a wildcard and ignores separators; confirm the exact name.
                 if row["id"] not in seen and PureWindowsPath(row["label"]).name == name:

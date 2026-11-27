@@ -28,7 +28,8 @@ from urllib.parse import urlsplit
 
 from .memory_models import is_loopback, profile
 from .sensitivity import CLASSES, earlier_source_ids, rollup, source_rows, source_sensitivity
-from .sql import clean_row, update_document, utc_now
+from .sql import clean_row, utc_now
+from .storage_query import db_find, db_update_where, is_in
 
 REMOTE_NOT_ALLOWED = "remote_not_allowed"
 HELD_BACK_UNKNOWN = ("Some project memory was not sent to the remote model server because of its sensitivity "
@@ -270,7 +271,7 @@ def held_chunk_ids(store, settings, rows, known: dict | None = None) -> set[str]
         return {i for i in ids if i in seen}
     owners: dict[str, str] = {}
     for start in range(0, len(ids), 500):
-        for row in store.query("SELECT id,source_id FROM chunks WHERE id IN :ids", {"ids": ids[start:start + 500]}):
+        for row in db_find(store, "chunks", is_in("id", ids[start:start + 500]), columns=("id", "source_id")):
             owners[row["id"]] = row["source_id"]
     sources = source_rows(store, owners.values())
     return {chunk for chunk, source in owners.items()
@@ -280,9 +281,11 @@ def held_chunk_ids(store, settings, rows, known: dict | None = None) -> set[str]
 def release_held_extractions(store, settings) -> int:
     """Queue again the extraction jobs held back for a class the chat role may now receive."""
     held = held_classes(settings, "chat")
-    rows = [clean_row(row) for row in store.query(
-        "SELECT FROM jobs WHERE kind='extract' AND state='completed' AND diagnostics.code=:code",
-        {"code": REMOTE_NOT_ALLOWED})]
+    rows = [clean_row(row) for row in db_find(
+        store,
+        "jobs",
+        {"kind": "extract", "state": "completed", "diagnostics.code": REMOTE_NOT_ALLOWED},
+    )]
     released = 0
     for job in rows:
         payload = job.get("payload")
@@ -297,9 +300,18 @@ def release_held_extractions(store, settings) -> int:
             if source_id not in sources or source_sensitivity(sources[source_id]) in held:
                 continue
         with store.transaction() as tx:
-            update_document(tx, "jobs", {"state": "pending", "error": None, "lease_until": None, "worker": None,
-                                         "updated_at": utc_now(),
-                                         "attempt_history": store._job_event(job, "remote_allowed")},
-                            "id=:id AND state='completed'", {"id": job["id"]})
+            db_update_where(
+                tx,
+                "jobs",
+                set_fields={
+                    "state": "pending",
+                    "error": None,
+                    "lease_until": None,
+                    "worker": None,
+                    "updated_at": utc_now(),
+                    "attempt_history": store._job_event(job, "remote_allowed"),
+                },
+                where={"id": job["id"], "state": "completed"},
+            )
         released += 1
     return released

@@ -12,7 +12,8 @@ import socket
 from pathlib import Path
 
 from .first_start import UNKNOWN_PROJECT_NEXT
-from .sql import insert_document, one_row, update_document, utc_now
+from .sql import insert_document, utc_now
+from .storage_query import db_find_one, db_update_where
 from .terminal_safe import safe_text
 
 HISTORY = "deleted_projects"
@@ -33,7 +34,7 @@ MESSAGES = {CLI_REFUSED: (
 
 def _row(reader, project_id: str) -> dict:
     """The project by its id (a removed one too): the workspace sends ids, never a name to be guessed."""
-    row = one_row(reader, "SELECT FROM projects WHERE id=:id", {"id": project_id}, False)
+    row = db_find_one(reader, "projects", {"id": project_id})
     if not row:
         raise ValueError(f"Unknown project: {project_id}. {UNKNOWN_PROJECT_NEXT}")
     return row
@@ -92,14 +93,14 @@ def delete(settings, store, project_id: str) -> dict:
 
 
 def _record(tx, entry: dict) -> None:
-    row = one_row(tx, "SELECT FROM devbrain_meta WHERE name=:name", {"name": HISTORY}, False)
+    row = db_find_one(tx, "devbrain_meta", {"name": HISTORY})
     history = [*((row or {}).get("history") or []), entry][-HISTORY_LIMIT:]
     if row:
-        update_document(tx, "devbrain_meta", {"history": history}, "name=:name", {"name": HISTORY})
+        db_update_where(tx, "devbrain_meta", set_fields={"history": history}, where={"name": HISTORY})
     else:
         insert_document(tx, "devbrain_meta", {"name": HISTORY, "history": history})
 
 
 def history(reader) -> list[dict]:
-    row = one_row(reader, "SELECT FROM devbrain_meta WHERE name=:name", {"name": HISTORY}, False)
+    row = db_find_one(reader, "devbrain_meta", {"name": HISTORY})
     return [entry for entry in (row or {}).get("history") or [] if isinstance(entry, dict)]

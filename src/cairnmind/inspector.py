@@ -17,7 +17,17 @@ from .code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
 from .memory_paths import bound_metadata, memory_bindings
 from .retrieval import Retriever, public_record, public_source_metadata
 from .sensitivity import record_classes, source_sensitivity
-from .sql import clean_row, json_text, one_row, unregistered_root, utc_now
+from .sql import clean_row, json_text, unregistered_root, utc_now
+from .storage_query import (
+    asc,
+    col,
+    db_count,
+    db_find,
+    db_find_one,
+    eq,
+    gt,
+    is_in,
+)
 
 
 TABLES = {"records", "sources", "plans", "check_runs", "jobs"}
@@ -72,8 +82,8 @@ class Inspector:
 
     def _scope(self, project, worktree=None):
         project = self._project(project)
-        roots = [Path(row["path"]).resolve() for row in self.store.query(
-            "SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})]
+        roots = [Path(row["path"]).resolve() for row in db_find(
+            self.store, "project_roots", {"project_id": project["id"]}, columns=["path"])]
         root = Path(worktree).expanduser().resolve() if worktree else None
         if root is not None and root not in roots:
             raise ValueError(unregistered_root(root, project))
@@ -108,35 +118,53 @@ class Inspector:
             if decoded.get("query") != query_key:
                 raise ValueError("Inspector page cursor belongs to another query")
             after = decoded["after"]
-        conditions, params = ["project_id=:project"], {"project": pid}
+        filters = [eq("project_id", pid)]
         if kind:
-            conditions.append("kind=:kind")
-            params["kind"] = kind
+            filters.append(eq("kind", kind))
         if status:
             field = "state" if collection == "jobs" else "outcome" if collection == "check_runs" else "status"
-            conditions.append(f"{field}=:status")
-            params["status"] = status
+            filters.append(eq(field, status))
         if state:
             if collection != "records" or kind != "task":
                 raise ValueError("Task state filter requires the task collection")
-            conditions.append("metadata.state=:task_state")
-            params["task_state"] = state
-        where = " AND ".join(conditions)
+            filters.append(eq("metadata.state", state))
         with self.store.transaction() as reader:
             # Fetch only identity/scope fields for worktree filtering. Source
             # bodies and arbitrary metadata never enter list projections.
-            scope_fields = "metadata.worktree AS worktree" if collection != "check_runs" else "worktree"
-            rows = reader.query(f"SELECT id,kind,metadata.root AS root,{scope_fields},"
-                f"metadata.path AS path FROM {collection} WHERE {where} ORDER BY id", params)
+            scope_col = col("metadata.worktree", "worktree") if collection != "check_runs" else col("worktree")
+            rows = db_find(
+                reader,
+                collection,
+                filters,
+                columns=["id", "kind", col("metadata.root", "root"), scope_col, col("metadata.path", "path")],
+                order_by=[asc("id")],
+            )
             ids = [row["id"] for row in rows if self._matches(scope, {"kind": row.get("kind"),
                 "metadata": {key: row.get(key) for key in ("root", "worktree", "path")}}, source=collection == "sources")]
             available = [identifier for identifier in ids if after is None or identifier > after]
             selected = available[:limit]
-            fields = "*"
-            if collection == "sources":
-                fields = "id,project_id,uri,kind,sha256,created_at,is_current,metadata.role AS role,metadata.client AS client,metadata.session_id AS session_id,metadata.origin_client AS origin_client,metadata.origin_evidence AS origin_evidence,metadata.origin_history AS origin_history,metadata.source_timestamp AS source_timestamp,metadata.byte_offset AS byte_offset"
-            rows = reader.query(f"SELECT {fields} FROM {collection} WHERE project_id=:project AND id IN :ids ORDER BY id",
-                                {"project": pid, "ids": selected}) if selected else []
+            source_cols = (
+                [
+                    "id", "project_id", "uri", "kind", "sha256", "created_at", "is_current",
+                    col("metadata.role", "role"),
+                    col("metadata.client", "client"),
+                    col("metadata.session_id", "session_id"),
+                    col("metadata.origin_client", "origin_client"),
+                    col("metadata.origin_evidence", "origin_evidence"),
+                    col("metadata.origin_history", "origin_history"),
+                    col("metadata.source_timestamp", "source_timestamp"),
+                    col("metadata.byte_offset", "byte_offset"),
+                ]
+                if collection == "sources"
+                else None
+            )
+            rows = db_find(
+                reader,
+                collection,
+                [eq("project_id", pid), is_in("id", selected)],
+                columns=source_cols,
+                order_by=[asc("id")],
+            ) if selected else []
             items = []
             for row in rows:
                 row = clean_row(row)
@@ -174,8 +202,9 @@ class Inspector:
             raise ValueError("Unknown inspector entity collection")
         scope = self._scope(project, worktree)
         with self.store.transaction() as reader:
-            row = one_row(reader, f"SELECT FROM {collection} WHERE project_id=:project AND id=:id",
-                       {"project": scope[0]["id"], "id": identifier}, False)
+            row = db_find_one(reader, collection, {"project_id": scope[0]["id"], "id": identifier})
+            if row is not None:
+                row = clean_row(row)
             metadata = row.get("metadata", {}) if row else {}
             if row and collection == "check_runs":
                 metadata = {**metadata, "worktree": row.get("worktree")}
@@ -195,10 +224,14 @@ class Inspector:
                 raise ValueError("Plan history cursor belongs to another plan")
             after = int(decoded["after"])
         with self.store.transaction() as reader:
-            params = {"project": plan["project_id"], "id": plan_id, "offset_version": after, "limit": limit + 1}
-            total = reader.query("SELECT count(*) AS n FROM plan_revisions WHERE project_id=:project AND plan_id=:id", params)[0]["n"]
-            rows = reader.query("SELECT FROM plan_revisions WHERE project_id=:project AND plan_id=:id "
-                                "AND version>:offset_version ORDER BY version LIMIT :limit", params)
+            total = db_count(reader, "plan_revisions", {"project_id": plan["project_id"], "plan_id": plan_id})
+            rows = db_find(
+                reader,
+                "plan_revisions",
+                [eq("project_id", plan["project_id"]), eq("plan_id", plan_id), gt("version", after)],
+                order_by=[asc("version")],
+                limit=limit + 1,
+            )
             return {"items": [clean_row(row) for row in rows[:limit]], "total": total,
                 "next_cursor": _encode_cursor({"plan": plan_id, "project": plan["project_id"], "after": str(rows[limit - 1]["version"])})
                 if len(rows) > limit else None, "cursor": _cursor(reader, self.store)}
@@ -206,8 +239,9 @@ class Inspector:
     def record(self, project, record_id, worktree=None):
         scope = self._scope(project, worktree)
         with self.store.transaction() as reader:
-            row = one_row(reader, "SELECT FROM records WHERE id=:id AND project_id=:project",
-                       {"id": record_id, "project": scope[0]["id"]}, False)
+            row = db_find_one(reader, "records", {"id": record_id, "project_id": scope[0]["id"]})
+            if row is not None:
+                row = clean_row(row)
             if not row or not self._matches(scope, row):
                 raise InspectorNotFound("Unknown record in requested scope")
             result = {"record": row, "cursor": _cursor(reader, self.store)}
@@ -215,9 +249,13 @@ class Inspector:
                 # The record that replaced it (#222, #239): read here, never stored on this row.
                 later = (row.get("metadata") or {}).get("superseded_by")
                 if not isinstance(later, str):
-                    found = reader.query("SELECT id FROM records WHERE project_id=:project AND supersedes=:id",
-                                         {"project": scope[0]["id"], "id": record_id})
-                    later = found[0]["id"] if found else None
+                    found = db_find_one(
+                        reader,
+                        "records",
+                        {"project_id": scope[0]["id"], "supersedes": record_id},
+                        columns=["id"],
+                    )
+                    later = found["id"] if found else None
                 result["replaced_by"] = later
         # Derived on every read: a source can change without any write to the record.
         from .evidence import evidence_states
@@ -243,11 +281,14 @@ class Inspector:
                 raise ValueError("Inspector revision cursor belongs to another record")
             after = int(value["after"])
         with self.store.transaction() as reader:
-            total = reader.query("SELECT count(*) AS n FROM record_revisions WHERE project_id=:project AND record_id=:id",
-                                 {"project": pid, "id": record_id})[0]["n"]
-            rows = reader.query("SELECT FROM record_revisions WHERE project_id=:project AND record_id=:id "
-                "AND version>:offset_version ORDER BY version LIMIT :limit",
-                {"project": pid, "id": record_id, "offset_version": after, "limit": limit + 1})
+            total = db_count(reader, "record_revisions", {"project_id": pid, "record_id": record_id})
+            rows = db_find(
+                reader,
+                "record_revisions",
+                [eq("project_id", pid), eq("record_id", record_id), gt("version", after)],
+                order_by=[asc("version")],
+                limit=limit + 1,
+            )
             return {"items": [clean_row(row) for row in rows[:limit]], "total": total,
                 "next_cursor": _encode_cursor({"record": record_id, "project": pid, "after": str(rows[limit - 1]["version"])})
                 if len(rows) > limit else None, "cursor": _cursor(reader, self.store)}
@@ -267,8 +308,9 @@ class Inspector:
             raise ValueError("Source offset must be nonnegative")
         scope = self._scope(project, worktree)
         with self.store.transaction() as reader:
-            row = one_row(reader, "SELECT FROM sources WHERE id=:id AND project_id=:project",
-                       {"id": source_id, "project": scope[0]["id"]}, False)
+            row = db_find_one(reader, "sources", {"id": source_id, "project_id": scope[0]["id"]})
+            if row is not None:
+                row = clean_row(row)
             if not row or not self._matches(scope, row, source=True):
                 raise InspectorNotFound("Unknown source in requested scope")
             text = row["content"] if view == "raw" else source_text(row) if view == "normalized" else json_text(row["metadata"])
@@ -287,10 +329,15 @@ class Inspector:
                 raise ValueError("Inbox cursor belongs to another collection")
             after = decoded["after"]
         with self.store.transaction() as reader:
-            total = int(reader.query("SELECT count(*) AS n FROM ingestion_inbox")[0]["n"])
-            rows = reader.query("SELECT id,path,source_offset,sha256,client,cwd,reason,created_at "
-                "FROM ingestion_inbox WHERE id>:offset_id ORDER BY id LIMIT :limit",
-                {"offset_id": after, "limit": limit + 1})
+            total = db_count(reader, "ingestion_inbox")
+            rows = db_find(
+                reader,
+                "ingestion_inbox",
+                [gt("id", after)],
+                columns=["id", "path", "source_offset", "sha256", "client", "cwd", "reason", "created_at"],
+                order_by=[asc("id")],
+                limit=limit + 1,
+            )
             return {"items": [{**clean_row(row), "project_id": None, "entity_type": "inbox"} for row in rows[:limit]],
                 "total": total, "next_cursor": _encode_cursor({"query": "global-inbox", "after": rows[limit - 1]["id"]})
                 if len(rows) > limit else None, "cursor": _cursor(reader, self.store)}
@@ -302,7 +349,9 @@ class Inspector:
         if type(offset) is not int or offset < 0:
             raise ValueError("Source offset must be nonnegative")
         with self.store.transaction() as reader:
-            row = one_row(reader, "SELECT FROM ingestion_inbox WHERE id=:id", {"id": identifier}, False)
+            row = db_find_one(reader, "ingestion_inbox", {"id": identifier})
+            if row is not None:
+                row = clean_row(row)
             if not row:
                 raise InspectorNotFound("Unknown unassigned source")
             metadata = {key: value for key, value in row.items() if key not in {"raw", "id"}}
@@ -322,12 +371,11 @@ class Inspector:
             for row in projects:
                 counts = {}
                 for table in ("sources", "records", "record_revisions", "plans", "plan_revisions", "nodes", "edges", "jobs", "check_runs"):
-                    counts[table] = int(reader.query(f"SELECT count(*) AS n FROM {table} WHERE project_id=:project",
-                                                    {"project": row["id"]})[0]["n"])
+                    counts[table] = db_count(reader, table, {"project_id": row["id"]})
                 items.append({"project": row, "counts": counts})
                 totals.update(counts)
             if project is None:
-                totals["inbox"] = int(reader.query("SELECT count(*) AS n FROM ingestion_inbox")[0]["n"])
+                totals["inbox"] = db_count(reader, "ingestion_inbox")
             return {"projects": items, "totals": dict(totals), "cursor": _cursor(reader, self.store)}
 
     def review(self, project, record_id, action, expected_version, *, expected_plan_version=None, reason=None,
@@ -346,9 +394,10 @@ class Inspector:
         # Who, on which worktree's branch and commit (#170, #247): before the writer lock.
         context = act_context(self.store, pid, worktree)
         with self.store.transaction() as reader:
-            old = one_row(reader, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": record_id, "project": pid}, False)
+            old = db_find_one(reader, "records", {"id": record_id, "project_id": pid})
             if not old:
                 raise InspectorNotFound("Unknown record in requested project")
+            old = clean_row(old)
             if old["version"] != expected_version:
                 raise ValueError("Review version conflict; read the current record")
             if review_refused(reader, old, status, action):
@@ -359,7 +408,13 @@ class Inspector:
                     "Already disputed at this version; nothing to do.")
             plan_id = old.get("metadata", {}).get("plan_ref") if old["kind"] == "task" else None
             if plan_id:
-                current = one_row(reader, "SELECT version FROM plans WHERE id=:id AND project_id=:project", {"id": plan_id, "project": pid})
+                current = db_find_one(
+                    reader,
+                    "plans",
+                    {"id": plan_id, "project_id": pid},
+                    columns=["version"],
+                    required=True,
+                )
                 if type(expected_plan_version) is not int or current["version"] != expected_plan_version:
                     raise ValueError("Review plan version conflict; read the current plan")
             audit = {"actor": "local_user", **context, "action": action, "record_id": record_id, "previous_version": expected_version,
@@ -378,16 +433,42 @@ class Inspector:
         pid = scope[0]["id"]
         result = {}
         fields = {
-            "sources": "id,kind,uri,is_current,created_at,metadata.root AS root,metadata.worktree AS worktree,metadata.path AS path,metadata.role AS role,metadata.client AS client,metadata.session_id AS session_id,metadata.origin_client AS origin_client,metadata.origin_evidence AS origin_evidence,metadata.source_timestamp AS source_timestamp,metadata.byte_offset AS byte_offset",
-            "records": "id,kind,status,version,metadata.root AS root,metadata.worktree AS worktree,metadata.path AS path",
-            "plans": "id,title,version",
-            "record_revisions": "id,record_id,version,snapshot.metadata.root AS root,snapshot.metadata.worktree AS worktree",
-            "plan_revisions": "id,plan_id,version",
-            "nodes": "id,kind,label,source_id,is_current,metadata.root AS root,metadata.worktree AS worktree,metadata.path AS path",
-            "edges": "id,from_id,to_id,kind,source_id,is_current,status",
+            "sources": [
+                "id", "kind", "uri", "is_current", "created_at",
+                col("metadata.root", "root"),
+                col("metadata.worktree", "worktree"),
+                col("metadata.path", "path"),
+                col("metadata.role", "role"),
+                col("metadata.client", "client"),
+                col("metadata.session_id", "session_id"),
+                col("metadata.origin_client", "origin_client"),
+                col("metadata.origin_evidence", "origin_evidence"),
+                col("metadata.source_timestamp", "source_timestamp"),
+                col("metadata.byte_offset", "byte_offset"),
+            ],
+            "records": [
+                "id", "kind", "status", "version",
+                col("metadata.root", "root"),
+                col("metadata.worktree", "worktree"),
+                col("metadata.path", "path"),
+            ],
+            "plans": ["id", "title", "version"],
+            "record_revisions": [
+                "id", "record_id", "version",
+                col("snapshot.metadata.root", "root"),
+                col("snapshot.metadata.worktree", "worktree"),
+            ],
+            "plan_revisions": ["id", "plan_id", "version"],
+            "nodes": [
+                "id", "kind", "label", "source_id", "is_current",
+                col("metadata.root", "root"),
+                col("metadata.worktree", "worktree"),
+                col("metadata.path", "path"),
+            ],
+            "edges": ["id", "from_id", "to_id", "kind", "source_id", "is_current", "status"],
         }
         for table, selected in fields.items():
-            rows = self.store.query(f"SELECT {selected} FROM {table} WHERE project_id=:project ORDER BY id", {"project": pid})
+            rows = db_find(self.store, table, {"project_id": pid}, columns=selected, order_by=[asc("id")])
             result[table] = [row for row in rows if self._matches(scope, {"kind": row.get("kind"),
                 "metadata": {key: row.get(key) for key in ("root", "worktree", "path")}}, source=table == "sources")]
         if scope[1] is not None:

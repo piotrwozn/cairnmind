@@ -332,6 +332,12 @@ def test_live_adapter_with_fake_store(tmp_path, monkeypatch):
             return False
         def command(self, sql, params=None):
             return []
+        def update_where(self, tbl, *, set_fields=None, remove_fields=(), where=()):
+            if tbl == "sessions" and set_fields:
+                sessions[0] = dict(set_fields)
+            return []
+        def insert_document(self, tbl, doc):
+            return doc
 
     class FakeStore:
         def resolve_project(self, identifier):
@@ -346,8 +352,9 @@ def test_live_adapter_with_fake_store(tmp_path, monkeypatch):
             if "FROM projects" in sql:
                 return [{"id": "p1", "name": "demo", "root": str(repo)}]
             if "FROM sessions" in sql:
-                if params and "id" in params:
-                    return [s for s in sessions if s["id"] == params["id"]]
+                if params and " id=:" in sql:
+                    sid = next(iter(params.values()))
+                    return [s for s in sessions if s["id"] == sid]
                 return list(sessions)
             if "FROM resume_acks" in sql:
                 return [{"session_id": "sess-1", "packet_id": "pkt-1", "packet_hash": "1234567890abcdef"}]
@@ -525,7 +532,7 @@ def test_ui_server_additional_edge_branches(tmp_path, monkeypatch):
             if "FROM projects" in sql:
                 return [{"id": "p1", "name": "drift", "root": str(repo)}]
             if "FROM sessions" in sql:
-                if params and "id" in params:
+                if " id=:" in sql:
                     return []
                 return [
                     {"id": "s-drop", "status": "dropped", "client": "codex"},
@@ -906,6 +913,26 @@ def test_live_adapter_cockpit_endpoints_respect_person_proof(tmp_path, monkeypat
             return self
         def __exit__(self, *args):
             return False
+        def insert_document(self, tbl, doc):
+            if tbl == "plans":
+                plans_tbl.append(doc)
+            elif tbl == "plan_revisions":
+                plan_revs.append(doc)
+            elif tbl == "records":
+                records_tbl.append(doc)
+            return doc
+        def update_where(self, tbl, *, set_fields=None, remove_fields=(), where=()):
+            from cairnmind.storage_query import normalize_where
+            target_id = next((c.value for c in normalize_where(where) if getattr(c, "field", None) == "id"), None)
+            if tbl == "plans" and set_fields:
+                for i, p in enumerate(plans_tbl):
+                    if p["id"] == target_id:
+                        plans_tbl[i] = dict(set_fields)
+            elif tbl == "records" and set_fields:
+                for i, r in enumerate(records_tbl):
+                    if r["id"] == target_id:
+                        records_tbl[i] = dict(set_fields)
+            return [dict(set_fields)] if set_fields else []
 
     class LiveFakeStore:
         def resolve_project(self, identifier):
@@ -914,44 +941,41 @@ def test_live_adapter_cockpit_endpoints_respect_person_proof(tmp_path, monkeypat
         def transaction(self):
             return FakeTx()
 
+        def find(self, collection, where=(), *, columns=None, order_by=(), limit=None, distinct=False):
+            from cairnmind.storage_query import normalize_where
+            conds = normalize_where(where)
+            target_id = next((c.value for c in conds if getattr(c, "field", None) == "id" and getattr(c, "op", None) == "="), None)
+            if collection == "projects":
+                rows = [{"id": "proj1", "name": "live-demo", "root": str(repo)}]
+            elif collection == "plans":
+                rows = [p for p in plans_tbl if target_id is None or p["id"] == target_id]
+            elif collection == "plan_revisions":
+                rows = list(plan_revs)
+            elif collection == "records":
+                rows = [r for r in records_tbl if target_id is None or r["id"] == target_id]
+            elif collection == "sources":
+                rows = [{"id": "s-1", "uri": str(mod), "kind": "code", "sha256": mod_sha, "is_current": True, "metadata": {"path": "engine.py"}}]
+            else:
+                rows = []
+            return rows[:limit] if limit is not None else rows
+
+        def count(self, collection, where=()):
+            return len(self.find(collection, where))
+
         def query(self, sql, params=None):
             if "FROM projects" in sql:
                 return [{"id": "proj1", "name": "live-demo", "root": str(repo)}]
             if "FROM plans" in sql:
-                if params and "id" in params:
-                    return [p for p in plans_tbl if p["id"] == params["id"]]
                 return list(plans_tbl)
             if "FROM plan_revisions" in sql:
                 return list(plan_revs)
             if "FROM records" in sql:
                 if "count(*)" in sql:
                     return [{"c": len(records_tbl)}]
-                if params and "id" in params:
-                    return [r for r in records_tbl if r["id"] == params["id"]]
                 return list(records_tbl)
             if "FROM sources" in sql:
                 return [{"id": "s-1", "uri": str(mod), "kind": "code", "sha256": mod_sha, "is_current": True, "metadata": {"path": "engine.py"}}]
             return []
-
-    def fake_insert(tx, tbl, doc):
-        if tbl == "plans":
-            plans_tbl.append(doc)
-        elif tbl == "plan_revisions":
-            plan_revs.append(doc)
-        elif tbl == "records":
-            records_tbl.append(doc)
-        return doc
-
-    def fake_update(tx, tbl, doc, where, params):
-        if tbl == "plans":
-            for i, p in enumerate(plans_tbl):
-                if p["id"] == params["id"]:
-                    plans_tbl[i] = doc
-        elif tbl == "records":
-            for i, r in enumerate(records_tbl):
-                if r["id"] == params["id"]:
-                    records_tbl[i] = doc
-        return doc
 
     monkeypatch.setattr("cairnmind.evidence.evidence_states", lambda s, pid, recs, quotes=True: {
         r["id"]: {"evidence_state": "anchored", "quote_survives": True} for r in recs
@@ -961,8 +985,6 @@ def test_live_adapter_cockpit_endpoints_respect_person_proof(tmp_path, monkeypat
     })
     monkeypatch.setattr("cairnmind.verification.verification_status", lambda s, task, root: {"stale": False})
     monkeypatch.setattr("cairnmind.ingest.index_project_if_changed", lambda s, pid: {"changed": 1, "errors": []})
-    monkeypatch.setattr("cairnmind.sql.insert_document", fake_insert)
-    monkeypatch.setattr("cairnmind.sql.update_document", fake_update)
 
     app = create_ui_app(store=LiveFakeStore(), settings=SimpleNamespace(knowledge_agent="disabled"), default_project="proj1")
     client, headers = _auth_client(app)

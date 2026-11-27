@@ -31,6 +31,7 @@ The state is only as fresh as the last indexing of the project's files.
 from __future__ import annotations
 
 from cairnmind.memory_paths import bound_metadata, imported_source_ids, memory_bindings
+from cairnmind.storage_query import db_find, eq, is_in
 from cairnmind.store import degraded_origin
 
 STATES = ("anchored", "evidence_replaced", "orphaned", "unverified", "degraded")
@@ -78,8 +79,9 @@ def _file_verdicts(store, project_id, stale):
                 addresses[source_id].append(local)
     keys = sorted({json_text([project_id, uri]) for uris in addresses.values() for uri in uris})
     # current_key is the unique index the store keeps for "the current version at this address".
-    current = {row["current_key"]: row for row in store.query(
-        "SELECT id,sha256,current_key FROM sources WHERE current_key IN :keys AND is_current=true", {"keys": keys})}
+    current = {row["current_key"]: row for row in db_find(
+        store, "sources", [is_in("current_key", keys), eq("is_current", True)],
+        columns=("id", "sha256", "current_key"))}
     verdicts, unmatched = {}, {}
     for source_id, source in stale.items():
         found = next((current[key] for key in (json_text([project_id, uri]) for uri in addresses[source_id])
@@ -100,10 +102,10 @@ def _file_verdicts(store, project_id, stale):
             return metadata.get("root")
 
         hashes = sorted({source["sha256"] for source in unmatched.values() if isinstance(source.get("sha256"), str)})
-        moved = {(row["sha256"], row.get("root")) for row in store.query(
-            "SELECT sha256,metadata.root AS root FROM sources WHERE project_id=:project AND is_current=true "
-            "AND kind IN :kinds AND sha256 IN :hashes",
-            {"project": project_id, "kinds": list(_FILE_KINDS), "hashes": hashes})} if hashes else set()
+        moved = {(row["sha256"], row.get("root")) for row in db_find(
+            store, "sources",
+            [eq("project_id", project_id), eq("is_current", True), is_in("kind", _FILE_KINDS), is_in("sha256", hashes)],
+            columns=("sha256", ("metadata.root", "root")))} if hashes else set()
         indexed = None
         for source_id, source in unmatched.items():
             if home(source_id, source) is not None and (source.get("sha256"), home(source_id, source)) in moved:
@@ -111,9 +113,10 @@ def _file_verdicts(store, project_id, stale):
                 continue
             if source_id in imported:
                 if indexed is None:
-                    indexed = bool(store.query(
-                        "SELECT id FROM sources WHERE project_id=:project AND is_current=true AND kind IN :kinds LIMIT 1",
-                        {"project": project_id, "kinds": list(_FILE_KINDS)}))
+                    indexed = bool(db_find(
+                        store, "sources",
+                        [eq("project_id", project_id), eq("is_current", True), is_in("kind", _FILE_KINDS)],
+                        columns=("id",), limit=1))
                 if not indexed:
                     verdicts[source_id] = ("pending", None)
                     continue
@@ -155,10 +158,16 @@ def _symbol_and_comment_states(store, project_id, records, cited_sources, verdic
     if not anchors and not comments:
         return {}
 
-    current_rows = store.query(
-        "SELECT id,uri,kind,sha256,created_at,metadata FROM sources "
-        "WHERE project_id=:project AND is_current=true AND kind IN :kinds AND metadata.relative_path IN :paths",
-        {"project": project_id, "kinds": list(_FILE_KINDS), "paths": sorted(wanted_paths)},
+    current_rows = db_find(
+        store,
+        "sources",
+        [
+            eq("project_id", project_id),
+            eq("is_current", True),
+            is_in("kind", _FILE_KINDS),
+            is_in("metadata.relative_path", sorted(wanted_paths)),
+        ],
+        columns=("id", "uri", "kind", "sha256", "created_at", "metadata"),
     ) if wanted_paths else []
 
     by_rel_root: dict[tuple[str, str], dict] = {}
@@ -180,9 +189,11 @@ def _symbol_and_comment_states(store, project_id, records, cited_sources, verdic
         register_current(row)
     missing_repl = sorted(replacement_ids - set(by_id))
     if missing_repl:
-        for row in store.query(
-                "SELECT id,uri,kind,sha256,created_at,metadata FROM sources WHERE id IN :ids AND is_current=true",
-                {"ids": missing_repl}):
+        for row in db_find(
+                store,
+                "sources",
+                [is_in("id", missing_repl), eq("is_current", True)],
+                columns=("id", "uri", "kind", "sha256", "created_at", "metadata")):
             if row.get("project_id", project_id) == project_id:
                 register_current(row)
 
@@ -320,8 +331,10 @@ def evidence_states(store, project_id, records, *, quotes=True):
     records = list(records)
     source_ids = sorted({source_id for record in records for source_id in record.get("source_ids") or []
                          if isinstance(source_id, str)})
-    rows = store.query("SELECT id,project_id,uri,kind,sha256,is_current,created_at,metadata FROM sources WHERE id IN :ids",
-                       {"ids": source_ids}) if source_ids else []
+    rows = db_find(
+        store, "sources", [is_in("id", source_ids)],
+        columns=("id", "project_id", "uri", "kind", "sha256", "is_current", "created_at", "metadata"),
+    ) if source_ids else []
     sources = {row["id"]: row for row in rows if row.get("project_id") == project_id}
     stale = {source_id: source for source_id, source in sources.items()
              if not source.get("is_current") and source.get("kind") in _FILE_KINDS}

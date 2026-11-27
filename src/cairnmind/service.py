@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from cairnmind import __version__, person_proof
 from cairnmind.config import BACKUP_SUFFIXES, SERVICE_NAMES, Settings
 from cairnmind.service_version import instance_id  # noqa: F401 - moved there (#319); cli and tests use it from here
+from cairnmind.storage_query import asc, db_find, db_find_one, desc
 from cairnmind.store_backup import stale_temporaries
 
 log = logging.getLogger(__name__)
@@ -359,10 +360,9 @@ def finish_job_if_present(store, job_id: str, error: str | None = None, *, worke
     try:
         store.finish_job(job_id, error, worker=worker, expected_attempts=expected_attempts)
     except ValueError:
-        rows = store.query("SELECT state,worker,attempts FROM jobs WHERE id=:id", {"id": job_id})
-        if not rows:
+        current = db_find_one(store, "jobs", {"id": job_id}, columns=["state", "worker", "attempts"])
+        if not current:
             return
-        current = rows[0]
         if ((expected_attempts is not None and (current.get("attempts", 0) != expected_attempts
                                                or current["state"] != "running"))
                 or (worker is not None and (current.get("worker") != worker or current["state"] != "running"))):
@@ -778,14 +778,19 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             scope, mark = None, None
             if session_id:
                 sessions.require_ack(session_id, packet_id, code)
-                row = store.query("SELECT id,project_id,worktree,client FROM sessions WHERE id=:id", {"id": session_id})
-                if not row or row[0]["project_id"] != pid:
+                session = db_find_one(
+                    store,
+                    "sessions",
+                    {"id": session_id},
+                    columns=["id", "project_id", "worktree", "client"],
+                )
+                if not session or session["project_id"] != pid:
                     raise ValueError("resume_required: session belongs to another project")
-                scope = row[0]["worktree"]
+                scope = session["worktree"]
                 # Derived from the session row, never from the payload: an external session's writes are
                 # stamped as such, and nothing a client sends can add, change or remove that stamp.
-                mark = origin_mark(row[0])
-                if mark is None and row[0].get("client") in {"api", "copilot"}:
+                mark = origin_mark(session)
+                if mark is None and session.get("client") in {"api", "copilot"}:
                     # An own-agent session that received a third-party MCP result writes as unverified (#126).
                     from cairnmind.agent_memory import third_party_origin
                     mark = third_party_origin(store, pid, session_id)
@@ -799,21 +804,25 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         immutable revision before, so the store's result, and everything stored from it, stays as it was."""
         if result.get("version", 1) < 2:
             return result
-        rows = store.query("SELECT snapshot FROM record_revisions WHERE id=:id",
-                           {"id": f"{result['id']}:{result['version'] - 1}"})
-        held = ((rows[0].get("snapshot") or {}).get("metadata") or {}) if rows else {}
+        prev = db_find_one(
+            store,
+            "record_revisions",
+            {"id": f"{result['id']}:{result['version'] - 1}"},
+            columns=["snapshot"],
+        )
+        held = ((prev.get("snapshot") or {}).get("metadata") or {}) if prev else {}
         dropped = sorted(name for name in held if name not in (result.get("metadata") or {}))
         return {**result, "metadata_dropped": dropped} if dropped else result
 
     def read_scope(pid: str, requested: str | None, session_id: str | None = None) -> str | None:
         scope = str(Path(requested).expanduser().resolve()) if requested else None
         if session_id:
-            rows = store.query("SELECT project_id,worktree FROM sessions WHERE id=:id", {"id": session_id})
-            if not rows or rows[0]["project_id"] != pid:
+            session = db_find_one(store, "sessions", {"id": session_id}, columns=["project_id", "worktree"])
+            if not session or session["project_id"] != pid:
                 raise ValueError("Session read belongs to another project")
-            if scope and scope != rows[0]["worktree"]:
+            if scope and scope != session["worktree"]:
                 raise ValueError("Requested read worktree differs from session scope")
-            scope = rows[0]["worktree"]
+            scope = session["worktree"]
         return scope
 
     @app.exception_handler(ValueError)
@@ -902,9 +911,14 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     @app.get("/project-roots", dependencies=auth)
     async def project_roots(project: str):
         found = store.resolve_project(project)
-        rows = await asyncio.to_thread(store.query,
-            "SELECT id,path,machine,host FROM project_roots WHERE project_id=:project ORDER BY path",
-            {"project": found["id"]})
+        rows = await asyncio.to_thread(
+            db_find,
+            store,
+            "project_roots",
+            {"project_id": found["id"]},
+            columns=["id", "path", "machine", "host"],
+            order_by=[asc("path")],
+        )
         from cairnmind.project_folders import entry, folder_states
         # From the rows read above, so the answer costs no second query on a workspace that polls it.
         away = await asyncio.to_thread(lambda: [entry(found, folder) for folder in folder_states(store, found, rows)
@@ -949,8 +963,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         def authorize_enable(scope):
             requested = selected_memory_scope(pid, body.worktree, scope) or selected["root"]
             root = str(Path(requested).expanduser().resolve())
-            if not store.query("SELECT path FROM project_roots WHERE project_id=:project AND path=:root",
-                               {"project": pid, "root": root}):
+            if not db_find_one(store, "project_roots", {"project_id": pid, "path": root}, columns=["path"]):
                 raise ValueError("Background processing requires a registered project worktree")
 
         await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id, authorize_enable)
@@ -988,10 +1001,10 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
         def require():
             sessions.require_ack(session_id, packet_id, code)
-            rows = store.query("SELECT project_id,worktree FROM sessions WHERE id=:id", {"id": session_id})
-            if not rows or rows[0]["project_id"] != pid:
+            session = db_find_one(store, "sessions", {"id": session_id}, columns=["project_id", "worktree"])
+            if not session or session["project_id"] != pid:
                 raise ValueError("resume_required: memory belongs to another project")
-            return selected_memory_scope(pid, requested, rows[0]["worktree"])
+            return selected_memory_scope(pid, requested, session["worktree"])
 
         def refresh():
             nonlocal code
@@ -1344,21 +1357,33 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pid = store.resolve_project(project)["id"]
         scope = await asyncio.to_thread(read_scope, pid, worktree, session_id)
         await asyncio.to_thread(recover_interrupted_runs, store, settings)
-        rows = await asyncio.to_thread(store.query, "SELECT FROM check_runs WHERE project_id=:project "
-                                      + ("AND task_id=:task " if task_id else "")
-                                      + ("AND worktree=:worktree " if scope else "")
-                                      + "ORDER BY ended_at DESC,id LIMIT 100",
-                                      {"project": pid, "task": task_id, "worktree": scope})
+        check_where: dict[str, Any] = {"project_id": pid}
+        if task_id:
+            check_where["task_id"] = task_id
+        if scope:
+            check_where["worktree"] = scope
+        rows = await asyncio.to_thread(
+            db_find,
+            store,
+            "check_runs",
+            check_where,
+            order_by=[desc("ended_at"), asc("id")],
+            limit=100,
+        )
         fields = ("id", "project_id", "task_id", "profile_id", "worktree", "outcome", "passed", "returncode",
                   "started_at", "ended_at", "duration_seconds", "source_ids", "reasons", "profile_hash",
                   "task_definition_hash", "origin")
         result = {"checks": [{key: row.get(key) for key in fields if key in row} for row in rows]}
         if task_id:
-            task = await asyncio.to_thread(store.query,
-                "SELECT FROM records WHERE id=:id AND project_id=:project AND kind='task'", {"id": task_id, "project": pid})
+            task = await asyncio.to_thread(
+                db_find_one,
+                store,
+                "records",
+                {"id": task_id, "project_id": pid, "kind": "task"},
+            )
             if not task:
                 raise ValueError("Task does not exist in this project")
-            result["verification"] = await asyncio.to_thread(verification_status, store, task[0], scope)
+            result["verification"] = await asyncio.to_thread(verification_status, store, task, scope)
         return result
 
     async def log_answer(pid, body, scope, answer_schema, code, result):
@@ -1505,8 +1530,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             # The worktree only checks that the caller's view is genuine; the finding is project-wide.
             requested = selected_memory_scope(pid, body.worktree, scope) or selected["root"]
             root = str(Path(requested).expanduser().resolve())
-            if not store.query("SELECT path FROM project_roots WHERE project_id=:project AND path=:root",
-                               {"project": pid, "root": root}):
+            if not db_find_one(store, "project_roots", {"project_id": pid, "path": root}, columns=["path"]):
                 raise ValueError("A finding needs a registered project worktree")
             return save_finding(store, pid, body.key, body.content, body.kind, body.status,
                                 session_id=body.session_id or None, worktree=root)

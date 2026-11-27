@@ -20,6 +20,7 @@ from .memory_paths import bound_metadata, memory_bindings
 from .memory_egress import ASK, held_back_class
 from .memory_models import from_settings
 from .sql import unregistered_root
+from .storage_query import any_of, col, db_count, db_find, eq, is_in, is_null, ne
 
 # The two warnings of a search whose vectors are missing (#187); Polish in terminal_i18n_messages.
 VECTORS_NOT_READY = ("Vectors for the current embedding model are not ready (being built or rebuilt, or models are "
@@ -272,8 +273,10 @@ class Retriever:
 
     def _scope(self, project_id, worktree=None):
         project = self.store.resolve_project(project_id)
-        roots = [Path(row["path"]).resolve() for row in self.store.query(
-            "SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})]
+        roots = [
+            Path(row["path"]).resolve()
+            for row in db_find(self.store, "project_roots", {"project_id": project["id"]}, columns=("path",))
+        ]
         root = Path(worktree if worktree is not None else project["root"]).expanduser().resolve()
         if root not in roots:
             raise ValueError(unregistered_root(root, project))
@@ -308,10 +311,19 @@ class Retriever:
 
     def _source_ids(self, project_id, root, roots, *, include_history=False):
         bindings = memory_bindings(self.store, project_id)
-        rows = self.store.query(
-            "SELECT id,kind,metadata.root AS root,metadata.worktree AS worktree,metadata.path AS path "
-            "FROM sources WHERE project_id=:project" + ("" if include_history else " AND is_current=true"),
-            {"project": project_id})
+        where = {"project_id": project_id} if include_history else {"project_id": project_id, "is_current": True}
+        rows = db_find(
+            self.store,
+            "sources",
+            where,
+            columns=(
+                "id",
+                "kind",
+                col("metadata.root", "root"),
+                col("metadata.worktree", "worktree"),
+                col("metadata.path", "path"),
+            ),
+        )
         return {row["id"] for row in rows if self._matches_scope(
             bound_metadata(self.store, project_id, {key: row.get(key) for key in ("root", "worktree", "path")},
                            bindings=bindings), root, roots,
@@ -319,9 +331,12 @@ class Retriever:
 
     def _record_ids(self, project_id, root, roots):
         bindings = memory_bindings(self.store, project_id)
-        rows = self.store.query(
-            "SELECT id,metadata.root AS root,metadata.worktree AS worktree FROM records "
-            "WHERE project_id=:project AND status!='superseded'", {"project": project_id})
+        rows = db_find(
+            self.store,
+            "records",
+            [eq("project_id", project_id), ne("status", "superseded")],
+            columns=("id", col("metadata.root", "root"), col("metadata.worktree", "worktree")),
+        )
         return {row["id"] for row in rows if self._matches_scope(
             bound_metadata(self.store, project_id, {key: row.get(key) for key in ("root", "worktree")},
                            bindings=bindings), root, roots)}
@@ -341,17 +356,26 @@ class Retriever:
     def _graph_ids(self, project_id, root, roots, source_ids):
         bindings = memory_bindings(self.store, project_id)
         global_kinds = {"decision", "task", "fact", "constraint", "question", "preference", "checkpoint", "plan"}
-        rows = self.store.query(
-            "SELECT id,kind,source_id,metadata.root AS root,metadata.worktree AS worktree FROM nodes "
-            "WHERE project_id=:project AND is_current=true "
-            "AND (metadata.status IS NULL OR metadata.status<>'superseded')", {"project": project_id})
+        rows = db_find(
+            self.store,
+            "nodes",
+            [
+                eq("project_id", project_id),
+                eq("is_current", True),
+                any_of(is_null("metadata.status"), ne("metadata.status", "superseded")),
+            ],
+            columns=("id", "kind", "source_id", col("metadata.root", "root"), col("metadata.worktree", "worktree")),
+        )
         nodes = {row["id"] for row in rows if self._matches_scope(
             bound_metadata(self.store, project_id, {key: row.get(key) for key in ("root", "worktree")},
                            bindings=bindings), root, roots)
             and (row["kind"] in global_kinds or not row.get("source_id") or row["source_id"] in source_ids)}
-        rows = self.store.query(
-            "SELECT id,kind,source_id,from_id,to_id FROM edges "
-            "WHERE project_id=:project AND is_current=true AND status<>'superseded'", {"project": project_id})
+        rows = db_find(
+            self.store,
+            "edges",
+            [eq("project_id", project_id), eq("is_current", True), ne("status", "superseded")],
+            columns=("id", "kind", "source_id", "from_id", "to_id"),
+        )
         edges = {row["id"] for row in rows if row["from_id"] in nodes and row["to_id"] in nodes
                  and (row["kind"] in {"supported_by", "depends_on", "supersedes", "has_step"}
                       or not row.get("source_id") or row["source_id"] in source_ids)}
@@ -372,7 +396,7 @@ class Retriever:
                      if isinstance(row.get("id"), str) and row["id"].startswith(prefix)}
             if not nodes:
                 continue
-            found = self.store.query(f"SELECT FROM {table} WHERE id IN :ids", {"ids": list(nodes)})
+            found = db_find(self.store, table, [is_in("id", list(nodes))])
             gate.prime(found)
             held |= {nodes[row["id"]] for row in found if gate.record_held(row)}
         for row in rows:
@@ -429,17 +453,33 @@ class Retriever:
     def _failed_vector_chunks(self, project_id: str, namespace: str) -> int:
         """How many current chunks have no vector for the namespace while their embed job is failed: nothing is
         pending for them, so only `retry-jobs` brings the vectors (#187)."""
-        rows = self.store.query("SELECT payload FROM jobs WHERE project_id=:project AND kind='embed' AND state='failed'",
-                                {"project": project_id})
+        rows = db_find(
+            self.store,
+            "jobs",
+            {"project_id": project_id, "kind": "embed", "state": "failed"},
+            columns=("payload",),
+        )
         ids = list({chunk for row in rows if (chunk := (json_value(row.get("payload"), {}) or {}).get("chunk_id"))})
         if not ids:
             return 0
-        current = {row["id"] for row in self.store.query(
-            "SELECT id FROM chunks WHERE project_id=:project AND is_current=true AND id IN :ids",
-            {"project": project_id, "ids": ids})}
-        done = {row["chunk_id"] for row in self.store.query(
-            "SELECT chunk_id FROM embeddings WHERE project_id=:project AND namespace=:namespace AND chunk_id IN :ids",
-            {"project": project_id, "namespace": namespace, "ids": ids})}
+        current = {
+            row["id"]
+            for row in db_find(
+                self.store,
+                "chunks",
+                [eq("project_id", project_id), eq("is_current", True), is_in("id", ids)],
+                columns=("id",),
+            )
+        }
+        done = {
+            row["chunk_id"]
+            for row in db_find(
+                self.store,
+                "embeddings",
+                [eq("project_id", project_id), eq("namespace", namespace), is_in("chunk_id", ids)],
+                columns=("chunk_id",),
+            )
+        }
         return len(current - done)
 
     def search(
@@ -478,10 +518,15 @@ class Retriever:
                     self.warnings.append(warning)
                 else:
                     ids = [row["chunk_id"] for row in neighbors]
-                    chunks = self.store.query(
-                        "SELECT FROM chunks WHERE project_id=:project AND id IN :ids AND is_current=true",
-                        {"project": project_id, "ids": ids},
-                    ) if ids else []
+                    chunks = (
+                        db_find(
+                            self.store,
+                            "chunks",
+                            [eq("project_id", project_id), is_in("id", ids), eq("is_current", True)],
+                        )
+                        if ids
+                        else []
+                    )
                     by_id = {row["id"]: row for row in chunks}
                     semantic = []
                     for neighbor in neighbors:
@@ -492,11 +537,13 @@ class Retriever:
                     self._demote_secondary(semantic)
                     ranks.append(semantic)
                 # The registry row comes back with the first embedded chunk, long before the rebuild ends (#187).
-                left = self.store.query(
-                    "SELECT count(*) AS n FROM jobs WHERE project_id=:project AND kind='embed' "
-                    "AND state IN ['pending','running']", {"project": project_id})
-                if left and left[0].get("n"):
-                    self.warnings.append(f"{VECTORS_BUILDING}{left[0]['n']}")
+                left = db_count(
+                    self.store,
+                    "jobs",
+                    [eq("project_id", project_id), eq("kind", "embed"), is_in("state", ("pending", "running"))],
+                )
+                if left:
+                    self.warnings.append(f"{VECTORS_BUILDING}{left}")
                 elif failed := self._failed_vector_chunks(project_id, namespace):
                     self.warnings.append(f"{VECTORS_FAILED}{failed}")
             else:
@@ -508,10 +555,20 @@ class Retriever:
             margin = max(RECORD_STATUS_PENALTY.values())
             records = self.backend.search_records_fts(project_id, words, eligible_records, limit * 2 + margin)
             # Exact keys remain useful even when a short task key is absent from its body.
-            keyed = self.store.query(
-                "SELECT FROM records WHERE project_id=:project AND status<>'superseded' "
-                f"AND id IN :eligible_records AND key IN :keys LIMIT {limit}",
-                {"project": project_id, "keys": words, "eligible_records": eligible_records},
+            keyed = (
+                db_find(
+                    self.store,
+                    "records",
+                    [
+                        eq("project_id", project_id),
+                        ne("status", "superseded"),
+                        is_in("id", eligible_records),
+                        is_in("key", words),
+                    ],
+                    limit=limit,
+                )
+                if eligible_records and words
+                else []
             )
             record_hits, seen, gate = [], set(), ASK.get()
             if gate:
@@ -612,12 +669,23 @@ class Retriever:
             )
             nodes.append(node)
         ids = [node["id"] for node in nodes]
-        edge_rows = self.store.query(
-            "SELECT FROM edges WHERE project_id=:project AND is_current=true AND status<>'superseded' "
-            "AND id IN :eligible_edges "
-            f"AND from_id IN :ids AND to_id IN :ids LIMIT {limit * 3 + 1}",
-            {"project": project_id, "ids": ids, "eligible_edges": eligible_edges},
-        ) if ids else []
+        edge_rows = (
+            db_find(
+                self.store,
+                "edges",
+                [
+                    eq("project_id", project_id),
+                    eq("is_current", True),
+                    ne("status", "superseded"),
+                    is_in("id", eligible_edges),
+                    is_in("from_id", ids),
+                    is_in("to_id", ids),
+                ],
+                limit=limit * 3 + 1,
+            )
+            if ids and eligible_edges
+            else []
+        )
         truncated |= len(edge_rows) > limit * 3
         edges = []
         for row in edge_rows[:limit * 3]:
@@ -726,11 +794,12 @@ class Retriever:
 
     async def embed_pending(self, job: dict) -> None:
         payload = json_value(job.get("payload"), {})
-        if not self.store.query("SELECT id FROM projects WHERE id=:id", {"id": job["project_id"]}):
+        if not db_find(self.store, "projects", {"id": job["project_id"]}, columns=("id",), limit=1):
             return
-        chunks = self.store.query(
-            "SELECT FROM chunks WHERE id=:id AND project_id=:project AND is_current=true",
-            {"id": payload["chunk_id"], "project": job["project_id"]},
+        chunks = db_find(
+            self.store,
+            "chunks",
+            {"id": payload["chunk_id"], "project_id": job["project_id"], "is_current": True},
         )
         if not chunks:
             return
@@ -738,7 +807,7 @@ class Retriever:
         try:
             source = self.store.get_source(chunk["source_id"])
         except ValueError:
-            if not self.store.query("SELECT id FROM projects WHERE id=:id", {"id": job["project_id"]}):
+            if not db_find(self.store, "projects", {"id": job["project_id"]}, columns=("id",), limit=1):
                 return
             raise
         if source["project_id"] != job["project_id"]:
@@ -747,9 +816,10 @@ class Retriever:
             return
         identity = getattr(self.ollama, "model_identity", None)
         namespace = await identity(self.settings.embedding_model) if identity else self.settings.embedding_model
-        canonical = self.store.query(
-            "SELECT FROM embeddings WHERE chunk_id=:chunk AND project_id=:project AND namespace=:namespace",
-            {"chunk": chunk["id"], "project": job["project_id"], "namespace": namespace},
+        canonical = db_find(
+            self.store,
+            "embeddings",
+            {"chunk_id": chunk["id"], "project_id": job["project_id"], "namespace": namespace},
         )
         if not canonical and held_back_class(self.settings, "embedding", source):
             return  # left unembedded for a remote server (#181); text search still finds it
@@ -775,8 +845,11 @@ class Retriever:
                 self.store._require_project(tx, job["project_id"])
             except ValueError:
                 return
-            active = tx.query("SELECT FROM sources WHERE id=:id AND project_id=:project AND is_current=true",
-                              {"id": source["id"], "project": job["project_id"]})
+            active = db_find(
+                tx,
+                "sources",
+                {"id": source["id"], "project_id": job["project_id"], "is_current": True},
+            )
             if not active:
                 return
             self.backend.upsert_embedding(tx, values, index)

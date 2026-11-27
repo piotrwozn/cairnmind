@@ -87,6 +87,55 @@ class StorageTransaction(Protocol):
         params: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]: ...
 
+    def find(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        columns: Any = None,
+        order_by: Any = (),
+        limit: int | None = None,
+        distinct: bool = False,
+    ) -> list[dict[str, Any]]: ...
+
+    def find_one(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        columns: Any = None,
+        order_by: Any = (),
+        required: bool = False,
+    ) -> dict[str, Any] | None: ...
+
+    def count(self, collection: str, where: Any = ()) -> int: ...
+
+    def group_counts(
+        self,
+        collection: str,
+        group_by: Any,
+        where: Any = (),
+        *,
+        count_alias: str = "total",
+    ) -> list[dict[str, Any]]: ...
+
+    def update_where(
+        self,
+        collection: str,
+        *,
+        set_fields: dict[str, Any] | None = None,
+        remove_fields: Any = (),
+        where: Any = (),
+    ) -> list[dict[str, Any]]: ...
+
+    def delete_where(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]: ...
+
 
 @runtime_checkable
 class StorageBackend(Protocol):
@@ -150,6 +199,61 @@ class StorageBackend(Protocol):
     ) -> list[dict[str, Any]]: ...
 
     def get_by_id(self, reader: Any, collection: str, row_id: str) -> dict[str, Any] | None: ...
+
+    # --- Declarative Backend-Neutral Queries & Mutations (DAL) ---
+    def find(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        columns: Any = None,
+        order_by: Any = (),
+        limit: int | None = None,
+        distinct: bool = False,
+        reader: Any = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def find_one(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        columns: Any = None,
+        order_by: Any = (),
+        required: bool = False,
+        reader: Any = None,
+    ) -> dict[str, Any] | None: ...
+
+    def count(self, collection: str, where: Any = (), *, reader: Any = None) -> int: ...
+
+    def group_counts(
+        self,
+        collection: str,
+        group_by: Any,
+        where: Any = (),
+        *,
+        count_alias: str = "total",
+        reader: Any = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def update_where(
+        self,
+        tx: Any,
+        collection: str,
+        *,
+        set_fields: dict[str, Any] | None = None,
+        remove_fields: Any = (),
+        where: Any = (),
+    ) -> list[dict[str, Any]]: ...
+
+    def delete_where(
+        self,
+        tx: Any,
+        collection: str,
+        where: Any = (),
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]: ...
 
     # --- Full-Text Search ---
     def search_chunks_fts(
@@ -232,6 +336,22 @@ class StorageBackend(Protocol):
         created_edges: list[dict[str, Any]],
     ) -> None: ...
 
+    def delete_graph_nodes(
+        self,
+        tx: Any,
+        project_id: str,
+        node_ids: list[str],
+    ) -> list[dict[str, Any]]: ...
+
+    def delete_graph_edges(
+        self,
+        tx: Any,
+        project_id: str,
+        edge_ids: list[str],
+        *,
+        kinds: Any = None,
+    ) -> list[dict[str, Any]]: ...
+
     def search_graph_seeds(
         self,
         project_id: str,
@@ -285,3 +405,63 @@ class StorageBackend(Protocol):
     ) -> Iterator[list[dict[str, Any]]]: ...
 
     def collection_counts(self, reader: Any = None) -> dict[str, int]: ...
+
+    # --- Schema Init, Migration & Sizing Primitives ---
+    def init_schema(self, store: Any = None) -> None: ...
+
+    def ensure_restored_vector_types(self, vector_indexes: list[dict[str, Any]]) -> None: ...
+
+    def wipe_all_collections(self, collections: tuple[str, ...]) -> None: ...
+
+    def import_migration_batch(self, collection: str, rows: list[dict[str, Any]]) -> None: ...
+
+    def upsert_meta_row(self, row: dict[str, Any]) -> None: ...
+
+    def measure_collection_exact_bytes(
+        self,
+        collection: str,
+        *,
+        project_id: str | None = None,
+        project_key: str = "project_id",
+    ) -> int: ...
+
+    def measure_collection_sample(
+        self,
+        collection: str,
+        rows: int,
+        *,
+        project_id: str | None = None,
+        project_key: str = "project_id",
+        fields: str = "",
+        sample_points: int = 32,
+        sample_window: int = 8,
+        seed: int = 184,
+    ) -> list[dict[str, Any]]: ...
+
+    def measure_collection_grouped(
+        self,
+        collection: str,
+        group_fields: tuple[str, ...],
+        *,
+        project_id: str | None = None,
+        project_key: str = "project_id",
+        include_bytes: bool = True,
+    ) -> list[dict[str, Any]]: ...
+
+    def measure_package_table(
+        self,
+        table: str,
+        project_id: str,
+        *,
+        only: Any = None,
+        group_sources: bool = False,
+    ) -> tuple[list[dict[str, Any]], bool]: ...
+
+    def measure_package_max_bytes(
+        self,
+        table: str,
+        project_id: str,
+        *,
+        floor_chars: int,
+        only: Any = None,
+    ) -> int | None: ...

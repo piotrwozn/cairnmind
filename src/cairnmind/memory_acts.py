@@ -16,7 +16,8 @@ from uuid import uuid4
 
 from .memory_published_format import (J, audit_covers, evidence_hash, identity_hash, plan_hash, row_definition_hash,
                                       sha256_text)
-from .sql import clean_row, one_row, utc_now
+from .sql import clean_row, utc_now
+from .storage_query import db_find, db_find_one
 
 
 DETACHED = "detached HEAD"  # Not a branch name: Git forbids the space.
@@ -28,18 +29,16 @@ def act_context(store, project_id, worktree=None) -> dict:
     guess. A folder that is not a registered root is refused."""
     from .sql import unregistered_root
     from .verification import _git
-    rows = store.query("SELECT id,name,root FROM projects WHERE id=:id", {"id": project_id})
+    rows = db_find(store, "projects", {"id": project_id}, columns=("id", "name", "root"))
     root = rows[0].get("root") if rows else None
     if worktree is not None and rows:
         root = str(Path(worktree).expanduser().resolve())
-        if not store.query("SELECT path FROM project_roots WHERE project_id=:project AND path=:root",
-                           {"project": project_id, "root": root}):
+        if not db_find(store, "project_roots", {"project_id": project_id, "path": root}, columns=("path",)):
             raise ValueError(unregistered_root(root, rows[0]))
     values = {"actor_name": None, "branch": None, "commit": None}
     if not root:
         return values
-    several = worktree is None and len(store.query("SELECT path FROM project_roots WHERE project_id=:project",
-                                                   {"project": project_id})) > 1
+    several = worktree is None and len(db_find(store, "project_roots", {"project_id": project_id}, columns=("path",))) > 1
     for name, args in (("actor_name", ("config", "user.name")), ("branch", ("rev-parse", "--abbrev-ref", "HEAD")),
                        ("commit", ("rev-parse", "HEAD"))):
         if several and name != "actor_name":
@@ -94,7 +93,7 @@ def covered_by_local_act(tx, record) -> bool:
     metadata = record.get("metadata") or {}
     definition = row_definition_hash(record["content"], metadata) if record["kind"] == "task" else None
     for source_id in record.get("source_ids") or []:
-        source = one_row(tx, "SELECT uri,content,metadata FROM sources WHERE id=:id", {"id": source_id}, False)
+        source = db_find_one(tx, "sources", {"id": source_id}, columns=("uri", "content", "metadata"))
         if (not source or not str(source.get("uri", "")).startswith("review://")
                 or (source.get("metadata") or {}).get("origin") != "local_user_review"):
             continue
@@ -157,8 +156,7 @@ def confirm_plan(store, project_id, plan_id, expected_plan_version, reason=None,
         raise ValueError("Review reason must be at most 4000 characters")
     context = act_context(store, project_id, worktree)
     with store.transaction() as tx:
-        plan = one_row(tx, "SELECT FROM plans WHERE id=:id AND project_id=:project",
-                       {"id": plan_id, "project": project_id}, False)
+        plan = db_find_one(tx, "plans", {"id": plan_id, "project_id": project_id})
         if not plan:
             raise LookupError("Unknown plan in requested project")
         if plan["version"] != expected_plan_version:

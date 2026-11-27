@@ -32,6 +32,7 @@ from .memory_paths import (
     nested_reserved,
     snapshot_directory,
 )
+from .storage_query import asc, db_find, desc as order_desc, eq, is_in
 from .store import Store, degraded_origin
 from .store_readonly import StoreNotReady
 from .terminal_safe import safe_text
@@ -365,7 +366,7 @@ def _resolve_project_and_root(
         scope = actor_scope(store, selected["id"], worktree)
         if scope is None:
             # Prefer the registered worktree containing cwd when a project has multiple worktrees.
-            rows = store.query("SELECT path FROM project_roots WHERE project_id=:project", {"project": selected["id"]})
+            rows = db_find(store, "project_roots", {"project_id": selected["id"]}, columns=("path",))
             roots = [Path(r["path"]).resolve() for r in rows if isinstance(r.get("path"), str)]
             if len(roots) > 1:
                 cwd = Path.cwd().resolve()
@@ -381,7 +382,7 @@ def _resolve_project_and_root(
 
     # Project omitted: infer from --worktree or current working directory / git toplevel.
     base = Path(worktree).expanduser().resolve() if worktree else Path.cwd().resolve()
-    rows = store.query("SELECT project_id, path FROM project_roots")
+    rows = db_find(store, "project_roots", columns=("project_id", "path"))
     registered = [
         (row["project_id"], Path(row["path"]).resolve())
         for row in rows
@@ -411,11 +412,13 @@ def _resolve_project_and_root(
 def _latest_baseline(store: Store, project_id: str, root: Path) -> dict[str, Any] | None:
     """Latest recorded Git (head, branch) for this exact worktree from check runs or resume packets."""
     worktree_str = str(root)
-    runs = store.query(
-        "SELECT ended_at, code_after FROM check_runs "
-        "WHERE project_id=:project AND worktree=:worktree AND origin='local_runner' "
-        "ORDER BY ended_at DESC LIMIT 5",
-        {"project": project_id, "worktree": worktree_str},
+    runs = db_find(
+        store,
+        "check_runs",
+        {"project_id": project_id, "worktree": worktree_str, "origin": "local_runner"},
+        columns=("ended_at", "code_after"),
+        order_by=(order_desc("ended_at"),),
+        limit=5,
     )
     for row in runs:
         code = row.get("code_after")
@@ -426,11 +429,13 @@ def _latest_baseline(store: Store, project_id: str, root: Path) -> dict[str, Any
                 "branch": code.get("branch"),
                 "at": row.get("ended_at"),
             }
-    packets = store.query(
-        "SELECT created_at, payload FROM resume_packets "
-        "WHERE project_id=:project AND worktree=:worktree "
-        "ORDER BY created_at DESC LIMIT 3",
-        {"project": project_id, "worktree": worktree_str},
+    packets = db_find(
+        store,
+        "resume_packets",
+        {"project_id": project_id, "worktree": worktree_str},
+        columns=("created_at", "payload"),
+        order_by=(order_desc("created_at"),),
+        limit=3,
     )
     for row in packets:
         payload = row.get("payload")
@@ -513,9 +518,11 @@ def _check_file_drift(
 
     sources_by_id: dict[str, dict[str, Any]] = {}
     if cited_ids:
-        rows = store.query(
-            "SELECT id, project_id, uri, kind, sha256, is_current, metadata FROM sources WHERE id IN :ids",
-            {"ids": sorted(cited_ids)},
+        rows = db_find(
+            store,
+            "sources",
+            [is_in("id", sorted(cited_ids))],
+            columns=("id", "project_id", "uri", "kind", "sha256", "is_current", "metadata"),
         )
         sources_by_id = {r["id"]: r for r in rows if r.get("project_id") == project_id}
 
@@ -550,10 +557,12 @@ def _check_file_drift(
 
     # 4. No-Git fallback: check current indexed file sources via fast (mtime_ns, size) + SHA-256.
     if not git["available"]:
-        current_files = store.query(
-            "SELECT id, uri, kind, sha256, metadata FROM sources "
-            f"WHERE project_id=:project AND is_current=true AND kind IN :kinds LIMIT {_NO_GIT_SOURCE_LIMIT}",
-            {"project": project_id, "kinds": list(_FILE_KINDS)},
+        current_files = db_find(
+            store,
+            "sources",
+            [eq("project_id", project_id), eq("is_current", True), is_in("kind", _FILE_KINDS)],
+            columns=("id", "uri", "kind", "sha256", "metadata"),
+            limit=_NO_GIT_SOURCE_LIMIT,
         )
         for source in current_files:
             rel = _source_relative_path(source, root)
@@ -659,9 +668,11 @@ def _check_test_freshness(
     runs_by_task: dict[str, list[dict[str, Any]]] = {}
     if not use_exact:
         task_ids = [t["id"] for t in relevant_tasks]
-        rows = store.query(
-            "SELECT FROM check_runs WHERE project_id=:project AND task_id IN :tasks ORDER BY ended_at DESC, id",
-            {"project": project_id, "tasks": task_ids},
+        rows = db_find(
+            store,
+            "check_runs",
+            [eq("project_id", project_id), is_in("task_id", task_ids)],
+            order_by=(order_desc("ended_at"), asc("id")),
         )
         for row in rows:
             if row.get("worktree") == str(root):
@@ -907,16 +918,19 @@ def _verify_snapshot_dir(snap_dir: Path, root: Path, git: dict[str, Any], broken
 
 def _active_plan(store: Store, project_id: str, root: Path) -> dict[str, Any] | None:
     """Read the active plan row for this exact worktree without failing on missing step references."""
-    rows = store.query(
-        "SELECT active_plan_id FROM worktree_states WHERE project_id=:project AND worktree=:worktree",
-        {"project": project_id, "worktree": str(root)},
+    rows = db_find(
+        store,
+        "worktree_states",
+        {"project_id": project_id, "worktree": str(root)},
+        columns=("active_plan_id",),
     )
     plan_id = rows[0].get("active_plan_id") if rows else None
     if not isinstance(plan_id, str) or not plan_id:
         return None
-    plans = store.query(
-        "SELECT FROM plans WHERE id=:id AND project_id=:project",
-        {"id": plan_id, "project": project_id},
+    plans = db_find(
+        store,
+        "plans",
+        {"id": plan_id, "project_id": project_id},
     )
     return plans[0] if plans else None
 

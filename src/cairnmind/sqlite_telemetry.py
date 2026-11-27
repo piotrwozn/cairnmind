@@ -247,14 +247,13 @@ def detect_filesystem_risk(
 def _read_db_counts(db_path: Path | str, store: Any = None) -> tuple[int, int, int]:
     """Return ``(db_bytes, files_count, edges_count)`` without creating or mutating any DB."""
     if store is not None and getattr(getattr(store, "backend", None), "backend_kind", None) == "sqlite":
+        from .storage_query import db_count, eq, is_in
         snap = store.backend.metrics_snapshot()
         db_bytes = int(snap.get("db_bytes", 0))
-        files_rows = store.query(
-            "SELECT count(*) AS n FROM sources WHERE is_current=true AND kind IN ['code','file','document']"
+        files_count = db_count(
+            store, "sources", [eq("is_current", True), is_in("kind", ("code", "file", "document"))]
         )
-        edges_rows = store.query("SELECT count(*) AS n FROM edges WHERE is_current=true")
-        files_count = int(files_rows[0]["n"]) if files_rows else 0
-        edges_count = int(edges_rows[0]["n"]) if edges_rows else 0
+        edges_count = db_count(store, "edges", {"is_current": True})
         return db_bytes, files_count, edges_count
 
     if str(db_path) == ":memory:":

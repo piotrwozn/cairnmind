@@ -14,7 +14,8 @@ with ``max_batches``, leaves only rows that the next run finds and deletes the s
 """
 from __future__ import annotations
 
-from .sql import IDENTIFIER, quote_name
+from .sql import IDENTIFIER
+from .storage_query import asc, db_delete_where, db_find, eq, gt, is_in
 
 SOURCES_PER_PAGE = 200
 CHUNKS_PER_TRANSACTION = 200  # below the journal's limit, under which every deleted row is still named
@@ -23,10 +24,12 @@ CHUNKS_PER_TRANSACTION = 200  # below the journal's limit, under which every del
 def _tables(store) -> list[tuple[str, str]]:
     """(table, report key) of every table that can hold rows of a source: chunks first, then each vector copy."""
     tables = [("chunks", "chunks"), ("embeddings", "embeddings")]
-    for row in store.query("SELECT type_name FROM vector_indexes"):
+    if getattr(getattr(store, "backend", None), "backend_kind", "arcade") == "sqlite":
+        return tables
+    for row in db_find(store, "vector_indexes", columns=("type_name",)):
         name = row.get("type_name")
         if name and IDENTIFIER.fullmatch(name) and name.startswith("vector_"):
-            tables.append((quote_name(name), "vector_rows"))
+            tables.append((name, "vector_rows"))
     return tables
 
 
@@ -46,17 +49,30 @@ def drop_replaced_chunks(store, *, batch: int = CHUNKS_PER_TRANSACTION, max_batc
     tables = _tables(store)
     after = ""
     while True:
-        page = [row["id"] for row in store.query(
-            "SELECT id FROM sources WHERE is_current=false AND id > :last ORDER BY id LIMIT :limit",
-            {"last": after, "limit": SOURCES_PER_PAGE})]
+        page = [
+            row["id"]
+            for row in db_find(
+                store,
+                "sources",
+                [eq("is_current", False), gt("id", after)],
+                columns=("id",),
+                order_by=(asc("id"),),
+                limit=SOURCES_PER_PAGE,
+            )
+        ]
         if not page:
             result["complete"] = True
             return result
         after, pending, touched = page[-1], list(page), set()
         for table, key in tables:
             while pending:
-                found = store.query(f"SELECT id,source_id FROM {table} WHERE source_id IN :ids LIMIT :limit",
-                                    {"ids": pending, "limit": batch})
+                found = db_find(
+                    store,
+                    table,
+                    is_in("source_id", pending),
+                    columns=("id", "source_id"),
+                    limit=batch,
+                )
                 if not found:
                     break
                 if max_batches is not None and result["transactions"] >= max_batches:
@@ -65,12 +81,18 @@ def drop_replaced_chunks(store, *, batch: int = CHUNKS_PER_TRANSACTION, max_batc
                     return result
                 with store.transaction() as tx:
                     # Checked again under the writer lock: a source made current meanwhile keeps its rows.
-                    still = {row["id"] for row in tx.query(
-                        "SELECT id FROM sources WHERE id IN :ids AND is_current=false",
-                        {"ids": sorted({row["source_id"] for row in found})})}
+                    still = {
+                        row["id"]
+                        for row in db_find(
+                            tx,
+                            "sources",
+                            [is_in("id", sorted({row["source_id"] for row in found})), eq("is_current", False)],
+                            columns=("id",),
+                        )
+                    }
                     doomed = [row["id"] for row in found if row["source_id"] in still]
                     if doomed:
-                        tx.command(f"DELETE FROM {table} WHERE id IN :ids", {"ids": doomed})
+                        db_delete_where(tx, table, is_in("id", doomed))
                 result["transactions"] += 1
                 result["removed"][key] += len(doomed)
                 touched.update(row["source_id"] for row in found if row["source_id"] in still)

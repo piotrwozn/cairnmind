@@ -1,7 +1,8 @@
 """Embedding jobs queued and repaired in groups, not one transaction per chunk (#363)."""
 from __future__ import annotations
 
-from .sql import json_text, update_document, utc_now
+from .sql import json_text, utc_now
+from .storage_query import db_find, db_update_where, eq, is_in
 
 # Keys per IN list, as memory_egress.held_chunk_ids reads chunks.
 READ_BATCH = 500
@@ -18,8 +19,12 @@ def _jobs(reader, keys: list[str]) -> dict[str, dict]:
     """The embed jobs of these keys, read ``READ_BATCH`` keys per request: job_key -> {id, job_key, state}."""
     found = {}
     for start in range(0, len(keys), READ_BATCH):
-        for row in reader.query("SELECT id,job_key,state FROM jobs WHERE job_key IN :keys",
-                                {"keys": keys[start:start + READ_BATCH]}):
+        for row in db_find(
+            reader,
+            "jobs",
+            [is_in("job_key", keys[start:start + READ_BATCH])],
+            columns=("id", "job_key", "state"),
+        ):
             found[row["job_key"]] = row
     return found
 
@@ -81,10 +86,20 @@ def repair_embed_jobs(store, rows: list[dict], namespace: str) -> None:
     for start in range(0, len(done), WRITE_BATCH):
         part = done[start:start + WRITE_BATCH]
         with store.transaction() as tx:
-            have = {r["chunk_id"] for r in tx.query(
-                "SELECT chunk_id FROM embeddings WHERE namespace=:namespace AND chunk_id IN :chunks",
-                {"namespace": namespace, "chunks": [chunk for chunk, _ in part]})}
+            have = {
+                r["chunk_id"]
+                for r in db_find(
+                    tx,
+                    "embeddings",
+                    [eq("namespace", namespace), is_in("chunk_id", [chunk for chunk, _ in part])],
+                    columns=("chunk_id",),
+                )
+            }
             ids = [job for chunk, job in part if chunk not in have]
             if ids:
-                update_document(tx, "jobs", {"state": "pending", "error": None, "lease_until": None,
-                                             "updated_at": utc_now()}, "id IN :ids AND state='completed'", {"ids": ids})
+                db_update_where(
+                    tx,
+                    "jobs",
+                    set_fields={"state": "pending", "error": None, "lease_until": None, "updated_at": utc_now()},
+                    where=[is_in("id", ids), eq("state", "completed")],
+                )

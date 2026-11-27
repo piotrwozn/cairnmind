@@ -30,7 +30,8 @@ dependencies = [
 [project.optional-dependencies]
 copilot = ["github-copilot-sdk==1.0.29"]
 nli = ["onnxruntime>=1.19,<2", "tokenizers>=0.20,<1"]
-all = ["github-copilot-sdk==1.0.29", "onnxruntime>=1.19,<2", "tokenizers>=0.20,<1"]
+vec = ["sqlite-vec>=0.1.6,<1"]
+all = ["github-copilot-sdk==1.0.29", "onnxruntime>=1.19,<2", "tokenizers>=0.20,<1", "sqlite-vec>=0.1.6,<1"]
 dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "pytest-xdist>=3.6,<4", "pytest-cov>=7,<8",
        "coverage>=7.10,<8", "diff-cover>=9.3.2,<11", "ruff>=0.11,<1",
        "github-copilot-sdk==1.0.29",

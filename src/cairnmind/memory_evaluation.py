@@ -24,6 +24,7 @@ from .memory_models import from_settings, inference_report
 from .ollama import OllamaUnavailable
 from .plans import PlanManager
 from .retrieval import Retriever
+from .storage_query import asc, db_find, db_find_one
 from .store import EXTRACTION_MARK, Store
 
 
@@ -65,7 +66,7 @@ def _expected_record(case: dict, row: dict, source_id: str, source_text: str) ->
 
 
 def _project_rows(store: Store, project_id: str, table: str) -> list[dict]:
-    return store.query(f"SELECT FROM {table} WHERE project_id=:project ORDER BY id", {"project": project_id})
+    return db_find(store, table, {"project_id": project_id}, order_by=(asc("id"),))
 
 
 def _semantic_rows(rows: list[dict]) -> list[dict]:
@@ -139,7 +140,7 @@ async def _evaluate(stores: list[Store], roots: list[Path], settings: list[Setti
                                 worker=job["worker"], expected_attempts=job["attempts"])
         records = source_store.list_records(project["id"])
         matches = [row for row in records if _expected_record(case, row, source["id"], case["text"])]
-        diagnostic = source_store.query("SELECT diagnostics FROM jobs WHERE id=:id", {"id": job_id})[0]["diagnostics"]
+        diagnostic = db_find_one(source_store, "jobs", {"id": job_id}, columns=("diagnostics",), required=True)["diagnostics"]
         passed = error is None and bool(matches) and diagnostic.get("counts", {}).get("written_records", 0) > 0
         report["extraction"].append({"id": case["id"], "status": "passed" if passed else "failed",
             "source_id": source["id"], "matching_record_ids": [row["id"] for row in matches],
@@ -208,7 +209,7 @@ async def _evaluate(stores: list[Store], roots: list[Path], settings: list[Setti
     report["stage"] = "recall"
     index_pending_sources(destination, limit=1000)
     retriever = Retriever(destination, settings[1], ollama=measured)
-    for chunk in destination.query("SELECT id FROM chunks WHERE project_id=:project", {"project": imported_project["id"]}):
+    for chunk in db_find(destination, "chunks", {"project_id": imported_project["id"]}, columns=("id",)):
         await retriever.embed_pending({"project_id": imported_project["id"], "payload": {"chunk_id": chunk["id"]}})
     # This agent has no messages, model state or retriever cache from extraction.
     recall = KnowledgeAgent(destination, settings[1], ollama=measured,

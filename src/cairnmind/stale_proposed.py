@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from .sql import ACT_NOTE_ORIGINS, parse_utc
+from .storage_query import asc, db_find, eq, is_in
 
 DEFAULT_DAYS = 30
 MAX_DAYS = 3650
@@ -36,8 +37,12 @@ def _evidence_sources(store, project_id, records) -> dict:
     ids = sorted({source for record in records for source in record.get("source_ids") or [] if isinstance(source, str)})
     notes = set()
     for first in range(0, len(ids), 500):
-        rows = store.query("SELECT id, metadata.origin AS origin FROM sources WHERE project_id=:project AND id IN :ids",
-                           {"project": project_id, "ids": ids[first:first + 500]})
+        rows = db_find(
+            store,
+            "sources",
+            [eq("project_id", project_id), is_in("id", ids[first:first + 500])],
+            columns=("id", ("metadata.origin", "origin")),
+        )
         notes.update(row["id"] for row in rows if row.get("origin") in ACT_NOTE_ORIGINS)
     return {record["id"]: len([source for source in dict.fromkeys(record.get("source_ids") or [])
                                if isinstance(source, str) and source not in notes]) for record in records}
@@ -67,8 +72,7 @@ def stale_proposed(store, project_id, *, days=DEFAULT_DAYS, matches=None, now=No
         raise ValueError(f"Limit must be between 1 and {MAX_ITEMS}")
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
-    rows = store.query("SELECT FROM records WHERE project_id=:project AND status='proposed' ORDER BY id",
-                       {"project": project_id})
+    rows = db_find(store, "records", {"project_id": project_id, "status": "proposed"}, order_by=(asc("id"),))
     waiting = []
     for row in rows:
         row = {key: value for key, value in row.items() if not key.startswith("@")}

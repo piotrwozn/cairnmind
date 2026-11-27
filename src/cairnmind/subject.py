@@ -61,6 +61,7 @@ from functools import lru_cache
 from pathlib import PurePosixPath
 
 from .extraction_input import source_text
+from .storage_query import db_find_one
 from .support import support_citations
 
 # What an answer refused by this check says is missing: this fixed prefix, then the names as the
@@ -397,8 +398,8 @@ def _not_own(store, project_id: str, absent: list[str], spreads: list[str], infl
     or of a directory that holds current sources, or an identifier whose prefix is the project's)."""
     if not absent:
         return []
-    project = store.query("SELECT name, root FROM projects WHERE id=:id", {"id": project_id})
-    name, root = (str(project[0].get("name") or ""), str(project[0].get("root") or "")) if project else ("", "")
+    project = db_find_one(store, "projects", {"id": project_id}, columns=("name", "root"))
+    name, root = (str(project.get("name") or ""), str(project.get("root") or "")) if project else ("", "")
     own = {_key(item) for item in (name, *name.split(), PurePosixPath(root.replace("\\", "/")).name) if item}
     missing = []
     for term in absent:

@@ -283,12 +283,13 @@ def actor_scope(store, project_id: str, worktree: Path | str | None = None):
     scope = str(Path(worktree).expanduser().resolve()) if worktree else None
     session_id = session_value("SESSION_ID")
     if session_id:
-        rows = store.query("SELECT project_id,worktree FROM sessions WHERE id=:id", {"id": session_id})
-        if not rows or rows[0]["project_id"] != project_id:
+        from cairnmind.storage_query import db_find_one
+        session = db_find_one(store, "sessions", {"id": session_id}, columns=["project_id", "worktree"])
+        if not session or session["project_id"] != project_id:
             raise ValueError("resume_required: command project differs from the session")
-        if scope and scope != rows[0]["worktree"]:
+        if scope and scope != session["worktree"]:
             raise ValueError("resume_required: command worktree differs from the session")
-        scope = rows[0]["worktree"]
+        scope = session["worktree"]
     return scope
 
 
@@ -2470,17 +2471,25 @@ def check_list(ctx: typer.Context, project: ProjectArg,
     pid = store.resolve_project(project)["id"]
     scope = actor_scope(store, pid, worktree)
     recover_interrupted_runs(store, ctx.obj)
-    rows = store.query("SELECT FROM check_runs WHERE project_id=:project "
-                       + ("AND task_id=:task " if task else "")
-                       + ("AND worktree=:worktree " if scope else "") + "ORDER BY ended_at DESC,id LIMIT 100",
-                       {"project": pid, "task": task, "worktree": scope})
+    from cairnmind.storage_query import asc, db_find, db_find_one, desc
+    check_where = {"project_id": pid}
+    if task:
+        check_where["task_id"] = task
+    if scope:
+        check_where["worktree"] = scope
+    rows = db_find(
+        store,
+        "check_runs",
+        check_where,
+        order_by=[desc("ended_at"), asc("id")],
+        limit=100,
+    )
     result = {"checks": [{key: value for key, value in row.items() if not key.startswith("@")} for row in rows]}
     if task:
-        records = store.query("SELECT FROM records WHERE id=:id AND project_id=:project AND kind='task'",
-                              {"id": task, "project": pid})
-        if not records:
+        record = db_find_one(store, "records", {"id": task, "project_id": pid, "kind": "task"})
+        if not record:
             raise ValueError("Task does not exist in this project")  # as the store says a missing row (#244)
-        result["verification"] = verification_status(store, records[0], scope)
+        result["verification"] = verification_status(store, record, scope)
     output(result)
 
 
@@ -3140,8 +3149,8 @@ def run(ctx: typer.Context, project: ProjectArg, client: ClientArg, worktree: Pa
     if worktree:
         store = store_for(ctx.obj)
         root = str(worktree.expanduser().resolve())
-        if not store.query("SELECT id FROM project_roots WHERE project_id=:project AND path=:path",
-                            {"project": selected["id"], "path": root}):
+        from cairnmind.storage_query import db_find_one
+        if not db_find_one(store, "project_roots", {"project_id": selected["id"], "path": root}, columns=["id"]):
             from cairnmind.sql import unregistered_root
             refuse(unregistered_root(root, selected))
         selected = {**selected, "root": root}

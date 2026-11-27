@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
+from .storage_query import db_find
+
 # The record kinds a person writes by hand: a task belongs to a plan and a checkpoint to a session.
 FINDING_KINDS = ("decision", "fact", "constraint", "question", "preference")
 # A person states a finding or confirms it; disputing and superseding are reviews of an existing record.
@@ -61,17 +63,15 @@ def save_finding(store, project_id, key, content, kind, status, *, session_id=No
         uri, metadata = f"session://finding/{key}", {"origin": SESSION_ORIGIN, "session_id": session_id}
     else:
         uri, metadata = f"workspace://finding/{key}", {"origin": ORIGIN, "role": "user"}
-    earlier = store.query("SELECT FROM records WHERE project_id=:project AND `key`=:key",
-                          {"project": project_id, "key": key})
-    sources = store.query("SELECT id,uri,kind,metadata,content FROM sources "
-                          "WHERE project_id=:project AND uri=:uri", {"project": project_id, "uri": uri})
+    earlier = db_find(store, "records", {"project_id": project_id, "key": key})
+    sources = db_find(store, "sources", {"project_id": project_id, "uri": uri},
+                      columns=("id", "uri", "kind", "metadata", "content"))
     if earlier and sources:
         record = {name: value for name, value in earlier[0].items() if not name.startswith("@")}
         source = {name: value for name, value in sources[0].items() if not name.startswith("@")}
         # The status the first request asked for is in the record's first revision: a later review
         # (confirm or dispute) changes the record's current status, never that revision.
-        first = store.query("SELECT snapshot FROM record_revisions WHERE id=:id",
-                            {"id": f"{record['id']}:1"})
+        first = db_find(store, "record_revisions", {"id": f"{record['id']}:1"}, columns=("snapshot",))
         asked = (first[0].get("snapshot") or {}).get("status") if first else record.get("status")
         if source.pop("content") != content or record.get("kind") != kind or asked != status:
             raise ValueError(DIFFERENT)

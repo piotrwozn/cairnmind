@@ -26,6 +26,18 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from cairnmind.storage_query import (
+    asc,
+    db_count,
+    db_find,
+    db_find_one,
+    db_insert_document,
+    db_update_where,
+    desc,
+    eq,
+    is_in,
+    ne,
+)
 from cairnmind.ui_cockpit import (
     CloneVersionRequest,
     CreateFactRequest,
@@ -1154,10 +1166,10 @@ class LiveUiAdapter(LiveCockpitMixin):
                 return self.store.resolve_project(selected)
             except ValueError as exc:
                 raise HTTPException(404, str(exc)) from None
-        rows = self.store.query("SELECT FROM projects ORDER BY updated_at DESC, id LIMIT 1")
-        if not rows:
+        row = db_find_one(self.store, "projects", order_by=[desc("updated_at"), asc("id")])
+        if not row:
             raise HTTPException(404, "No projects registered in Cairnmind store. Run `cairnmind ui --mock` to preview.")
-        return rows[0]
+        return row
 
     def _state_rev(self, project_id: str) -> int:
         from cairnmind.journal import Journal
@@ -1168,10 +1180,7 @@ class LiveUiAdapter(LiveCockpitMixin):
                 return seq
         except Exception:  # noqa: BLE001
             pass
-        rows = self.store.query(
-            "SELECT count(*) AS c FROM records WHERE project_id=:project", {"project": project_id}
-        )
-        return int(rows[0].get("c", 0)) if rows else 0
+        return db_count(self.store, "records", {"project_id": project_id})
 
     def snapshot(self, project_arg: str | None = None) -> dict[str, Any]:
         from cairnmind.evidence import evidence_states
@@ -1188,13 +1197,19 @@ class LiveUiAdapter(LiveCockpitMixin):
             code = capture_code_state(self.store, pid, str(root_path))
 
         # 1. Sessions & OCC sync status
-        session_rows = self.store.query(
-            "SELECT FROM sessions WHERE project_id=:project ORDER BY updated_at DESC LIMIT 50",
-            {"project": pid},
+        session_rows = db_find(
+            self.store,
+            "sessions",
+            {"project_id": pid},
+            order_by=[desc("updated_at")],
+            limit=50,
         )
-        ack_rows = self.store.query(
-            "SELECT FROM resume_acks WHERE project_id=:project ORDER BY recorded_at DESC LIMIT 200",
-            {"project": pid},
+        ack_rows = db_find(
+            self.store,
+            "resume_acks",
+            {"project_id": pid},
+            order_by=[desc("recorded_at")],
+            limit=200,
         )
         latest_ack_by_session: dict[str, dict[str, Any]] = {}
         for row in ack_rows:
@@ -1227,9 +1242,12 @@ class LiveUiAdapter(LiveCockpitMixin):
             })
 
         # 2. Records, Sources & Verbatim Quote Provenance
-        all_records = self.store.query(
-            "SELECT FROM records WHERE project_id=:project AND status!='superseded' ORDER BY updated_at DESC LIMIT 300",
-            {"project": pid},
+        all_records = db_find(
+            self.store,
+            "records",
+            [eq("project_id", pid), ne("status", "superseded")],
+            order_by=[desc("updated_at")],
+            limit=300,
         )
         task_records = [r for r in all_records if r.get("kind") == "task"]
         claim_records = [r for r in all_records if r.get("kind") != "task"]
@@ -1238,21 +1256,29 @@ class LiveUiAdapter(LiveCockpitMixin):
         source_ids = sorted({
             sid for r in all_records for sid in (r.get("source_ids") or []) if isinstance(sid, str)
         })
-        source_rows = self.store.query(
-            "SELECT id,uri,kind,sha256,is_current,metadata FROM sources WHERE id IN :ids",
-            {"ids": source_ids},
+        source_rows = db_find(
+            self.store,
+            "sources",
+            [is_in("id", source_ids)],
+            columns=["id", "uri", "kind", "sha256", "is_current", "metadata"],
         ) if source_ids else []
         sources_by_id = {row["id"]: row for row in source_rows}
 
-        plans = self.store.query(
-            "SELECT FROM plans WHERE project_id=:project ORDER BY updated_at DESC LIMIT 20",
-            {"project": pid},
+        plans = db_find(
+            self.store,
+            "plans",
+            {"project_id": pid},
+            order_by=[desc("updated_at")],
+            limit=20,
         )
         plans_by_id = {p["id"]: p for p in plans}
 
-        check_runs = self.store.query(
-            "SELECT FROM check_runs WHERE project_id=:project ORDER BY ended_at DESC LIMIT 200",
-            {"project": pid},
+        check_runs = db_find(
+            self.store,
+            "check_runs",
+            {"project_id": pid},
+            order_by=[desc("ended_at")],
+            limit=200,
         )
         checks_by_task: dict[str, list[dict[str, Any]]] = {}
         for chk in check_runs:
@@ -1414,9 +1440,12 @@ class LiveUiAdapter(LiveCockpitMixin):
         # 5. Audit log (in-memory MCP bus + stored session_events)
         audit_entries = list(self.bus.recent_audit(100))
         if len(audit_entries) < 50:
-            sess_events = self.store.query(
-                "SELECT FROM session_events WHERE project_id=:project ORDER BY recorded_at DESC LIMIT 50",
-                {"project": pid},
+            sess_events = db_find(
+                self.store,
+                "session_events",
+                {"project_id": pid},
+                order_by=[desc("recorded_at")],
+                limit=50,
             )
             seen_ids = {e["id"] for e in audit_entries}
             for ev in sess_events:
@@ -1515,22 +1544,22 @@ class LiveUiAdapter(LiveCockpitMixin):
         }
 
     def drop_session(self, session_id: str, project_arg: str | None = None) -> dict[str, Any]:
-        from cairnmind.sql import insert_document, update_document
-
         self._require_writable()
         proj = self._resolve_project(project_arg)
         pid = proj["id"]
-        rows = self.store.query(
-            "SELECT FROM sessions WHERE id=:id AND project_id=:project",
-            {"id": session_id, "project": pid},
-        )
-        if not rows:
+        row = db_find_one(self.store, "sessions", {"id": session_id, "project_id": pid})
+        if not row:
             raise HTTPException(404, f"Active session not found: {session_id}")
         now = _utc_now()
         with self.store.transaction() as tx:
-            updated = {**rows[0], "status": "dropped", "active_packet_id": None, "updated_at": now}
-            update_document(tx, "sessions", updated, "id=:id", {"id": session_id})
-            insert_document(tx, "session_events", {
+            updated = {
+                **{k: v for k, v in row.items() if not k.startswith("@")},
+                "status": "dropped",
+                "active_packet_id": None,
+                "updated_at": now,
+            }
+            db_update_where(tx, "sessions", set_fields=updated, where={"id": session_id})
+            db_insert_document(tx, "session_events", {
                 "id": str(uuid4()),
                 "project_id": pid,
                 "session_id": session_id,
@@ -1541,7 +1570,7 @@ class LiveUiAdapter(LiveCockpitMixin):
         rev = self._state_rev(pid)
         self.bus.record_audit({
             "session_id": session_id,
-            "client": str(rows[0].get("client") or "mcp"),
+            "client": str(row.get("client") or "mcp"),
             "mcp_tool": "session.drop",
             "verdict": "ACCEPTED",
             "reason_code": "OK",

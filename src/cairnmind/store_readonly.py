@@ -72,6 +72,86 @@ class ReadOnlyClient:
             raise ReadOnlyStoreError("A store opened for reading runs only SELECT, MATCH and TRAVERSE queries")
         return self._client.query(sql, params)
 
+    def find(
+        self,
+        collection: str,
+        where=(),
+        *,
+        columns=None,
+        order_by=(),
+        limit: int | None = None,
+        distinct: bool = False,
+    ) -> list[dict]:
+        from .sql import clean_row
+        from .storage_query import db_find
+        return [
+            clean_row(row)
+            for row in db_find(
+                self._client,
+                collection,
+                where,
+                columns=columns,
+                order_by=order_by,
+                limit=limit,
+                distinct=distinct,
+            )
+        ]
+
+    def find_one(
+        self,
+        collection: str,
+        where=(),
+        *,
+        columns=None,
+        order_by=(),
+        required: bool = False,
+    ) -> dict | None:
+        from .storage_query import missing_row_message
+        rows = self.find(collection, where, columns=columns, order_by=order_by, limit=1)
+        if not rows:
+            if required:
+                raise ValueError(missing_row_message(collection))
+            return None
+        return rows[0]
+
+    def count(self, collection: str, where=()) -> int:
+        from .storage_query import db_count
+        return db_count(self._client, collection, where)
+
+    def group_counts(self, collection: str, group_by, where=(), *, count_alias: str = "total") -> list[dict]:
+        from .sql import clean_row
+        from .storage_query import db_group_counts
+        return [
+            clean_row(row)
+            for row in db_group_counts(self._client, collection, group_by, where, count_alias=count_alias)
+        ]
+
+    def list_collections(self) -> set[str]:
+        from .storage_query import db_list_collections
+        return db_list_collections(self._client)
+
+    def server_time_ms(self) -> int:
+        from .storage_query import db_server_time_ms
+        return db_server_time_ms(self._client)
+
+    def iter_backup_pages(self, collection: str, *, page_rows: int = 1000, page_bytes: int = 2 * 1024 * 1024):
+        return self._client.iter_backup_pages(collection, page_rows=page_rows, page_bytes=page_bytes)
+
+    def insert_document(self, collection: str, data: dict):
+        self._refuse("A store opened for reading cannot run a database command")
+
+    def insert_documents(self, collection: str, rows: list[dict]):
+        self._refuse("A store opened for reading cannot run a database command")
+
+    def upsert_document(self, collection: str, data: dict, key_field: str = "id"):
+        self._refuse("A store opened for reading cannot run a database command")
+
+    def update_where(self, collection: str, *, set_fields=None, remove_fields=(), where=()):
+        self._refuse("A store opened for reading cannot run a database command")
+
+    def delete_where(self, collection: str, where=(), *, limit: int | None = None):
+        self._refuse("A store opened for reading cannot run a database command")
+
     def command(self, sql, params=None):
         self._refuse("A store opened for reading cannot run a database command")
 
@@ -111,10 +191,11 @@ def check_ready(client: ArcadeClient, settings: Settings) -> None:
         if connect_only(settings):
             raise StoreNotReady(missing_database(settings))
         raise StoreNotReady("The Cairnmind database does not exist yet; create it with `cairnmind init`.")
-    types = {row.get("name") for row in client.query("SELECT name FROM schema:types")}
-    rows = client.query("SELECT value FROM devbrain_meta WHERE name='schema_version'") \
-        if "devbrain_meta" in types else []
-    version = rows[0].get("value") if rows else None
+    from .storage_query import db_find_one, db_list_collections
+    types = db_list_collections(client)
+    meta_row = db_find_one(client, "devbrain_meta", {"name": "schema_version"}, columns=("value",)) \
+        if "devbrain_meta" in types else None
+    version = meta_row.get("value") if meta_row else None
     if version is None:
         raise StoreNotReady("The Cairnmind database has no schema yet; create it with `cairnmind init`.")
     if version in {1, 2, 3}:
@@ -126,7 +207,7 @@ def check_ready(client: ArcadeClient, settings: Settings) -> None:
                             f"and this release reads version {SCHEMA_VERSION}.")
     from .restore_staged import refuse_if_unfinished
     refuse_if_unfinished(client)  # a restore that did not finish leaves part of a backup (#362)
-    if "journal_state" not in types or not client.query("SELECT id FROM journal_state WHERE id='current'"):
+    if "journal_state" not in types or not db_find_one(client, "journal_state", {"id": "current"}, columns=("id",)):
         raise StoreNotReady("The Cairnmind database has no journal state; any ordinary write, for example "
                             "`cairnmind remember`, recreates it, and `cairnmind restore FILE` is for when the "
                             "data itself is damaged.")
@@ -139,11 +220,17 @@ EVENT_LIMIT = 500
 
 def _affected(store, before, after, project_id, kinds) -> bool:
     """Whether a change committed in (before, after] can alter a read of ``kinds`` in ``project_id``."""
+    from .storage_query import asc, db_find, eq, gt, lte
     if before["epoch"] != after["epoch"] or after["seq"] - before["seq"] > EVENT_LIMIT:
         return True  # a reset journal, or too many changes to look at: count them as affecting
-    rows = store.client.query(
-        f"SELECT seq,project_id,entity_type FROM journal_events WHERE epoch=:epoch AND seq>:position AND seq<=:upto "
-        f"ORDER BY seq LIMIT {EVENT_LIMIT}", {"epoch": before["epoch"], "position": before["seq"], "upto": after["seq"]})
+    rows = db_find(
+        store.client,
+        "journal_events",
+        [eq("epoch", before["epoch"]), gt("seq", before["seq"]), lte("seq", after["seq"])],
+        columns=("seq", "project_id", "entity_type"),
+        order_by=(asc("seq"),),
+        limit=EVENT_LIMIT,
+    )
     if len(rows) != after["seq"] - before["seq"]:
         return True  # events pruned meanwhile: nothing is known about them
     # An event without a project (a journal reset, rows shared by every project) concerns every read.
@@ -186,14 +273,14 @@ def open_readonly(store_class, settings: Settings):
             collections = backend.list_collections()
             if "devbrain_meta" not in collections:
                 raise StoreNotReady("The Cairnmind database has no schema yet; create it with `cairnmind init --backend sqlite`.")
-            rows = backend.query("SELECT value FROM devbrain_meta WHERE name='schema_version'")
-            version = rows[0].get("value") if rows else None
+            meta_row = backend.find_one("devbrain_meta", {"name": "schema_version"}, columns=("value",))
+            version = meta_row.get("value") if meta_row else None
             if version != SCHEMA_VERSION:
                 raise StoreNotReady(
                     f"Database schema version is incompatible: the database has version {version!r} "
                     f"and this release reads version {SCHEMA_VERSION}."
                 )
-            if "journal_state" not in collections or not backend.query("SELECT id FROM journal_state WHERE id='current'"):
+            if "journal_state" not in collections or not backend.find_one("journal_state", {"id": "current"}, columns=("id",)):
                 raise StoreNotReady("The Cairnmind database has no journal state.")
         except BaseException:
             backend.close()

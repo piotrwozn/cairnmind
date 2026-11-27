@@ -464,16 +464,27 @@ def test_memory_and_store_optimization_edge_branches(tmp_path, monkeypatch):
     edge_row = {"id": "e:1", "project_id": pid, "from_id": "custom:1", "to_id": "custom:1", "kind": "relates_to"}
 
     class FakeCaptureStore:
+        def find(self, collection, where=(), *, columns=None, order_by=(), limit=None, distinct=False):
+            from cairnmind.storage_query import normalize_where
+            conds = normalize_where(where)
+            if collection == "projects":
+                return [{"id": pid, "name": "Demo", "root": str(root.resolve())}]
+            if collection == "project_roots":
+                return [{"id": "pr1"}]
+            if collection == "edges" and any(getattr(c, "op", None) == "not_in" for c in conds):
+                return [edge_row]
+            if collection == "nodes" and any(getattr(c, "field", None) == "id" and getattr(c, "op", None) == "in" for c in conds):
+                return [extra_node]
+            return []
+
         def query(self, statement, params=None):
             if "FROM projects WHERE" in statement:
                 return [{"id": pid, "name": "Demo", "root": str(root.resolve())}]
             if "FROM project_roots WHERE" in statement:
                 return [{"id": "pr1"}]
-            if "kind NOT IN :code_edges" in statement:
+            if "FROM edges" in statement and "NOT IN" in statement:
                 return [edge_row]
-            if "kind IN :kept_nodes" in statement:
-                return []
-            if "FROM nodes WHERE project_id=:project AND id IN :ids" in statement:
+            if "FROM nodes" in statement and " id IN " in statement:
                 return [extra_node]
             if "FROM journal_state" in statement:
                 return []

@@ -40,7 +40,7 @@ from .config import Settings, resolved_backend, session_value, sqlite_db_path, t
 from .file_locks import lock_exclusive
 from .private_files import make_private
 from .restore_claims import BackupClaims
-from .sql import clean_row, json_text, quote_name, utc_now
+from .sql import clean_row, utc_now
 from .sqlite_telemetry import DEFAULT_THRESHOLDS, evaluate_sqlite_health
 from .storage_backend import ALL_COLLECTIONS
 
@@ -229,23 +229,7 @@ def _open_store_for_backend(settings: Settings, *, backend: str, database: str |
 
 def _wipe_target_collections(target_store: Any, target_backend: str) -> None:
     """Clear all 28 collections in target store (edges before nodes for ArcadeDB)."""
-    wipe_order = list(reversed(MIGRATION_COLLECTIONS))
-    if target_backend == "sqlite":
-        with target_store.backend.raw_transaction() as tx:
-            for col in wipe_order:
-                tx.command(f"DELETE FROM {quote_name(col)}")
-            tx._conn.execute("DELETE FROM chunks_fts")
-            tx._conn.execute("DELETE FROM records_fts")
-        return
-    # ArcadeDB: delete vector_* types too if present
-    existing_types = target_store.backend.list_collections(target_store.client)
-    with target_store.client.transaction() as tx:
-        for tname in sorted(existing_types):
-            if tname.startswith("vector_"):
-                tx.command(f"DELETE FROM {quote_name(tname)}")
-        for col in wipe_order:
-            if col in existing_types:
-                tx.command(f"DELETE FROM {quote_name(col)}")
+    target_store.backend.wipe_all_collections(MIGRATION_COLLECTIONS)
 
 
 def _write_batch_to_target(
@@ -257,74 +241,7 @@ def _write_batch_to_target(
     """Idempotently write one batch into target store using raw transactions (preserves journal verbatim)."""
     if not rows:
         return
-    if target_backend == "sqlite":
-        with target_store.backend.raw_transaction() as tx:
-            if collection == "journal_state":
-                tx.command("DELETE FROM journal_state")
-            for row in rows:
-                target_store.backend._upsert_row(tx._conn, collection, row, key_field="id")
-        return
-
-    # ArcadeDB target: idempotent insert (skip already-present IDs on resume, overwrite bootstrap journal_state).
-    ids = [r["id"] for r in rows if isinstance(r.get("id"), str)]
-    with target_store.client.transaction() as tx:
-        if collection == "journal_state":
-            tx.command("DELETE FROM journal_state")
-            existing_ids: set[str] = set()
-        elif ids:
-            found = tx.query(f"SELECT id FROM {quote_name(collection)} WHERE id IN :ids", {"ids": ids})
-            existing_ids = {str(r["id"]) for r in found if r.get("id") is not None}
-        else:
-            existing_ids = set()
-
-        to_insert = [clean_row(r) for r in rows if r.get("id") not in existing_ids]
-        if not to_insert:
-            return
-
-        if collection == "nodes":
-            for offset in range(0, len(to_insert), 250):
-                tx.command("CREATE VERTEX nodes CONTENT :rows", {"rows": to_insert[offset:offset + 250]})
-        elif collection == "edges":
-            for edge in to_insert:
-                tx.command(
-                    "CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:from_id) "
-                    f"TO (SELECT FROM nodes WHERE id=:to_id) CONTENT {json_text(edge)}",
-                    {"from_id": edge["from_id"], "to_id": edge["to_id"]},
-                )
-        else:
-            for offset in range(0, len(to_insert), 250):
-                tx.command(
-                    f"INSERT INTO {quote_name(collection)} CONTENT :rows",
-                    {"rows": to_insert[offset:offset + 250]},
-                )
-
-    # Mirror LSM_VECTOR types when migrating vector_indexes / embeddings into ArcadeDB.
-    if collection == "vector_indexes":
-        for row in rows:
-            pid = row.get("project_id")
-            ns = row.get("namespace")
-            dim = row.get("dimension")
-            model = row.get("model") or ""
-            if pid and ns and isinstance(dim, int) and dim > 0:
-                target_store.backend.ensure_vector_index(pid, ns, dim, model)
-    elif collection == "embeddings":
-        with target_store.client.transaction() as tx:
-            for row in rows:
-                vec = row.get("vector")
-                pid = row.get("project_id")
-                ns = row.get("namespace")
-                dim = row.get("dimension")
-                if isinstance(vec, list) and vec and pid and ns and isinstance(dim, int):
-                    from .arcade_backend import vector_type_name
-
-                    tname = vector_type_name(pid, ns, dim)
-                    existing_types = target_store.backend.list_collections(target_store.client)
-                    if tname in existing_types:
-                        found = tx.query(f"SELECT id FROM {quote_name(tname)} WHERE id=:id", {"id": row["id"]})
-                        if not found:
-                            tx.command(
-                                f"INSERT INTO {quote_name(tname)} CONTENT {json_text({**clean_row(row), 'is_current': True})}"
-                            )
+    target_store.backend.import_migration_batch(collection, rows)
 
 
 def _sync_writer_meta(source_store: Any, target_store: Any, target_backend: str, source_role: str, me_id: str) -> None:
@@ -334,14 +251,7 @@ def _sync_writer_meta(source_store: Any, target_store: Any, target_backend: str,
     writer_row = store_writer.read_writer(source_store.client)
     if not writer_row:
         return
-    row = clean_row(writer_row)
-    if target_backend == "sqlite":
-        with target_store.backend.raw_transaction() as tx:
-            target_store.backend._upsert_row(tx._conn, "devbrain_meta", row, key_field="name")
-    else:
-        with target_store.client.transaction() as tx:
-            tx.command("DELETE FROM devbrain_meta WHERE name='writer'")
-            tx.command(f"INSERT INTO devbrain_meta CONTENT {json_text(row)}")
+    target_store.backend.upsert_meta_row(writer_row)
 
 
 def _verify_verdict_cache(data_dir: Path) -> dict[str, Any]:
@@ -574,12 +484,13 @@ def migrate(
 
             # Reverse migration threshold gate (arcade -> sqlite)
             if target_backend == "sqlite" and not force:
-                files_rows = source_store.query(
-                    "SELECT count(*) AS n FROM sources WHERE is_current=true AND kind IN ['code','file','document']"
+                from .storage_query import db_count, eq, is_in
+                files_count = db_count(
+                    source_store,
+                    "sources",
+                    [eq("is_current", True), is_in("kind", ("code", "file", "document"))],
                 )
-                edges_rows = source_store.query("SELECT count(*) AS n FROM edges WHERE is_current=true")
-                files_count = int(files_rows[0]["n"]) if files_rows else 0
-                edges_count = int(edges_rows[0]["n"]) if edges_rows else 0
+                edges_count = db_count(source_store, "edges", {"is_current": True})
                 breaches = []
                 if source_bytes > DEFAULT_THRESHOLDS["max_db_bytes"]:
                     breaches.append(f"size {round(source_bytes / (1024 * 1024), 1)} MB > 500 MB")

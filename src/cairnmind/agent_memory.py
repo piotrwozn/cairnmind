@@ -19,7 +19,8 @@ import httpx
 
 from .config import tls_verify
 from .memory_egress import ordered
-from .sql import clean_row, json_text, one_row
+from .sql import clean_row, json_text
+from .storage_query import col, db_find, db_find_one, desc, eq, lte
 from .terminal_safe import safe_text
 
 AGENT_CLIENTS = {"api", "copilot"}
@@ -120,10 +121,18 @@ def third_party_origin(store, project_id, session_id) -> dict | None:
     The engine archives at once after such a result, so the archive holds it before any later write.
     Derived from archived host metadata, never from a payload (store.ORIGIN_METADATA).
     """
-    rows = store.query(
-        "SELECT metadata.origin_client AS client FROM sources WHERE project_id=:project AND kind='agent_transcript' "
-        "AND metadata.agent_session_id=:session AND metadata.third_party_result=true LIMIT 1",
-        {"project": project_id, "session": session_id})
+    rows = db_find(
+        store,
+        "sources",
+        {
+            "project_id": project_id,
+            "kind": "agent_transcript",
+            "metadata.agent_session_id": session_id,
+            "metadata.third_party_result": True,
+        },
+        columns=(col("metadata.origin_client", "client"),),
+        limit=1,
+    )
     if not rows or not str(rows[0].get("client", "")).startswith("mcp:"):
         return None
     return {"origin_client": rows[0]["client"], "origin_session_id": session_id,
@@ -181,11 +190,18 @@ def agent_continuity_unknowns(store, settings, session: dict) -> list[str]:
     """
     if session.get("client") not in AGENT_CLIENTS:
         return []
-    rows = store.query(
-        "SELECT metadata.agent_sequence AS sequence,metadata.agent_event_hash AS event_hash "
-        "FROM sources WHERE project_id=:project AND kind='agent_transcript' "
-        "AND metadata.agent_session_id=:session ORDER BY metadata.agent_sequence DESC LIMIT 1",
-        {"project": session["project_id"], "session": session["id"]})
+    rows = db_find(
+        store,
+        "sources",
+        {
+            "project_id": session["project_id"],
+            "kind": "agent_transcript",
+            "metadata.agent_session_id": session["id"],
+        },
+        columns=(col("metadata.agent_sequence", "sequence"), col("metadata.agent_event_hash", "event_hash")),
+        order_by=(desc("metadata.agent_sequence"),),
+        limit=1,
+    )
     if not rows:
         return []
     reason = ("Own-agent private journal is missing, truncated or rewritten; start a new agent session. "
@@ -245,7 +261,7 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
         expected_path = _journal_path(settings, sid)
         if target.get("path") != str(expected_path):
             raise ValueError("Own-agent archive path does not match its bound logical session")
-        owner = one_row(store, "SELECT FROM sessions WHERE id=:id", {"id": sid})
+        owner = clean_row(db_find_one(store, "sessions", {"id": sid}, required=True))
         if (owner.get("client") not in AGENT_CLIENTS or target.get("client") != owner["client"]
                 or (owner.get("project_id"), owner.get("worktree")) !=
                 (session["project_id"], session["worktree"])):
@@ -254,10 +270,18 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
         if (type(sequence) is not int or not 1 <= sequence <= 1_000_000
                 or type(size) is not int or not 0 < size <= 64 * 1024 * 1024):
             raise ValueError("Invalid own-agent archive horizon")
-        rows = [clean_row(row) for row in store.query(
-            "SELECT FROM sources WHERE project_id=:project AND metadata.agent_session_id=:session "
-            "AND metadata.agent_sequence<=:sequence",
-            {"project": session["project_id"], "session": sid, "sequence": sequence})]
+        rows = [
+            clean_row(row)
+            for row in db_find(
+                store,
+                "sources",
+                [
+                    eq("project_id", session["project_id"]),
+                    eq("metadata.agent_session_id", sid),
+                    lte("metadata.agent_sequence", sequence),
+                ],
+            )
+        ]
         if len({row.get("metadata", {}).get("agent_sequence") for row in rows}) != len(rows):
             raise ValueError("Conflicting durable own-agent event sequences")
         proof = target.get("proof") or {}
@@ -334,8 +358,7 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
                 # Forgetting or rebinding the project during ingestion cannot
                 # publish a source into an unregistered scope.
                 store._require_project(store, session["project_id"])
-                roots = store.query("SELECT path FROM project_roots WHERE project_id=:project",
-                                    {"project": session["project_id"]})
+                roots = db_find(store, "project_roots", {"project_id": session["project_id"]}, columns=("path",))
                 if owner["worktree"] not in {row["path"] for row in roots}:
                     raise ValueError("Own-agent worktree is no longer registered")
                 source = store.snapshot(session["project_id"], uri, content, "agent_transcript", metadata)

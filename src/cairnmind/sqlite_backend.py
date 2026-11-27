@@ -11,6 +11,7 @@ Provides full behavioral parity with ArcadeBackend across all 28 collections:
 """
 from __future__ import annotations
 
+from array import array
 from collections import deque
 from contextlib import contextmanager
 import hashlib
@@ -173,60 +174,24 @@ _LOOKUP_INDEXES: tuple[tuple[str, str], ...] = (
     ("resume_packets", "session_id"),
 )
 
-_SQL_KEYWORDS = frozenset({
-    "AND", "OR", "NOT", "IN", "IS", "NULL", "TRUE", "FALSE", "LIKE", "ASC", "DESC",
-    "ORDER", "BY", "LIMIT", "GROUP", "WHERE", "SELECT", "FROM", "AS", "DISTINCT",
-    "COUNT", "SUM", "MIN", "MAX", "AVG", "CASE", "WHEN", "THEN", "ELSE", "END",
-})
-
-_SELECT_RE = re.compile(
-    r"^\s*SELECT\s+(?P<distinct>DISTINCT\s+)?(?P<cols>.*?)\s*FROM\s+`?(?P<table>[A-Za-z_][A-Za-z0-9_:]*)`?"
-    r"(?P<rest>.*)$",
-    re.I | re.S,
-)
-_DELETE_RE = re.compile(
-    r"^\s*DELETE\s+FROM\s+`?(?P<table>[A-Za-z_][A-Za-z0-9_]*)`?(?P<rest>.*)$",
-    re.I | re.S,
-)
-_INSERT_CONTENT_RE = re.compile(
-    r"^\s*(?:INSERT\s+INTO|CREATE\s+VERTEX)\s+`?(?P<table>[A-Za-z_][A-Za-z0-9_]*)`?\s+CONTENT\s+(?P<body>.*)$",
-    re.I | re.S,
-)
-_INSERT_SET_RE = re.compile(
-    r"^\s*(?:INSERT\s+INTO|CREATE\s+VERTEX)\s+`?(?P<table>[A-Za-z_][A-Za-z0-9_]*)`?\s+SET\s+(?P<set>.*)$",
-    re.I | re.S,
-)
-_UPDATE_REMOVE_RE = re.compile(
-    r"^\s*UPDATE\s+`?(?P<table>[A-Za-z_][A-Za-z0-9_]*)`?\s+REMOVE\s+(?P<fields>.*?)(?:\s+WHERE\s+(?P<where>.*))?$",
-    re.I | re.S,
-)
-_UPDATE_RE = re.compile(
-    r"^\s*UPDATE\s+`?(?P<table>[A-Za-z_][A-Za-z0-9_]*)`?\s+SET\s+(?P<set>.*?)(?:\s+(?P<upsert>UPSERT))?"
-    r"(?:\s+WHERE\s+(?P<where>.*))?$",
-    re.I | re.S,
-)
-
 
 def pack_vector(vector: list[float]) -> bytes:
     """Pack a float vector as canonical little-endian float32 BLOB (ADR-03)."""
     return struct.pack(f"<{len(vector)}f", *(float(v) for v in vector))
 
 
-def unpack_vector(blob: bytes) -> tuple[float, ...]:
-    count = len(blob) // 4
-    return struct.unpack(f"<{count}f", blob)
+def unpack_vector(blob: bytes) -> array:
+    arr = array("f")
+    arr.frombytes(blob)
+    return arr
 
 
-def cosine_distance(left: list[float] | tuple[float, ...], right: list[float] | tuple[float, ...]) -> float:
+def cosine_distance(left: list[float] | tuple[float, ...] | array, right: list[float] | tuple[float, ...] | array) -> float:
     if len(left) != len(right):
         return 2.0
-    dot = 0.0
-    norm_l = 0.0
-    norm_r = 0.0
-    for a, b in zip(left, right):
-        dot += a * b
-        norm_l += a * a
-        norm_r += b * b
+    dot = math.sumprod(left, right)
+    norm_l = math.sumprod(left, left)
+    norm_r = math.sumprod(right, right)
     denom = math.sqrt(norm_l) * math.sqrt(norm_r)
     if denom <= 0.0:
         return 1.0
@@ -261,94 +226,6 @@ def _sql_col_value(value: Any) -> Any:
     return value
 
 
-def _split_top_level(text: str, sep: str = ",") -> list[str]:
-    parts, buf = [], []
-    quote, depth = None, 0
-    i = 0
-    while i < len(text):
-        ch = text[i]
-        if quote:
-            buf.append(ch)
-            if ch == "\\" and i + 1 < len(text):
-                buf.append(text[i + 1])
-                i += 2
-                continue
-            if ch == quote:
-                if i + 1 < len(text) and text[i + 1] == quote:
-                    buf.append(text[i + 1])
-                    i += 2
-                    continue
-                quote = None
-        elif ch in "'\"`":
-            quote = ch
-            buf.append(ch)
-        elif ch in "([{":
-            depth += 1
-            buf.append(ch)
-        elif ch in ")]}":
-            depth -= 1
-            buf.append(ch)
-        elif depth == 0 and text[i:i + len(sep)] == sep:
-            parts.append("".join(buf).strip())
-            buf = []
-            i += len(sep)
-            continue
-        else:
-            buf.append(ch)
-        i += 1
-    tail = "".join(buf).strip()
-    if tail:
-        parts.append(tail)
-    return parts
-
-
-def _split_clauses(rest: str) -> dict[str, str]:
-    """Extract WHERE / GROUP BY / ORDER BY / LIMIT clauses at parenthesis depth 0."""
-    clauses = {"where": "", "group_by": "", "order_by": "", "limit": ""}
-    keywords = (
-        ("WHERE", "where"),
-        ("GROUP BY", "group_by"),
-        ("ORDER BY", "order_by"),
-        ("LIMIT", "limit"),
-    )
-    positions: list[tuple[int, int, str]] = []
-    quote, depth, i = None, 0, 0
-    upper = rest.upper()
-    while i < len(rest):
-        ch = rest[i]
-        if quote:
-            if ch == "\\" and i + 1 < len(rest):
-                i += 2
-                continue
-            if ch == quote:
-                if i + 1 < len(rest) and rest[i + 1] == quote:
-                    i += 2
-                    continue
-                quote = None
-        elif ch in "'\"`":
-            quote = ch
-        elif ch in "([{":
-            depth += 1
-        elif ch in ")]}":
-            depth -= 1
-        elif depth == 0 and (i == 0 or not (rest[i - 1].isalnum() or rest[i - 1] == "_")):
-            for kw, key in keywords:
-                if upper.startswith(kw, i):
-                    end = i + len(kw)
-                    if end == len(rest) or not (rest[end].isalnum() or rest[end] == "_"):
-                        positions.append((i, end, key))
-                        i = end
-                        break
-            else:
-                i += 1
-            continue
-        i += 1
-    for idx, (start, end, key) in enumerate(positions):
-        next_start = positions[idx + 1][0] if idx + 1 < len(positions) else len(rest)
-        clauses[key] = rest[end:next_start].strip()
-    return clauses
-
-
 def _table_column_names(table: str) -> set[str]:
     if table == META_COLLECTION:
         return {"name"}
@@ -358,321 +235,10 @@ def _table_column_names(table: str) -> set[str]:
     return cols
 
 
-def _field_expr(table: str, raw_ident: str) -> str:
-    cleaned = raw_ident.strip("`")
-    if "." in cleaned:
-        return f"json_extract(doc, '$.{cleaned}')"
-    if cleaned in _table_column_names(table):
-        return f'"{cleaned}"'
-    return f"json_extract(doc, '$.{cleaned}')"
-
-
-def _translate_expr(table: str, expr: str, params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """Translate an ArcadeDB WHERE/ORDER/GROUP expression into SQLite SQL + expanded params."""
-    out_params: dict[str, Any] = {}
-    for k, v in (params or {}).items():
-        if isinstance(v, bool):
-            out_params[k] = 1 if v else 0
-        elif isinstance(v, (dict, list)):
-            out_params[k] = v  # may be expanded if used with IN :param
-        else:
-            out_params[k] = v
-
-    # Replace inline list literals IN ['a', 'b'] -> IN ('a', 'b') outside strings.
-    def _replace_brackets(text: str) -> str:
-        res = []
-        quote = None
-        i = 0
-        while i < len(text):
-            ch = text[i]
-            if quote:
-                res.append(ch)
-                if ch == quote:
-                    quote = None
-                i += 1
-                continue
-            if ch in "'\"":
-                quote = ch
-                res.append(ch)
-                i += 1
-                continue
-            if ch == "[":
-                res.append("(")
-            elif ch == "]":
-                res.append(")")
-            else:
-                res.append(ch)
-            i += 1
-        return "".join(res)
-
-    text = _replace_brackets(expr)
-
-    # Expand `NOT IN :param` / `IN :param` where param is a list/tuple/set.
-    expand_counter = [0]
-
-    def _expand_in(match: re.Match) -> str:
-        neg = match.group("neg") or ""
-        pname = match.group("param")
-        val = (params or {}).get(pname)
-        if not isinstance(val, (list, tuple, set)):
-            return match.group(0)
-        items = list(val)
-        if not items:
-            return "1=1" if neg else "0=1"
-        placeholders = []
-        for item in items:
-            key = f"__in_{expand_counter[0]}"
-            expand_counter[0] += 1
-            out_params[key] = _sql_col_value(item)
-            placeholders.append(f":{key}")
-        prefix = "NOT IN" if neg else "IN"
-        return f"{prefix} ({', '.join(placeholders)})"
-
-    text = re.sub(
-        r"(?P<neg>\bNOT\s+)?\bIN\s+:(?P<param>[A-Za-z_][A-Za-z0-9_]*)",
-        _expand_in,
-        text,
-        flags=re.I,
-    )
-
-    # Fix up any `col 0=1` / `col 1=1` created when `col IN :empty` was expanded.
-    text = re.sub(
-        r"(?:`?[A-Za-z_][A-Za-z0-9_.]*`?)\s+(0=1|1=1)\b",
-        lambda m: f"({m.group(1)})",
-        text,
-    )
-
-    # Token-by-token rewrite of identifiers, booleans, and dotted paths outside string literals.
-    result = []
-    prev_word = ""
-    i = 0
-    n = len(text)
-    while i < n:
-        ch = text[i]
-        if ch in "'\"":
-            q = ch
-            start = i
-            i += 1
-            while i < n:
-                if text[i] == "\\" and i + 1 < n:
-                    i += 2
-                    continue
-                if text[i] == q:
-                    if i + 1 < n and text[i + 1] == q:
-                        i += 2
-                        continue
-                    i += 1
-                    break
-                i += 1
-            result.append(text[start:i])
-            prev_word = ""
-            continue
-        if ch == "(" and re.match(r"\(\s*SELECT\b", text[i:], re.I):
-            depth = 0
-            q_sub = None
-            j = i
-            while j < n:
-                c_sub = text[j]
-                if q_sub:
-                    if c_sub == "\\" and j + 1 < n:
-                        j += 2
-                        continue
-                    if c_sub == q_sub:
-                        if j + 1 < n and text[j + 1] == q_sub:
-                            j += 2
-                            continue
-                        q_sub = None
-                elif c_sub in "'\"":
-                    q_sub = c_sub
-                elif c_sub == "(":
-                    depth += 1
-                elif c_sub == ")":
-                    depth -= 1
-                    if depth == 0:
-                        break
-                j += 1
-            if j < n and depth == 0:
-                inner_sql = text[i + 1:j].strip()
-                sub_m = _SELECT_RE.match(inner_sql)
-                if sub_m:
-                    sub_table = sub_m.group("table")
-                    sub_cols_raw = (sub_m.group("cols") or "").strip()
-                    sub_cols = ", ".join(
-                        _field_expr(sub_table, c.strip()) if c.strip() != "*" else "*"
-                        for c in _split_top_level(sub_cols_raw, ",")
-                    ) if sub_cols_raw else "*"
-                    sub_clauses = _split_clauses((sub_m.group("rest") or "").strip())
-                    sub_where = ""
-                    if sub_clauses["where"]:
-                        sub_where, sub_params = _translate_expr(sub_table, sub_clauses["where"], params)
-                        out_params.update(sub_params)
-                    rebuilt = f'(SELECT {sub_cols} FROM "{sub_table}"'
-                    if sub_where:
-                        rebuilt += f" WHERE {sub_where}"
-                    rebuilt += ")"
-                    result.append(rebuilt)
-                    i = j + 1
-                    continue
-        if ch == ":":
-            m = re.match(r":[A-Za-z_][A-Za-z0-9_]*", text[i:])
-            if m:
-                result.append(m.group(0))
-                i += len(m.group(0))
-                continue
-        if ch == "`":
-            end = text.find("`", i + 1)
-            if end != -1:
-                ident = text[i + 1:end]
-                result.append(_field_expr(table, ident))
-                i = end + 1
-                continue
-        if ch.isalpha() or ch == "_":
-            m = re.match(r"[A-Za-z_][A-Za-z0-9_.]*", text[i:])
-            assert m is not None
-            word = m.group(0)
-            after_pos = i + len(word)
-            next_ch = text[after_pos] if after_pos < n else ""
-            upper = word.upper()
-            if prev_word == "AS":
-                result.append(f'"{word}"')
-            elif upper == "TRUE":
-                result.append("1")
-            elif upper == "FALSE":
-                result.append("0")
-            elif upper in _SQL_KEYWORDS or next_ch == "(":
-                result.append(word)
-            else:
-                result.append(_field_expr(table, word))
-            prev_word = upper
-            i = after_pos
-            continue
-        if not ch.isspace():
-            prev_word = ""
-        result.append(ch)
-        i += 1
-
-    # Remove non-scalar params that were expanded for IN clauses so sqlite3 doesn't choke.
-    final_params = {
-        k: (_sql_col_value(v) if isinstance(v, (dict, list)) else v)
-        for k, v in out_params.items()
-        if f":{k}" in "".join(result) or k in out_params
-    }
-    sql_out = "".join(result)
-    bound_names = set(re.findall(r":([A-Za-z_][A-Za-z0-9_]*)", sql_out))
-    final_params = {k: v for k, v in final_params.items() if k in bound_names}
-    return sql_out, final_params
-
-
-def _extract_dotted(row: dict[str, Any], path: str) -> Any:
-    current: Any = row
-    for part in path.split("."):
-        if isinstance(current, dict):
-            current = current.get(part)
-        else:
-            return None
-    return current
-
-
-def _project_rows(docs: list[dict[str, Any]], cols_spec: str, distinct: bool = False) -> list[dict[str, Any]]:
-    spec = cols_spec.strip()
-    if not spec or spec == "*":
-        rows = [clean_row(doc) for doc in docs]
-    else:
-        col_specs = _split_top_level(spec, ",")
-        parsed: list[tuple[str, str]] = []
-        for item in col_specs:
-            m = re.match(r"^(.+?)\s+AS\s+`?([A-Za-z_][A-Za-z0-9_]*)`?$", item, re.I)
-            if m:
-                src = m.group(1).strip().strip("`")
-                alias = m.group(2).strip()
-            else:
-                src = item.strip().strip("`")
-                alias = src.split(".")[-1]
-            parsed.append((src, alias))
-        rows = []
-        for doc in docs:
-            projected = {}
-            for src, alias in parsed:
-                if src == "*":
-                    projected.update(clean_row(doc))
-                else:
-                    projected[alias] = _extract_dotted(doc, src)
-            rows.append(projected)
-    if distinct:
-        seen = set()
-        unique = []
-        for row in rows:
-            key = json_text(row)
-            if key not in seen:
-                seen.add(key)
-                unique.append(row)
-        return unique
-    return rows
-
-
-def _apply_doc_updates(doc: dict[str, Any], updates: dict[str, Any]) -> None:
-    """Apply top-level or dotted-path (e.g. metadata.analysis) updates into a document dict."""
-    for key, value in updates.items():
-        if "." not in key:
-            doc[key] = value
-            continue
-        parts = key.split(".")
-        target: Any = doc
-        for part in parts[:-1]:
-            cur = target.get(part) if isinstance(target, dict) else None
-            if not isinstance(cur, dict):
-                cur = {}
-                target[part] = cur
-            target = cur
-        target[parts[-1]] = value
-
-
-def _remove_doc_fields(doc: dict[str, Any], fields: list[str]) -> None:
-    """Remove top-level or dotted-path fields from a document dict."""
-    for field in fields:
-        if "." not in field:
-            doc.pop(field, None)
-            continue
-        parts = field.split(".")
-        target: Any = doc
-        for part in parts[:-1]:
-            if not isinstance(target, dict) or part not in target:
-                target = None
-                break
-            target = target[part]
-        if isinstance(target, dict):
-            target.pop(parts[-1], None)
-
-
-def _parse_set_assignments(set_clause: str, params: dict[str, Any]) -> dict[str, Any]:
-    """Parse ArcadeDB `col=:param, col2=true, ...` assignment list into a Python dict."""
-    values: dict[str, Any] = {}
-    for assign in _split_top_level(set_clause, ","):
-        left, _, right = assign.partition("=")
-        col = left.strip().strip("`")
-        val_raw = right.strip()
-        if val_raw.startswith(":"):
-            values[col] = params.get(val_raw[1:])
-        elif val_raw.lower() == "true":
-            values[col] = True
-        elif val_raw.lower() == "false":
-            values[col] = False
-        elif val_raw.lower() == "null":
-            values[col] = None
-        elif val_raw.startswith("'") and val_raw.endswith("'"):
-            values[col] = val_raw[1:-1]
-        else:
-            try:
-                values[col] = json.loads(val_raw)
-            except ValueError:
-                values[col] = val_raw
-    return values
-
-
-def _is_aggregate_select(cols_spec: str, group_by: str) -> bool:
-    if group_by:
-        return True
-    return bool(re.search(r"\b(count|sum|min|max|avg)\s*\(", cols_spec, re.I))
+_RAW_SQL_DISABLED = (
+    "Raw ArcadeDB SQL is disabled on SQLiteBackend; "
+    "use declarative StorageBackend / storage_query methods"
+)
 
 
 class SQLiteTransaction:
@@ -684,31 +250,103 @@ class SQLiteTransaction:
         self._read_only = read_only
 
     def query(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        return self._backend._exec_query(self._conn, sql, params or {})
+        raise NotImplementedError(_RAW_SQL_DISABLED)
 
     def command(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         if self._read_only:
             from .store_readonly import ReadOnlyStoreError
             raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
-        return self._backend._exec_command(self._conn, sql, params or {})
+        raise NotImplementedError(_RAW_SQL_DISABLED)
 
     def script(self, statements: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         if self._read_only:
             from .store_readonly import ReadOnlyStoreError
             raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
-        last: list[dict[str, Any]] = []
-        for stmt in statements.split(";\n"):
-            stmt = stmt.strip()
-            if not stmt:
-                continue
-            if stmt.upper().startswith("SELECT "):
-                last = self.query(stmt, params)
-            else:
-                last = self.command(stmt, params)
-        return last
+        raise NotImplementedError(_RAW_SQL_DISABLED)
 
     def server_time_ms(self) -> int:
         return int(time.time() * 1000)
+
+    def list_collections(self) -> set[str]:
+        return self._backend.list_collections()
+
+    def iter_backup_pages(
+        self,
+        collection: str,
+        *,
+        page_rows: int = 1000,
+        page_bytes: int = 2 * 1024 * 1024,
+    ) -> Iterator[str]:
+        return self._backend._iter_backup_pages_conn(
+            self._conn, collection, page_rows=page_rows, page_bytes=page_bytes
+        )
+
+    def find(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        columns: Any = None,
+        order_by: Any = (),
+        limit: int | None = None,
+        distinct: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self._backend._find_rows(
+            self._conn, collection, where, columns=columns, order_by=order_by, limit=limit, distinct=distinct
+        )
+
+    def find_one(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        columns: Any = None,
+        order_by: Any = (),
+        required: bool = False,
+    ) -> dict[str, Any] | None:
+        return self._backend._find_one_row(
+            self._conn, collection, where, columns=columns, order_by=order_by, required=required
+        )
+
+    def count(self, collection: str, where: Any = ()) -> int:
+        return self._backend._count_rows(self._conn, collection, where)
+
+    def group_counts(
+        self,
+        collection: str,
+        group_by: Any,
+        where: Any = (),
+        *,
+        count_alias: str = "total",
+    ) -> list[dict[str, Any]]:
+        return self._backend._group_count_rows(self._conn, collection, group_by, where, count_alias=count_alias)
+
+    def update_where(
+        self,
+        collection: str,
+        *,
+        set_fields: dict[str, Any] | None = None,
+        remove_fields: Any = (),
+        where: Any = (),
+    ) -> list[dict[str, Any]]:
+        if self._read_only:
+            from .store_readonly import ReadOnlyStoreError
+            raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
+        return self._backend._update_where_rows(
+            self._conn, collection, set_fields=set_fields, remove_fields=remove_fields, where=where
+        )
+
+    def delete_where(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        if self._read_only:
+            from .store_readonly import ReadOnlyStoreError
+            raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
+        return self._backend._delete_where_rows(self._conn, collection, where, limit=limit)
 
     def insert_document(self, collection: str, data: dict[str, Any]) -> dict[str, Any]:
         if self._read_only:
@@ -735,7 +373,7 @@ class SQLiteTransaction:
         if self._read_only:
             from .store_readonly import ReadOnlyStoreError
             raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
-        return self._backend._update_rows(self._conn, collection, data, where, params)
+        raise NotImplementedError(_RAW_SQL_DISABLED)
 
     def upsert_document(
         self,
@@ -758,7 +396,7 @@ class SQLiteTransaction:
         if self._read_only:
             from .store_readonly import ReadOnlyStoreError
             raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
-        return self._backend._delete_rows(self._conn, collection, where, params or {})
+        raise NotImplementedError(_RAW_SQL_DISABLED)
 
     def create_vertex(self, collection: str, node: dict[str, Any]) -> dict[str, Any]:
         return self.insert_document(collection, node)
@@ -952,7 +590,7 @@ class SQLiteBackend:
             shutil.copy2(self.db_path, backup)
         return backup
 
-    def init_schema(self) -> None:
+    def init_schema(self, store: Any = None) -> None:
         """Create or migrate all 28 collections, FTS5 tables, and indexes."""
         if self._read_only:
             return
@@ -1055,14 +693,13 @@ class SQLiteBackend:
         return self.raw_transaction(commit_timeout=commit_timeout)
 
     def query(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        return self._exec_query(self._conn(), sql, params or {})
+        raise NotImplementedError(_RAW_SQL_DISABLED)
 
     def command(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         if self._read_only:
             from .store_readonly import ReadOnlyStoreError
             raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
-        with self.raw_transaction():
-            return self._exec_command(self._conn(), sql, params or {})
+        raise NotImplementedError(_RAW_SQL_DISABLED)
 
     # --- Internal Row Operations + FTS5 Sync ---
 
@@ -1189,220 +826,6 @@ class SQLiteBackend:
             self._sync_fts_delete(conn, collection, [old_id])
         self._sync_fts_upsert(conn, collection, row)
 
-    def _update_rows(
-        self,
-        conn: sqlite3.Connection,
-        collection: str,
-        updates: dict[str, Any],
-        where: str,
-        params: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        pk = "name" if collection == META_COLLECTION else "id"
-        if where:
-            sql_where, sql_params = _translate_expr(collection, where, params)
-            rows = conn.execute(f'SELECT "{pk}", doc FROM "{collection}" WHERE {sql_where}', sql_params).fetchall()
-        else:
-            rows = conn.execute(f'SELECT "{pk}", doc FROM "{collection}"').fetchall()
-        updated_docs: list[dict[str, Any]] = []
-        for row in rows:
-            doc = json.loads(row["doc"])
-            _apply_doc_updates(doc, updates)
-            self._replace_row_by_id(conn, collection, row[pk], doc)
-            updated_docs.append(doc)
-        return updated_docs
-
-    def _remove_fields_rows(
-        self,
-        conn: sqlite3.Connection,
-        collection: str,
-        fields: list[str],
-        where: str,
-        params: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        pk = "name" if collection == META_COLLECTION else "id"
-        if where:
-            sql_where, sql_params = _translate_expr(collection, where, params)
-            rows = conn.execute(f'SELECT "{pk}", doc FROM "{collection}" WHERE {sql_where}', sql_params).fetchall()
-        else:
-            rows = conn.execute(f'SELECT "{pk}", doc FROM "{collection}"').fetchall()
-        updated_docs: list[dict[str, Any]] = []
-        for row in rows:
-            doc = json.loads(row["doc"])
-            _remove_doc_fields(doc, fields)
-            self._replace_row_by_id(conn, collection, row[pk], doc)
-            updated_docs.append(doc)
-        return updated_docs
-
-    def _delete_rows(
-        self,
-        conn: sqlite3.Connection,
-        collection: str,
-        where: str,
-        params: dict[str, Any],
-        *,
-        limit: int | None = None,
-    ) -> list[dict[str, Any]]:
-        pk = "name" if collection == META_COLLECTION else "id"
-        if limit is not None:
-            lim = max(0, int(limit))
-            if lim == 0:
-                return [{"count": 0}]
-            if where:
-                sql_where, sql_params = _translate_expr(collection, where, params)
-                rows = conn.execute(
-                    f'SELECT "{pk}" FROM "{collection}" WHERE {sql_where} LIMIT {lim}',
-                    sql_params,
-                ).fetchall()
-            else:
-                rows = conn.execute(f'SELECT "{pk}" FROM "{collection}" LIMIT {lim}').fetchall()
-            ids = [row[0] for row in rows]
-            if ids:
-                ph = ", ".join("?" for _ in ids)
-                conn.execute(f'DELETE FROM "{collection}" WHERE "{pk}" IN ({ph})', ids)
-        elif where:
-            sql_where, sql_params = _translate_expr(collection, where, params)
-            rows = conn.execute(f'SELECT "{pk}" FROM "{collection}" WHERE {sql_where}', sql_params).fetchall()
-            ids = [row[0] for row in rows]
-            conn.execute(f'DELETE FROM "{collection}" WHERE {sql_where}', sql_params)
-        else:
-            rows = conn.execute(f'SELECT "{pk}" FROM "{collection}"').fetchall()
-            ids = [row[0] for row in rows]
-            conn.execute(f'DELETE FROM "{collection}"')
-        if collection in {"chunks", "records"}:
-            self._sync_fts_delete(conn, collection, [str(x) for x in ids])
-        return [{"count": len(ids)}]
-
-    # --- ArcadeSQL Compatibility Translator (for read-only projections & shared domain modules) ---
-
-    def _exec_query(self, conn: sqlite3.Connection, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-        stripped = sql.strip()
-        if "sysdate()" in stripped:
-            return [{"milliseconds": int(time.time() * 1000)}]
-        m = _SELECT_RE.match(stripped)
-        if not m:
-            raise ValueError(f"Unsupported SQLite query: {stripped[:160]}")
-        distinct = bool(m.group("distinct"))
-        cols = (m.group("cols") or "").strip()
-        table = m.group("table")
-        rest = (m.group("rest") or "").strip()
-
-        if table == "schema:types":
-            names = sorted(self.list_collections())
-            return [{"name": n} for n in names]
-
-        clauses = _split_clauses(rest)
-        sql_params: dict[str, Any] = {}
-        where_sql = ""
-        if clauses["where"]:
-            where_sql, w_params = _translate_expr(table, clauses["where"], params)
-            sql_params.update(w_params)
-
-        order_sql = ""
-        if clauses["order_by"]:
-            order_sql, o_params = _translate_expr(table, clauses["order_by"], params)
-            sql_params.update(o_params)
-
-        limit_sql = ""
-        if clauses["limit"]:
-            lim_raw = clauses["limit"].strip()
-            if lim_raw.startswith(":"):
-                pname = lim_raw[1:]
-                limit_sql = f"LIMIT :{pname}"
-                sql_params[pname] = int(params[pname])
-            else:
-                limit_sql = f"LIMIT {int(lim_raw)}"
-
-        if _is_aggregate_select(cols, clauses["group_by"]):
-            # Translate column list & GROUP BY directly for aggregates like count(*).
-            agg_cols, a_params = _translate_expr(table, cols, params)
-            sql_params.update(a_params)
-            group_sql = ""
-            if clauses["group_by"]:
-                g_expr, g_params = _translate_expr(table, clauses["group_by"], params)
-                sql_params.update(g_params)
-                group_sql = f"GROUP BY {g_expr}"
-            query_sql = (
-                f'SELECT {agg_cols} FROM "{table}"'
-                + (f" WHERE {where_sql}" if where_sql else "")
-                + (f" {group_sql}" if group_sql else "")
-                + (f" ORDER BY {order_sql}" if order_sql else "")
-                + (f" {limit_sql}" if limit_sql else "")
-            )
-            cur = conn.execute(query_sql, sql_params)
-            col_names = [desc[0] for desc in cur.description or ()]
-            return [{col_names[i]: row[i] for i in range(len(col_names))} for row in cur.fetchall()]
-
-        # Non-aggregate SELECT: fetch canonical `doc` rows via SQLite indexes, then project exact Python types!
-        query_sql = (
-            f'SELECT doc FROM "{table}"'
-            + (f" WHERE {where_sql}" if where_sql else "")
-            + (f" ORDER BY {order_sql}" if order_sql else "")
-            + (f" {limit_sql}" if limit_sql else "")
-        )
-        rows = conn.execute(query_sql, sql_params).fetchall()
-        docs = [json.loads(row[0]) for row in rows]
-        return _project_rows(docs, cols, distinct=distinct)
-
-    def _exec_command(self, conn: sqlite3.Connection, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-        stripped = sql.strip()
-        upper = stripped.upper()
-        if upper.startswith(("CREATE DOCUMENT TYPE", "CREATE VERTEX TYPE", "CREATE EDGE TYPE",
-                             "CREATE PROPERTY", "CREATE INDEX")):
-            return []
-        m_del = _DELETE_RE.match(stripped)
-        if m_del:
-            clauses = _split_clauses((m_del.group("rest") or "").strip())
-            limit_val: int | None = None
-            if clauses["limit"]:
-                lim_raw = clauses["limit"].strip()
-                limit_val = int(params[lim_raw[1:]]) if lim_raw.startswith(":") else int(lim_raw)
-            return self._delete_rows(conn, m_del.group("table"), clauses["where"], params, limit=limit_val)
-        m_ins = _INSERT_CONTENT_RE.match(stripped)
-        if m_ins:
-            table = m_ins.group("table")
-            body = m_ins.group("body").strip()
-            if body.startswith(":"):
-                payload = params.get(body[1:])
-                if isinstance(payload, list):
-                    for item in payload:
-                        self._insert_row(conn, table, item)
-                    return list(payload)
-                if isinstance(payload, dict):
-                    self._insert_row(conn, table, payload)
-                    return [payload]
-            row = json.loads(body)
-            self._insert_row(conn, table, row)
-            return [row]
-        m_ins_set = _INSERT_SET_RE.match(stripped)
-        if m_ins_set:
-            table = m_ins_set.group("table")
-            row = _parse_set_assignments(m_ins_set.group("set").strip(), params)
-            self._insert_row(conn, table, row)
-            return [row]
-        m_rem = _UPDATE_REMOVE_RE.match(stripped)
-        if m_rem:
-            table = m_rem.group("table")
-            fields = [f.strip().strip("`") for f in _split_top_level(m_rem.group("fields"), ",") if f.strip()]
-            where_clause = (m_rem.group("where") or "").strip()
-            return self._remove_fields_rows(conn, table, fields, where_clause, params)
-        m_upd = _UPDATE_RE.match(stripped)
-        if m_upd:
-            table = m_upd.group("table")
-            set_clause = m_upd.group("set").strip()
-            is_upsert = bool(m_upd.group("upsert"))
-            where_clause = (m_upd.group("where") or "").strip()
-            updates = _parse_set_assignments(set_clause, params)
-            if is_upsert:
-                # Extract key_field from simple `field=:param` WHERE clause.
-                m_key = re.match(r"^`?([A-Za-z_][A-Za-z0-9_]*)`?\s*=\s*:([A-Za-z_][A-Za-z0-9_]*)$", where_clause)
-                key_field = m_key.group(1) if m_key else "id"
-                if m_key and key_field not in updates:
-                    updates[key_field] = params.get(m_key.group(2))
-                self._upsert_row(conn, table, updates, key_field=key_field)
-                return [updates]
-            return self._update_rows(conn, table, updates, where_clause, params)
-        raise ValueError(f"Unsupported SQLite command: {stripped[:160]}")
-
     # --- StorageBackend Protocol Methods ---
 
     def insert_document(self, tx: Any, collection: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -1426,9 +849,10 @@ class SQLiteBackend:
         where: str,
         params: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        if hasattr(tx, "update_document"):
-            return tx.update_document(collection, data, where, params)
-        return self._update_rows(self._conn(), collection, data, where, params)
+        if self._read_only:
+            from .store_readonly import ReadOnlyStoreError
+            raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
+        raise NotImplementedError(_RAW_SQL_DISABLED)
 
     def upsert_document(
         self,
@@ -1449,16 +873,249 @@ class SQLiteBackend:
         where: str,
         params: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        if hasattr(tx, "delete_documents"):
-            return tx.delete_documents(collection, where, params or {})
-        return self._delete_rows(self._conn(), collection, where, params or {})
+        if self._read_only:
+            from .store_readonly import ReadOnlyStoreError
+            raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
+        raise NotImplementedError(_RAW_SQL_DISABLED)
 
     def get_by_id(self, reader: Any, collection: str, row_id: str) -> dict[str, Any] | None:
         conn = self._conn()
         row = conn.execute(f'SELECT doc FROM "{collection}" WHERE id=?', (row_id,)).fetchone()
         return clean_row(json.loads(row[0])) if row else None
 
-    # --- Full-Text Search (FTS5 + BM25) ---
+    # --- Declarative Backend-Neutral Queries & Mutations (Native SQLite, zero SQL transpilation) ---
+
+    def _find_rows(
+        self,
+        conn: sqlite3.Connection,
+        collection: str,
+        where: Any = (),
+        *,
+        columns: Any = None,
+        order_by: Any = (),
+        limit: int | None = None,
+        distinct: bool = False,
+    ) -> list[dict[str, Any]]:
+        from .storage_query import (
+            compile_sqlite_where,
+            extract_field_path,
+            normalize_columns,
+            normalize_order_by,
+            sqlite_field_expr,
+        )
+        table_cols = _table_column_names(collection)
+        where_sql, params = compile_sqlite_where(conn, table_cols, where)
+        order_specs = normalize_order_by(order_by)
+        order_sql = ""
+        if order_specs:
+            order_parts = [
+                f"{sqlite_field_expr(table_cols, spec.field)} {'DESC' if spec.desc else 'ASC'}"
+                for spec in order_specs
+            ]
+            order_sql = " ORDER BY " + ", ".join(order_parts)
+        limit_sql = f" LIMIT {max(0, int(limit))}" if limit is not None else ""
+        sql = f'SELECT doc FROM "{collection}"' + (f" WHERE {where_sql}" if where_sql else "") + order_sql + limit_sql
+        rows = conn.execute(sql, params).fetchall()
+        docs = [clean_row(json.loads(r[0])) for r in rows]
+        col_specs = normalize_columns(columns)
+        if not col_specs:
+            return docs
+        projected: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for doc in docs:
+            item: dict[str, Any] = {}
+            for spec in col_specs:
+                key = spec.alias or spec.field.split(".")[-1]
+                item[key] = extract_field_path(doc, spec.field)
+            if distinct:
+                marker = json_text(item)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+            projected.append(item)
+        return projected
+
+    def _find_one_row(
+        self,
+        conn: sqlite3.Connection,
+        collection: str,
+        where: Any = (),
+        *,
+        columns: Any = None,
+        order_by: Any = (),
+        required: bool = False,
+    ) -> dict[str, Any] | None:
+        from .storage_query import missing_row_message
+        rows = self._find_rows(conn, collection, where, columns=columns, order_by=order_by, limit=1)
+        if not rows:
+            if required:
+                raise ValueError(missing_row_message(collection))
+            return None
+        return rows[0]
+
+    def _count_rows(self, conn: sqlite3.Connection, collection: str, where: Any = ()) -> int:
+        from .storage_query import compile_sqlite_where
+        table_cols = _table_column_names(collection)
+        where_sql, params = compile_sqlite_where(conn, table_cols, where)
+        sql = f'SELECT count(*) FROM "{collection}"' + (f" WHERE {where_sql}" if where_sql else "")
+        row = conn.execute(sql, params).fetchone()
+        return int(row[0]) if row else 0
+
+    def _group_count_rows(
+        self,
+        conn: sqlite3.Connection,
+        collection: str,
+        group_by: Any,
+        where: Any = (),
+        *,
+        count_alias: str = "total",
+    ) -> list[dict[str, Any]]:
+        from .storage_query import compile_sqlite_where, sqlite_field_expr, validate_field_path
+        table_cols = _table_column_names(collection)
+        where_sql, params = compile_sqlite_where(conn, table_cols, where)
+        fields = [validate_field_path(f) for f in group_by]
+        exprs = [sqlite_field_expr(table_cols, f) for f in fields]
+        out_names = [f.split(".")[-1] for f in fields]
+        select_expr = ", ".join(f'{expr} AS "{name}"' for expr, name in zip(exprs, out_names))
+        group_expr = ", ".join(exprs)
+        sql = (
+            f'SELECT {select_expr}, count(*) AS "{count_alias}" FROM "{collection}"'
+            + (f" WHERE {where_sql}" if where_sql else "")
+            + f" GROUP BY {group_expr}"
+        )
+        rows = conn.execute(sql, params).fetchall()
+        return [
+            {**{out_names[i]: row[i] for i in range(len(out_names))}, count_alias: int(row[len(out_names)])}
+            for row in rows
+        ]
+
+    def _update_where_rows(
+        self,
+        conn: sqlite3.Connection,
+        collection: str,
+        *,
+        set_fields: dict[str, Any] | None = None,
+        remove_fields: Any = (),
+        where: Any = (),
+    ) -> list[dict[str, Any]]:
+        from .storage_query import apply_nested_updates, compile_sqlite_where
+        pk = "name" if collection == META_COLLECTION else "id"
+        table_cols = _table_column_names(collection)
+        where_sql, params = compile_sqlite_where(conn, table_cols, where)
+        sql = f'SELECT "{pk}", doc FROM "{collection}"' + (f" WHERE {where_sql}" if where_sql else "")
+        rows = conn.execute(sql, params).fetchall()
+        updated_docs: list[dict[str, Any]] = []
+        for row in rows:
+            doc = apply_nested_updates(json.loads(row["doc"]), set_fields=set_fields, remove_fields=remove_fields)
+            self._replace_row_by_id(conn, collection, row[pk], doc)
+            updated_docs.append(doc)
+        return updated_docs
+
+    def _delete_where_rows(
+        self,
+        conn: sqlite3.Connection,
+        collection: str,
+        where: Any = (),
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        from .storage_query import compile_sqlite_where, sqlite_id_filter_sql
+        pk = "name" if collection == META_COLLECTION else "id"
+        table_cols = _table_column_names(collection)
+        where_sql, params = compile_sqlite_where(conn, table_cols, where)
+        if limit is not None:
+            lim = max(0, int(limit))
+            if lim == 0:
+                return [{"count": 0}]
+            sql = f'SELECT "{pk}" FROM "{collection}"' + (f" WHERE {where_sql}" if where_sql else "") + f" LIMIT {lim}"
+            ids = [row[0] for row in conn.execute(sql, params).fetchall()]
+            if ids:
+                clause, id_params = sqlite_id_filter_sql(conn, f'"{pk}"', ids, slot=7)
+                conn.execute(f'DELETE FROM "{collection}" WHERE {clause}', id_params)
+        else:
+            sql = f'SELECT "{pk}" FROM "{collection}"' + (f" WHERE {where_sql}" if where_sql else "")
+            ids = [row[0] for row in conn.execute(sql, params).fetchall()]
+            if where_sql:
+                conn.execute(f'DELETE FROM "{collection}" WHERE {where_sql}', params)
+            else:
+                conn.execute(f'DELETE FROM "{collection}"')
+        if collection in {"chunks", "records"} and ids:
+            self._sync_fts_delete(conn, collection, [str(x) for x in ids])
+        return [{"count": len(ids)}]
+
+    def find(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        columns: Any = None,
+        order_by: Any = (),
+        limit: int | None = None,
+        distinct: bool = False,
+        reader: Any = None,
+    ) -> list[dict[str, Any]]:
+        return self._find_rows(
+            self._conn(), collection, where, columns=columns, order_by=order_by, limit=limit, distinct=distinct
+        )
+
+    def find_one(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        columns: Any = None,
+        order_by: Any = (),
+        required: bool = False,
+        reader: Any = None,
+    ) -> dict[str, Any] | None:
+        return self._find_one_row(
+            self._conn(), collection, where, columns=columns, order_by=order_by, required=required
+        )
+
+    def count(self, collection: str, where: Any = (), *, reader: Any = None) -> int:
+        return self._count_rows(self._conn(), collection, where)
+
+    def group_counts(
+        self,
+        collection: str,
+        group_by: Any,
+        where: Any = (),
+        *,
+        count_alias: str = "total",
+        reader: Any = None,
+    ) -> list[dict[str, Any]]:
+        return self._group_count_rows(self._conn(), collection, group_by, where, count_alias=count_alias)
+
+    def update_where(
+        self,
+        tx: Any,
+        collection: str,
+        *,
+        set_fields: dict[str, Any] | None = None,
+        remove_fields: Any = (),
+        where: Any = (),
+    ) -> list[dict[str, Any]]:
+        if hasattr(tx, "update_where") and tx is not self:
+            return tx.update_where(
+                collection, set_fields=set_fields, remove_fields=remove_fields, where=where
+            )
+        return self._update_where_rows(
+            self._conn(), collection, set_fields=set_fields, remove_fields=remove_fields, where=where
+        )
+
+    def delete_where(
+        self,
+        tx: Any,
+        collection: str,
+        where: Any = (),
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        if hasattr(tx, "delete_where") and tx is not self:
+            return tx.delete_where(collection, where, limit=limit)
+        return self._delete_where_rows(self._conn(), collection, where, limit=limit)
+
+    # --- Full-Text Search (FTS5 + BM25, TEMP TABLE safe for large eligible lists) ---
 
     def search_chunks_fts(
         self,
@@ -1472,16 +1129,17 @@ class SQLiteBackend:
         fts_query = quote_fts5_query(words)
         if not fts_query:
             return []
+        from .storage_query import sqlite_id_filter_sql
         t0 = time.monotonic()
         conn = self._conn()
-        placeholders = ", ".join("?" for _ in eligible_sources)
+        src_clause, src_params = sqlite_id_filter_sql(conn, "c.source_id", eligible_sources, slot=0)
         rows = conn.execute(
             f"SELECT c.doc, -bm25(chunks_fts) AS score "
             f"FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.id "
             f"WHERE chunks_fts MATCH ? AND c.project_id = ? AND c.is_current = 1 "
-            f"AND c.source_id IN ({placeholders}) "
+            f"AND {src_clause} "
             f"ORDER BY bm25(chunks_fts) ASC LIMIT ?",
-            [fts_query, project_id, *eligible_sources, int(limit)],
+            [fts_query, project_id, *src_params, int(limit)],
         ).fetchall()
         self._fts_latencies_ms.append((time.monotonic() - t0) * 1000.0)
         return [{**json.loads(row[0]), "search_score": float(row[1])} for row in rows]
@@ -1498,21 +1156,22 @@ class SQLiteBackend:
         fts_query = quote_fts5_query(words)
         if not fts_query:
             return []
+        from .storage_query import sqlite_id_filter_sql
         t0 = time.monotonic()
         conn = self._conn()
-        placeholders = ", ".join("?" for _ in eligible_records)
+        rec_clause, rec_params = sqlite_id_filter_sql(conn, "r.id", eligible_records, slot=0)
         rows = conn.execute(
             f"SELECT r.doc, -bm25(records_fts) AS score "
             f"FROM records_fts JOIN records r ON r.id = records_fts.id "
             f"WHERE records_fts MATCH ? AND r.project_id = ? AND r.status <> 'superseded' "
-            f"AND r.id IN ({placeholders}) "
+            f"AND {rec_clause} "
             f"ORDER BY bm25(records_fts) ASC LIMIT ?",
-            [fts_query, project_id, *eligible_records, int(limit)],
+            [fts_query, project_id, *rec_params, int(limit)],
         ).fetchall()
         self._fts_latencies_ms.append((time.monotonic() - t0) * 1000.0)
         return [{**json.loads(row[0]), "search_score": float(row[1])} for row in rows]
 
-    # --- Vectors (ADR-03: float32 BLOB + exact cosine similarity) ---
+    # --- Vectors (ADR-03: float32 BLOB + C-level math.sumprod exact cosine / optional sqlite-vec) ---
 
     def ensure_vector_index(
         self,
@@ -1538,7 +1197,7 @@ class SQLiteBackend:
             "index_name": f"{type_name}[vector]",
         }
         with self.transaction() as tx:
-            if not tx.query("SELECT id FROM projects WHERE id=:id", {"id": project_id}):
+            if not self._find_one_row(conn, "projects", {"id": project_id}, columns=("id",)):
                 return None
             self.upsert_document(tx, "vector_indexes", values, key_field="id")
         return values
@@ -1575,6 +1234,7 @@ class SQLiteBackend:
         eligible_sources: list[str],
         limit: int,
     ) -> tuple[bool, list[dict[str, Any]], str | None]:
+        from .storage_query import sqlite_id_filter_sql
         conn = self._conn()
         dim = len(query_vector)
         has_idx = conn.execute(
@@ -1585,12 +1245,14 @@ class SQLiteBackend:
             return False, [], None
         if not eligible_sources:
             return True, [], None
-        placeholders = ", ".join("?" for _ in eligible_sources)
+        src_clause, src_params = sqlite_id_filter_sql(conn, "source_id", eligible_sources, slot=0)
         rows = conn.execute(
             f"SELECT chunk_id, vector_blob, doc FROM embeddings "
-            f"WHERE project_id=? AND namespace=? AND dimension=? AND source_id IN ({placeholders})",
-            [project_id, namespace, dim, *eligible_sources],
+            f"WHERE project_id=? AND namespace=? AND dimension=? AND {src_clause}",
+            [project_id, namespace, dim, *src_params],
         ).fetchall()
+        q_arr = array("f", query_vector)
+        q_norm = math.sqrt(math.sumprod(q_arr, q_arr))
         scored: list[tuple[float, str]] = []
         for row in rows:
             blob = row[1]
@@ -1598,10 +1260,18 @@ class SQLiteBackend:
                 vec = unpack_vector(blob)
             else:
                 doc = json.loads(row[2])
-                vec = doc.get("vector") or ()
+                vec = array("f", doc.get("vector") or ())
             if len(vec) != dim:
                 continue
-            dist = cosine_distance(query_vector, vec)
+            if q_norm <= 0.0:
+                dist = 1.0
+            else:
+                v_norm = math.sqrt(math.sumprod(vec, vec))
+                if v_norm <= 0.0:
+                    dist = 1.0
+                else:
+                    sim = max(-1.0, min(1.0, math.sumprod(q_arr, vec) / (q_norm * v_norm)))
+                    dist = 1.0 - sim
             scored.append((dist, str(row[0])))
         scored.sort(key=lambda item: (item[0], item[1]))
         neighbors = [{"chunk_id": cid, "distance": dist} for dist, cid in scored[: int(limit)]]
@@ -1610,16 +1280,17 @@ class SQLiteBackend:
     def delete_vectors_for_sources(self, tx: Any, source_ids: list[str]) -> None:
         if not source_ids:
             return
-        tx.command("DELETE FROM embeddings WHERE source_id IN :ids", {"ids": list(source_ids)})
+        from .storage_query import is_in
+        self.delete_where(tx, "embeddings", is_in("source_id", list(source_ids)))
 
     def delete_vectors_for_project(self, tx: Any, project_id: str) -> None:
-        tx.command("DELETE FROM embeddings WHERE project_id=:project", {"project": project_id})
+        self.delete_where(tx, "embeddings", {"project_id": project_id})
 
     # --- Graph (Vertices, Edges, Cycle-Guarded WITH RECURSIVE Bounded BFS) ---
 
     def upsert_vertex(self, tx: Any, node: dict[str, Any], *, existing: bool = False) -> dict[str, Any]:
         if existing:
-            self.update_document(tx, "nodes", node, "id=:id", {"id": node["id"], "project_id": node["project_id"]})
+            self.update_where(tx, "nodes", set_fields=node, where={"id": node["id"]})
         elif hasattr(tx, "create_vertex"):
             tx.create_vertex("nodes", node)
         else:
@@ -1634,11 +1305,10 @@ class SQLiteBackend:
         existing: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if existing:
-            mine = {"id": edge["id"], "project_id": edge["project_id"]}
             if any(existing.get(k) != edge[k] for k in ("project_id", "from_id", "to_id")):
-                tx.command("DELETE FROM edges WHERE id=:id", mine)
+                self.delete_where(tx, "edges", {"id": edge["id"]})
             else:
-                self.update_document(tx, "edges", edge, "id=:id", mine)
+                self.update_where(tx, "edges", set_fields=edge, where={"id": edge["id"]})
                 return edge
         if hasattr(tx, "create_edge"):
             tx.create_edge("edges", edge)
@@ -1661,6 +1331,33 @@ class SQLiteBackend:
         for edge in created_edges:
             self.upsert_edge(tx, edge, existing=None)
 
+    def delete_graph_nodes(
+        self,
+        tx: Any,
+        project_id: str,
+        node_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        if not node_ids:
+            return [{"count": 0}]
+        from .storage_query import eq, is_in
+        return self.delete_where(tx, "nodes", [eq("project_id", project_id), is_in("id", list(node_ids))])
+
+    def delete_graph_edges(
+        self,
+        tx: Any,
+        project_id: str,
+        edge_ids: list[str],
+        *,
+        kinds: Any = None,
+    ) -> list[dict[str, Any]]:
+        if not edge_ids:
+            return [{"count": 0}]
+        from .storage_query import eq, is_in
+        conds: list[Any] = [is_in("id", list(edge_ids))]
+        if kinds is not None:
+            conds = [eq("project_id", project_id), is_in("kind", list(kinds)), *conds]
+        return self.delete_where(tx, "edges", conds)
+
     def search_graph_seeds(
         self,
         project_id: str,
@@ -1672,21 +1369,22 @@ class SQLiteBackend:
     ) -> list[dict[str, Any]]:
         if not eligible_nodes:
             return []
+        from .storage_query import sqlite_id_filter_sql
         conn = self._conn()
-        elig_ph = ", ".join("?" for _ in eligible_nodes)
+        elig_clause, elig_params = sqlite_id_filter_sql(conn, "id", eligible_nodes, slot=0)
         conds = ["id = ?"]
-        sql_params: list[Any] = [project_id, *eligible_nodes, exact_query]
+        sql_params: list[Any] = [project_id, *elig_params, exact_query]
         if seed_sources:
-            src_ph = ", ".join("?" for _ in seed_sources)
-            conds.append(f"source_id IN ({src_ph})")
-            sql_params.extend(seed_sources)
+            src_clause, src_params = sqlite_id_filter_sql(conn, "source_id", seed_sources, slot=1)
+            conds.append(src_clause)
+            sql_params.extend(src_params)
         for word in words:
             conds.append("LOWER(label) LIKE ?")
             sql_params.append(f"%{word.casefold()}%")
         sql_params.append(int(limit))
         rows = conn.execute(
             f"SELECT id FROM nodes WHERE project_id = ? AND is_current = 1 "
-            f"AND id IN ({elig_ph}) "
+            f"AND {elig_clause} "
             f"AND (json_extract(doc, '$.metadata.status') IS NULL "
             f"     OR json_extract(doc, '$.metadata.status') <> 'superseded') "
             f"AND ({' OR '.join(conds)}) LIMIT ?",
@@ -1704,50 +1402,50 @@ class SQLiteBackend:
         max_depth: int = 4,
         limit: int = 30,
     ) -> list[dict[str, Any]]:
-        """Cycle-safe bounded BFS via SQLite WITH RECURSIVE CTE."""
+        """Cycle-safe bounded BFS via SQLite WITH RECURSIVE CTE (TEMP TABLE safe for large graphs)."""
         if not seed_ids or not eligible_nodes:
             return []
+        from .storage_query import sqlite_id_filter_sql
         t0 = time.monotonic()
         conn = self._conn()
-        seed_ph = ", ".join("?" for _ in seed_ids)
-        node_ph = ", ".join("?" for _ in eligible_nodes)
+        seed_clause, seed_params = sqlite_id_filter_sql(conn, "id", seed_ids, slot=0)
+        node_clause, node_params = sqlite_id_filter_sql(conn, "id", eligible_nodes, slot=1)
         if not eligible_edges:
-            # Depth 0 seeds only when no edges are eligible.
             rows = conn.execute(
                 f"SELECT doc, 0 AS distance FROM nodes "
                 f"WHERE project_id = ? AND is_current = 1 "
-                f"AND id IN ({seed_ph}) AND id IN ({node_ph}) "
+                f"AND {seed_clause} AND {node_clause} "
                 f"AND (json_extract(doc, '$.metadata.status') IS NULL "
                 f"     OR json_extract(doc, '$.metadata.status') <> 'superseded') "
                 f"ORDER BY id LIMIT ?",
-                [project_id, *seed_ids, *eligible_nodes, int(limit)],
+                [project_id, *seed_params, *node_params, int(limit)],
             ).fetchall()
             self._graph_latencies_ms.append((time.monotonic() - t0) * 1000.0)
             return [{**json.loads(row[0]), "distance": int(row[1])} for row in rows]
 
-        edge_ph = ", ".join("?" for _ in eligible_edges)
+        edge_clause, edge_params = sqlite_id_filter_sql(conn, "id", eligible_edges, slot=2)
         sql = f"""
         WITH RECURSIVE
         valid_nodes(id) AS (
             SELECT id FROM nodes
             WHERE project_id = ? AND is_current = 1
-              AND id IN ({node_ph})
+              AND {node_clause}
               AND (json_extract(doc, '$.metadata.status') IS NULL
                    OR json_extract(doc, '$.metadata.status') <> 'superseded')
         ),
         valid_edges(src, dst) AS (
             SELECT from_id, to_id FROM edges
             WHERE project_id = ? AND is_current = 1 AND status <> 'superseded'
-              AND id IN ({edge_ph})
+              AND {edge_clause}
             UNION
             SELECT to_id, from_id FROM edges
             WHERE project_id = ? AND is_current = 1 AND status <> 'superseded'
-              AND id IN ({edge_ph})
+              AND {edge_clause}
         ),
         walk(node_id, depth, path) AS (
             SELECT id, 0, '|' || id || '|'
             FROM valid_nodes
-            WHERE id IN ({seed_ph})
+            WHERE {seed_clause}
             UNION ALL
             SELECT e.dst, w.depth + 1, w.path || e.dst || '|'
             FROM walk w
@@ -1770,12 +1468,12 @@ class SQLiteBackend:
         """
         params: list[Any] = [
             project_id,
-            *eligible_nodes,
+            *node_params,
             project_id,
-            *eligible_edges,
+            *edge_params,
             project_id,
-            *eligible_edges,
-            *seed_ids,
+            *edge_params,
+            *seed_params,
             int(max_depth),
             int(limit),
         ]
@@ -1799,13 +1497,14 @@ class SQLiteBackend:
     ) -> list[dict[str, Any]]:
         if not eligible_sources:
             return []
+        from .storage_query import sqlite_id_filter_sql
         conn = self._conn()
-        src_ph = ", ".join("?" for _ in eligible_sources)
+        src_clause, src_params = sqlite_id_filter_sql(conn, "source_id", eligible_sources, slot=0)
         rows = conn.execute(
             f"SELECT doc FROM nodes WHERE project_id = ? AND is_current = 1 AND kind = 'symbol' "
-            f"AND source_id IN ({src_ph}) "
+            f"AND {src_clause} "
             f"ORDER BY label, json_extract(doc, '$.metadata.path'), json_extract(doc, '$.metadata.line_start'), id",
-            [project_id, *eligible_sources],
+            [project_id, *src_params],
         ).fetchall()
         docs = [json.loads(row[0]) for row in rows]
         matched: list[dict[str, Any]] = []
@@ -1933,6 +1632,245 @@ class SQLiteBackend:
             counts[collection] = int(row[0]) if row else 0
         return counts
 
+    # --- Backup Paging, Migration, Restore DDL & Native Sizing ---
+
+    def _iter_backup_pages_conn(
+        self,
+        conn: sqlite3.Connection,
+        collection: str,
+        *,
+        page_rows: int = 1000,
+        page_bytes: int = 2 * 1024 * 1024,
+    ) -> Iterator[str]:
+        limit, last_rowid = page_rows, 0
+        while True:
+            rows = conn.execute(
+                f'SELECT rowid, doc FROM "{collection}" WHERE rowid > ? ORDER BY rowid ASC LIMIT ?',
+                (last_rowid, limit),
+            ).fetchall()
+            size = 0
+            for row in rows:
+                text = json_text(clean_row(json.loads(row[1])))
+                size += len(text)
+                yield text
+            if len(rows) < limit:
+                return
+            last_rowid = int(rows[-1][0])
+            limit = (
+                max(1, limit // 2)
+                if size > page_bytes
+                else min(page_rows, limit * 2)
+                if size < page_bytes // 4
+                else limit
+            )
+
+    def ensure_restored_vector_types(self, vector_indexes: list[dict[str, Any]]) -> None:
+        for registry in vector_indexes:
+            name, dimension = registry.get("type_name"), registry.get("dimension")
+            if not isinstance(name, str) or not name.startswith("vector_") or type(dimension) is not int or dimension <= 0:
+                raise ValueError("Invalid vector namespace in backup")
+
+    def wipe_all_collections(self, collections: tuple[str, ...]) -> None:
+        wipe_order = list(reversed(collections))
+        with self.raw_transaction() as tx:
+            for col in wipe_order:
+                tx._conn.execute(f'DELETE FROM "{col}"')
+            tx._conn.execute("DELETE FROM chunks_fts")
+            tx._conn.execute("DELETE FROM records_fts")
+
+    def import_migration_batch(self, collection: str, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return
+        with self.raw_transaction() as tx:
+            if collection == "journal_state":
+                tx._conn.execute("DELETE FROM journal_state")
+            for row in rows:
+                self._upsert_row(tx._conn, collection, row, key_field="id")
+
+    def upsert_meta_row(self, row: dict[str, Any]) -> None:
+        with self.raw_transaction() as tx:
+            self._upsert_row(tx._conn, META_COLLECTION, clean_row(row), key_field="name")
+
+    def measure_collection_exact_bytes(
+        self,
+        collection: str,
+        *,
+        project_id: str | None = None,
+        project_key: str = "project_id",
+    ) -> int:
+        conn = self._conn()
+        if project_id is not None:
+            row = conn.execute(
+                f'SELECT COALESCE(SUM(length(doc)), 0) FROM "{collection}" WHERE "{project_key}" = ?',
+                (project_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(f'SELECT COALESCE(SUM(length(doc)), 0) FROM "{collection}"').fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+
+    def measure_collection_sample(
+        self,
+        collection: str,
+        rows: int,
+        *,
+        project_id: str | None = None,
+        project_key: str = "project_id",
+        fields: str = "",
+        sample_points: int = 32,
+        sample_window: int = 8,
+        seed: int = 184,
+    ) -> list[dict[str, Any]]:
+        conn = self._conn()
+        from .storage_query import extract_field_path
+        extra_fields = [f.strip().strip("`") for f in fields.split(",") if f.strip()]
+        generator, seen, sample = random.Random(seed), set(), []
+        part = rows / sample_points
+        where = f' WHERE "{project_key}" = ?' if project_id is not None else ""
+        base_params = [project_id] if project_id is not None else []
+        for point in range(sample_points):
+            offset = int(point * part + generator.random() * max(0.0, part - sample_window))
+            fetched = conn.execute(
+                f'SELECT rowid, doc, length(doc) FROM "{collection}"{where} LIMIT ? OFFSET ?',
+                [*base_params, int(sample_window), int(offset)],
+            ).fetchall()
+            for r in fetched:
+                rid = f"#{r[0]}"
+                if rid in seen:
+                    continue
+                seen.add(rid)
+                doc = json.loads(r[1])
+                item: dict[str, Any] = {"rid": rid, "b": int(r[2] or 0)}
+                for field in extra_fields:
+                    item[field.split(".")[-1]] = extract_field_path(doc, field)
+                sample.append(item)
+        return sample
+
+    def measure_collection_grouped(
+        self,
+        collection: str,
+        group_fields: tuple[str, ...],
+        *,
+        project_id: str | None = None,
+        project_key: str = "project_id",
+        include_bytes: bool = True,
+    ) -> list[dict[str, Any]]:
+        from .storage_query import sqlite_field_expr, validate_field_path
+        conn = self._conn()
+        table_cols = _table_column_names(collection)
+        fields = [validate_field_path(f) for f in group_fields]
+        exprs = [sqlite_field_expr(table_cols, f) for f in fields]
+        out_names = [f.split(".")[-1] for f in fields]
+        select_expr = ", ".join(f'{expr} AS "{name}"' for expr, name in zip(exprs, out_names))
+        group_expr = ", ".join(exprs)
+        bytes_col = ", COALESCE(SUM(length(doc)), 0) AS b" if include_bytes else ""
+        where = f' WHERE "{project_key}" = ?' if project_id is not None else ""
+        params = [project_id] if project_id is not None else []
+        rows = conn.execute(
+            f'SELECT {select_expr}, count(*) AS n{bytes_col} FROM "{collection}"{where} GROUP BY {group_expr}',
+            params,
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            item: dict[str, Any] = {}
+            for i, name in enumerate(out_names):
+                val = row[i]
+                if name == "is_current" and val in (0, 1):
+                    val = bool(val)
+                item[name] = val
+            item["n"] = int(row[len(out_names)] or 0)
+            if include_bytes:
+                item["b"] = int(row[len(out_names) + 1] or 0)
+            out.append(item)
+        return out
+
+    def _compile_package_only(
+        self, conn: sqlite3.Connection, table: str, project_id: str, only: Any
+    ) -> tuple[str, list[Any]]:
+        from .storage_query import compile_sqlite_where, eq, is_in, not_in
+        table_cols = _table_column_names(table)
+        conds: list[Any] = [eq("project_id", project_id)]
+        if only is not None:
+            if isinstance(only, tuple) and len(only) == 2 and isinstance(only[0], str):
+                # Support legacy tuple specs e.g. ("kind IN :kept_nodes", {"kept_nodes": [...]})
+                expr_str, expr_params = only
+                m_not = re.fullmatch(r"\s*`?([A-Za-z_][A-Za-z0-9_.]*)`?\s+NOT\s+IN\s+:([A-Za-z_][A-Za-z0-9_]*)\s*", expr_str, re.I)
+                m_in = re.fullmatch(r"\s*`?([A-Za-z_][A-Za-z0-9_.]*)`?\s+IN\s+:([A-Za-z_][A-Za-z0-9_]*)\s*", expr_str, re.I)
+                if m_not:
+                    conds.append(not_in(m_not.group(1), expr_params.get(m_not.group(2), ())))
+                elif m_in:
+                    conds.append(is_in(m_in.group(1), expr_params.get(m_in.group(2), ())))
+                else:
+                    raise ValueError(f"Unsupported SQLite package filter: {expr_str!r}")
+            else:
+                from .storage_query import normalize_where
+                conds.extend(normalize_where(only))
+        return compile_sqlite_where(conn, table_cols, conds)
+
+    def measure_package_table(
+        self,
+        table: str,
+        project_id: str,
+        *,
+        only: Any = None,
+        group_sources: bool = False,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        conn = self._conn()
+        where_sql, params = self._compile_package_only(conn, table, project_id, only)
+        if group_sources:
+            rows = conn.execute(
+                f'SELECT "kind", "is_current", count(*) AS n, '
+                f'COALESCE(SUM(length(CAST(doc AS BLOB))), 0) AS b, '
+                f'COALESCE(MAX(length(CAST(doc AS BLOB))), 0) AS m '
+                f'FROM "{table}" WHERE {where_sql} GROUP BY "kind", "is_current"',
+                params,
+            ).fetchall()
+            out = [
+                {
+                    "kind": r[0],
+                    "is_current": bool(r[1]) if r[1] in (0, 1) else r[1],
+                    "n": int(r[2] or 0),
+                    "b": int(r[3] or 0),
+                    "m": int(r[4] or 0),
+                }
+                for r in rows
+            ]
+        else:
+            rows = conn.execute(
+                f'SELECT count(*) AS n, '
+                f'COALESCE(SUM(length(CAST(doc AS BLOB))), 0) AS b, '
+                f'COALESCE(MAX(length(CAST(doc AS BLOB))), 0) AS m '
+                f'FROM "{table}" WHERE {where_sql}',
+                params,
+            ).fetchall()
+            out = [
+                {
+                    "kind": None,
+                    "is_current": None,
+                    "n": int(r[0] or 0),
+                    "b": int(r[1] or 0),
+                    "m": int(r[2] or 0),
+                }
+                for r in rows
+            ]
+        return out, True
+
+    def measure_package_max_bytes(
+        self,
+        table: str,
+        project_id: str,
+        *,
+        floor_chars: int,
+        only: Any = None,
+    ) -> int | None:
+        conn = self._conn()
+        where_sql, params = self._compile_package_only(conn, table, project_id, only)
+        row = conn.execute(
+            f'SELECT MAX(length(CAST(doc AS BLOB))) FROM "{table}" '
+            f'WHERE {where_sql} AND length(doc) > ?',
+            [*params, int(floor_chars)],
+        ).fetchone()
+        return int(row[0]) if row and row[0] is not None else None
+
     # --- Read-only client proxy compatibility for Store ---
 
     def as_client_proxy(self) -> _SQLiteClientProxy:
@@ -1959,11 +1897,90 @@ class _SQLiteClientProxy:
     def database_exists(self) -> bool:
         return self._backend.database_exists()
 
+    def list_collections(self) -> set[str]:
+        return self._backend.list_collections()
+
+    def server_time_ms(self) -> int:
+        return self._backend.server_time_ms()
+
+    def insert_document(self, collection: str, data: dict[str, Any]) -> dict[str, Any]:
+        with self._backend.raw_transaction() as tx:
+            return tx.insert_document(collection, data)
+
+    def insert_documents(self, collection: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        with self._backend.raw_transaction() as tx:
+            return tx.insert_documents(collection, rows)
+
+    def upsert_document(self, collection: str, data: dict[str, Any], key_field: str = "id") -> dict[str, Any]:
+        with self._backend.raw_transaction() as tx:
+            return tx.upsert_document(collection, data, key_field=key_field)
+
     def query(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         return self._backend.query(sql, params)
 
     def command(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         return self._backend.command(sql, params)
+
+    def find(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        columns: Any = None,
+        order_by: Any = (),
+        limit: int | None = None,
+        distinct: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self._backend.find(
+            collection, where, columns=columns, order_by=order_by, limit=limit, distinct=distinct
+        )
+
+    def find_one(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        columns: Any = None,
+        order_by: Any = (),
+        required: bool = False,
+    ) -> dict[str, Any] | None:
+        return self._backend.find_one(
+            collection, where, columns=columns, order_by=order_by, required=required
+        )
+
+    def count(self, collection: str, where: Any = ()) -> int:
+        return self._backend.count(collection, where)
+
+    def group_counts(
+        self,
+        collection: str,
+        group_by: Any,
+        where: Any = (),
+        *,
+        count_alias: str = "total",
+    ) -> list[dict[str, Any]]:
+        return self._backend.group_counts(collection, group_by, where, count_alias=count_alias)
+
+    def update_where(
+        self,
+        collection: str,
+        *,
+        set_fields: dict[str, Any] | None = None,
+        remove_fields: Any = (),
+        where: Any = (),
+    ) -> list[dict[str, Any]]:
+        return self._backend.update_where(
+            self._backend, collection, set_fields=set_fields, remove_fields=remove_fields, where=where
+        )
+
+    def delete_where(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._backend.delete_where(self._backend, collection, where, limit=limit)
 
     def transaction(self, commit_timeout: float = 30.0, *, commit: bool = True):
         return self._backend.raw_transaction(commit_timeout=commit_timeout)

@@ -20,7 +20,8 @@ import re
 import subprocess
 from typing import Any
 
-from .sql import insert_document, one_row, update_document, utc_now
+from .sql import utc_now
+from .storage_query import db_find, db_find_one, db_insert_document, db_update_where
 from .symbol_anchor import (
     COMMENT_TAGS,
     find_symbol_in_analysis,
@@ -50,7 +51,7 @@ _ADR_REF_RE = re.compile(r"\bADR[-_ ]?(\d+[A-Za-z0-9_-]*)\b", re.IGNORECASE)
 
 def get_decision_source(reader, project_id: str) -> str:
     """Return the configured per-project decision source (`off` by default)."""
-    row = one_row(reader, "SELECT FROM memory_settings WHERE id=:id", {"id": project_id}, False) or {}
+    row = db_find_one(reader, "memory_settings", {"id": project_id}) or {}
     value = row.get(SETTING)
     return value if isinstance(value, str) and value in DECISION_SOURCES else DEFAULT_DECISION_SOURCE
 
@@ -93,10 +94,11 @@ def set_decision_source(store, project_id: str, source: str) -> dict[str, Any]:
     if choice != previous:
         with store.transaction() as tx:
             store._require_project(tx, pid)
-            if tx.query("SELECT id FROM memory_settings WHERE id=:id", {"id": pid}):
-                update_document(tx, "memory_settings", {SETTING: choice, "updated_at": utc_now()}, "id=:id", {"id": pid})
+            if db_find(tx, "memory_settings", {"id": pid}, columns=("id",)):
+                db_update_where(tx, "memory_settings", set_fields={SETTING: choice, "updated_at": utc_now()},
+                                where={"id": pid})
             else:
-                insert_document(tx, "memory_settings", {
+                db_insert_document(tx, "memory_settings", {
                     "id": pid,
                     "project_id": pid,
                     "enabled": False,
@@ -398,9 +400,12 @@ def _git_trailer_entries(root: Path, limit: int = TRAILER_COMMIT_LIMIT) -> list[
 
 def _record_exists(store, project_id: str, kind: str, key: str) -> bool:
     return bool(
-        store.query(
-            "SELECT id FROM records WHERE project_id=:project AND kind=:kind AND `key`=:key LIMIT 1",
-            {"project": project_id, "kind": kind, "key": key},
+        db_find(
+            store,
+            "records",
+            {"project_id": project_id, "kind": kind, "key": key},
+            columns=("id",),
+            limit=1,
         )
     )
 

@@ -28,13 +28,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import random
 import stat
 import time
 
 from .brief import _line
 from .config import BACKUP_SUFFIXES
-from .sql import IDENTIFIER, quote_name
+from .sql import IDENTIFIER
 from .store_backup import TEMPORARY_PREFIX
 from .terminal_safe import safe_text
 
@@ -56,39 +55,43 @@ class _Collection:
     """One collection, optionally limited to a project: its count and the length of its rows."""
 
     def __init__(self, store, name, project_id=None, key="project_id"):
-        self.store, self.name, self.project_id = store, name, project_id
-        self.where = f"{key}=:project" if project_id else ""
-        self.params = {"project": project_id} if project_id else {}
+        self.store, self.name, self.project_id, self.key = store, name, project_id, key
 
-    def query(self, select, where="", params=None, tail=""):
-        # The caller's condition (a range of ids) comes first: the engine then walks the id index.
-        condition = " AND ".join(part for part in (where, self.where) if part)
-        return self.store.query(f"SELECT {select} FROM {quote_name(self.name)}{' WHERE ' if condition else ''}"
-                                f"{condition}{tail}",
-                                {**self.params, **(params or {})})
+    def _base_where(self):
+        from .storage_query import eq
+        return [eq(self.key, self.project_id)] if self.project_id else []
 
     def rows(self) -> int:
-        found = self.query("count(*) AS n")
-        return int(found[0].get("n") or 0) if found else 0
+        from .storage_query import db_count
+        return db_count(self.store, self.name, self._base_where())
 
     def exact_bytes(self) -> int:
-        found = self.query(f"sum({_LENGTH}) AS b")
-        return int(found[0].get("b") or 0) if found else 0
+        return self.store.backend.measure_collection_exact_bytes(
+            self.name, project_id=self.project_id, project_key=self.key
+        )
 
     def sample(self, rows: int, fields=""):
         """Up to SAMPLE_POINTS windows of SAMPLE_WINDOW rows, one at a random position in each equal part of
-        the ``rows`` rows, each row with its length. Positions are offsets, so the windows cover the whole
-        collection whatever its ids look like."""
-        generator, seen, sample = random.Random(SEED), set(), []
-        part = rows / SAMPLE_POINTS
-        for point in range(SAMPLE_POINTS):
-            offset = int(point * part + generator.random() * max(0.0, part - SAMPLE_WINDOW))
-            for row in self.query(f"@rid AS rid, {fields}{_LENGTH} AS b",
-                                  tail=f" SKIP {offset} LIMIT {SAMPLE_WINDOW}"):
-                if row.get("rid") not in seen:
-                    seen.add(row.get("rid"))
-                    sample.append(row)
-        return sample
+        the ``rows`` rows, each row with its length."""
+        return self.store.backend.measure_collection_sample(
+            self.name,
+            rows,
+            project_id=self.project_id,
+            project_key=self.key,
+            fields=fields,
+            sample_points=SAMPLE_POINTS,
+            sample_window=SAMPLE_WINDOW,
+            seed=SEED,
+        )
+
+    def grouped(self, group_fields: tuple[str, ...], *, include_bytes: bool = True):
+        return self.store.backend.measure_collection_grouped(
+            self.name,
+            group_fields,
+            project_id=self.project_id,
+            project_key=self.key,
+            include_bytes=include_bytes,
+        )
 
 
 def _measure(collection, fields=""):
@@ -135,9 +138,8 @@ def _kinds(groups, found=False):
 def _sources(store, project_id):
     collection = _Collection(store, "sources", project_id)
     rows, size, sampled, sample = _measure(collection, "kind, is_current, ")
-    select = "kind, is_current, count(*) AS n" + ("" if sampled else f", sum({_LENGTH}) AS b")
     groups = {}
-    for row in collection.query(select, tail=" GROUP BY kind, is_current"):
+    for row in collection.grouped(("kind", "is_current"), include_bytes=not sampled):
         groups[(row.get("kind"), _state(row.get("is_current")))] = {
             "rows": int(row.get("n") or 0), "bytes": int(row.get("b") or 0)}
     if sampled:
@@ -147,9 +149,13 @@ def _sources(store, project_id):
 
 def _source_kinds(store, project_id):
     """The kind of every source of the store or project, read in pages by id; no text is read."""
-    collection, kinds, after = _Collection(store, "sources", project_id), {}, ""
+    from .storage_query import asc, db_find, eq, gt
+    kinds, after = {}, ""
     while True:
-        page = collection.query("id, kind", "id > :position", {"position": after}, f" ORDER BY id LIMIT {KIND_PAGE}")
+        conds = [gt("id", after)]
+        if project_id:
+            conds.append(eq("project_id", project_id))
+        page = db_find(store, "sources", conds, columns=("id", "kind"), order_by=(asc("id"),), limit=KIND_PAGE)
         kinds.update((row.get("id"), row.get("kind")) for row in page)
         if len(page) < KIND_PAGE:
             return kinds
@@ -159,9 +165,8 @@ def _source_kinds(store, project_id):
 def _chunks(store, project_id):
     collection = _Collection(store, "chunks", project_id)
     rows, size, sampled, sample = _measure(collection, "source_id, is_current, ")
-    select = "source_id, is_current, count(*) AS n" + ("" if sampled else f", sum({_LENGTH}) AS b")
     # The chunk groups first, then the kinds: a source written in between is then only among the kinds.
-    per_source = collection.query(select, tail=" GROUP BY source_id, is_current")
+    per_source = collection.grouped(("source_id", "is_current"), include_bytes=not sampled)
     kinds = _source_kinds(store, project_id)
 
     def key(row):
@@ -181,15 +186,14 @@ def _vector_types(store, project_id):
     """Every vector_* type in the schema, with its registry entry (namespace, dimension, project) if any.
 
     For one project only the types registered to it; a type without a registry entry is shown for the store."""
+    from .storage_query import db_find, db_list_collections
     from .store import EXPORT_TYPES
-    registry = {row.get("type_name"): row for row in store.query(
-        "SELECT type_name, namespace, dimension, project_id FROM vector_indexes")}
+    registry = {
+        row.get("type_name"): row
+        for row in db_find(store, "vector_indexes", columns=("type_name", "namespace", "dimension", "project_id"))
+    }
     # A name that is not a plain identifier is not one the product made, and is not queried.
-    collections = (
-        store.backend.list_collections(store)
-        if hasattr(store, "backend")
-        else {str(row.get("name")) for row in store.query("SELECT name FROM schema:types") if row.get("name")}
-    )
+    collections = db_list_collections(store)
     names = sorted(name for name in collections
                    if name.startswith("vector_") and name not in EXPORT_TYPES
                    and IDENTIFIER.fullmatch(name))
@@ -293,13 +297,14 @@ def _disk(settings) -> dict:
 
 def measure(store, project_id: str | None = None) -> dict:
     """The size report of the store, or of one project's rows; the disk part is always the whole directory."""
+    from .storage_query import db_find_one, db_group_counts
     started = time.monotonic()
     project = None
     if project_id:
-        found = store.query("SELECT id, name FROM projects WHERE id=:id", {"id": project_id})
-        if not found:
+        found_project = db_find_one(store, "projects", {"id": project_id}, columns=("id", "name"))
+        if not found_project:
             raise ValueError(f"Unknown project: {project_id}")
-        project = {"id": found[0]["id"], "name": found[0].get("name")}
+        project = {"id": found_project["id"], "name": found_project.get("name")}
     measured = _collections(store, project_id)
     measured["sources"], sources = _sources(store, project_id)
     measured["chunks"], chunks = _chunks(store, project_id)
@@ -315,8 +320,12 @@ def measure(store, project_id: str | None = None) -> dict:
         entry["rows"] += vector["rows"]
         entry["bytes"] = None if entry["bytes"] is None or vector["bytes"] is None else entry["bytes"] + vector["bytes"]
         entry["sampled"] = entry["sampled"] or vector["sampled"]
-    jobs = {str(row.get("state")): int(row.get("n") or 0)
-            for row in _Collection(store, "jobs", project_id).query("state, count(*) AS n", tail=" GROUP BY state")}
+    jobs = {
+        str(row.get("state")): int(row.get("n") or 0)
+        for row in db_group_counts(
+            store, "jobs", ("state",), {"project_id": project_id} if project_id else (), count_alias="n"
+        )
+    }
     from .store import EXPORT_TYPES
     order = [*EXPORT_TYPES, *(vector["name"] for vector in vectors)]
     report = {

@@ -35,7 +35,8 @@ from uuid import uuid4
 
 from .memory import MemoryConflict
 from .memory_paths import git_pathspec, is_reserved_memory
-from .sql import clean_row, json_text, one_row, utc_now
+from .sql import clean_row, json_text, utc_now
+from .storage_query import db_find, db_find_one, db_update_where, desc, eq, is_in
 from .terminal_safe import safe_text
 
 HEAL_AUDIT_PREFIX = "heal://"
@@ -1323,7 +1324,6 @@ def _ensure_healed_file_source(
 ) -> dict[str, Any]:
     """Create or reuse the current file source row for a healed quote location inside `tx`."""
     from .parsing import analyze_code, parser_identity
-    from .sql import update_document
 
     assert action.new_file_content is not None and action.outcome.new_path is not None
     abs_path = (root / action.outcome.new_path).resolve()
@@ -1331,13 +1331,11 @@ def _ensure_healed_file_source(
     content = action.new_file_content
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
     current_key = json_text([project_id, uri])
-    existing = one_row(
-        tx, "SELECT FROM sources WHERE current_key=:key AND is_current=true", {"key": current_key}, False
-    )
+    existing = db_find_one(tx, "sources", {"current_key": current_key, "is_current": True})
     if existing and existing.get("sha256") == digest:
         return existing
     if existing:
-        update_document(tx, "sources", {"is_current": False, "current_key": None}, "id=:id", {"id": existing["id"]})
+        db_update_where(tx, "sources", set_fields={"is_current": False, "current_key": None}, where={"id": existing["id"]})
         store.drop_chunks(tx, [existing["id"]])
         store._delete_old_vectors(tx, [existing["id"]])
     analysis = analyze_code(abs_path, content)
@@ -1368,19 +1366,19 @@ def apply_healing_plan(
 ) -> dict[str, Any]:
     """Phase 3: apply planned healing updates under optimistic concurrency CAS + immutable audit log."""
     if expected_snapshot_id is not None:
-        tip = one_row(
+        tip = db_find_one(
             tx,
-            "SELECT snapshot_id FROM memory_snapshots WHERE project_id=:project "
-            "ORDER BY created_at DESC,id DESC LIMIT 1",
-            {"project": project_id},
-            False,
+            "memory_snapshots",
+            {"project_id": project_id},
+            columns=("snapshot_id",),
+            order_by=(desc("created_at"), desc("id")),
         )
-        imp = one_row(
+        imp = db_find_one(
             tx,
-            "SELECT snapshot_id FROM memory_imports WHERE project_id=:project "
-            "ORDER BY imported_at DESC,id DESC LIMIT 1",
-            {"project": project_id},
-            False,
+            "memory_imports",
+            {"project_id": project_id},
+            columns=("snapshot_id",),
+            order_by=(desc("imported_at"), desc("id")),
         )
         current_tip = (tip or imp or {}).get("snapshot_id")
         if current_tip != expected_snapshot_id:
@@ -1396,12 +1394,7 @@ def apply_healing_plan(
 
     for action in plan.actions:
         outcome = action.outcome
-        old = one_row(
-            tx,
-            "SELECT FROM records WHERE id=:id AND project_id=:project",
-            {"id": action.record_id, "project": project_id},
-            False,
-        )
+        old = db_find_one(tx, "records", {"id": action.record_id, "project_id": project_id})
         expected_ver = (
             expected_versions[action.record_id]
             if expected_versions and action.record_id in expected_versions
@@ -1501,11 +1494,11 @@ def apply_healing_plan(
 
         update_payload: dict[str, Any] = {"id": old["id"], "expected_version": expected_ver}
         if old["kind"] == "task" and (old.get("metadata") or {}).get("plan_ref"):
-            plan_row = one_row(
+            plan_row = db_find_one(
                 tx,
-                "SELECT version FROM plans WHERE id=:id AND project_id=:project",
-                {"id": old["metadata"]["plan_ref"], "project": project_id},
-                False,
+                "plans",
+                {"id": old["metadata"]["plan_ref"], "project_id": project_id},
+                columns=("version",),
             )
             if plan_row:
                 update_payload["expected_plan_version"] = plan_row["version"]
@@ -1585,9 +1578,10 @@ def heal_project_quotes(
     })
     sources_by_id: dict[str, dict[str, Any]] = {}
     for offset in range(0, len(source_ids), 500):
-        for row in store.query(
-            "SELECT FROM sources WHERE project_id=:project AND id IN :ids",
-            {"project": pid, "ids": source_ids[offset:offset + 500]},
+        for row in db_find(
+            store,
+            "sources",
+            [eq("project_id", pid), is_in("id", source_ids[offset:offset + 500])],
         ):
             cleaned = clean_row(row)
             sources_by_id[cleaned["id"]] = cleaned
@@ -1595,11 +1589,12 @@ def heal_project_quotes(
     bindings = memory_bindings(store, pid)
     origin_roots = [str(root), str(project["root"]), *[str(origin) for origin, _ in bindings]]
     nested = nested_reserved(store, root)
-    tip = one_row(
+    tip = db_find_one(
         store,
-        "SELECT snapshot_id FROM memory_snapshots WHERE project_id=:project ORDER BY created_at DESC,id DESC LIMIT 1",
-        {"project": pid},
-        False,
+        "memory_snapshots",
+        {"project_id": pid},
+        columns=("snapshot_id",),
+        order_by=(desc("created_at"), desc("id")),
     )
 
     plan = _plan_records_healing(
@@ -1618,9 +1613,8 @@ def heal_project_quotes(
     with store.transaction() as tx:
         if expected_versions:
             for rec_id, exp_ver in expected_versions.items():
-                current = one_row(
-                    tx, "SELECT version FROM records WHERE id=:id AND project_id=:project",
-                    {"id": rec_id, "project": pid}, False,
+                current = db_find_one(
+                    tx, "records", {"id": rec_id, "project_id": pid}, columns=("version",),
                 )
                 if not current or current["version"] != exp_ver:
                     raise QuoteCASConflict(
@@ -1915,13 +1909,21 @@ def healing_audit_log(
         raise ValueError("Audit log limit must be between 1 and 1000")
     project = store.resolve_project(project_id)
     pid = project["id"]
-    sql = (
-        "SELECT id,uri,kind,content,metadata,created_at FROM sources "
-        "WHERE project_id=:project AND kind='manual' AND metadata.healing_audit=true"
-        + (" AND metadata.record_id=:record_id" if record_id else "")
-        + " ORDER BY created_at DESC,id DESC LIMIT :limit"
+    where = [
+        eq("project_id", pid),
+        eq("kind", "manual"),
+        eq("metadata.healing_audit", True),
+    ]
+    if record_id:
+        where.append(eq("metadata.record_id", record_id))
+    rows = db_find(
+        store,
+        "sources",
+        where,
+        columns=("id", "uri", "kind", "content", "metadata", "created_at"),
+        order_by=(desc("created_at"), desc("id")),
+        limit=limit,
     )
-    rows = store.query(sql, {"project": pid, "record_id": record_id, "limit": limit})
     entries: list[dict[str, Any]] = []
     for row in rows:
         cleaned = clean_row(row)

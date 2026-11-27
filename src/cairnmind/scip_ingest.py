@@ -33,6 +33,7 @@ from .scip_registry import (
     detect_project_languages,
     indexers_for_languages,
 )
+from .storage_query import col, db_find, db_update_where
 
 SCIP_ANALYSIS_PREFIX = "scip-v1:"
 
@@ -298,9 +299,11 @@ def scip_to_file_analyses(
 
 def _validate_registered_root(store, project_id: str, root: Path) -> Path:
     resolved = Path(root).expanduser().resolve()
-    rows = store.query(
-        "SELECT path FROM project_roots WHERE project_id=:project AND path=:root",
-        {"project": project_id, "root": str(resolved)},
+    rows = db_find(
+        store,
+        "project_roots",
+        {"project_id": project_id, "path": str(resolved)},
+        columns=("path",),
     )
     if not rows:
         raise ValueError(f"Root {resolved} is not registered for project {project_id}")
@@ -329,17 +332,26 @@ def apply_scip_index(
     analyses = scip_to_file_analyses(decoded, resolved_root, indexer=tool_name, version=tool_version)
 
     # Ensure source rows exist before attaching SCIP analyses.
-    existing_rows = store.query(
-        "SELECT id,uri,kind,metadata.path AS path,metadata.analysis_version AS analysis_version "
-        "FROM sources WHERE project_id=:project AND is_current=true",
-        {"project": pid},
+    source_cols = (
+        "id",
+        "uri",
+        "kind",
+        col("metadata.path", "path"),
+        col("metadata.analysis_version", "analysis_version"),
+    )
+    existing_rows = db_find(
+        store,
+        "sources",
+        {"project_id": pid, "is_current": True},
+        columns=source_cols,
     )
     if not existing_rows:
         index_project(store, pid)
-        existing_rows = store.query(
-            "SELECT id,uri,kind,metadata.path AS path,metadata.analysis_version AS analysis_version "
-            "FROM sources WHERE project_id=:project AND is_current=true",
-            {"project": pid},
+        existing_rows = db_find(
+            store,
+            "sources",
+            {"project_id": pid, "is_current": True},
+            columns=source_cols,
         )
 
     by_resolved_path: dict[Path, dict[str, Any]] = {}
@@ -370,15 +382,16 @@ def apply_scip_index(
         if row.get("analysis_version") == scip_ver and row.get("kind") == "code":
             unchanged += 1
             continue
-        store.command(
-            "UPDATE sources SET kind='code', metadata.analysis=:analysis, "
-            "metadata.analysis_version=:version, metadata.language=:lang WHERE id=:source",
-            {
-                "analysis": analysis,
-                "version": scip_ver,
-                "lang": analysis["language"],
-                "source": row["id"],
+        db_update_where(
+            store,
+            "sources",
+            set_fields={
+                "kind": "code",
+                "metadata.analysis": analysis,
+                "metadata.analysis_version": scip_ver,
+                "metadata.language": analysis["language"],
             },
+            where={"id": row["id"]},
         )
         updated += 1
 

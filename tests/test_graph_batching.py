@@ -322,7 +322,13 @@ def failed_removal(tmp_path, monkeypatch, rows):
     code_tree(root)
     grouped, first, single, second, *_ = both(tmp_path, root, monkeypatch)
     remove_code(root)
-    real, deletes, build, before = JournalTransaction.command, [], ingest._build_graph, {}
+    real, real_update, deletes, build, before = (
+        JournalTransaction.command,
+        JournalTransaction.update_where,
+        [],
+        ingest._build_graph,
+        {},
+    )
 
     def building(store, *args, **kwargs):
         before["graph"] = graph(store, first)
@@ -335,13 +341,20 @@ def failed_removal(tmp_path, monkeypatch, rows):
             deletes.append(len(params["ids"]))
             if rows is not None and len(deletes) == 2:  # the second group is deleted, then the connection drops
                 raise RuntimeError("the connection dropped")
-        if rows is None and sql.startswith("UPDATE projects SET graph_fingerprint=:fingerprint"):
+        if rows is None and sql.startswith("UPDATE projects SET graph_fingerprint="):
             raise RuntimeError("the connection dropped")  # after the whole removal: any commit before it would show
+        return result
+
+    def failing_update(self, collection, *, set_fields=None, remove_fields=(), where=()):
+        result = real_update(self, collection, set_fields=set_fields, remove_fields=remove_fields, where=where)
+        if rows is None and collection == "projects" and isinstance(set_fields, dict) and "graph_fingerprint" in set_fields:
+            raise RuntimeError("the connection dropped")
         return result
     with monkeypatch.context() as patch:
         if rows is not None:
             patch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", rows)
         patch.setattr(JournalTransaction, "command", failing)
+        patch.setattr(JournalTransaction, "update_where", failing_update)
         patch.setattr(ingest, "_build_graph", building)
         with pytest.raises(RuntimeError, match="connection dropped"):
             ingest.index_project(grouped, first)

@@ -51,6 +51,7 @@ from .config import Settings
 from .evaluation import MeasuredOllama, _fixture_settings, _git
 from .memory_models import from_settings
 from .ollama import OllamaUnavailable
+from .storage_query import db_find
 
 PASS_SHARE = 0.8  # complete and right, of all questions
 # An ask that ended with one of these codes, or with a status other than complete or partial, broke
@@ -253,8 +254,7 @@ async def _ask_all(settings: Settings, root: Path, cases: list[dict], measured, 
     started = time.monotonic()
     indexed = await asyncio.to_thread(index_project, store, project["id"])
     retriever = Retriever(store, settings, measured)
-    chunks = store.query("SELECT id FROM chunks WHERE project_id=:project AND is_current=true",
-                         {"project": project["id"]})
+    chunks = db_find(store, "chunks", {"project_id": project["id"], "is_current": True}, columns=("id",))
     report["stage"] = "embed"
     for row in chunks:
         await retriever.embed_pending({"project_id": project["id"], "payload": {"chunk_id": row["id"]}})

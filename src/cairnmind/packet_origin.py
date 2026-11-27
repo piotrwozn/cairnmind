@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from .storage_query import db_find, eq, is_in
 from .store import EXTRACTION_MARK
 
 AUTOMATIC_EXTRACTION = "automatic_extraction"
@@ -25,9 +26,9 @@ def _extracted(metadata) -> bool:
 def record_origins(store, records: list[dict]) -> dict[str, str]:
     """The origin of each record, by id."""
     ids = [row["id"] for row in records]
-    first = {row["record_id"]: row.get("metadata") for row in store.query(
-        "SELECT record_id, snapshot.metadata AS metadata FROM record_revisions "
-        "WHERE record_id IN :ids AND version=1", {"ids": ids})} if ids else {}
+    first = {row["record_id"]: row.get("metadata") for row in db_find(
+        store, "record_revisions", [is_in("record_id", ids), eq("version", 1)],
+        columns=("record_id", ("snapshot.metadata", "metadata")))} if ids else {}
     origins = {}
     for row in records:
         metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}

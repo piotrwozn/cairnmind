@@ -23,6 +23,7 @@ from .memory_published_secrets import (
     scan_text,
 )
 from .sql import clean_row, utc_now
+from .storage_query import all_of, any_of, db_find, eq
 
 RELEASE_ORIGIN = "local_user_release"
 CONFIG = Path(".cairnmind") / "publication.toml"
@@ -122,10 +123,21 @@ def commit_config_text(root, commit):
 
 def release_sources(tx, project_id):
     """{record_id: {source_id: row}} of every release this store holds: its own and imported ones."""
-    rows = [clean_row(row) for row in tx.query(
-        "SELECT id,project_id,uri,kind,sha256,metadata,created_at,content FROM sources WHERE project_id=:project "
-        "AND (metadata.origin=:origin OR (kind='published' AND metadata.published.kind='release'))",
-        {"project": project_id, "origin": RELEASE_ORIGIN})]
+    rows = [
+        clean_row(row)
+        for row in db_find(
+            tx,
+            "sources",
+            [
+                eq("project_id", project_id),
+                any_of(
+                    eq("metadata.origin", RELEASE_ORIGIN),
+                    all_of(eq("kind", "published"), eq("metadata.published.kind", "release")),
+                ),
+            ],
+            columns=("id", "project_id", "uri", "kind", "sha256", "metadata", "created_at", "content"),
+        )
+    ]
     found = {}
     for row in rows:
         metadata = row.get("metadata") or {}

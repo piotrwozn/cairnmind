@@ -25,7 +25,8 @@ from uuid import UUID, uuid4
 from .check_profile_messages import unknown_profile_message
 from .private_files import atomic_replace, fsync_directory, make_private
 from .process_control import ProcessJob, group_popen_kwargs, terminate_group
-from .sql import clean_row, insert_document, json_text, unregistered_root, utc_now
+from .sql import clean_row, json_text, unregistered_root, utc_now
+from .storage_query import asc, db_find, db_find_one, db_insert_document, desc, eq, ne
 from .memory_paths import git_pathspec, is_reserved_below, is_reserved_memory, nested_reserved
 from .path_spelling import lies_in
 from .process_identity import start as process_start
@@ -47,7 +48,7 @@ def _hash(value) -> str:
 def _root(store, project_id, worktree=None) -> Path:
     project = store.resolve_project(project_id)
     root = Path(worktree if worktree is not None else project["root"]).expanduser().resolve()
-    registered = store.query("SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})
+    registered = db_find(store, "project_roots", {"project_id": project["id"]}, columns=("path",))
     if str(root) not in {str(Path(row["path"]).resolve()) for row in registered}:
         raise ValueError(unregistered_root(root, project))
     return root
@@ -490,20 +491,19 @@ def _insert_run(store, run):
     # The only insertion path is the local runner.  Public/model inputs can only
     # refer to immutable IDs, never supply a completed machine-run payload.
     with store.transaction() as tx:
-        if not tx.query("SELECT id FROM projects WHERE id=:id", {"id": run["project_id"]}):
+        if not db_find(tx, "projects", {"id": run["project_id"]}, columns=("id",)):
             raise _RunReferencesGone("Project removed before check evidence could be recorded")
-        if not tx.query("SELECT id FROM records WHERE id=:id AND project_id=:project AND kind='task'",
-                        {"id": run["task_id"], "project": run["project_id"]}):
+        if not db_find(tx, "records", {"id": run["task_id"], "project_id": run["project_id"], "kind": "task"},
+                       columns=("id",)):
             raise _RunReferencesGone("Task removed before check evidence could be recorded")
         source_ids = [run["profile_source_id"], *run["source_ids"].values()]
         for source_id in source_ids:
-            if not tx.query("SELECT id FROM sources WHERE id=:id AND project_id=:project",
-                            {"id": source_id, "project": run["project_id"]}):
+            if not db_find(tx, "sources", {"id": source_id, "project_id": run["project_id"]}, columns=("id",)):
                 raise _RunReferencesGone("Source removed before check evidence could be recorded")
-        existing = tx.query("SELECT FROM check_runs WHERE id=:id", {"id": run["id"]})
+        existing = db_find(tx, "check_runs", {"id": run["id"]})
         if existing:
             return clean_row(existing[0])
-        insert_document(tx, "check_runs", run)
+        db_insert_document(tx, "check_runs", run)
         return run
 
 
@@ -588,7 +588,7 @@ def recover_interrupted_runs(store, settings) -> list[dict]:
             if _process_identity(pid) == active["runner_identity"]:
                 continue
             owner_dead = True
-            if store.query("SELECT id FROM check_runs WHERE id=:id", {"id": active["id"]}):
+            if db_find(store, "check_runs", {"id": active["id"]}, columns=("id",)):
                 path.unlink(missing_ok=True)
                 continue
             store._require_project(store, active["project_id"])
@@ -624,7 +624,7 @@ def recover_interrupted_runs(store, settings) -> list[dict]:
             path.unlink(missing_ok=True)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             if (owner_dead and active and (isinstance(exc, _RunReferencesGone)
-                    or not store.query("SELECT id FROM projects WHERE id=:id", {"id": active.get("project_id")}))):
+                    or not db_find(store, "projects", {"id": active.get("project_id")}, columns=("id",)))):
                 recovered.append(_cancelled_without_evidence(active, str(exc)))
                 try:
                     _cleanup_run_artifacts(settings, active)
@@ -638,8 +638,11 @@ def recover_interrupted_runs(store, settings) -> list[dict]:
 def run_check(store, settings, project_id, profile_id, task_id, worktree=None) -> dict:
     recover_interrupted_runs(store, settings)
     root = _root(store, project_id, worktree)
-    task = next((r for r in store.query("SELECT FROM records WHERE id=:id AND project_id=:project AND kind='task' AND status!='superseded'",
-                                      {"id": task_id, "project": project_id})), None)
+    task = db_find_one(
+        store,
+        "records",
+        [eq("id", task_id), eq("project_id", project_id), eq("kind", "task"), ne("status", "superseded")],
+    )
     if task is None:
         raise ValueError("Check task must be an active task in the project")
     profiles = load_profiles(store, project_id, root)
@@ -671,7 +674,7 @@ def run_check(store, settings, project_id, profile_id, task_id, worktree=None) -
     try:
         run = _finish_run(store, root, profile, active, outcome, returncode, error, buffers)
     except ValueError as exc:
-        if not isinstance(exc, _RunReferencesGone) and store.query("SELECT id FROM projects WHERE id=:id", {"id": project_id}):
+        if not isinstance(exc, _RunReferencesGone) and db_find(store, "projects", {"id": project_id}, columns=("id",)):
             raise
         run = _cancelled_without_evidence({**active, "returncode": returncode,
             "output_bytes": sum(len(b) for b in buffers.values())}, str(exc))
@@ -700,7 +703,9 @@ def _finish_run(store, root, profile, active, outcome, returncode, error, buffer
         current_profile = None
     if current_profile is None or current_profile["hash"] != profile["hash"]:
         reasons.append("profile changed during check")
-    current_task = store.query("SELECT FROM records WHERE id=:id AND project_id=:project AND status!='superseded'", {"id": task_id, "project": project_id})
+    current_task = db_find(
+        store, "records", [eq("id", task_id), eq("project_id", project_id), ne("status", "superseded")]
+    )
     if not current_task or task_definition_hash(current_task[0]) != definition_hash:
         reasons.append("task definition changed during check")
     source_ids, rendered_total = {}, 0
@@ -729,8 +734,9 @@ def _verification_status(store, reader, task, worktree=None, capture=None):
     metadata = task.get("metadata", {})
     project_id = task["project_id"]
     root = _root(store, project_id, worktree)
-    runs = [clean_row(r) for r in reader.query("SELECT FROM check_runs WHERE project_id=:project AND task_id=:task ORDER BY ended_at DESC,id",
-                                           {"project": project_id, "task": task["id"]})]
+    runs = [clean_row(r) for r in db_find(
+        reader, "check_runs", {"project_id": project_id, "task_id": task["id"]},
+        order_by=(desc("ended_at"), asc("id")))]
     scoped = [r for r in runs if r.get("worktree") == str(root)]
     try:
         profiles = load_profiles(store, project_id, root)
@@ -833,9 +839,9 @@ def criteria_status(store, task, worktree=None, *, capture=None, reader=None) ->
     except ValueError as exc:
         profiles, problem = {}, str(exc)
     definition = task_definition_hash(task)
-    runs = [clean_row(r) for r in reader.query(
-        "SELECT FROM check_runs WHERE project_id=:project AND task_id=:task ORDER BY ended_at DESC,id",
-        {"project": task["project_id"], "task": task["id"]})]
+    runs = [clean_row(r) for r in db_find(
+        reader, "check_runs", {"project_id": task["project_id"], "task_id": task["id"]},
+        order_by=(desc("ended_at"), asc("id")))]
     local = [r for r in runs if r.get("worktree") == str(root) and r.get("origin") == "local_runner"]
     captured: dict[tuple, dict] = {}
     take = capture or capture_code_state

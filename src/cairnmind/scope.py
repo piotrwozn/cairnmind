@@ -34,6 +34,7 @@ import stat
 import subprocess
 
 from .private_files import ensure_private_dir, write_durable_private
+from .storage_query import db_find, db_find_one
 import threading
 import time
 
@@ -80,7 +81,7 @@ def _file(store, project_id: str, worktree: str, task_id: str) -> Path:
 
 def _roots(store, project_id: str, first: Path | None = None) -> list[Path]:
     """Every registered root of a project, the given one first."""
-    rows = store.query("SELECT path FROM project_roots WHERE project_id=:project", {"project": project_id})
+    rows = db_find(store, "project_roots", {"project_id": project_id}, columns=("path",))
     found = [first] if first is not None else []
     for row in rows:
         path = Path(row["path"]).resolve()
@@ -191,7 +192,6 @@ def record_baseline(store, task: dict, worktree=None) -> bool:
     A task that goes back to work keeps the note of its first start: taking a new one would
     forget what had already changed. Only after the task was finished does a start begin anew.
     """
-    from cairnmind.sql import one_row
     from cairnmind.verification import _root
     if declared_scope(task) is None:
         return False
@@ -211,7 +211,7 @@ def record_baseline(store, task: dict, worktree=None) -> bool:
     _write(store, path, {"project_id": task["project_id"], "task_id": task["id"], "worktree": state["worktree"],
                          "head": state["head"], "captured_at": datetime.now(timezone.utc).isoformat(),
                          "captured_ns": started, "paths": paths})
-    current = one_row(store, "SELECT FROM records WHERE id=:id", {"id": task["id"]}, False)
+    current = db_find_one(store, "records", {"id": task["id"]})
     if current and current.get("metadata", {}).get("state") == "done":
         close_note(store, current, root)  # it was finished while the tree was being read
     return True

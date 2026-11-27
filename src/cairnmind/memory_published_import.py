@@ -18,7 +18,8 @@ from .memory_paths import PUBLISHED_RELATIVE
 from .memory_published import version_projection
 from .memory_published_check import check_directory, check_files, record_row, stub_row
 from .memory_published_format import J, canonical_uuid, projection, reviewed_by, same, sha256_text
-from .sql import clean_row, evidence_time, insert_document, json_text, one_row, update_document, utc_now
+from .sql import clean_row, evidence_time, insert_document, json_text, utc_now
+from .storage_query import asc, db_find, db_find_one, db_update_where, is_in, ne
 
 
 class _DryRun(Exception):
@@ -59,12 +60,16 @@ def _own_directory(tx, directory, project_id):
     if tail != tuple(part.casefold() for part in PUBLISHED_RELATIVE.parts):
         return
     holder = path.parents[len(PUBLISHED_RELATIVE.parts) - 1]
-    roots = {Path(row["path"]).resolve() for row in tx.query(
-        "SELECT path FROM project_roots WHERE project_id=:project", {"project": project_id})}
+    roots = {
+        Path(row["path"]).resolve()
+        for row in db_find(tx, "project_roots", {"project_id": project_id}, columns=("path",))
+    }
     if holder in roots:
         return
-    others = {Path(row["path"]).resolve() for row in tx.query(
-        "SELECT path FROM project_roots WHERE project_id<>:project", {"project": project_id})}
+    others = {
+        Path(row["path"]).resolve()
+        for row in db_find(tx, "project_roots", [ne("project_id", project_id)], columns=("path",))
+    }
     tops = {top for top in map(_git_top, sorted(roots)) if top is not None}
     if holder in others or any(holder.is_relative_to(top) for top in tops):
         from .memory import MemoryConflict
@@ -161,7 +166,7 @@ class PublishedImporter:
 
     def _apply(self, tx, tree, project_id, bind, take, result, directory=None):
         from .memory import MemoryConflict
-        project = one_row(tx, "SELECT FROM projects WHERE id=:id", {"id": project_id})
+        project = db_find_one(tx, "projects", {"id": project_id}, required=True)
         # Another project's directory first (#239): no binding or ID check could make it this project's.
         _own_directory(tx, directory, project_id)
         identity = project.get("publication_id")
@@ -171,11 +176,13 @@ class PublishedImporter:
         for table, identifiers in (("records", list(tree["records"])), ("plans", list(tree["plans"])),
                                    ("sources", list(tree["sources"]))):
             for start in range(0, len(identifiers), 500):
-                if any(row.get("project_id") != project_id for row in tx.query(
-                        f"SELECT project_id FROM {table} WHERE id IN :ids", {"ids": identifiers[start:start + 500]})):
+                if any(
+                    row.get("project_id") != project_id
+                    for row in db_find(tx, table, is_in("id", identifiers[start:start + 500]), columns=("project_id",))
+                ):
                     raise MemoryConflict("A memory entity ID belongs to another local project")
         if identity != tree["project_id"]:
-            update_document(tx, "projects", {"publication_id": tree["project_id"]}, "id=:id", {"id": project_id})
+            db_update_where(tx, "projects", set_fields={"publication_id": tree["project_id"]}, where={"id": project_id})
         self._stubs(tx, tree, project_id, result)
         plans = {i: m for i, m in tree["plans"].items()}
         written, diverged, foreign = {}, [], []
@@ -187,8 +194,16 @@ class PublishedImporter:
             return said(row["kind"], row["content"], row["key"], row["supersedes"], row["metadata"])
         for record_id, model in sorted(tree["records"].items()):
             path = tree["paths"][record_id]
-            versions = [clean_row(r)["snapshot"] for r in tx.query(
-                "SELECT snapshot,version FROM record_revisions WHERE record_id=:id ORDER BY version", {"id": record_id})]
+            versions = [
+                clean_row(r)["snapshot"]
+                for r in db_find(
+                    tx,
+                    "record_revisions",
+                    {"record_id": record_id},
+                    columns=("snapshot", "version"),
+                    order_by=(asc("version"),),
+                )
+            ]
             if versions and versions[-1]["kind"] != model["kind"]:
                 raise MemoryConflict(f"{path}: a local record with this ID has another kind")
             sources = self._sources(tx, project_id, {s for v in versions for s in v.get("source_ids") or []}
@@ -249,7 +264,7 @@ class PublishedImporter:
                     "never verified here"}
         for record_id, (_, _, old, _) in written.items():
             if old is not None:
-                update_document(tx, "records", {"active_key": None}, "id=:id", {"id": record_id})
+                db_update_where(tx, "records", set_fields={"active_key": None}, where={"id": record_id})
         now = utc_now()
         # A record that ends superseded goes first: its earlier versions hold their key, which the record that
         # replaced it (same kind and key, #222) takes once this one lets it go.
@@ -279,7 +294,7 @@ class PublishedImporter:
                 self.store._record_graph(tx, heads[record_id])
         from .plans import _plan_graph, _tasks
         for plan_id in touched_plans:
-            row = clean_row(one_row(tx, "SELECT FROM plans WHERE id=:id", {"id": plan_id}))
+            row = clean_row(db_find_one(tx, "plans", {"id": plan_id}, required=True))
             _plan_graph(self.store, tx, row, _tasks(tx, project_id, row))
         if written or touched_plans or result["stubs"]:
             from .journal import Journal
@@ -297,7 +312,7 @@ class PublishedImporter:
         for source_id, source in sorted(tree["sources"].items()):
             stub = stub_row(project_id, source_id, source)
             stub["metadata"]["published_quotes"] = sorted(quotes.get(source_id, []), key=J)
-            existing = one_row(tx, "SELECT FROM sources WHERE id=:id", {"id": source_id}, False)
+            existing = db_find_one(tx, "sources", {"id": source_id})
             if existing is None:
                 insert_document(tx, "sources", stub)
                 result["stubs"] += 1
@@ -308,8 +323,12 @@ class PublishedImporter:
                 known = list(metadata.get("published_quotes") or [])
                 grown = sorted(known + [q for q in stub["metadata"]["published_quotes"] if q not in known], key=J)
                 if grown != known:
-                    update_document(tx, "sources", {"metadata": {**metadata, "published_quotes": grown}},
-                                    "id=:id", {"id": source_id})
+                    db_update_where(
+                        tx,
+                        "sources",
+                        set_fields={"metadata": {**metadata, "published_quotes": grown}},
+                        where={"id": source_id},
+                    )
             # A full local source with the same ID is this machine's own evidence: kept untouched.
 
     def _published_here(self, project_id, kind, record_id, versions, sources):
@@ -330,8 +349,12 @@ class PublishedImporter:
         rows = {}
         identifiers = sorted(identifiers)
         for start in range(0, len(identifiers), 500):
-            for row in tx.query("SELECT id,project_id,uri,kind,sha256,metadata,created_at,content FROM sources "
-                                "WHERE id IN :ids", {"ids": identifiers[start:start + 500]}):
+            for row in db_find(
+                tx,
+                "sources",
+                is_in("id", identifiers[start:start + 500]),
+                columns=("id", "project_id", "uri", "kind", "sha256", "metadata", "created_at", "content"),
+            ):
                 if row.get("project_id") == project_id:
                     rows[row["id"]] = clean_row(row)
         return rows
@@ -381,13 +404,13 @@ class PublishedImporter:
         from .memory import MemoryConflict
         row["active_key"] = json_text([row["project_id"], row["kind"], row["key"]]) if row["status"] != "superseded" else None
         if row["active_key"]:
-            collision = one_row(tx, "SELECT id FROM records WHERE active_key=:key", {"key": row["active_key"]}, False)
+            collision = db_find_one(tx, "records", {"active_key": row["active_key"]}, columns=("id",))
             if collision and collision["id"] != row["id"]:
                 raise MemoryConflict(f"{path}: its kind and key belong to the local record {collision['id']}")
         if row["version"] == 1:
             insert_document(tx, "records", row)
         else:
-            update_document(tx, "records", row, "id=:id", {"id": row["id"]})
+            db_update_where(tx, "records", set_fields=row, where={"id": row["id"]})
         insert_document(tx, "record_revisions", {"id": f"{row['id']}:{row['version']}", "project_id": row["project_id"],
                                                  "record_id": row["id"], "version": row["version"], "snapshot": row,
                                                  "recorded_at": utc_now()})
@@ -399,14 +422,16 @@ class PublishedImporter:
         touched, diverged = [], []
         for plan_id, model in sorted(tree["plans"].items()):
             path, definitions = tree["paths"][plan_id], model["definitions"]
-            local = one_row(tx, "SELECT FROM plans WHERE id=:id", {"id": plan_id}, False)
+            local = db_find_one(tx, "plans", {"id": plan_id})
             steps_written = any(tree["records"][i]["revisions"][-1].get("plan") == plan_id for i in written
                                 if i in tree["records"])
             if local is None:
                 numbers = list(range(len(definitions)))
             else:
-                revisions = [clean_row(r) for r in tx.query("SELECT FROM plan_revisions WHERE plan_id=:id ORDER BY version",
-                                                             {"id": plan_id})]
+                revisions = [
+                    clean_row(r)
+                    for r in db_find(tx, "plan_revisions", {"plan_id": plan_id}, order_by=(asc("version"),))
+                ]
                 cores = [{"title": r["snapshot"]["plan"]["title"], "goal": r["snapshot"]["plan"]["goal"],
                           "constraints": r["snapshot"]["plan"]["constraints"],
                           "steps": [[t["id"], t["metadata"].get("step_key")] for t in r["snapshot"]["tasks"]]}
@@ -442,12 +467,12 @@ class PublishedImporter:
                     row.update({k: local.get(k) for k in ("title", "goal", "constraints", "context_hash")})
                 tasks = []
                 for task_id in row["step_ids"]:
-                    task = heads.get(task_id) or clean_row(one_row(tx, "SELECT FROM records WHERE id=:id", {"id": task_id}))
+                    task = heads.get(task_id) or clean_row(db_find_one(tx, "records", {"id": task_id}, required=True))
                     tasks.append(task)
                 if local is None and version == 1:
                     insert_document(tx, "plans", row)
                 else:
-                    update_document(tx, "plans", row, "id=:id", {"id": plan_id})
+                    db_update_where(tx, "plans", set_fields=row, where={"id": plan_id})
                 insert_document(tx, "plan_revisions", {"id": f"{plan_id}:{version}", "project_id": project_id,
                                                        "plan_id": plan_id, "version": version,
                                                        "reason": "publication_import",

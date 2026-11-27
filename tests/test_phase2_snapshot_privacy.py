@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 from uuid import uuid4
@@ -226,7 +227,14 @@ def test_ignore_rules_negation_cairnmindignore_symlinks_and_binaries(tmp_path):
     outside = tmp_path / "outside.txt"
     outside.write_text("outside secret\n")
     link = root / "escape.txt"
-    link.symlink_to(outside)
+    has_symlink = True
+    try:
+        link.symlink_to(outside)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            has_symlink = False
+        else:
+            raise
 
     # Canonical git check-ignore respects negation !important.env
     git_ignored = git_check_ignore(root, ["secret.env", "important.env", "debug.log", "keep.py"])
@@ -242,13 +250,15 @@ def test_ignore_rules_negation_cairnmindignore_symlinks_and_binaries(tmp_path):
     assert not matcher.is_ignored("keep.py")
 
     # Symlink escaping repo detected and never walked by _files
-    assert escapes_root(link, root)
+    if has_symlink:
+        assert escapes_root(link, root)
     assert not escapes_root(root / "keep.py", root)
     walked = {p.relative_to(root).as_posix() for p in _files(root)}
     assert "keep.py" in walked and "important.env" in walked
     assert "secret.env" not in walked and "debug.log" not in walked
     assert "private/notes.md" not in walked and "secret.internal.txt" not in walked
-    assert "escape.txt" not in walked
+    if has_symlink:
+        assert "escape.txt" not in walked
 
     # Binary detection (NUL byte)
     assert is_binary_bytes(b"\x89PNG\r\n\x1a\n\x00\x00")

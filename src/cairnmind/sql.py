@@ -7,6 +7,18 @@ import re
 
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PROFILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+_ARCADE_RESERVED = frozenset({
+    "key", "offset", "by", "order", "group", "select", "from", "where", "limit",
+    "skip", "set", "remove", "delete", "insert", "update", "into", "values",
+    "in", "not", "and", "or", "is", "null", "true", "false", "as", "distinct",
+    "to", "index", "type", "class", "content", "upsert",
+})
+
+
+def _arcade_ident(name: str) -> str:
+    if not isinstance(name, str) or not IDENTIFIER.fullmatch(name):
+        raise ValueError(f"Invalid database identifier: {name!r}")
+    return f"`{name}`" if name.lower() in _ARCADE_RESERVED else name
 
 
 def utc_now():
@@ -46,8 +58,24 @@ def evidence_time(tx, source_ids, *, source_rows: dict | None = None):
                    "stated": meta.get("source_timestamp"),
                    "origin": meta.get("origin")}
         else:
-            row = one_row(tx, "SELECT created_at, metadata.source_timestamp AS stated, metadata.origin AS origin "
-                             "FROM sources WHERE id=:id", {"id": source_id}, False) or {}
+            if hasattr(tx, "find_one"):
+                row = tx.find_one(
+                    "sources",
+                    {"id": source_id},
+                    columns=(
+                        "created_at",
+                        ("metadata.source_timestamp", "stated"),
+                        ("metadata.origin", "origin"),
+                    ),
+                ) or {}
+            else:
+                row = one_row(
+                    tx,
+                    "SELECT created_at, metadata.source_timestamp AS stated, metadata.origin AS origin "
+                    "FROM sources WHERE id=:id",
+                    {"id": source_id},
+                    False,
+                ) or {}
         if row.get("origin") in ACT_NOTE_ORIGINS:
             continue  # Also a review published elsewhere (#170): when someone judged, not when evidence existed.
         stated = parse_utc(row.get("stated"))
@@ -130,9 +158,10 @@ def insert_documents(tx, collection, rows):
     if hasattr(tx, "insert_documents"):
         stored = tx.insert_documents(collection, rows)
     else:
-        stored = tx.command(f"INSERT INTO {quote_name(collection)} CONTENT :rows", {"rows": rows})
+        stored = tx.command(f"INSERT INTO {_arcade_ident(collection)} CONTENT :rows", {"rows": rows})
     if not isinstance(stored, list) or len(stored) != len(rows):
         raise RuntimeError(f"The database did not store every row of a group in {collection}")
+    return stored
 
 
 def update_document(tx, collection, data, where, params):

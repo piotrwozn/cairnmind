@@ -98,72 +98,18 @@ def _in_range(low, high):
     return " AND ".join(where), params
 
 
-def _sum_of(collection, label, group, pattern):
-    """The sum of ``pattern`` per group, as {(kind, is_current): sum}; None when the engine stops it even in parts."""
-    expression = f"{label}sum({_kept(pattern)}) AS w"
-
-    def run(low=None, high=None):
-        where, params = _in_range(low, high)
-        return collection.query(expression, where=where, params=params, tail=group)
-
-    def add(found, into):
-        for row in found:
-            key = (row.get("kind"), row.get("is_current"))
-            into[key] = into.get(key, 0) + int(row.get("w") or 0)
-
-    total = {}
-    try:
-        add(run(), total)
-        return total
-    except RuntimeError:
-        total = {}
-    for digit, (first_low, first_high) in zip(_DIGITS, _parts(None, None, "")):
-        try:
-            add(run(first_low, first_high), total)
-            continue
-        except RuntimeError:
-            pass
-        # The part of one first digit, in sixteen again; None at an open end stands for no limit there.
-        for low, high in _parts(first_low, first_high, digit):
-            try:
-                add(run(low, high), total)
-            except RuntimeError:
-                return None
-    return total
-
-
-def _scoped(store, table, project_id, only):
-    """The collection of one table of a project, limited to the rows ``only`` names for it: (condition, parameters)."""
-    from .store_size import _Collection
-    collection = _Collection(store, table, project_id)
-    if table in only:
-        collection.where += f" AND {only[table][0]}"
-        collection.params.update(only[table][1])
-    return collection
-
-
 def _measure(store, project_id, tables, max_object_bytes, only):
     """Rows, bytes, whether the bytes are exact, the largest row and the source figures of one project."""
-    from .store_size import _LENGTH
     rows, size, largest, exact = 0, 0, 0, True
     sources = {"current": 0, "replaced": 0, "transcripts": 0}
     for table in tables:
-        collection = _scoped(store, table, project_id, only)
-        group = " GROUP BY kind, is_current" if table == "sources" else ""
-        label = "kind, is_current, " if table == "sources" else ""
-        found = collection.query(f"{label}count(*) AS n, sum({_LENGTH}) AS b, max({_LENGTH}) AS m", tail=group)
-        extra = {}
-        for pattern in _WIDTHS:
-            widths = _sum_of(collection, label, group, pattern)
-            if widths is None:
-                exact, extra = False, {}
-                break
-            for key, value in widths.items():
-                extra[key] = extra.get(key, 0) + value
-            if not any(widths.values()):
-                break  # nothing is that wide: the passes for wider characters would find nothing either
-        for row in found:
-            n, b = int(row.get("n") or 0), int(row.get("b") or 0) + extra.get((row.get("kind"), row.get("is_current")), 0)
+        table_rows, table_exact = store.backend.measure_package_table(
+            table, project_id, only=only.get(table), group_sources=(table == "sources")
+        )
+        if not table_exact:
+            exact = False
+        for row in table_rows:
+            n, b = int(row.get("n") or 0), int(row.get("b") or 0)
             rows, size, largest = rows + n, size + b, max(largest, int(row.get("m") or 0))
             if table == "sources":
                 sources["current" if row.get("is_current") is True else "replaced"] += b
@@ -174,10 +120,11 @@ def _measure(store, project_id, tables, max_object_bytes, only):
     if largest > floor:
         try:
             for table in tables:
-                found = _scoped(store, table, project_id, only).query(
-                    f"max({_bytes_expression()}) AS m", where=f"{_LENGTH} > :floor", params={"floor": floor})
-                if found and found[0].get("m") is not None:
-                    largest = max(largest, int(found[0]["m"]))
+                found_max = store.backend.measure_package_max_bytes(
+                    table, project_id, floor_chars=floor, only=only.get(table)
+                )
+                if found_max is not None:
+                    largest = max(largest, int(found_max))
         except RuntimeError:
             exact = False
     return rows, size, exact, largest, sources

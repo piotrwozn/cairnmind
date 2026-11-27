@@ -70,7 +70,15 @@ from uuid import UUID, uuid4
 
 from .file_locks import lock_exclusive
 from .private_files import atomic_replace, make_private
-from .sql import clean_row, insert_document, update_document, utc_now
+from .sql import clean_row, utc_now
+from .storage_query import (
+    db_find,
+    db_find_one,
+    db_insert_document,
+    db_list_collections,
+    db_server_time_ms,
+    db_update_where,
+)
 
 INSTALLATION_FILE = "installation.json"
 HISTORY_LIMIT = 20
@@ -232,7 +240,7 @@ def installation(data_dir: Path) -> Installation:
 
 
 def read_writer(reader) -> dict | None:
-    rows = [clean_row(row) for row in reader.query("SELECT FROM devbrain_meta WHERE name='writer'")]
+    rows = [clean_row(row) for row in db_find(reader, "devbrain_meta", {"name": "writer"})]
     if len(rows) > 1:
         raise ValueError("The store records more than one writer; run `cairnmind doctor` and report it.")
     return rows[0] if rows else None
@@ -277,10 +285,7 @@ def server_now(tx) -> str:
     """The database server's time, in the format ``utc_now`` gives, read in the transaction that writes the writer
     row (#372): clocks of installations differ, the server's is one, so the history's times do not go backwards in
     the order of commits (two takeovers that overlap cannot both commit: the head fences them)."""
-    if hasattr(tx, "server_time_ms"):
-        milliseconds = tx.server_time_ms()
-    else:
-        milliseconds = tx.query("SELECT sysdate().asLong() AS milliseconds")[0]["milliseconds"]
+    milliseconds = db_server_time_ms(tx)
     if not isinstance(milliseconds, int) or isinstance(milliseconds, bool):
         raise ValueError("The database server gave no time; the writer row was not changed.")
     return (datetime.fromtimestamp(0, timezone.utc) + timedelta(milliseconds=milliseconds)).isoformat(timespec="microseconds")
@@ -288,18 +293,22 @@ def server_now(tx) -> str:
 
 def stamp(tx, installation_id: str) -> None:
     """Name the writer in the journal head, always as a change of that record (see the module text)."""
-    tx.command("UPDATE journal_state SET writer=:writer,writer_change=:change WHERE id='current'",
-               {"writer": installation_id, "change": uuid4().hex})
+    db_update_where(
+        tx,
+        "journal_state",
+        set_fields={"writer": installation_id, "writer_change": uuid4().hex},
+        where={"id": "current"},
+    )
 
 
 def head_writer(reader) -> str | None:
     """The installation the journal head names; None for a store without a head, or a head that names none."""
     from .arcade import ArcadeError
     try:
-        rows = reader.query("SELECT writer FROM journal_state WHERE id='current'")
+        row = db_find_one(reader, "journal_state", {"id": "current"}, columns=("writer",))
     except ArcadeError:  # a store of another release without the type
         return None
-    return rows[0].get("writer") if rows else None
+    return row.get("writer") if row else None
 
 
 def read_fence(reader) -> tuple[dict | None, str | None]:
@@ -347,24 +356,24 @@ def settle(client, me: Installation) -> dict | None:
     row = read_writer(client)
     if row and row.get("installation_id") != me.id:
         return row
-    head = client.query("SELECT writer FROM journal_state WHERE id='current'")
-    if row and head and head[0].get("writer") == me.id:
+    head = db_find_one(client, "journal_state", {"id": "current"}, columns=("writer",))
+    if row and head and head.get("writer") == me.id:
         return None
     with client.transaction() as tx:
         # The head first: the engine refuses an update of a record only when it changed after this transaction
         # read it, so a claim committed after this read makes this commit fail, and one committed before it is
         # seen in the writer row read next (a page read for the first time shows the latest commit).
-        heads = tx.query("SELECT writer FROM journal_state WHERE id='current'")
+        head_tx = db_find_one(tx, "journal_state", {"id": "current"}, columns=("writer",))
         row = read_writer(tx)
         if row and row.get("installation_id") != me.id:
             return row
-        if row and heads and heads[0].get("writer") not in (None, me.id):
+        if row and head_tx and head_tx.get("writer") not in (None, me.id):
             # The row names this installation and the head another one (mixed_reason). Opening a store never
             # moves the fence away from an installation: writes are refused until a person runs the takeover.
             return None
         if row is None:
             now = server_now(tx)
-            insert_document(tx, "devbrain_meta", {
+            db_insert_document(tx, "devbrain_meta", {
                 "name": "writer", "installation_id": me.id, "host": label(socket.gethostname()), "since": now,
                 "history": [{"installation_id": me.id, "host": label(socket.gethostname()), "at": now, "how": "first"}]})
         stamp(tx, me.id)
@@ -462,12 +471,12 @@ def take_over(store, note: str | None = None) -> dict:
         has_head = ready or "journal_state" in (
             store.backend.list_collections(native)
             if hasattr(store, "backend")
-            else {row.get("name") for row in native.query("SELECT name FROM schema:types")}
+            else db_list_collections(native)
         )
         # The head first, as in settle: the stamp below changes it, so a claim or a takeover committed after
         # this read makes this commit fail, and one committed before it is seen in the writer row read next.
-        heads = native.query("SELECT writer FROM journal_state WHERE id='current'") if has_head else []
-        has_head, named = bool(heads), heads[0].get("writer") if heads else None
+        head_row = db_find_one(native, "journal_state", {"id": "current"}, columns=("writer",)) if has_head else None
+        has_head, named = head_row is not None, head_row.get("writer") if head_row else None
         row = read_writer(native)
         previous = row.get("installation_id") if row else None
         # The row names this installation and the head another one (mixed_reason): the head is put right.
@@ -486,9 +495,9 @@ def take_over(store, note: str | None = None) -> dict:
         history = [*(row.get("history") or []), entry][-HISTORY_LIMIT:] if row else [entry]
         values = {"installation_id": me, "host": host, "since": at, "history": history}
         if row:
-            update_document(native, "devbrain_meta", values, "name='writer'", {})
+            db_update_where(native, "devbrain_meta", set_fields=values, where={"name": "writer"})
         else:
-            insert_document(native, "devbrain_meta", {"name": "writer", **values})
+            db_insert_document(native, "devbrain_meta", {"name": "writer", **values})
         if has_head:
             stamp(native, me)
         released = 0
@@ -508,12 +517,21 @@ def release_running_jobs(tx, now: str) -> int:
     """Put the jobs the previous writer was running back to pending, so that only this writer's worker runs them."""
     from .store import Store
     released = 0
-    for job in tx.query("SELECT FROM jobs WHERE state='running'"):
+    for job in db_find(tx, "jobs", {"state": "running"}):
         job = clean_row(job)
         job["state"] = "pending"
-        update_document(tx, "jobs", {"state": "pending", "worker": None, "lease_until": None, "updated_at": now,
-                                     "attempt_history": Store._job_event(job, "writer_takeover", state="pending")},
-                        "id=:id AND state='running'", {"id": job["id"]})
+        db_update_where(
+            tx,
+            "jobs",
+            set_fields={
+                "state": "pending",
+                "worker": None,
+                "lease_until": None,
+                "updated_at": now,
+                "attempt_history": Store._job_event(job, "writer_takeover", state="pending"),
+            },
+            where={"id": job["id"], "state": "running"},
+        )
         released += 1
     return released
 

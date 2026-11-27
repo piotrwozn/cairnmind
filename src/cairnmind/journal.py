@@ -11,7 +11,7 @@ import json
 import re
 from uuid import UUID, uuid4
 
-from .sql import json_text, quote_name
+from .sql import _arcade_ident, json_text, quote_name
 
 
 JOURNAL_TYPES = ("journal_state", "journal_events")
@@ -151,14 +151,163 @@ class JournalTransaction:
     def query(self, sql, params=None):
         return self.native.query(sql, params)
 
+    def find(
+        self,
+        collection: str,
+        where=(),
+        *,
+        columns=None,
+        order_by=(),
+        limit: int | None = None,
+        distinct: bool = False,
+    ) -> list[dict]:
+        from .storage_query import _build_arcade_select
+        if hasattr(self.native, "find"):
+            return self.native.find(
+                collection, where, columns=columns, order_by=order_by, limit=limit, distinct=distinct
+            )
+        sql, params = _build_arcade_select(
+            collection, where, columns=columns, order_by=order_by, limit=limit, distinct=distinct
+        )
+        return [_clean(row) for row in self.query(sql, params)]
+
+    def find_one(
+        self,
+        collection: str,
+        where=(),
+        *,
+        columns=None,
+        order_by=(),
+        required: bool = False,
+    ) -> dict | None:
+        from .storage_query import missing_row_message
+        rows = self.find(collection, where, columns=columns, order_by=order_by, limit=1)
+        if not rows:
+            if required:
+                raise ValueError(missing_row_message(collection))
+            return None
+        return rows[0]
+
+    def count(self, collection: str, where=()) -> int:
+        from .storage_query import compile_arcade_where
+        if hasattr(self.native, "count"):
+            return int(self.native.count(collection, where))
+        where_sql, params = compile_arcade_where(where)
+        clause = f" WHERE {where_sql}" if where_sql else ""
+        rows = self.query(f"SELECT count(*) AS total FROM {quote_name(collection)}{clause}", params)
+        return int(rows[0]["total"]) if rows and rows[0].get("total") is not None else 0
+
+    def group_counts(self, collection: str, group_by, where=(), *, count_alias: str = "total") -> list[dict]:
+        from .storage_query import compile_arcade_where, quote_arcade_field
+        if hasattr(self.native, "group_counts"):
+            return self.native.group_counts(collection, group_by, where, count_alias=count_alias)
+        fields = [quote_arcade_field(f) for f in group_by]
+        where_sql, params = compile_arcade_where(where)
+        clause = f" WHERE {where_sql}" if where_sql else ""
+        group_expr = ", ".join(fields)
+        rows = self.query(
+            f"SELECT {group_expr}, count(*) AS {quote_name(count_alias)} "
+            f"FROM {quote_name(collection)}{clause} GROUP BY {group_expr}",
+            params,
+        )
+        return [_clean(row) for row in rows]
+
+    def update_where(
+        self,
+        collection: str,
+        *,
+        set_fields: dict | None = None,
+        remove_fields=(),
+        where=(),
+    ) -> list[dict]:
+        from .storage_query import compile_arcade_where, is_in, normalize_where, quote_arcade_field
+        self._invalidate_known(collection)
+        project = None
+        for cond in normalize_where(where):
+            if getattr(cond, "field", None) in {"project_id", "project"} and getattr(cond, "op", None) == "=":
+                project = cond.value
+                break
+        tracked = (
+            self._is_tracked(collection)
+            and self.reset_reason is None
+            and not self._skip_graph_row_tracking(collection, project)
+        )
+        before = self.find(collection, where) if tracked else []
+        if hasattr(self.native, "update_where"):
+            result = self.native.update_where(
+                collection, set_fields=set_fields, remove_fields=remove_fields, where=where
+            )
+        else:
+            where_sql, params = compile_arcade_where(where)
+            clause = f" WHERE {where_sql}" if where_sql else ""
+            result = []
+            if set_fields:
+                assignments = []
+                set_params = dict(params)
+                for idx, (field, value) in enumerate(set_fields.items()):
+                    pname = f"set_{idx}"
+                    assignments.append(f"{quote_arcade_field(field)}=:{pname}")
+                    set_params[pname] = value
+                result = list(
+                    self.native.command(
+                        f"UPDATE {_arcade_ident(collection)} SET {', '.join(assignments)}{clause}",
+                        set_params,
+                    )
+                )
+            if remove_fields:
+                rem = ", ".join(quote_arcade_field(f) for f in remove_fields)
+                result = list(self.native.command(f"UPDATE {_arcade_ident(collection)} REMOVE {rem}{clause}", params))
+        if tracked:
+            identifiers = {row["id"] for row in before if isinstance(row.get("id"), str)}
+            identifiers.update(row["id"] for row in result if isinstance(row, dict) and isinstance(row.get("id"), str))
+            if set_fields and isinstance(set_fields.get("id"), str):
+                identifiers.add(set_fields["id"])
+            after = (
+                self.find(collection, is_in("id", list(identifiers)))
+                if identifiers
+                else self.find(collection, where)
+            )
+            self._record(collection, before, after)
+        return result
+
+    def delete_where(self, collection: str, where=(), *, limit: int | None = None) -> list[dict]:
+        from .storage_query import compile_arcade_where, normalize_where
+        self._invalidate_known(collection)
+        project = None
+        for cond in normalize_where(where):
+            if getattr(cond, "field", None) in {"project_id", "project"} and getattr(cond, "op", None) == "=":
+                project = cond.value
+                break
+        tracked = (
+            self._is_tracked(collection)
+            and self.reset_reason is None
+            and not self._skip_graph_row_tracking(collection, project)
+        )
+        before = self.find(collection, where, limit=limit) if tracked else []
+        if hasattr(self.native, "delete_where"):
+            result = self.native.delete_where(collection, where, limit=limit)
+        else:
+            where_sql, params = compile_arcade_where(where)
+            clause = f" WHERE {where_sql}" if where_sql else ""
+            lim = f" LIMIT {max(0, int(limit))}" if limit is not None else ""
+            result = list(self.native.command(f"DELETE FROM {_arcade_ident(collection)}{clause}{lim}", params))
+        if tracked:
+            if collection == "nodes":
+                for row in before:
+                    self.touch(row.get("project_id"), "graph", op="reset")
+            self._record(collection, before, [])
+        return result
+
     def server_time_ms(self) -> int:
-        if hasattr(self.native, "server_time_ms"):
-            return int(self.native.server_time_ms())
-        rows = self.native.query("SELECT sysdate().asLong() AS milliseconds")
-        milliseconds = rows[0]["milliseconds"] if rows else None
-        if not isinstance(milliseconds, int) or isinstance(milliseconds, bool):
-            raise ValueError("The database server gave no time; the writer row was not changed.")
-        return milliseconds
+        from .storage_query import db_server_time_ms
+        return db_server_time_ms(self.native)
+
+    def list_collections(self) -> set[str]:
+        from .storage_query import db_list_collections
+        return db_list_collections(self.native)
+
+    def iter_backup_pages(self, collection: str, *, page_rows: int = 1000, page_bytes: int = 2 * 1024 * 1024):
+        return self.native.iter_backup_pages(collection, page_rows=page_rows, page_bytes=page_bytes)
 
     @staticmethod
     def _is_tracked(table: str) -> bool:
@@ -258,6 +407,7 @@ class JournalTransaction:
         return result
 
     def upsert_document(self, collection: str, data: dict, key_field: str = "id") -> dict:
+        from .storage_query import db_find
         self._invalidate_known(collection)
         key_val = data[key_field]
         project = data.get("id") if collection == "projects" else data.get("project_id")
@@ -266,14 +416,7 @@ class JournalTransaction:
             and self.reset_reason is None
             and not self._skip_graph_row_tracking(collection, project)
         )
-        before = (
-            self.native.query(
-                f"SELECT FROM {quote_name(collection)} WHERE {quote_name(key_field)}=:upsert_key",
-                {"upsert_key": key_val},
-            )
-            if tracked
-            else []
-        )
+        before = db_find(self.native, collection, {key_field: key_val}) if tracked else []
         if hasattr(self.native, "upsert_document"):
             self.native.upsert_document(collection, data, key_field=key_field)
         else:
@@ -285,10 +428,7 @@ class JournalTransaction:
                 params,
             )
         if tracked:
-            after = self.native.query(
-                f"SELECT FROM {quote_name(collection)} WHERE {quote_name(key_field)}=:upsert_key",
-                {"upsert_key": key_val},
-            )
+            after = db_find(self.native, collection, {key_field: key_val})
             self._record(collection, before, after or [_clean(data)])
         return data
 
@@ -436,10 +576,19 @@ class JournalTransaction:
         return events
 
     def flush(self):
+        from .storage_query import (
+            db_delete_where,
+            db_find,
+            db_insert_document,
+            db_insert_documents,
+            db_update_where,
+            eq,
+            lt,
+        )
         events = self.pending()
         if not events and self.reset_reason is None:
             return
-        state = self.native.query("SELECT FROM journal_state WHERE id='current'")
+        state = db_find(self.native, "journal_state", {"id": "current"})
         if self.check is not None:
             # The head is updated below in this same commit: a takeover committed after this read makes
             # the commit fail with a conflict, one committed before it is seen here.
@@ -447,12 +596,12 @@ class JournalTransaction:
         if self.reset_reason is not None or not state:
             epoch = str(uuid4())
             sequence = 0
-            self.native.command("DELETE FROM journal_events")
-            self.native.command("DELETE FROM journal_state")
+            db_delete_where(self.native, "journal_events")
+            db_delete_where(self.native, "journal_state")
             head = {"id": "current", "epoch": epoch, "seq": 0, "first_seq": 1}
             if self.writer is not None:
                 head["writer"] = self.writer
-            self.native.command("INSERT INTO journal_state CONTENT :row", {"row": head})
+            db_insert_document(self.native, "journal_state", head)
             events = {(None, "reset", None): "reset"}
         else:
             epoch, sequence = state[0]["epoch"], state[0]["seq"]
@@ -468,16 +617,14 @@ class JournalTransaction:
         # sent would be events lost without a word, so the transaction fails instead.
         for offset in range(0, len(rows), EVENTS_PER_STATEMENT):
             part = rows[offset:offset + EVENTS_PER_STATEMENT]
-            stored = self.native.command("INSERT INTO journal_events CONTENT :rows", {"rows": part})
+            stored = db_insert_documents(self.native, "journal_events", part)
             if not isinstance(stored, list) or sorted(row.get("seq") for row in stored if isinstance(row, dict)) != \
                     [row["seq"] for row in part]:
                 raise RuntimeError("The journal did not store every event of the transaction")
         first = max(1, sequence - MAX_EVENTS + 1)
-        self.native.command("UPDATE journal_state SET seq=:seq,first_seq=:first WHERE id='current'",
-                            {"seq": sequence, "first": first})
+        db_update_where(self.native, "journal_state", set_fields={"seq": sequence, "first_seq": first}, where={"id": "current"})
         if first > 1:
-            self.native.command("DELETE FROM journal_events WHERE epoch=:epoch AND seq<:first",
-                                {"epoch": epoch, "first": first})
+            db_delete_where(self.native, "journal_events", [eq("epoch", epoch), lt("seq", first)])
 
 
 class Journal:
@@ -485,10 +632,11 @@ class Journal:
         self.store = store
 
     def cursor(self, reader=None):
-        rows = (reader or self.store).query("SELECT epoch,seq FROM journal_state WHERE id='current'")
-        if not rows:
+        from .storage_query import db_find_one
+        row = db_find_one(reader or self.store, "journal_state", {"id": "current"}, columns=("epoch", "seq"))
+        if not row:
             raise ValueError("Journal state is unavailable")
-        return {"epoch": rows[0]["epoch"], "seq": rows[0]["seq"]}
+        return {"epoch": row["epoch"], "seq": row["seq"]}
 
     @staticmethod
     def touch(tx, project_id, entity_type, entity_id=None, op="upsert"):
@@ -503,6 +651,7 @@ class Journal:
         tx.reset(reason)
 
     def read(self, after=None, project_id=None, limit=200):
+        from .storage_query import any_of, asc, db_find, db_find_one, eq, gt, is_null
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError("Journal limit must be between 1 and 1000")
         if project_id is not None and not isinstance(project_id, str):
@@ -523,14 +672,16 @@ class Journal:
             except (ValueError, TypeError, AttributeError) as exc:
                 raise ValueError("Invalid journal epoch") from exc
         with self.store.transaction() as tx:
-            state = tx.query("SELECT FROM journal_state WHERE id='current'")[0]
+            state = db_find_one(tx, "journal_state", {"id": "current"}, required=True)
+            assert state is not None
             head = {"epoch": state["epoch"], "seq": state["seq"]}
             if (after is None or after["epoch"] != head["epoch"] or after["seq"] > head["seq"]
                     or after["seq"] < state.get("first_seq", 1) - 1):
                 return {"epoch": head["epoch"], "cursor": head, "events": [], "reset_required": True}
-            rows = tx.query("SELECT FROM journal_events WHERE epoch=:epoch AND seq>:seq "
-                + ("AND (project_id=:project OR project_id IS NULL) " if project_id is not None else "")
-                + f"ORDER BY seq LIMIT {limit + 1}", {"epoch": head["epoch"], "seq": after["seq"], "project": project_id})
+            conds = [eq("epoch", head["epoch"]), gt("seq", after["seq"])]
+            if project_id is not None:
+                conds.append(any_of(eq("project_id", project_id), is_null("project_id")))
+            rows = db_find(tx, "journal_events", conds, order_by=(asc("seq"),), limit=limit + 1)
             more = len(rows) > limit
             events = [{key: row.get(key) for key in ("epoch", "seq", "project_id", "entity_type", "entity_id", "op", "at")}
                       for row in rows[:limit]]

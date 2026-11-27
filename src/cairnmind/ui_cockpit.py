@@ -14,6 +14,15 @@ from uuid import uuid4
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
+from cairnmind.storage_query import (
+    asc,
+    db_find,
+    db_find_one,
+    db_insert_document,
+    db_update_where,
+    desc,
+)
+
 OriginCategory = Literal["ENGINE_VERIFIED", "HUMAN_REPO", "MCP_DEGRADED"]
 OriginEvidence = Literal["verified", "human", "repo_ci", "degraded"]
 
@@ -1984,15 +1993,21 @@ class LiveCockpitMixin:
         }
 
     def _project_plans(self, pid: str, root_path: Path, tasks_out: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        rows = self.store.query(
-            "SELECT FROM plans WHERE project_id=:project ORDER BY updated_at DESC LIMIT 50",
-            {"project": pid},
+        rows = db_find(
+            self.store,
+            "plans",
+            {"project_id": pid},
+            order_by=[desc("updated_at")],
+            limit=50,
         )
         active_plan_id: str | None = None
         with suppress(Exception):
-            wt_rows = self.store.query(
-                "SELECT active_plan_id FROM worktree_states WHERE project_id=:project LIMIT 5",
-                {"project": pid},
+            wt_rows = db_find(
+                self.store,
+                "worktree_states",
+                {"project_id": pid},
+                columns=["active_plan_id"],
+                limit=5,
             )
             if wt_rows:
                 active_plan_id = wt_rows[0].get("active_plan_id")
@@ -2280,18 +2295,13 @@ class LiveCockpitMixin:
         project_arg: str | None = None,
     ) -> dict[str, Any]:
         from cairnmind import person_proof
-        from cairnmind.sql import update_document
 
         self._require_writable()
         proj = self._resolve_project(project_arg)
         pid = proj["id"]
-        rows = self.store.query(
-            "SELECT FROM records WHERE id=:id AND project_id=:project",
-            {"id": decision_id, "project": pid},
-        )
-        if not rows:
+        current = db_find_one(self.store, "records", {"id": decision_id, "project_id": pid})
+        if not current:
             raise HTTPException(404, f"Detected decision not found: {decision_id}")
-        current = rows[0]
         cur_status = str(current.get("status") or "proposed")
         proven = person_proof.present()
         if cur_status in {"confirmed", "disputed"} and not proven:
@@ -2307,13 +2317,13 @@ class LiveCockpitMixin:
             meta["ui_triaged"] = "ignored"
         with self.store.transaction() as tx:
             updated = {
-                **current,
+                **{k: v for k, v in current.items() if not k.startswith("@")},
                 "status": next_status,
                 "metadata": meta,
                 "version": int(current.get("version") or 1) + 1,
                 "updated_at": now,
             }
-            update_document(tx, "records", updated, "id=:id", {"id": decision_id})
+            db_update_where(tx, "records", set_fields=updated, where={"id": decision_id})
         rev = self._state_rev(pid)
         self.bus.publish("state.updated", {"state_rev": rev, "reason": f"detected_decision_{req.action}", "decision_id": decision_id})
         return {
@@ -2329,8 +2339,6 @@ class LiveCockpitMixin:
         }
 
     def create_plan(self, req: CreatePlanRequest, project_arg: str | None = None) -> dict[str, Any]:
-        from cairnmind.sql import insert_document
-
         self._require_writable()
         proj = self._resolve_project(project_arg)
         pid = proj["id"]
@@ -2366,9 +2374,9 @@ class LiveCockpitMixin:
             "updated_at": now,
         }
         with self.store.transaction() as tx:
-            insert_document(tx, "plans", doc)
+            db_insert_document(tx, "plans", doc)
             with suppress(Exception):
-                insert_document(tx, "plan_revisions", {
+                db_insert_document(tx, "plan_revisions", {
                     "id": f"{plan_id}:1",
                     "project_id": pid,
                     "plan_id": plan_id,
@@ -2397,19 +2405,13 @@ class LiveCockpitMixin:
         return {"ok": True, "plan": plan_out, "state_rev": rev}
 
     def update_plan(self, plan_id: str, req: UpdatePlanRequest, project_arg: str | None = None) -> dict[str, Any]:
-        from cairnmind.sql import insert_document, update_document
-
         self._require_writable()
         proj = self._resolve_project(project_arg)
         pid = proj["id"]
         root_path = Path(proj["root"]).expanduser().resolve()
-        rows = self.store.query(
-            "SELECT FROM plans WHERE id=:id AND project_id=:project",
-            {"id": plan_id, "project": pid},
-        )
-        if not rows:
+        current = db_find_one(self.store, "plans", {"id": plan_id, "project_id": pid})
+        if not current:
             raise HTTPException(404, f"Plan not found: {plan_id}")
-        current = rows[0]
         cur_ver = int(current.get("version") or 1)
         meta = dict(current.get("metadata") or {}) if isinstance(current.get("metadata"), dict) else {}
 
@@ -2481,9 +2483,14 @@ class LiveCockpitMixin:
         updated["updated_at"] = now
 
         with self.store.transaction() as tx:
-            update_document(tx, "plans", updated, "id=:id", {"id": plan_id})
+            db_update_where(
+                tx,
+                "plans",
+                set_fields={k: v for k, v in updated.items() if not k.startswith("@")},
+                where={"id": plan_id},
+            )
             with suppress(Exception):
-                insert_document(tx, "plan_revisions", {
+                db_insert_document(tx, "plan_revisions", {
                     "id": f"{plan_id}:{updated['version']}",
                     "project_id": pid,
                     "plan_id": plan_id,
@@ -2501,13 +2508,9 @@ class LiveCockpitMixin:
         proj = self._resolve_project(project_arg)
         pid = proj["id"]
         root_path = Path(proj["root"]).expanduser().resolve()
-        rows = self.store.query(
-            "SELECT FROM plans WHERE id=:id AND project_id=:project",
-            {"id": plan_id, "project": pid},
-        )
-        if not rows:
+        current = db_find_one(self.store, "plans", {"id": plan_id, "project_id": pid})
+        if not current:
             raise HTTPException(404, f"Plan not found: {plan_id}")
-        current = rows[0]
         cur_ver = int(current.get("version") or 1)
         meta = dict(current.get("metadata") or {}) if isinstance(current.get("metadata"), dict) else {}
         if req.expected_version != cur_ver:
@@ -2554,8 +2557,6 @@ class LiveCockpitMixin:
         return {"ok": True, "requires_confirmation": False, "precheck": precheck, "plan": res["plan"], "state_rev": res["state_rev"]}
 
     def create_task(self, req: CreateTaskRequest, project_arg: str | None = None) -> dict[str, Any]:
-        from cairnmind.sql import insert_document
-
         self._require_writable()
         proj = self._resolve_project(project_arg)
         pid = proj["id"]
@@ -2584,7 +2585,7 @@ class LiveCockpitMixin:
             "updated_at": now,
         }
         with self.store.transaction() as tx:
-            insert_document(tx, "records", doc)
+            db_insert_document(tx, "records", doc)
         rev = self._state_rev(pid)
         self.bus.publish("state.updated", {"state_rev": rev, "reason": "task_created", "task_id": task_id})
         return {
@@ -2615,7 +2616,6 @@ class LiveCockpitMixin:
 
     def create_fact(self, req: CreateFactRequest, project_arg: str | None = None) -> dict[str, Any]:
         from cairnmind import person_proof
-        from cairnmind.sql import insert_document
 
         self._require_writable()
         proj = self._resolve_project(project_arg)
@@ -2654,7 +2654,7 @@ class LiveCockpitMixin:
             "updated_at": now,
         }
         with self.store.transaction() as tx:
-            insert_document(tx, "records", doc)
+            db_insert_document(tx, "records", doc)
         rev = self._state_rev(pid)
         self.bus.publish("state.updated", {"state_rev": rev, "reason": "fact_created", "claim_id": claim_id})
         return {
@@ -2696,9 +2696,11 @@ class LiveCockpitMixin:
         pid = proj["id"]
         versions: list[dict[str, Any]] = []
         if entity_kind == "plan":
-            rev_rows = self.store.query(
-                "SELECT FROM plan_revisions WHERE project_id=:project AND plan_id=:id ORDER BY version ASC",
-                {"project": pid, "id": entity_id},
+            rev_rows = db_find(
+                self.store,
+                "plan_revisions",
+                {"project_id": pid, "plan_id": entity_id},
+                order_by=[asc("version")],
             )
             for r in rev_rows:
                 snap = (r.get("snapshot") or {}).get("plan") or r.get("snapshot") or {}
@@ -2715,9 +2717,11 @@ class LiveCockpitMixin:
                     "snapshot": snap,
                 })
         else:
-            rev_rows = self.store.query(
-                "SELECT FROM record_revisions WHERE project_id=:project AND record_id=:id ORDER BY version ASC",
-                {"project": pid, "id": entity_id},
+            rev_rows = db_find(
+                self.store,
+                "record_revisions",
+                {"project_id": pid, "record_id": entity_id},
+                order_by=[asc("version")],
             )
             for r in rev_rows:
                 snap = r.get("snapshot") or {}

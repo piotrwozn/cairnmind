@@ -31,6 +31,7 @@ from .first_start import (CLIENT_SKIPPED, LAUNCH_REFUSED, PART_CONTRACT, PART_HO
                           REMOVED_COMMAND, REMOVED_COMMAND_BESIDE, TRUST_NOTE)
 from .private_files import IS_WINDOWS, atomic_replace, ensure_private_dir, fsync_directory, make_private, open_no_follow, pread_at
 from .removed_command import bare_devbrain_entries
+from .storage_query import db_find
 
 # The name of the MCP server in client configuration, and the markers around what install manages.
 # Entries and blocks written under the earlier name are recognised and converted in place.
@@ -1131,7 +1132,7 @@ def drain_hook_spool(settings: Settings, store, limit: int = 100) -> dict[str, A
     # An event no registered folder took is read again only once the registered folders changed, so the work of
     # a drain does not grow with the pile of a removed project's events (#327).
     try:
-        folders = frozenset(row["path"] for row in store.query("SELECT path FROM project_roots"))
+        folders = frozenset(row["path"] for row in db_find(store, "project_roots", columns=("path",)))
     except (OSError, ValueError, RuntimeError, httpx.HTTPError):
         folders = None  # the store does not answer: every event is tried, and fails below, as before
     known, waiting = _WAITING.get(str(directory), (None, set()))

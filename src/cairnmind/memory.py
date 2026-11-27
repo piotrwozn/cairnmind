@@ -32,8 +32,10 @@ from .memory_size import WARN_FRACTION, package_size
 from .store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
                     validate_extractor_stamp)
 from .system_links import passes_planted_link
-from .sql import (clean_row, insert_document, json_text, one_row, unregistered_root, update_document,
-                  utc_now)
+from .sql import clean_row, insert_document, json_text, unregistered_root, utc_now
+from .storage_query import (
+    any_of, db_count, db_find, db_find_one, db_update_where, desc, eq, gt, is_in, is_null, ne, not_in,
+)
 
 # Written into every new manifest, and so into its identifier. Manifests written under the
 # earlier name are read as they are: rewriting one would change its identifier and its history.
@@ -738,10 +740,9 @@ class MemoryManager:
 
     def _scope(self, project_id, worktree=None, reader=None):
         reader = reader or self.store
-        project = one_row(reader, "SELECT FROM projects WHERE id=:id", {"id": project_id})
+        project = db_find_one(reader, "projects", {"id": project_id}, required=True)
         root = Path(worktree if worktree is not None else project["root"]).expanduser().resolve()
-        if not reader.query("SELECT id FROM project_roots WHERE project_id=:project AND path=:path",
-                            {"project": project_id, "path": str(root)}):
+        if not db_find(reader, "project_roots", {"project_id": project_id, "path": str(root)}, columns=("id",)):
             raise ValueError(unregistered_root(root, project))
         return project, root
 
@@ -790,13 +791,11 @@ class MemoryManager:
             authorize()
         project, root = self._scope(project_id, worktree, reader)
         if _without_rebuilt_graph is _DEFAULT_WITHOUT_REBUILT_GRAPH:
-            raw_rows = {"edges": reader.query(
-                "SELECT FROM edges WHERE project_id=:project AND kind NOT IN :code_edges",
-                {"project": project_id, "code_edges": sorted(_CODE_EDGES)},
+            raw_rows = {"edges": db_find(
+                reader, "edges", [eq("project_id", project_id), not_in("kind", sorted(_CODE_EDGES))]
             )}
-            base_nodes = list(reader.query(
-                "SELECT FROM nodes WHERE project_id=:project AND kind IN :kept_nodes",
-                {"project": project_id, "kept_nodes": sorted(_GLOBAL_NODES)},
+            base_nodes = list(db_find(
+                reader, "nodes", [eq("project_id", project_id), is_in("kind", sorted(_GLOBAL_NODES))]
             ))
             seen_node_ids = {r.get("id") for r in base_nodes}
             linked = sorted({
@@ -804,31 +803,34 @@ class MemoryManager:
                 if isinstance(r.get(end), str) and r.get(end) not in seen_node_ids
             })
             for start in range(0, len(linked), 500):
-                base_nodes.extend(reader.query(
-                    "SELECT FROM nodes WHERE project_id=:project AND id IN :ids",
-                    {"project": project_id, "ids": linked[start:start + 500]},
+                base_nodes.extend(db_find(
+                    reader, "nodes", [eq("project_id", project_id), is_in("id", linked[start:start + 500])]
                 ))
             raw_rows["nodes"] = base_nodes
             for table in TABLES:
                 if table not in raw_rows:
-                    raw_rows[table] = reader.query(f"SELECT FROM {table} WHERE project_id=:project", {"project": project_id})
+                    raw_rows[table] = db_find(reader, table, {"project_id": project_id})
         else:
             raw_rows = {
-                table: reader.query(f"SELECT FROM {table} WHERE project_id=:project", {"project": project_id})
+                table: db_find(reader, table, {"project_id": project_id})
                 for table in TABLES
             }
         payload = _without_rebuilt_graph({
             table: sorted([_logical(table, r, copy=False) for r in raw_rows[table]], key=lambda r: r["id"])
             for table in TABLES
         })
-        focus = one_row(reader, "SELECT active_plan_id FROM worktree_states WHERE project_id=:project AND worktree=:root",
-                     {"project": project_id, "root": str(root)}, False)
+        focus = db_find_one(
+            reader, "worktree_states", {"project_id": project_id, "worktree": str(root)}, columns=("active_plan_id",)
+        )
         active = focus.get("active_plan_id") if focus else None
         _validate(payload, project_id, active)
-        aliases = [str(root)] + [r["origin_root"] for r in reader.query(
-            "SELECT origin_root FROM memory_bindings WHERE project_id=:project AND local_root=:root",
-            {"project": project_id, "root": str(root)})]
-        jobs = reader.query("SELECT kind,state FROM jobs WHERE project_id=:project", {"project": project_id})
+        aliases = [str(root)] + [
+            r["origin_root"]
+            for r in db_find(
+                reader, "memory_bindings", {"project_id": project_id, "local_root": str(root)}, columns=("origin_root",)
+            )
+        ]
+        jobs = db_find(reader, "jobs", {"project_id": project_id}, columns=("kind", "state"))
         processing = {kind: {state: sum(j.get("kind") == kind and j.get("state") == state for j in jobs)
                              for state in ("pending", "running", "failed", "completed")}
                       for kind in ("extract", "embed", "import")}
@@ -860,8 +862,9 @@ class MemoryManager:
         objects = _descriptors(payload)
         # The manifest as snapshot() would write it, with the parent and ancestry of the tip (an earlier file
         # without a receipt makes snapshot() refuse, so the tip is the only parent that matters).
-        tip = one_row(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project ORDER BY created_at DESC,id DESC LIMIT 1",
-                      {"project": project_id}, False)
+        tip = db_find_one(
+            self.store, "memory_snapshots", {"project_id": project_id}, order_by=(desc("created_at"), desc("id"))
+        )
         parent = tip["snapshot_id"] if tip else None
         ancestors = list(dict.fromkeys([parent, *tip.get("ancestors", [])]))[:4096] if tip else []
         manifest = len(_bytes({"format": FORMAT, "format_version": VERSION, **captured, "objects": objects,
@@ -879,8 +882,12 @@ class MemoryManager:
                 **({"redaction_counts": privacy["redaction_counts"]} if privacy and privacy["redaction_counts"] else {})}
 
     def _known_manifest(self, project_id, path):
-        return one_row(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project AND path=:path ORDER BY created_at DESC,id DESC LIMIT 1",
-                    {"project": project_id, "path": str(path)}, False)
+        return db_find_one(
+            self.store,
+            "memory_snapshots",
+            {"project_id": project_id, "path": str(path)},
+            order_by=(desc("created_at"), desc("id")),
+        )
 
     def _receipt(self, tx, project_id, path, raw, manifest, origin, worktree=None):
         self.store._require_project(tx, project_id)
@@ -896,7 +903,7 @@ class MemoryManager:
                "path": str(path), "manifest_sha": hashlib.sha256(raw).hexdigest(),
                "journal_cursor": journal_cursor,
                "created_at": utc_now(), "origin": origin}
-        if not tx.query("SELECT id FROM memory_snapshots WHERE id=:id", {"id": row["id"]}):
+        if not db_find(tx, "memory_snapshots", {"id": row["id"]}, columns=("id",)):
             insert_document(tx, "memory_snapshots", row)
 
     def _unchanged_since_receipt(self, project_id, worktree=None):
@@ -911,8 +918,9 @@ class MemoryManager:
         if any(is_reparse_point(p) or p.is_symlink() for p in (root / ".memory", path.parent, path.parent / "objects")):
             return None
         known = self._known_manifest(project_id, path)
-        tip = one_row(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project ORDER BY created_at DESC,id DESC LIMIT 1",
-                      {"project": project_id}, False)
+        tip = db_find_one(
+            self.store, "memory_snapshots", {"project_id": project_id}, order_by=(desc("created_at"), desc("id"))
+        )
         cursor = known.get("journal_cursor") if known else None
         if not known or not tip or known["id"] != tip["id"] or not isinstance(cursor, dict):
             return None
@@ -921,22 +929,38 @@ class MemoryManager:
                 or manifest["project"]["id"] != project_id
                 or manifest["snapshot_id"] != tip["snapshot_id"]):
             return None
-        state = one_row(self.store, "SELECT epoch,seq,first_seq FROM journal_state WHERE id='current'", required=False)
+        state = db_find_one(self.store, "journal_state", {"id": "current"}, columns=("epoch", "seq", "first_seq"))
         if (not state or state.get("epoch") != cursor.get("epoch")
                 or type(cursor.get("seq")) is not int or cursor["seq"] > state.get("seq", -1)
                 or cursor["seq"] < state.get("first_seq", 1) - 1):
             return None
         if state["seq"] > cursor["seq"]:
-            changed = self.store.query(
-                "SELECT entity_type FROM journal_events WHERE epoch=:epoch AND seq>:seq "
-                "AND (project_id=:project OR project_id IS NULL) AND entity_type NOT IN :ignored LIMIT 1",
-                {"epoch": state["epoch"], "seq": cursor["seq"], "project": project_id, "ignored": list(_NON_SNAPSHOT_EVENTS)},
+            changed = db_find(
+                self.store,
+                "journal_events",
+                [
+                    eq("epoch", state["epoch"]),
+                    gt("seq", cursor["seq"]),
+                    any_of(eq("project_id", project_id), is_null("project_id")),
+                    not_in("entity_type", list(_NON_SNAPSHOT_EVENTS)),
+                ],
+                columns=("entity_type",),
+                limit=1,
             )
             if changed:
                 return None
-            aliases = sorted({str(root), *(r["origin_root"] for r in self.store.query(
-                "SELECT origin_root FROM memory_bindings WHERE project_id=:project AND local_root=:root",
-                {"project": project_id, "root": str(root)}))})
+            aliases = sorted({
+                str(root),
+                *(
+                    r["origin_root"]
+                    for r in db_find(
+                        self.store,
+                        "memory_bindings",
+                        {"project_id": project_id, "local_root": str(root)},
+                        columns=("origin_root",),
+                    )
+                ),
+            })
             if aliases != manifest.get("root_aliases", []):
                 return None
         return _summary(path, manifest, "unchanged")
@@ -987,8 +1011,9 @@ class MemoryManager:
             objects, encoded_by_digest = _encode_objects(payload)
             content_hash = _digest({**{k: v for k, v in captured.items() if k not in {"processing", "completeness"}},
                                     "objects": objects})
-            tip = one_row(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project ORDER BY created_at DESC,id DESC LIMIT 1",
-                       {"project": project_id}, False)
+            tip = db_find_one(
+                self.store, "memory_snapshots", {"project_id": project_id}, order_by=(desc("created_at"), desc("id"))
+            )
             if previous and tip and tip["snapshot_id"] != previous["snapshot_id"]:
                 if previous["snapshot_id"] not in tip.get("ancestors", []):
                     raise MemoryConflict("Published and accepted memory snapshot histories diverged")
@@ -1103,27 +1128,33 @@ class MemoryManager:
         with self.store.transaction() as tx:
             if authorize is not None:
                 authorize()
-            current = one_row(tx, "SELECT FROM projects WHERE id=:id", {"id": project_id}, False)
+            current = db_find_one(tx, "projects", {"id": project_id})
             if current and current.get("removed_at"):
                 from .project_removal import import_refusal
                 raise MemoryConflict(import_refusal(current, self.store.data_dir))  # the way back is named; nothing is imported (#327)
             # A package never carries the code graph (#261): it is built from the project's files by indexing.
             result["code_graph"] = {"state": "not_built" if code_graph_pending(current) else "built_here"}
-            conflicts = tx.query("SELECT id FROM projects WHERE (name=:name OR root=:root) AND id!=:id",
-                                 {"name": chosen_name, "root": str(root), "id": project_id})
-            roots = tx.query("SELECT project_id FROM project_roots WHERE path=:path", {"path": str(root)})
+            conflicts = db_find(
+                tx,
+                "projects",
+                [any_of(eq("name", chosen_name), eq("root", str(root))), ne("id", project_id)],
+                columns=("id",),
+            )
+            roots = db_find(tx, "project_roots", {"path": str(root)}, columns=("project_id",))
             if conflicts or any(r["project_id"] != project_id for r in roots):
                 raise MemoryConflict("Memory target name or root belongs to another project identity")
-            prior = one_row(tx, "SELECT FROM memory_imports WHERE project_id=:project ORDER BY imported_at DESC,id DESC LIMIT 1",
-                         {"project": project_id}, False)
+            prior = db_find_one(
+                tx, "memory_imports", {"project_id": project_id}, order_by=(desc("imported_at"), desc("id"))
+            )
             if prior and prior["snapshot_id"] == snapshot_id:
                 if not roots:
                     raise MemoryConflict("An already imported snapshot is bound to a different local root")
                 return {**result, "status": "unchanged", "project": current or result["project"]}
             if current:
                 captured, existing_payload = self._capture(project_id, current["root"], tx)
-                published = one_row(tx, "SELECT FROM memory_snapshots WHERE project_id=:project ORDER BY created_at DESC,id DESC LIMIT 1",
-                                 {"project": project_id}, False)
+                published = db_find_one(
+                    tx, "memory_snapshots", {"project_id": project_id}, order_by=(desc("created_at"), desc("id"))
+                )
                 baseline = published or prior
                 exact_current = existing_payload == payload
                 team_state_hash = captured["state_hash"]
@@ -1158,12 +1189,17 @@ class MemoryManager:
                                          "does not merge it with the package. Nothing was imported. Record it with "
                                          f"`cairnmind memory snapshot {current['name']}` before choosing which "
                                          "history to keep.")
-                focus = one_row(tx, "SELECT active_plan_id FROM worktree_states WHERE project_id=:project AND worktree=:root",
-                             {"project": project_id, "root": str(root)}, False)
+                focus = db_find_one(
+                    tx, "worktree_states", {"project_id": project_id, "worktree": str(root)}, columns=("active_plan_id",)
+                )
                 selected = focus.get("active_plan_id") if focus else None
-                focus_baseline = one_row(tx, "SELECT active_plan_id FROM memory_snapshots WHERE project_id=:project "
-                                     "AND worktree=:root ORDER BY created_at DESC,id DESC LIMIT 1",
-                                     {"project": project_id, "root": str(root)}, False)
+                focus_baseline = db_find_one(
+                    tx,
+                    "memory_snapshots",
+                    {"project_id": project_id, "worktree": str(root)},
+                    columns=("active_plan_id",),
+                    order_by=(desc("created_at"), desc("id")),
+                )
                 previous_focus = focus_baseline.get("active_plan_id") if focus_baseline else None
                 if selected != previous_focus and selected != manifest.get("active_plan_id"):
                     raise MemoryConflict("The local worktree's active plan changed since its memory baseline")
@@ -1173,8 +1209,10 @@ class MemoryManager:
             for table in TABLES:
                 identifiers = [row["id"] for row in payload[table]]
                 for start in range(0, len(identifiers), 1000):
-                    if any(row.get("project_id") != project_id for row in tx.query(
-                            f"SELECT project_id FROM {table} WHERE id IN :ids", {"ids": identifiers[start:start + 1000]})):
+                    if any(
+                        row.get("project_id") != project_id
+                        for row in db_find(tx, table, is_in("id", identifiers[start:start + 1000]), columns=("project_id",))
+                    ):
                         raise MemoryConflict("A memory entity ID belongs to another local project")
             for table in ("record_revisions", "plan_revisions", "check_runs"):
                 for row in payload[table]:
@@ -1201,9 +1239,12 @@ class MemoryManager:
                 raise MemoryConflict("Incoming memory omits existing knowledge records")
             origins = sorted(set([manifest["origin_root"], *manifest.get("root_aliases", [])]))
             for origin in origins:
-                if any(r["local_root"] != str(root) for r in tx.query(
-                        "SELECT local_root FROM memory_bindings WHERE project_id=:project AND origin_root=:origin",
-                        {"project": project_id, "origin": origin})):
+                if any(
+                    r["local_root"] != str(root)
+                    for r in db_find(
+                        tx, "memory_bindings", {"project_id": project_id, "origin_root": origin}, columns=("local_root",)
+                    )
+                ):
                     raise MemoryConflict("Memory origin already has a different local root binding")
             # What the package brings as confirmed (#177): every record whose head is confirmed and is new
             # here or moves this store's head on. It is kept as confirmed elsewhere, with who the package
@@ -1212,9 +1253,12 @@ class MemoryManager:
             from .confirmation import REPLACES_NOTE, archive_claims, import_mark, local_verdict, replaces_refusal, said
             package_sources = {row["id"]: row for row in payload["sources"]}
             # Read from the rows: the captured state above leaves local marks out, as a package does.
-            local_marks = {row["id"]: row.get("mark") for row in tx.query(
-                "SELECT id,metadata.confirmation AS mark FROM records WHERE project_id=:project",
-                {"project": project_id})} if current else {}
+            local_marks = {
+                row["id"]: row.get("mark")
+                for row in db_find(
+                    tx, "records", {"project_id": project_id}, columns=("id", ("metadata.confirmation", "mark"))
+                )
+            } if current else {}
             marks, imported_at, names, unnamed, brought, replaced = {}, utc_now(), set(), 0, 0, []
             for row in payload["records"]:
                 old = existing["records"].get(row["id"])
@@ -1275,17 +1319,17 @@ class MemoryManager:
             for origin in origins:
                 binding = {"id": _digest([project_id, origin, str(root)]), "project_id": project_id,
                            "origin_root": origin, "local_root": str(root)}
-                if not tx.query("SELECT id FROM memory_bindings WHERE id=:id", {"id": binding["id"]}):
+                if not db_find(tx, "memory_bindings", {"id": binding["id"]}, columns=("id",)):
                     insert_document(tx, "memory_bindings", binding)
             # Clear only affected derived unique keys before applying a complete
             # final record set; legitimate key swaps must not depend on row order.
             for row in payload["records"]:
                 if row["id"] in existing["records"]:
-                    update_document(tx, "records", {"active_key": None}, "id=:id", {"id": row["id"]})
+                    db_update_where(tx, "records", set_fields={"active_key": None}, where={"id": row["id"]})
             for row in payload["sources"]:
                 if (row["id"] in existing["sources"] and not (row["kind"] in {"code", "document", "file"}
                         and isinstance(row["metadata"].get("path"), str))):
-                    update_document(tx, "sources", {"current_key": None}, "id=:id", {"id": row["id"]})
+                    db_update_where(tx, "sources", set_fields={"current_key": None}, where={"id": row["id"]})
             for table in TABLES:
                 for original in payload[table]:
                     row, old = deepcopy(original), existing[table].get(original["id"])
@@ -1293,11 +1337,17 @@ class MemoryManager:
                         if old:
                             if not (row["kind"] in {"code", "document", "file"}
                                     and isinstance(row["metadata"].get("path"), str)):
-                                update_document(tx, "sources", {"is_current": row["is_current"],
-                                    "current_key": json_text([project_id, row["uri"]]) if row["is_current"] else None},
-                                     "id=:id", {"id": row["id"]})
+                                db_update_where(
+                                    tx,
+                                    "sources",
+                                    set_fields={
+                                        "is_current": row["is_current"],
+                                        "current_key": json_text([project_id, row["uri"]]) if row["is_current"] else None,
+                                    },
+                                    where={"id": row["id"]},
+                                )
                                 if row["is_current"]:
-                                    update_document(tx, "chunks", {"is_current": True}, "source_id=:id", {"id": row["id"]})
+                                    db_update_where(tx, "chunks", set_fields={"is_current": True}, where={"source_id": row["id"]})
                                 else:  # no longer current: its chunks and vectors go, as on a replacement (#186)
                                     self.store.drop_chunks(tx, [row["id"]])
                                     self.store._delete_old_vectors(tx, [row["id"]])
@@ -1333,7 +1383,7 @@ class MemoryManager:
                     if old:
                         if table in {"record_revisions", "plan_revisions"}:
                             continue
-                        update_document(tx, table, row, "id=:id", {"id": row["id"]})
+                        db_update_where(tx, table, set_fields=row, where={"id": row["id"]})
                     else:
                         insert_document(tx, table, row)
             # Canonical relationships describe the final heads, not a union of
@@ -1353,9 +1403,9 @@ class MemoryManager:
             for source in payload["sources"]:
                 if is_verdict_source(source) or is_mcp_source(source) or is_healing_audit_source(source):
                     continue  # imported with the memory, never searchable text
-                if tx.query("SELECT id FROM chunks WHERE source_id=:source LIMIT 1", {"source": source["id"]}):
+                if db_find(tx, "chunks", {"source_id": source["id"]}, columns=("id",), limit=1):
                     continue
-                saved = one_row(tx, "SELECT is_current FROM sources WHERE id=:id", {"id": source["id"]})
+                saved = db_find_one(tx, "sources", {"id": source["id"]}, columns=("is_current",), required=True)
                 if saved.get("is_current") is False:
                     continue  # nothing searches a chunk of a source that is not current (#186)
                 for number, (text, first, last) in enumerate(_chunks(source_text(source), source.get("uri", ""))):
@@ -1368,11 +1418,14 @@ class MemoryManager:
                 from .plans import PlanManager
                 PlanManager(self.store).activate(project_id, active, str(root))
             else:
-                focus = one_row(tx, "SELECT FROM worktree_states WHERE project_id=:project AND worktree=:root",
-                             {"project": project_id, "root": str(root)}, False)
+                focus = db_find_one(tx, "worktree_states", {"project_id": project_id, "worktree": str(root)})
                 if focus and focus.get("active_plan_id") is not None:
-                    update_document(tx, "worktree_states", {"active_plan_id": None, "version": focus["version"] + 1,
-                         "updated_at": utc_now()}, "id=:id", {"id": focus["id"]})
+                    db_update_where(
+                        tx,
+                        "worktree_states",
+                        set_fields={"active_plan_id": None, "version": focus["version"] + 1, "updated_at": utc_now()},
+                        where={"id": focus["id"]},
+                    )
             receipt = {"id": _digest([project_id, snapshot_id]), "project_id": project_id, "snapshot_id": snapshot_id,
                        "state_hash": manifest["state_hash"], "ancestors": manifest.get("ancestors", []),
                        "origin_root": manifest["origin_root"], "local_root": str(root),
@@ -1397,8 +1450,8 @@ class MemoryManager:
         with self.store.transaction() as tx:
             row = {"id": project_id, "project_id": project_id, "enabled": enabled,
                    "interval_minutes": interval_minutes, "worktree": str(root), "updated_at": utc_now()}
-            if tx.query("SELECT id FROM memory_settings WHERE id=:id", {"id": project_id}):
-                update_document(tx, "memory_settings", row, "id=:id", {"id": project_id})
+            if db_find(tx, "memory_settings", {"id": project_id}, columns=("id",)):
+                db_update_where(tx, "memory_settings", set_fields=row, where={"id": project_id})
             else:
                 insert_document(tx, "memory_settings", row)
         return {"status": "configured", **self.status(project_id, str(root))}
@@ -1408,32 +1461,46 @@ class MemoryManager:
         # Shown: the package there is to read. Written next: always the current directory.
         found = snapshot_directory(root)
         path = found / "manifest.json" if found is not None else self._path(root)
-        schedule = one_row(self.store, "SELECT FROM memory_settings WHERE id=:id", {"id": project_id}, False) or {}
+        schedule = db_find_one(self.store, "memory_settings", {"id": project_id}) or {}
         result = {"project_id": project_id, "path": str(path), "write_path": str(self._path(root)),
                   "earlier_package": self._earlier_package(root), "latest": None,
                   "auto": {"enabled": False, "interval_minutes": 15, "worktree": str(root),
                            "last_checked_at": None, "last_success_at": None, "error": None}}
         result["auto"].update({k: v for k, v in schedule.items() if k in result["auto"]})
-        jobs = self.store.query("SELECT kind,state FROM jobs WHERE project_id=:project", {"project": project_id})
+        jobs = db_find(self.store, "jobs", {"project_id": project_id}, columns=("kind", "state"))
         result["processing"] = {kind: {state: sum(r.get("kind") == kind and r.get("state") == state for r in jobs)
                                        for state in ("pending", "running", "failed", "completed")}
                                 for kind in ("extract", "embed", "import")}
+
         def count(table):
-            rows = self.store.query(f"SELECT count(*) AS total FROM {table} WHERE project_id=:project", {"project": project_id})
-            return int(rows[0].get("total", 0)) if rows else 0
+            return db_count(self.store, table, {"project_id": project_id})
+
         result["rebuilding"] = {"code_index_pending": code_graph_pending(project),
                                 "chunks": count("chunks"), "embedding_rows": count("embeddings"),
                                 "model_required_to_read_memory": False}
-        imported = one_row(self.store, "SELECT snapshot_id,imported_at,origin_root,local_root FROM memory_imports "
-                        "WHERE project_id=:project ORDER BY imported_at DESC,id DESC LIMIT 1", {"project": project_id}, False)
+        imported = db_find_one(
+            self.store,
+            "memory_imports",
+            {"project_id": project_id},
+            columns=("snapshot_id", "imported_at", "origin_root", "local_root"),
+            order_by=(desc("imported_at"), desc("id")),
+        )
         result["last_import"] = imported
         result["verification"] = "Imported checks are historical; local execution and a new session ACK remain required."
         # Against the limits of publication (#191); the behaviour at the limit is in snapshot() and is unchanged.
-        result["package_size"] = package_size(self.store, project_id, TABLES, max_rows=MAX_ROWS,
-                                              max_bytes=MAX_TOTAL_BYTES, max_manifest_bytes=MAX_MANIFEST_BYTES,
-                                              max_object_bytes=MAX_OBJECT_BYTES, only={
-                                                  "nodes": ("kind IN :kept_nodes", {"kept_nodes": sorted(_GLOBAL_NODES)}),
-                                                  "edges": ("kind NOT IN :code_edges", {"code_edges": sorted(_CODE_EDGES)})})
+        result["package_size"] = package_size(
+            self.store,
+            project_id,
+            TABLES,
+            max_rows=MAX_ROWS,
+            max_bytes=MAX_TOTAL_BYTES,
+            max_manifest_bytes=MAX_MANIFEST_BYTES,
+            max_object_bytes=MAX_OBJECT_BYTES,
+            only={
+                "nodes": is_in("kind", sorted(_GLOBAL_NODES)),
+                "edges": not_in("kind", sorted(_CODE_EDGES)),
+            },
+        )
         if path.exists() or path.is_symlink():
             try:
                 result["latest"] = manifest_summary(path)
@@ -1448,7 +1515,7 @@ class MemoryManager:
         results, errors = [], []
         from .project_removal import removed_ids
         removed = removed_ids(self.store)  # the schedule of a removed project pauses until it is back (#327)
-        for row in self.store.query("SELECT FROM memory_settings WHERE enabled=true"):
+        for row in db_find(self.store, "memory_settings", {"enabled": True}):
             if row["project_id"] in removed:
                 continue
             checked = row.get("last_checked_at")
@@ -1466,5 +1533,5 @@ class MemoryManager:
                 values = {"last_checked_at": timestamp, "error": code}
                 errors.append({"project_id": row["project_id"], "code": code})
             with self.store.transaction() as tx:
-                update_document(tx, "memory_settings", values, "id=:id", {"id": row["id"]})
+                db_update_where(tx, "memory_settings", set_fields=values, where={"id": row["id"]})
         return {"status": "completed", "projects": results, "errors": errors}

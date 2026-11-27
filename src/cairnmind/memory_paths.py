@@ -13,6 +13,7 @@ from pathlib import Path
 import subprocess
 
 from .path_spelling import relative_on_disk
+from .storage_query import db_find
 from .system_links import system_spelling
 
 
@@ -65,7 +66,7 @@ def nested_reserved(store, base: str | Path) -> tuple[Path, ...]:
     ``services/a/.memory/...`` there.
     """
     base = Path(base).resolve()
-    roots = {Path(row["path"]).resolve() for row in store.query("SELECT path FROM project_roots")
+    roots = {Path(row["path"]).resolve() for row in db_find(store, "project_roots", columns=("path",))
              if isinstance(row.get("path"), str) and row["path"]}
     # Below `base` by identity too, spelled as a walk of `base` lists the names: on a file system that ignores
     # case a project registered as `REPO/Services/Alpha` is the folder `services/alpha` of `Repo` (#230).
@@ -149,11 +150,11 @@ def _absolute(value):
 
 def memory_bindings(store, project_id: str) -> list[tuple[Path, Path]]:
     """Return unambiguous, project-scoped mappings into registered local roots."""
-    registered = {Path(row["path"]).resolve() for row in store.query(
-        "SELECT path FROM project_roots WHERE project_id=:project", {"project": project_id})}
-    rows = store.query(
-        "SELECT origin_root,local_root FROM memory_bindings WHERE project_id=:project",
-        {"project": project_id})
+    registered = {
+        Path(row["path"]).resolve()
+        for row in db_find(store, "project_roots", {"project_id": project_id}, columns=("path",))
+    }
+    rows = db_find(store, "memory_bindings", {"project_id": project_id}, columns=("origin_root", "local_root"))
     candidates: dict[Path, set[Path]] = {}
     for row in rows:
         origin, local = _absolute(row.get("origin_root")), _absolute(row.get("local_root"))
@@ -165,7 +166,7 @@ def memory_bindings(store, project_id: str) -> list[tuple[Path, Path]]:
 
 def imported_source_ids(store, project_id: str) -> set[str]:
     """Receipt membership distinguishes imported archives from local evidence."""
-    rows = store.query("SELECT source_ids FROM memory_imports WHERE project_id=:project", {"project": project_id})
+    rows = db_find(store, "memory_imports", {"project_id": project_id}, columns=("source_ids",))
     return {source_id for row in rows for source_id in (row.get("source_ids") or []) if isinstance(source_id, str)}
 
 

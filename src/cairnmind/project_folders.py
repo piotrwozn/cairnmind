@@ -14,6 +14,7 @@ import os
 import socket
 from pathlib import Path
 
+from .storage_query import db_find, db_update_where, is_in, is_null
 from .terminal_safe import safe_text
 
 STATES = ("available", "missing", "unreadable", "elsewhere")
@@ -80,8 +81,7 @@ def folder_states(store, project: dict, rows: list[dict] | None = None) -> list[
     `rows` are the project's `project_roots` rows when the caller has read them already."""
     from .store_writer import label
     if rows is None:
-        rows = store.query("SELECT id,path,machine,host FROM project_roots WHERE project_id=:project",
-                           {"project": project["id"]})
+        rows = db_find(store, "project_roots", {"project_id": project["id"]}, columns=("id", "path", "machine", "host"))
     rows = {str(Path(row["path"]).resolve()): row for row in rows}
     # The order and resolution of ingest._roots, written out here so that module can import this one.
     roots = list(dict.fromkeys([Path(project["root"]).resolve(), *[Path(path) for path in rows]]))
@@ -132,10 +132,15 @@ def unavailable(store, project_id: str | None = None) -> list[dict]:
 
 def adopt(store, row_ids: list[str]) -> None:
     """Stamp rows that have no machine with this one: the first complete index that read the folder claims it."""
-    if row_ids and stamp():
+    stamped = stamp()
+    if row_ids and stamped:
         with store.transaction() as tx:
-            tx.command("UPDATE project_roots SET machine=:machine,host=:host WHERE id IN :ids AND machine IS NULL",
-                       {**stamp(), "ids": row_ids})
+            db_update_where(
+                tx,
+                "project_roots",
+                set_fields=stamped,
+                where=[is_in("id", row_ids), is_null("machine")],
+            )
 
 def require_here(store, project: dict, root: Path) -> None:
     """Refuse an act that writes into a folder that belongs to another machine."""

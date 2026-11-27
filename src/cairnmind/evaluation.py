@@ -28,6 +28,7 @@ from .memory_models import from_settings
 from .ollama import OllamaUnavailable
 from .private_files import ensure_private_dir, make_private
 from .retrieval import Retriever
+from .storage_query import db_find
 from .store import Store
 
 
@@ -334,7 +335,7 @@ async def _local_cases(store: Store, settings: Settings, project: dict, cases: l
     # Exercise the real native vector index as well as BM25. Fixture inference is
     # confined to this namespace; it never drains or changes a user's GPU queue.
     try:
-        for row in store.query("SELECT id FROM chunks WHERE project_id=:project", {"project": project["id"]}):
+        for row in db_find(store, "chunks", {"project_id": project["id"]}, columns=("id",)):
             await retriever.embed_pending({"project_id": project["id"], "payload": {"chunk_id": row["id"]}})
     except OllamaUnavailable as exc:
         return [{"id": case.key, "status": "not_run", "critical": case.critical,

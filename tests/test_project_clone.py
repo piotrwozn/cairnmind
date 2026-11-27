@@ -611,7 +611,7 @@ def test_clone_edge_cases_parser_auth_preflight_interactive_and_errors(tmp_path,
             return str(Path(root).expanduser().resolve(strict=False))
 
         def query(self, sql, params=None):
-            return [{"project_id": "p1"}] if params and params.get("path") == str(extra_root.resolve()) else []
+            return [{"project_id": "p1"}] if params and str(extra_root.resolve()) in params.values() else []
 
     qstore = QueryStore(tmp_path / "data", [{"id": "p1", "name": "one", "root": str(existing_root)}])
     with pytest.raises(ValueError, match="must not be empty"):

@@ -24,7 +24,8 @@ import re
 
 from .confirmation import PERSON_ROUTES, person_mark, person_source
 from .ingest import CLAUDE_TECHNICAL_RECORDS, CODEX_TECHNICAL_RECORDS
-from .sql import one_row, update_document, utc_now
+from .sql import utc_now
+from .storage_query import asc, db_find, db_find_one, db_update_where, eq, gt, is_null
 from .terminal_safe import safe_text
 
 FIELD = "accepted_record_kinds"
@@ -123,8 +124,7 @@ def _entries(value, limit=MAX_ACCEPTED) -> list[dict]:
 
 
 def _project_row(reader, project_id) -> dict:
-    row = one_row(reader, f"SELECT id,name,{FIELD},{WITHDRAWN_FIELD} FROM projects WHERE id=:id",
-                  {"id": project_id}, False)
+    row = db_find_one(reader, "projects", {"id": project_id}, columns=("id", "name", FIELD, WITHDRAWN_FIELD))
     if row is None:
         raise ValueError("Unknown project")
     return row
@@ -157,8 +157,8 @@ def set_acceptance(store, project_id, client, kind, note=None, *, withdraw=False
         raise AcceptanceRefused()
     prefix, origin = PERSON_ROUTES[act["route"]]
     with store.transaction() as tx:
-        source = one_row(tx, "SELECT id,project_id,uri,metadata,content FROM sources WHERE id=:id",
-                         {"id": act["source_id"]}, False)
+        source = db_find_one(tx, "sources", {"id": act["source_id"]},
+                             columns=("id", "project_id", "uri", "metadata", "content"))
         if (not source or source.get("project_id") != project_id or not str(source.get("uri", "")).startswith(prefix)
                 or (source.get("metadata") or {}).get("origin") != origin):
             raise AcceptanceRefused()
@@ -184,7 +184,8 @@ def set_acceptance(store, project_id, client, kind, note=None, *, withdraw=False
                        "accepted_by": mark["actor_name"], "route": act["route"], "source_id": source["id"]}
             entries.append(current)
             result = {"status": "accepted", "acceptance": current}
-        update_document(tx, "projects", {FIELD: entries, WITHDRAWN_FIELD: withdrawn}, "id=:id", {"id": project_id})
+        db_update_where(tx, "projects", set_fields={FIELD: entries, WITHDRAWN_FIELD: withdrawn},
+                        where={"id": project_id})
     return {"project_id": project_id, **result}
 
 
@@ -254,9 +255,16 @@ def overview(reader, project_id, limit=LIST_LIMIT) -> dict:
         if key not in groups:
             metadata = source.get("metadata") or {}
             if found["version"] is None and metadata.get("import_path"):
-                first = one_row(reader, "SELECT content FROM sources WHERE project_id=:project AND "
-                                "metadata.import_path=:path AND metadata.byte_offset=0 LIMIT 1",
-                                {"project": project_id, "path": metadata["import_path"]}, False)
+                first = db_find_one(
+                    reader,
+                    "sources",
+                    [
+                        eq("project_id", project_id),
+                        eq("metadata.import_path", metadata["import_path"]),
+                        eq("metadata.byte_offset", 0),
+                    ],
+                    columns=("content",),
+                )
                 found["version"] = _first_version((first or {}).get("content"))
             groups[key] = {**found, "path": safe_text(str(metadata.get("import_path") or ""), limit=400),
                            "byte": metadata.get("byte_offset") if type(metadata.get("byte_offset")) is int else None}
@@ -274,13 +282,22 @@ def _unknown_rows(reader, project_id, limit):
     after, seen = None, 0
     while True:
         size = min(_PAGE, limit - seen + 1)  # one more than may be read, to learn whether more remain
-        parameters = {"project": project_id, "warning": UNKNOWN_TRANSCRIPT_WARNING, "limit": size}
+        where = [
+            eq("project_id", project_id),
+            eq("is_current", True),
+            eq("kind", "transcript_unknown"),
+            eq("metadata.schema_warning", UNKNOWN_TRANSCRIPT_WARNING),
+        ]
         if after is not None:
-            parameters["position"] = after
-        page = reader.query(
-            "SELECT id,kind,content,metadata FROM sources WHERE project_id=:project AND is_current=true "
-            "AND kind='transcript_unknown' AND metadata.schema_warning=:warning"
-            + (" AND id > :position" if after is not None else "") + " ORDER BY id LIMIT :limit", parameters)
+            where.append(gt("id", after))
+        page = db_find(
+            reader,
+            "sources",
+            where,
+            columns=("id", "kind", "content", "metadata"),
+            order_by=(asc("id"),),
+            limit=size,
+        )
         for source in page:
             if seen >= limit:
                 yield None
@@ -295,7 +312,13 @@ def _unknown_rows(reader, project_id, limit):
 def doctor_view(reader) -> list[dict]:
     """Every standing acceptance, per project, for `doctor`."""
     result = []
-    for row in reader.query(f"SELECT id,name,{FIELD} FROM projects WHERE removed_at IS NULL ORDER BY name"):
+    for row in db_find(
+        reader,
+        "projects",
+        [is_null("removed_at")],
+        columns=("id", "name", FIELD),
+        order_by=(asc("name"),),
+    ):
         entries = _entries(row.get(FIELD))
         if entries:
             result.append({"project_id": row["id"], "project": row.get("name"), "accepted": entries,

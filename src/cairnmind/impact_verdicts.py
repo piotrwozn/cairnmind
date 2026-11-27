@@ -19,6 +19,8 @@ import hashlib
 import json
 import os
 
+from .storage_query import db_find, eq
+
 VERDICTS = {"still_valid": "still valid", "needs_update": "needs update", "not_related": "not related"}
 MAX_NOTE_CHARS = 4000
 PREFIX = "review://impact/"
@@ -112,10 +114,17 @@ def _uri(record_id, fingerprint):
 def current_verdicts(store, project_id):
     """``{uri: (source, verdict document)}`` for the project's current verdicts, in one query."""
     found = {}
-    for row in store.query("SELECT id,uri,kind,content,metadata,created_at FROM sources "
-                           "WHERE project_id=:project AND is_current=true AND kind='manual' "
-                           "AND metadata.impact_verdict=true",
-                           {"project": project_id}):
+    for row in db_find(
+        store,
+        "sources",
+        [
+            eq("project_id", project_id),
+            eq("is_current", True),
+            eq("kind", "manual"),
+            eq("metadata.impact_verdict", True),
+        ],
+        columns=("id", "uri", "kind", "content", "metadata", "created_at"),
+    ):
         # Only the shape this module writes counts. A local writer other than this module produces no
         # review://impact/ address, but an imported memory package can carry a verdict written elsewhere,
         # as it carries review notes; such a verdict counts where its fingerprint matches.

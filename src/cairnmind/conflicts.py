@@ -14,7 +14,8 @@ import hashlib
 from uuid import uuid4
 
 from .confirmation import confirmed_by
-from .sql import evidence_time, json_text, one_row, parse_utc, utc_now
+from .sql import evidence_time, json_text, parse_utc, utc_now
+from .storage_query import db_find, db_find_one, eq, is_in
 
 KINDS = ("fact", "decision")
 ACTIONS = ("supersede", "different_scopes", "dismiss")
@@ -40,12 +41,12 @@ def _never_published(tx, record):
     if not canonical_uuid(record["id"]) or degraded_origin(record.get("metadata")):
         return True
     cited = set(_ids(record.get("source_ids")))
-    for row in tx.query("SELECT snapshot FROM record_revisions WHERE project_id=:project AND record_id=:id",
-                        {"project": record["project_id"], "id": record["id"]}):
+    for row in db_find(tx, "record_revisions", {"project_id": record["project_id"], "record_id": record["id"]},
+                       columns=("snapshot",)):
         snapshot = row.get("snapshot")
         cited |= set(_ids(snapshot.get("source_ids") if isinstance(snapshot, dict) else None))
-    return bool(cited) and any(degraded_origin(row.get("metadata")) for row in tx.query(
-        "SELECT id,metadata FROM sources WHERE id IN :ids", {"ids": sorted(cited)}))
+    return bool(cited) and any(degraded_origin(row.get("metadata")) for row in db_find(
+        tx, "sources", [is_in("id", sorted(cited))], columns=("id", "metadata")))
 
 
 def _metadata(record):
@@ -150,9 +151,9 @@ def list_conflicts(store, project_id, scoped_records, in_scope=None):
     source_ids = sorted({source_id for record in involved.values() for source_id in record.get("source_ids") or []
                          if isinstance(source_id, str)})
     # A review or decision note is not a source of the finding itself.
-    uris = {row["id"]: row["uri"] for row in store.query(
-        "SELECT id,uri,metadata.origin AS origin FROM sources WHERE id IN :ids AND project_id=:project",
-        {"ids": source_ids, "project": project_id})
+    uris = {row["id"]: row["uri"] for row in db_find(
+        store, "sources", [is_in("id", source_ids), eq("project_id", project_id)],
+        columns=("id", "uri", ("metadata.origin", "origin")))
         if row.get("origin") not in ("local_user_review", "cli_person", "evaluation_seed")} if source_ids else {}
     states = evidence_states(store, project_id, involved.values()) if involved else {}
     with store.transaction() as tx:
@@ -192,8 +193,8 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
     from .memory_acts import act_context, identity_hash, record_evidence, row_definition_hash
     context = act_context(store, project_id, worktree)  # Who decided, on which worktree's branch and commit (#170).
     with store.transaction() as tx:
-        rows = {identifier: one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project",
-                                 {"id": identifier, "project": project_id}, False) for identifier in (record_id, other_id)}
+        rows = {identifier: db_find_one(tx, "records", {"id": identifier, "project_id": project_id})
+                for identifier in (record_id, other_id)}
         candidate, existing = rows[record_id], rows[other_id]
         if not candidate or not existing:
             raise LookupError("Unknown record in requested project")
@@ -265,8 +266,7 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
         else:
             update["supersedes"] = loser["id"]
         saved = write(update, winner)
-        replaced = one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project",
-                        {"id": loser["id"], "project": project_id})
+        replaced = db_find_one(tx, "records", {"id": loser["id"], "project_id": project_id}, required=True)
         return {"decision": action, "record": saved, "superseded": replaced, "audit_source_id": source["id"]}
 
 

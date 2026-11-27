@@ -179,7 +179,8 @@ def unfinished(reader) -> dict | None:
     """The mark of an unfinished restore, None when there is none, and {} when a row is there that cannot be read.
 
     The row may have been written by another installation, so every field is checked here."""
-    rows = reader.query("SELECT FROM devbrain_meta WHERE name=:name", {"name": MARK})
+    from .storage_query import db_find
+    rows = db_find(reader, "devbrain_meta", {"name": MARK})
     if not rows:
         return None
     if len(rows) != 1:
@@ -210,17 +211,18 @@ def refuse_if_unfinished(reader) -> None:
 
 
 def write_mark(store, mark: dict) -> None:
-    from .sql import insert_document, one_row, update_document
+    from .storage_query import db_find_one, db_insert_document, db_update_where
     with store.transaction(RESTORE_COMMIT_TIMEOUT) as tx:
-        if one_row(tx, "SELECT FROM devbrain_meta WHERE name=:name", {"name": MARK}, False):
-            update_document(tx, "devbrain_meta", mark, "name=:name", {"name": MARK})
+        if db_find_one(tx, "devbrain_meta", {"name": MARK}):
+            db_update_where(tx, "devbrain_meta", set_fields=mark, where={"name": MARK})
         else:
-            insert_document(tx, "devbrain_meta", {"name": MARK, **mark})
+            db_insert_document(tx, "devbrain_meta", {"name": MARK, **mark})
 
 
 def clear_mark(store) -> None:
+    from .storage_query import db_delete_where
     with store.transaction(RESTORE_COMMIT_TIMEOUT) as tx:
-        tx.command("DELETE FROM devbrain_meta WHERE name=:name", {"name": MARK})
+        db_delete_where(tx, "devbrain_meta", {"name": MARK})
 
 
 class Batches(BoundedTransactions):
@@ -244,7 +246,7 @@ def clear(store, types: list[str]) -> None:
     """Delete every row of ``types``, in order, at most ``ROWS_PER_TRANSACTION`` rows and ``TIME_PER_TRANSACTION``
     seconds per transaction; a delete that was slow makes the next ones smaller."""
     from .journal import Journal
-    from .sql import quote_name
+    from .storage_query import db_delete_where
     types, limit = list(types), ROWS_PER_TRANSACTION
     while types:
         with store.transaction(RESTORE_COMMIT_TIMEOUT) as tx:
@@ -252,7 +254,7 @@ def clear(store, types: list[str]) -> None:
             budget, opened = limit, time.monotonic()
             while types and budget:
                 started = time.monotonic()
-                result = tx.command(f"DELETE FROM {quote_name(types[0])} LIMIT {budget}")
+                result = db_delete_where(tx, types[0], limit=budget)
                 count = result[0].get("count") if isinstance(result, list) and result and isinstance(result[0], dict) else None
                 if type(count) is not int or not 0 <= count <= budget:
                     raise RuntimeError("The database did not say how many rows of a restore it deleted")
@@ -417,8 +419,9 @@ def replace(store, source, claims) -> int | None:
     Returns how many embed jobs were set back to pending (Store._requeue_embed_jobs). A failure leaves the store
     part way: ``staged_restore`` is what puts it back."""
     from .restore_groups import write_restored
+    from .storage_query import db_find
     from .store import DOCUMENT_TYPES
-    vectors = [row["type_name"] for row in store.query("SELECT type_name FROM vector_indexes")
+    vectors = [row["type_name"] for row in db_find(store, "vector_indexes", columns=("type_name",))
                if str(row.get("type_name", "")).startswith("vector_")]
     # The journal's own rows are rewritten by every commit of a reset (journal.JournalTransaction.flush).
     store.restore_changed = True  # from here a failure may have deleted rows, so only the safety copy puts it back

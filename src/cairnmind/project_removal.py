@@ -13,7 +13,11 @@ import time
 from pathlib import Path
 
 from .first_start import UNKNOWN_PROJECT_NEXT
-from .sql import clean_row, insert_document, one_row, update_document, utc_now
+from .sql import clean_row, insert_document, utc_now
+from .storage_query import (
+    any_of, asc, db_count, db_delete_where, db_find, db_find_one, db_update_where, desc, eq, gte,
+    is_not_null, is_null, ne,
+)
 from .terminal_safe import safe_text
 from uuid import uuid4
 
@@ -222,12 +226,14 @@ def when(text: str | None) -> str:
 
 
 def removed_rows(reader) -> list[dict]:
-    return [clean_row(row) for row in reader.query(
-        "SELECT FROM projects WHERE removed_at IS NOT NULL ORDER BY removed_at")]
+    return [
+        clean_row(row)
+        for row in db_find(reader, "projects", [is_not_null("removed_at")], order_by=(asc("removed_at"),))
+    ]
 
 
 def removed_ids(reader) -> set[str]:
-    return {row["id"] for row in reader.query("SELECT id FROM projects WHERE removed_at IS NOT NULL")}
+    return {row["id"] for row in db_find(reader, "projects", [is_not_null("removed_at")], columns=("id",))}
 
 
 def stuck(row: dict, data_dir) -> bool:
@@ -255,9 +261,13 @@ def import_refusal(row: dict, data_dir) -> str:
 def find_removed(reader, value: str, path: Path | None = None) -> dict | None:
     """The removed project a name, an id or (with `path`) a folder inside one of its folders names."""
     if path is None:
-        rows = reader.query("SELECT FROM projects WHERE removed_at IS NOT NULL AND (id=:value OR removed_name=:value) "
-                            "ORDER BY removed_at DESC LIMIT 1", {"value": value})
-        return clean_row(rows[0]) if rows else None
+        row = db_find_one(
+            reader,
+            "projects",
+            [is_not_null("removed_at"), any_of(eq("id", value), eq("removed_name", value))],
+            order_by=(desc("removed_at"),),
+        )
+        return clean_row(row) if row else None
     best, found = -1, None
     for row in removed_rows(reader):
         for folder in (row.get("removed_root"), *(row.get("removed_roots") or [])):
@@ -269,8 +279,12 @@ def find_removed(reader, value: str, path: Path | None = None) -> dict | None:
 def restore_in(tx, name: str, path: str, allow: bool = True) -> dict | None:
     """Inside Store.add_project: the removed project that had exactly this name and main folder comes back; a caller
     that asked for a separate identity (allow False) is refused instead of getting the old one."""
-    rows = tx.query("SELECT FROM projects WHERE removed_at IS NOT NULL AND removed_name=:name AND removed_root=:root "
-                    "LIMIT 2", {"name": name, "root": path})
+    rows = db_find(
+        tx,
+        "projects",
+        [is_not_null("removed_at"), eq("removed_name", name), eq("removed_root", path)],
+        limit=2,
+    )
     if not rows:
         return None
     if not allow:
@@ -278,20 +292,29 @@ def restore_in(tx, name: str, path: str, allow: bool = True) -> dict | None:
     if len(rows) > 1:
         raise ValueError(SEVERAL_REMOVED.format(name=_q(name), root=_q(path), ids=", ".join(r["id"] for r in rows)))
     pid = rows[0]["id"]
-    taken = tx.query("SELECT project_id FROM project_roots WHERE path=:path", {"path": path})
+    taken = db_find(tx, "project_roots", {"path": path}, columns=("project_id",))
     if taken:
-        other = one_row(tx, "SELECT FROM projects WHERE id=:id", {"id": taken[0]["project_id"]}, False) or {}
+        other = db_find_one(tx, "projects", {"id": taken[0]["project_id"]}) or {}
         raise ValueError(ROOT_OF_ANOTHER.format(root=_q(path), other=_q(other.get("name") or taken[0]["project_id"])))
-    update_document(tx, "projects", {"name": name, "root": path}, "id=:id", {"id": pid})
-    tx.command(f"UPDATE projects REMOVE {', '.join(REMOVED_FIELDS)} WHERE id=:id", {"id": pid})
+    db_update_where(
+        tx,
+        "projects",
+        set_fields={"name": name, "root": path},
+        remove_fields=REMOVED_FIELDS,
+        where={"id": pid},
+    )
     from .project_folders import stamp
     insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": pid, "path": path, **stamp()})
-    return one_row(tx, "SELECT FROM projects WHERE id=:id", {"id": pid})
+    return db_find_one(tx, "projects", {"id": pid}, required=True)
 
 
 def _jobs_in_work(reader, project: dict) -> None:
-    jobs = reader.query("SELECT kind FROM jobs WHERE project_id=:project AND state='running' AND lease_until>=:now",
-                        {"project": project["id"], "now": time.time()})
+    jobs = db_find(
+        reader,
+        "jobs",
+        [eq("project_id", project["id"]), eq("state", "running"), gte("lease_until", time.time())],
+        columns=("kind",),
+    )
     if jobs:
         raise Refused(JOBS_IN_WORK.format(project=_q(project["name"]),
                                           kinds=", ".join(sorted({str(j.get("kind")) for j in jobs}))))
@@ -355,8 +378,10 @@ def plan(settings, store, project: dict, root: Path | None = None) -> dict:
     from . import answer_log
     pid, main, name = project["id"], project["root"], _q(project["name"])
     head = {"id": pid, "name": project["name"], "root": main}
-    paths = [r["path"] for r in store.query("SELECT path FROM project_roots WHERE project_id=:project ORDER BY path",
-                                            {"project": pid})]
+    paths = [
+        r["path"]
+        for r in db_find(store, "project_roots", {"project_id": pid}, columns=("path",), order_by=(asc("path"),))
+    ]
     roots = [main, *[p for p in paths if p != main]]
     if root is not None:
         folder = str(root)
@@ -365,29 +390,27 @@ def plan(settings, store, project: dict, root: Path | None = None) -> dict:
         if folder not in paths:
             raise Refused(NOT_A_ROOT.format(root=safe_text(folder), project=name,
                                             roots=", ".join(safe_text(p) for p in roots)))
-        if store.query("SELECT id FROM memory_settings WHERE id=:id AND enabled=true AND worktree=:root",
-                       {"id": pid, "root": folder}):
+        if db_find(store, "memory_settings", {"id": pid, "enabled": True, "worktree": folder}, columns=("id",)):
             raise Refused(ROOT_SCHEDULED.format(project=name, root=safe_text(folder)))
         return {"project": head, "root": folder, "applied": False,
                 "bring_back": f"cairnmind project root {name} {_q(folder)}"}
     counts = store.status(pid)
     log = answer_log.log_path(settings, pid)
-    names = {r["id"]: r["name"] for r in store.query("SELECT id,name FROM projects WHERE removed_at IS NULL")}
-    nested = [{"root": own, "project": names.get(other["project_id"], other["project_id"]), "parent": other["path"]}
-              for own in roots
-              for other in store.query("SELECT project_id,path FROM project_roots WHERE project_id!=:project",
-                                       {"project": pid})
-              if Path(other["path"]) in Path(own).parents]
+    names = {r["id"]: r["name"] for r in db_find(store, "projects", [is_null("removed_at")], columns=("id", "name"))}
+    nested = [
+        {"root": own, "project": names.get(other["project_id"], other["project_id"]), "parent": other["path"]}
+        for own in roots
+        for other in db_find(store, "project_roots", [ne("project_id", pid)], columns=("project_id", "path"))
+        if Path(other["path"]) in Path(own).parents
+    ]
     kept = {key: counts[key] for key in ("records", "plans", "sources", "sessions", "check_runs", "chunks", "nodes",
                                          "embeddings")}
     kept.update(answer_log=str(log) if log.exists() else None, backups=str(Path(settings.data_dir) / "backups"),
                 folder=[path for each in roots for path in _folder_files(each)])
     return {"project": head, "root": None, "applied": False, "removed_at": None, "roots": roots,
             "queued_jobs": counts["jobs"]["pending"],
-            "transcripts_followed": len(store.query("SELECT path FROM import_cursors WHERE project_id=:project",
-                                                    {"project": pid})),
-            "scheduled_snapshot": bool(store.query("SELECT id FROM memory_settings WHERE id=:id AND enabled=true",
-                                                   {"id": pid})),
+            "transcripts_followed": db_count(store, "import_cursors", {"project_id": pid}),
+            "scheduled_snapshot": bool(db_find(store, "memory_settings", {"id": pid, "enabled": True}, columns=("id",))),
             "kept": kept, "nested": nested, "bring_back": f"cairnmind project add {name} {_q(main)}",
             "no_way_back": stuck({"removed_root": main}, store.data_dir),
             "extra_roots": roots[1:], "delete": "workspace: More, then Delete project memory"}
@@ -399,27 +422,32 @@ def apply(store, result: dict) -> dict:
     from .ingest import forget_index_signature
     pid, folder = result["project"]["id"], result["root"]
     with store.transaction() as tx:
-        row = one_row(tx, "SELECT FROM projects WHERE id=:id AND removed_at IS NULL", {"id": pid}, False)
+        row = db_find_one(tx, "projects", [eq("id", pid), is_null("removed_at")])
         if not row:
             raise Refused(f"Unknown project: {pid}. {UNKNOWN_PROJECT_NEXT}")
         _jobs_in_work(tx, row)
-        paths = [r["path"] for r in tx.query("SELECT path FROM project_roots WHERE project_id=:project",
-                                             {"project": pid})]
+        paths = [r["path"] for r in db_find(tx, "project_roots", {"project_id": pid}, columns=("path",))]
         if folder is not None:
             if folder not in paths:
                 raise Refused(NOT_A_ROOT.format(root=safe_text(folder), project=_q(row["name"]),
                                                 roots=", ".join(safe_text(p) for p in sorted(paths))))
-            tx.command("DELETE FROM project_roots WHERE project_id=:project AND path=:path",
-                       {"project": pid, "path": folder})
+            db_delete_where(tx, "project_roots", {"project_id": pid, "path": folder})
             removed_at = None
         else:
             removed_at = utc_now()
-            update_document(tx, "projects", {"removed_at": removed_at, "removed_name": row["name"],
-                                             "removed_root": row["root"],
-                                             "removed_roots": sorted(p for p in paths if p != row["root"])},
-                            "id=:id", {"id": pid})
-            tx.command("UPDATE projects REMOVE name, root WHERE id=:id", {"id": pid})
-            tx.command("DELETE FROM project_roots WHERE project_id=:project", {"project": pid})
+            db_update_where(
+                tx,
+                "projects",
+                set_fields={
+                    "removed_at": removed_at,
+                    "removed_name": row["name"],
+                    "removed_root": row["root"],
+                    "removed_roots": sorted(p for p in paths if p != row["root"]),
+                },
+                remove_fields=("name", "root"),
+                where={"id": pid},
+            )
+            db_delete_where(tx, "project_roots", {"project_id": pid})
     forget_index_signature(store, pid)
     return {**result, "applied": True, **({"removed_at": removed_at} if folder is None else {})}
 

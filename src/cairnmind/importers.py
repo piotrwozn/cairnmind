@@ -29,6 +29,7 @@ from .path_spelling import lies_in
 from .private_files import open_no_follow, write_durable_private
 from .process_control import ProcessJob, group_popen_kwargs, terminate_group
 from .secret_mask import ingest_masker, masked_metadata
+from .storage_query import db_upsert_document
 from .store_writer import require_writer
 
 IMPORTERS_FILENAME = "importers.json"
@@ -494,21 +495,21 @@ def run_converter_import(
         if not resolved_project:
             reason = conflict or "No registered project matches working directory"
             inbox_id = _identifier(resolved, entry["name"], event["line_no"], event["raw_line"])
-            store.command(
-                "UPDATE ingestion_inbox SET id=:id,path=:path,source_offset=:offset,sha256=:sha256,"
-                "raw=:raw,client=:client,cwd=:cwd,reason=:reason,created_at=:created "
-                "UPSERT WHERE id=:id",
+            db_upsert_document(
+                store,
+                "ingestion_inbox",
                 {
                     "id": inbox_id,
                     "path": str(resolved),
-                    "offset": event["line_no"],
+                    "source_offset": event["line_no"],
                     "sha256": event["sha256"],
                     "raw": event["raw_line"],
                     "client": client_tag,
                     "cwd": event.get("cwd"),
                     "reason": reason,
-                    "created": _now(),
+                    "created_at": _now(),
                 },
+                key_field="id",
             )
             inbox += 1
             errors.append(f"{resolved}:{event['line_no']}: {reason}")

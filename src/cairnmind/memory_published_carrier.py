@@ -18,7 +18,8 @@ from pathlib import Path
 from .memory_paths import PUBLISHED_RELATIVE, RESERVED_DIRECTORIES
 from .memory_published_format import canonical_uuid
 from .path_spelling import lies_in, path_identity
-from .sql import insert_document, one_row, update_document, utc_now
+from .sql import insert_document, utc_now
+from .storage_query import db_find, db_find_one, db_update_where
 from .system_links import system_spelling
 from .terminal_safe import safe_text
 
@@ -31,7 +32,7 @@ _MAX_PATH = 4096
 
 def carrier_of(reader, project_id):
     """The project's carrier as stored, or the default."""
-    row = one_row(reader, "SELECT FROM memory_settings WHERE id=:id", {"id": project_id}, False) or {}
+    row = db_find_one(reader, "memory_settings", {"id": project_id}) or {}
     value = row.get(SETTING)
     return dict(value) if isinstance(value, dict) and value.get("kind") in CARRIERS else dict(DEFAULT)
 
@@ -60,8 +61,8 @@ def checkout_path(store, project_id, raw):
     # same directory can be written in another spelling, and a comparison of text would let it through (#230).
     if lies_in(path, data_dir) or lies_in(data_dir, path):
         raise ValueError(f"The checkout path {path} overlaps Cairnmind's own data directory")
-    names = {row["id"]: row["name"] for row in store.query("SELECT id,name FROM projects")}
-    for row in store.query("SELECT project_id,path FROM project_roots"):
+    names = {row["id"]: row["name"] for row in db_find(store, "projects", columns=("id", "name"))}
+    for row in db_find(store, "project_roots", columns=("project_id", "path")):
         root = Path(row["path"])
         name = names.get(row["project_id"], row["project_id"])
         for reserved in RESERVED_DIRECTORIES:
@@ -146,7 +147,7 @@ def carrier_status(store, project, root):
         result["other_package"] = package_at(in_repository)
     # The carrier before the last change, and any package still there, so status keeps naming it after the
     # one-off message of `memory carrier` scrolled away.
-    row = one_row(store, "SELECT FROM memory_settings WHERE id=:id", {"id": project["id"]}, False) or {}
+    row = db_find_one(store, "memory_settings", {"id": project["id"]}) or {}
     previous = row.get(SETTING_PREVIOUS)
     if isinstance(previous, dict) and previous.get("kind") in CARRIERS:
         result["previous_carrier"] = dict(previous)
@@ -194,9 +195,13 @@ def configure(store, project_id, kind, path=None, worktree=None):
     _, folder = destination(store, project, root, new)
     if new != old:
         with store.transaction() as tx:
-            if tx.query("SELECT id FROM memory_settings WHERE id=:id", {"id": project_id}):
-                update_document(tx, "memory_settings", {SETTING: new, SETTING_PREVIOUS: old, "updated_at": utc_now()},
-                                "id=:id", {"id": project_id})
+            if db_find(tx, "memory_settings", {"id": project_id}, columns=("id",)):
+                db_update_where(
+                    tx,
+                    "memory_settings",
+                    set_fields={SETTING: new, SETTING_PREVIOUS: old, "updated_at": utc_now()},
+                    where={"id": project_id},
+                )
             else:
                 insert_document(tx, "memory_settings", {
                     "id": project_id, "project_id": project_id, "enabled": False, "interval_minutes": 15,

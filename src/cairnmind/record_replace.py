@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from .findings import FINDING_KINDS, finding_error
-from .sql import json_text, one_row, utc_now
+from .sql import json_text, utc_now
+from .storage_query import db_find_one
 
 SCOPE_METADATA = ("root", "worktree", "worktree_root", "path")  # where the record holds, kept on the new one
 HISTORICAL = "A historical version cannot be replaced. Nothing was saved. Open the record that replaced it."
@@ -55,9 +56,9 @@ def replace_record(store, project_id, record_id, content, expected_version, *, r
     from .memory_published_format import identity_hash
     from .secret_mask import note_metadata
     context = act_context(store, project_id, worktree)  # before the writer lock, as a review does
-    where = {"id": record_id, "project": project_id}
+    where = {"id": record_id, "project_id": project_id}
     with store.transaction() as tx:
-        old = one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project", where, False)
+        old = db_find_one(tx, "records", where)
         if not old:
             raise LookupError("Unknown record in requested project")
         if old["status"] == "superseded":
@@ -105,5 +106,5 @@ def replace_record(store, project_id, record_id, content, expected_version, *, r
                 saved = store._remember(tx, project_id, {**new, "metadata": kept, "supersedes": record_id,
                                                          "expected_version": expected_version},
                                         [note["id"], source["id"]], new_id=new_id)
-        replaced = one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project", where)
+        replaced = db_find_one(tx, "records", where, required=True)
         return {"record": saved, "replaced": replaced, "audit_source_id": source["id"], "note_source_id": note["id"]}

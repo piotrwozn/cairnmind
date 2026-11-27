@@ -21,12 +21,31 @@ from .first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN, UNKNOWN_PROJECT
 from .terminal_safe import safe_text
 # The sensitivity class of a source and a record (#180): derived on every read, stored nowhere.
 from .sensitivity import record_sensitivity, source_sensitivity  # noqa: F401
-from .sql import (PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
-                  quote_name, update_document, utc_now)
+from .sql import PROFILE_NAME, clean_row, evidence_time, json_text, parse_utc, utc_now
+from .storage_query import (
+    all_of,
+    any_of,
+    asc,
+    db_delete_where,
+    db_find,
+    db_find_one,
+    db_insert_document,
+    db_update_where,
+    desc,
+    eq,
+    gt,
+    is_in,
+    is_not_null,
+    is_null,
+    lt,
+    lte,
+    ne,
+    not_in,
+)
 from .arcade import REQUEST_TIMEOUT
 from .backup_reader import opened_backup
 from .path_spelling import lies_in
-from .store_backup import VECTOR_COLLECTIONS, payload_digest, streamed_backup, streamed_export, write_backup
+from .store_backup import VECTOR_COLLECTIONS, payload_digest, streamed_backup, write_backup
 
 SCHEMA_VERSION = 4
 # Indexes for lookups by a field other than id and project_id. They are not part of the schema version:
@@ -417,6 +436,81 @@ class Store:
     def query(self, sql, params=None):
         return (getattr(self._local, "transaction", None) or self.client).query(sql, params)
 
+    def find(
+        self,
+        collection: str,
+        where=(),
+        *,
+        columns=None,
+        order_by=(),
+        limit: int | None = None,
+        distinct: bool = False,
+    ) -> list[dict]:
+        tx = getattr(self._local, "transaction", None)
+        if tx is not None and hasattr(tx, "find"):
+            return tx.find(collection, where, columns=columns, order_by=order_by, limit=limit, distinct=distinct)
+        return self.backend.find(
+            collection, where, columns=columns, order_by=order_by, limit=limit, distinct=distinct, reader=tx
+        )
+
+    def find_one(
+        self,
+        collection: str,
+        where=(),
+        *,
+        columns=None,
+        order_by=(),
+        required: bool = False,
+    ) -> dict | None:
+        tx = getattr(self._local, "transaction", None)
+        if tx is not None and hasattr(tx, "find_one"):
+            return tx.find_one(collection, where, columns=columns, order_by=order_by, required=required)
+        return self.backend.find_one(
+            collection, where, columns=columns, order_by=order_by, required=required, reader=tx
+        )
+
+    def count(self, collection: str, where=()) -> int:
+        tx = getattr(self._local, "transaction", None)
+        if tx is not None and hasattr(tx, "count"):
+            return int(tx.count(collection, where))
+        return int(self.backend.count(collection, where, reader=tx))
+
+    def group_counts(self, collection: str, group_by, where=(), *, count_alias: str = "total") -> list[dict]:
+        tx = getattr(self._local, "transaction", None)
+        if tx is not None and hasattr(tx, "group_counts"):
+            return tx.group_counts(collection, group_by, where, count_alias=count_alias)
+        return self.backend.group_counts(collection, group_by, where, count_alias=count_alias, reader=tx)
+
+    def update_where(self, collection: str, *, set_fields=None, remove_fields=(), where=()) -> list[dict]:
+        if self.read_only:
+            if self.not_writer:
+                from .store_writer import StoreNotWriter
+                raise StoreNotWriter(self.not_writer)
+            from .store_readonly import ReadOnlyStoreError
+            raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
+        tx = getattr(self._local, "transaction", None)
+        if tx is not None:
+            return self.backend.update_where(
+                tx, collection, set_fields=set_fields, remove_fields=remove_fields, where=where
+            )
+        with self.transaction() as active_tx:
+            return self.backend.update_where(
+                active_tx, collection, set_fields=set_fields, remove_fields=remove_fields, where=where
+            )
+
+    def delete_where(self, collection: str, where=(), *, limit: int | None = None) -> list[dict]:
+        if self.read_only:
+            if self.not_writer:
+                from .store_writer import StoreNotWriter
+                raise StoreNotWriter(self.not_writer)
+            from .store_readonly import ReadOnlyStoreError
+            raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
+        tx = getattr(self._local, "transaction", None)
+        if tx is not None:
+            return self.backend.delete_where(tx, collection, where, limit=limit)
+        with self.transaction() as active_tx:
+            return self.backend.delete_where(active_tx, collection, where, limit=limit)
+
     def command(self, sql, params=None):
         from .journal import mutation
         if self.read_only:
@@ -559,8 +653,12 @@ class Store:
             if self.current_origin() or getattr(self._local, "session_write", None):
                 raise ConfirmationRefused()
             prefix, origin = SEED_SOURCE if act["route"] == SEED_ROUTE else PERSON_ROUTES[act["route"]]
-            source = one_row(tx, "SELECT id,project_id,uri,metadata,content FROM sources WHERE id=:id",
-                             {"id": act["source_id"]}, False) if act["source_id"] in sources else None
+            source = db_find_one(
+                tx,
+                "sources",
+                {"id": act["source_id"]},
+                columns=("id", "project_id", "uri", "metadata", "content"),
+            ) if act["source_id"] in sources else None
             if (not source or source.get("project_id") != project_id
                     or not str(source.get("uri", "")).startswith(prefix)
                     or (source.get("metadata") or {}).get("origin") != origin):
@@ -669,100 +767,19 @@ class Store:
 
     def _prepare_schema(self):
         """Create or upgrade the schema; called by init, with the writer lock held, when no other installation writes."""
-        if getattr(self.backend, "backend_kind", "arcade") == "sqlite":
-            self.backend.init_schema()
-            return
-        self.client.command("CREATE DOCUMENT TYPE devbrain_meta IF NOT EXISTS")
-        meta = {row.get("name"): row.get("value") for row in self.client.query(
-            "SELECT FROM devbrain_meta WHERE name IN ['schema_version','lookup_indexes']")}
-        version, indexed = meta.get("schema_version"), meta.get("lookup_indexes")
-        if version is not None:
-            if version not in {1, 2, 3, SCHEMA_VERSION}:
-                raise ValueError("Database schema version is incompatible")
-            if version == SCHEMA_VERSION:
-                if indexed != LOOKUP_INDEX_SET:
-                    self._lookup_indexes(indexed)
-                return
-            # Snapshot only existing types. Hold the writer lock through
-            # backup, additive DDL, and the version-last commit.
-            destination = self.data_dir / "backups" / f"before-schema-{version}-to-{SCHEMA_VERSION}-{uuid4().hex}{BACKUP_SUFFIXES[0]}"
-            with self.client.transaction() as tx:
-                self._write_backup(destination, streamed_export(tx,
-                    LEGACY_EXPORT_TYPES if version == 1 else V03_EXPORT_TYPES if version == 2 else V04_EXPORT_TYPES,
-                    version + 1))
-        collections = ((*V03_DOCUMENT_TYPES, *V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 1
-                       else (*V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 2
-                       else V05_DOCUMENT_TYPES if version == 3 else DOCUMENT_TYPES)
-        exports = collections if version is not None else EXPORT_TYPES
-        statements = []
-        run_ddl = statements.append if version is None else self.client.command
-        for collection in collections:
-            run_ddl(f"CREATE DOCUMENT TYPE {collection} IF NOT EXISTS")
-        if version is None:
-            run_ddl("CREATE VERTEX TYPE nodes IF NOT EXISTS")
-            run_ddl("CREATE EDGE TYPE edges IF NOT EXISTS")
-        for collection in exports:
-            run_ddl(f"CREATE PROPERTY {collection}.id IF NOT EXISTS STRING")
-            run_ddl(f"CREATE INDEX IF NOT EXISTS ON {collection}(id) UNIQUE NULL_STRATEGY SKIP")
-            if collection != "projects":
-                run_ddl(f"CREATE PROPERTY {collection}.project_id IF NOT EXISTS STRING")
-                run_ddl(f"CREATE INDEX IF NOT EXISTS ON {collection}(project_id) NOTUNIQUE NULL_STRATEGY SKIP")
-        if version is None:
-            for collection, field in (("projects", "name"), ("projects", "root"), ("project_roots", "path"),
-                                      ("sources", "current_key"), ("records", "active_key"), ("jobs", "job_key"),
-                                      ("import_cursors", "path")):
-                run_ddl(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
-                run_ddl(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) UNIQUE NULL_STRATEGY SKIP")
-            for collection in ("sources", "chunks", "nodes", "edges"):
-                run_ddl(f"CREATE PROPERTY {collection}.is_current IF NOT EXISTS BOOLEAN")
-            for collection, field in (("chunks", "text"), ("records", "content")):
-                run_ddl(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
-                run_ddl(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) FULL_TEXT METADATA {{similarity:'BM25'}}")
-        run_ddl("CREATE PROPERTY journal_events.epoch IF NOT EXISTS STRING")
-        run_ddl("CREATE PROPERTY journal_events.seq IF NOT EXISTS LONG")
-        run_ddl("CREATE INDEX IF NOT EXISTS ON journal_events(epoch,seq) UNIQUE")
-        if statements:
-            self.client.script(";\n".join(statements))
-        with self.client.transaction() as tx:
-            if not tx.query("SELECT id FROM journal_state WHERE id='current'"):
-                insert_document(tx, "journal_state", {"id": "current", "epoch": str(uuid4()), "seq": 0, "first_seq": 1})
-            # Read again here, not from the start of this method: another installation that is creating the
-            # same store may have committed its row in between. Then it also committed the head above, so this
-            # transaction inserts neither; when both insert the head, the unique id refuses the second commit.
-            if not tx.query("SELECT name FROM devbrain_meta WHERE name='schema_version'"):
-                insert_document(tx, "devbrain_meta", {"name": "schema_version", "value": SCHEMA_VERSION})
-            else:
-                update_document(tx, "devbrain_meta", {"value": SCHEMA_VERSION}, "name='schema_version'", {})
-        if indexed != LOOKUP_INDEX_SET:
-            self._lookup_indexes(indexed)
+        self.backend.init_schema(self)
 
     def _lookup_indexes(self, recorded):
-        """Create the lookup indexes that are missing. Called with the writer lock held; safe to repeat.
-
-        An index only makes a lookup faster. When one cannot be built now, for example because a large
-        table takes longer than a request may, the database is opened all the same and the next start
-        tries again: nothing is recorded until every index exists.
-        """
-        from .arcade import ArcadeError
-        try:
-            for collection, field in LOOKUP_INDEXES:
-                self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
-                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) NOTUNIQUE NULL_STRATEGY SKIP")
-        except ArcadeError:
-            return
-        with self.client.transaction() as tx:
-            # Read again, as for schema_version: another installation may have recorded it in between.
-            if not tx.query("SELECT name FROM devbrain_meta WHERE name='lookup_indexes'"):
-                insert_document(tx, "devbrain_meta", {"name": "lookup_indexes", "value": LOOKUP_INDEX_SET})
-            else:
-                update_document(tx, "devbrain_meta", {"value": LOOKUP_INDEX_SET}, "name='lookup_indexes'", {})
+        """Create the lookup indexes that are missing (delegated to backend)."""
+        if hasattr(self.backend, "_lookup_indexes"):
+            self.backend._lookup_indexes(self, recorded)
 
     @staticmethod
     def _require_project(tx, project_id):
         known = getattr(tx, "known", None)
         if known is not None and project_id in known["projects"]:
             return
-        if project_id is not None and not tx.query("SELECT id FROM projects WHERE id=:id", {"id": project_id}):
+        if project_id is not None and not db_find_one(tx, "projects", {"id": project_id}, columns=("id",)):
             raise ValueError(f"Unknown project: {project_id}")
         if known is not None and project_id is not None:
             known["projects"].add(project_id)
@@ -805,13 +822,17 @@ class Store:
             | {item[key] for item in edges for key in ("from_id", "to_id") if isinstance(item.get(key), str)},
             "edges": {item["id"] for item in edges if isinstance(item.get("id"), str)},
         }
-        fields = {"sources": "id,project_id,is_current", "nodes": "id,project_id", "edges": "id,project_id,from_id,to_id"}
+        fields = {
+            "sources": ("id", "project_id", "is_current"),
+            "nodes": ("id", "project_id"),
+            "edges": ("id", "project_id", "from_id", "to_id"),
+        }
         known = {"projects": set(), "sources": {}, "nodes": {}, "edges": {}}
         for table, identifiers in wanted.items():
             identifiers = sorted(identifiers)
             for offset in range(0, len(identifiers), 500):
                 part = identifiers[offset:offset + 500]
-                found = {row["id"]: row for row in tx.query(f"SELECT {fields[table]} FROM {table} WHERE id IN :ids", {"ids": part})}
+                found = {row["id"]: row for row in db_find(tx, table, is_in("id", part), columns=fields[table])}
                 known[table].update({identifier: found.get(identifier) for identifier in part})
         tx.known = known
 
@@ -834,7 +855,7 @@ class Store:
             # The limit of the service's route, for every route (#238).
             raise ValueError("Project name must be at most 256 characters")
         with self.transaction() as tx:
-            existing = one_row(tx, "SELECT FROM projects WHERE name=:name OR root=:root", {"name": name, "root": path}, False)
+            existing = db_find_one(tx, "projects", any_of(eq("name", name), eq("root", path)))
             if existing:
                 if existing["name"] != name or existing["root"] != path:
                     if existing["name"] == name:
@@ -846,9 +867,9 @@ class Store:
             if restored:
                 return restored
             project = {"id": str(uuid4()), "name": name, "root": path, "created_at": utc_now()}
-            insert_document(tx, "projects", project)
+            db_insert_document(tx, "projects", project)
             from .project_folders import stamp
-            insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project["id"], "path": path, **stamp()})
+            db_insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project["id"], "path": path, **stamp()})
             return project
 
     def add_project_root(self, project_id, path) -> dict:
@@ -859,19 +880,19 @@ class Store:
         root = self.require_safe_project_root(path)
         with self.transaction() as tx:
             self._require_project(tx, project_id)
-            existing = one_row(tx, "SELECT FROM project_roots WHERE path=:path", {"path": root}, False)
+            existing = db_find_one(tx, "project_roots", {"path": root})
             if existing and existing["project_id"] != project_id:
                 raise ValueError("Directory already belongs to another project")
             if not existing:
-                insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": root, **stamp()})
+                db_insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": root, **stamp()})
             elif (here := this_machine()) and existing.get("machine") != here:
-                update_document(tx, "project_roots", stamp(), "id=:id", {"id": existing["id"]})
+                db_update_where(tx, "project_roots", set_fields=stamp(), where={"id": existing["id"]})
                 if existing.get("machine"):
                     return {"moved_from": label(existing.get("host"))}
         return {}
 
     def list_projects(self):
-        return [clean_row(row) for row in self.query("SELECT FROM projects WHERE removed_at IS NULL ORDER BY name")]
+        return [clean_row(row) for row in self.find("projects", is_null("removed_at"), order_by=(asc("name"),))]
 
     def resolve_project(self, identifier, *, recorded: bool = False):
         """The project of an id, a name, or a path inside one of its registered folders (#238).
@@ -885,8 +906,9 @@ class Store:
         """
         value = str(identifier)
         from .project_removal import find_removed, unknown_removed
-        project = one_row(self, "SELECT FROM projects WHERE removed_at IS NULL AND (id=:value OR name=:value)",
-                          {"value": value}, False)
+        project = db_find_one(
+            self, "projects", [is_null("removed_at"), any_of(eq("id", value), eq("name", value))]
+        )
         if project:
             return project
         if not value.startswith((".", "~")) and "/" not in value and os.sep not in value:
@@ -901,11 +923,11 @@ class Store:
         path = written.resolve()
         if not recorded and not path.exists():
             raise ValueError(f"Unknown project: {value} (no such file or folder)")
-        candidates = [r for r in self.query("SELECT FROM project_roots")
+        candidates = [r for r in self.find("project_roots")
                       if path == Path(r["path"]) or Path(r["path"]) in path.parents]
         if candidates:
             selected = max(candidates, key=lambda row: len(row["path"]))
-            return one_row(self, "SELECT FROM projects WHERE id=:id", {"id": selected["project_id"]})
+            return db_find_one(self, "projects", {"id": selected["project_id"]}, required=True)
         removed = find_removed(self, value, path)
         if removed:
             raise unknown_removed(value, removed, self.data_dir)
@@ -922,7 +944,7 @@ class Store:
         current chunks only, and an import rebuilds chunks from the source text. The source itself, its text and
         its hash stay, so evidence that cites the old version can still be read and checked."""
         if source_ids:
-            tx.command("DELETE FROM chunks WHERE source_id IN :ids", {"ids": list(source_ids)})
+            db_delete_where(tx, "chunks", is_in("source_id", list(source_ids)))
 
     def snapshot(self, project_id, uri, content, kind="document", metadata=None):
         if not isinstance(content, str) or not isinstance(uri, str) or not uri:
@@ -930,20 +952,40 @@ class Store:
         digest, key = hashlib.sha256(content.encode()).hexdigest(), json_text([project_id, uri])
         with self.transaction() as tx:
             self._require_project(tx, project_id)
-            existing = one_row(tx, "SELECT FROM sources WHERE current_key=:key AND is_current=true", {"key": key}, False)
+            existing = db_find_one(tx, "sources", {"current_key": key, "is_current": True})
             if existing and existing["sha256"] == digest:
                 return existing
             if existing:
-                params = {"id": existing["id"]}
-                update_document(tx, "sources", {"is_current": False, "current_key": None}, "id=:id", params)
+                db_update_where(
+                    tx, "sources", set_fields={"is_current": False, "current_key": None}, where={"id": existing["id"]}
+                )
                 self.drop_chunks(tx, [existing["id"]])
-                update_document(tx, "nodes", {"is_current": False}, "source_id=:id AND kind NOT IN ['source','decision','task','fact','constraint','question','preference','checkpoint']", params)
-                update_document(tx, "edges", {"is_current": False}, "source_id=:id AND kind NOT IN ['supported_by','depends_on','supersedes']", params)
+                db_update_where(
+                    tx,
+                    "nodes",
+                    set_fields={"is_current": False},
+                    where=[
+                        eq("source_id", existing["id"]),
+                        not_in(
+                            "kind",
+                            ("source", "decision", "task", "fact", "constraint", "question", "preference", "checkpoint"),
+                        ),
+                    ],
+                )
+                db_update_where(
+                    tx,
+                    "edges",
+                    set_fields={"is_current": False},
+                    where=[
+                        eq("source_id", existing["id"]),
+                        not_in("kind", ("supported_by", "depends_on", "supersedes")),
+                    ],
+                )
                 self._delete_old_vectors(tx, [existing["id"]])
             source = {"id": str(uuid4()), "project_id": project_id, "uri": uri, "kind": kind, "content": content,
                       "sha256": digest, "metadata": {**(metadata or {}), **(self.current_origin() or {})},
                       "is_current": True, "current_key": key, "created_at": utc_now()}
-            insert_document(tx, "sources", source)
+            db_insert_document(tx, "sources", source)
             return source
 
     def snapshot_new(self, tx, project_id, uri, content, kind="document", metadata=None):
@@ -954,8 +996,9 @@ class Store:
         """
         if not isinstance(content, str) or not isinstance(uri, str) or not uri:
             raise ValueError("Source requires a URI and text content")
-        if one_row(tx, "SELECT id FROM sources WHERE current_key=:key AND is_current=true",
-                   {"key": json_text([project_id, uri])}, False):
+        if db_find_one(
+            tx, "sources", {"current_key": json_text([project_id, uri]), "is_current": True}, columns=("id",)
+        ):
             return None
         return self.new_source(tx, project_id, uri, content, kind, metadata)
 
@@ -970,7 +1013,7 @@ class Store:
                   "sha256": hashlib.sha256(content.encode()).hexdigest(),
                   "metadata": {**(metadata or {}), **(self.current_origin() or {})},
                   "is_current": True, "current_key": json_text([project_id, uri]), "created_at": utc_now()}
-        insert_document(tx, "sources", source)
+        db_insert_document(tx, "sources", source)
         return source
 
     def enqueue_new(self, tx, kind, project_id, payload, dedupe_key):
@@ -981,13 +1024,13 @@ class Store:
         if not kind or not isinstance(dedupe_key, str) or not dedupe_key:
             raise ValueError("A job requires a kind and deduplication key")
         job_id, now = str(uuid4()), utc_now()
-        insert_document(tx, "jobs", {"id": job_id, "project_id": project_id, "kind": kind, "payload": payload, "dedupe_key": dedupe_key,
+        db_insert_document(tx, "jobs", {"id": job_id, "project_id": project_id, "kind": kind, "payload": payload, "dedupe_key": dedupe_key,
                              "job_key": json_text([kind, project_id, dedupe_key]), "state": "pending", "lease_until": None,
                              "worker": None, "error": None, "attempts": 0, "created_at": now, "updated_at": now})
         return job_id
 
     def get_source(self, source_id):
-        return one_row(self, "SELECT FROM sources WHERE id=:id", {"id": source_id})
+        return db_find_one(self, "sources", {"id": source_id}, required=True)
 
     @staticmethod
     def _validate_sources(tx, project_id, sources):
@@ -995,7 +1038,7 @@ class Store:
             raise ValueError("A memory record requires at least one source ID: cite a source you read, "
                              "or the source_ids a checkpoint returns")
         for source_id in sources:
-            source = one_row(tx, "SELECT project_id FROM sources WHERE id=:id", {"id": source_id}, False)
+            source = db_find_one(tx, "sources", {"id": source_id}, columns=("project_id",))
             if not source or source.get("project_id") != project_id:
                 raise ValueError("Sources must exist and belong to the same project")
 
@@ -1014,7 +1057,7 @@ class Store:
                 raise ValueError(f"{key} must be a list of nonempty strings")
         validate_criterion_links(metadata, criteria)
         for run_id in metadata.get("check_run_ids", []):
-            run = one_row(tx, "SELECT task_id,project_id FROM check_runs WHERE id=:id", {"id": run_id}, False)
+            run = db_find_one(tx, "check_runs", {"id": run_id}, columns=("task_id", "project_id"))
             if not run or run.get("project_id") != project_id or run.get("task_id") != record_id:
                 raise ValueError("check_run_ids must reference machine runs for this task and project")
         for flag in ("requires_test", "requires_review", "test_passed", "review_passed", "acceptance_passed"):
@@ -1030,8 +1073,11 @@ class Store:
             if task_id in seen:
                 return
             seen.add(task_id)
-            task = one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project AND kind='task' AND status!='superseded'",
-                        {"id": task_id, "project": project_id}, False)
+            task = db_find_one(
+                tx,
+                "records",
+                [eq("id", task_id), eq("project_id", project_id), eq("kind", "task"), ne("status", "superseded")],
+            )
             if not task:
                 raise ValueError("Task dependencies must be active tasks from the same project")
             if task["metadata"].get("state", "todo") != "done":
@@ -1075,14 +1121,19 @@ class Store:
         self._require_project(tx, node["project_id"])
         source = None
         if node.get("source_id"):
-            source = self._remembered(tx, "sources", node["source_id"], lambda: one_row(
-                tx, "SELECT project_id,is_current FROM sources WHERE id=:id", {"id": node["source_id"]}, False))
+            source = self._remembered(
+                tx,
+                "sources",
+                node["source_id"],
+                lambda: db_find_one(tx, "sources", {"id": node["source_id"]}, columns=("project_id", "is_current")),
+            )
             if not source or source.get("project_id") != node["project_id"]:
                 raise ValueError("Graph vertex source must belong to the same project")
         # Evidence/decision vertices remain traversable as provenance even if a code file changed.
         node.setdefault("is_current", bool(source["is_current"]) if source and node["kind"] not in KINDS | {"source"} else True)
-        existing = self._remembered(tx, "nodes", node["id"], lambda: one_row(
-            tx, "SELECT FROM nodes WHERE id=:id", {"id": node["id"]}, False))
+        existing = self._remembered(
+            tx, "nodes", node["id"], lambda: db_find_one(tx, "nodes", {"id": node["id"]})
+        )
         if existing and existing.get("project_id") != node["project_id"]:
             raise ValueError("Graph vertex belongs to another project")
         return node, existing
@@ -1105,19 +1156,28 @@ class Store:
             if not isinstance(edge.get(key), str):
                 raise ValueError(f"Graph edge requires {key}")
         for endpoint in (edge["from_id"], edge["to_id"]):
-            vertex = self._remembered(tx, "nodes", endpoint, lambda endpoint=endpoint: one_row(
-                tx, "SELECT project_id FROM nodes WHERE id=:id", {"id": endpoint}, False))
+            vertex = self._remembered(
+                tx,
+                "nodes",
+                endpoint,
+                lambda endpoint=endpoint: db_find_one(tx, "nodes", {"id": endpoint}, columns=("project_id",)),
+            )
             if not vertex or vertex.get("project_id") != edge["project_id"]:
                 raise ValueError("Graph edge endpoints must exist in the same project")
         source = None
         if edge.get("source_id"):
-            source = self._remembered(tx, "sources", edge["source_id"], lambda: one_row(
-                tx, "SELECT project_id,is_current FROM sources WHERE id=:id", {"id": edge["source_id"]}, False))
+            source = self._remembered(
+                tx,
+                "sources",
+                edge["source_id"],
+                lambda: db_find_one(tx, "sources", {"id": edge["source_id"]}, columns=("project_id", "is_current")),
+            )
             if not source or source.get("project_id") != edge["project_id"]:
                 raise ValueError("Graph edge source must belong to the same project")
         edge.setdefault("is_current", bool(source["is_current"]) if source and edge["kind"] not in {"supported_by", "depends_on", "supersedes"} else True)
-        existing = self._remembered(tx, "edges", edge["id"], lambda: one_row(
-            tx, "SELECT FROM edges WHERE id=:id", {"id": edge["id"]}, False))
+        existing = self._remembered(
+            tx, "edges", edge["id"], lambda: db_find_one(tx, "edges", {"id": edge["id"]})
+        )
         if existing and existing.get("project_id") != edge["project_id"]:
             raise ValueError("Graph edge belongs to another project")
         return edge, existing
@@ -1180,15 +1240,19 @@ class Store:
         for offset in range(0, len(identifiers), group):
             part = identifiers[offset:offset + group]
             named = set()
-            for row in tx.query("SELECT from_id,to_id FROM edges WHERE from_id IN :ids OR to_id IN :ids", {"ids": part}):
+            for row in db_find(
+                tx,
+                "edges",
+                any_of(is_in("from_id", part), is_in("to_id", part)),
+                columns=("from_id", "to_id"),
+            ):
                 named.update((row.get("from_id"), row.get("to_id")))
             kept.extend(identifier for identifier in part if identifier in named)
             unlinked = [identifier for identifier in part if identifier not in named]
             if not unlinked:
                 continue
             # The project names the graph a reset transaction reports, so the journal reads nothing for this statement.
-            deleted = tx.command("DELETE FROM nodes WHERE project_id=:project AND id IN :ids",
-                                 {"project": project_id, "ids": unlinked})
+            deleted = self.backend.delete_graph_nodes(tx, project_id, unlinked)
             count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
             if type(count) is not int or count != len(unlinked):
                 raise RuntimeError("The database did not delete every graph vertex of a group")
@@ -1202,7 +1266,7 @@ class Store:
         unique_ids = list(dict.fromkeys(sources))
         loaded = {}
         for start in range(0, len(unique_ids), 500):
-            for row in tx.query("SELECT FROM sources WHERE id IN :ids", {"ids": unique_ids[start:start + 500]}):
+            for row in db_find(tx, "sources", is_in("id", unique_ids[start:start + 500])):
                 cleaned = clean_row(row)
                 loaded[cleaned["id"]] = cleaned
         if len(loaded) != len(unique_ids) or any(row.get("project_id") != project_id for row in loaded.values()):
@@ -1218,12 +1282,12 @@ class Store:
             else:
                 missing_source_ids.append(source_id)
         for start in range(0, len(missing_source_ids), 500):
-            for row in tx.query("SELECT FROM sources WHERE id IN :ids", {"ids": missing_source_ids[start:start + 500]}):
+            for row in db_find(tx, "sources", is_in("id", missing_source_ids[start:start + 500])):
                 cleaned = clean_row(row)
                 resolved_sources[cleaned["id"]] = cleaned
         for source_id in missing_source_ids:
             if source_id not in resolved_sources:
-                resolved_sources[source_id] = one_row(tx, "SELECT FROM sources WHERE id=:id", {"id": source_id})
+                resolved_sources[source_id] = db_find_one(tx, "sources", {"id": source_id}, required=True)
 
         node_id = f"record:{record['id']}"
         dep_ids = [f"record:{dependency}" for dependency in (record["metadata"].get("depends_on") or [])]
@@ -1232,7 +1296,7 @@ class Store:
         candidate_ids = list(dict.fromkeys([node_id, *source_node_ids, *dep_ids, *sup_ids]))
         existing_nodes = {}
         for start in range(0, len(candidate_ids), 500):
-            for row in tx.query("SELECT FROM nodes WHERE id IN :ids", {"ids": candidate_ids[start:start + 500]}):
+            for row in db_find(tx, "nodes", is_in("id", candidate_ids[start:start + 500])):
                 cleaned = clean_row(row)
                 existing_nodes[cleaned["id"]] = cleaned
 
@@ -1255,8 +1319,11 @@ class Store:
                               "metadata": {**record["metadata"], "record_id": record["id"], "status": record["status"]}}, tx)
             if had_record_node:
                 with self._keeping(tx):
-                    tx.command("DELETE FROM edges WHERE from_id=:id AND kind IN ['supported_by','depends_on','supersedes']",
-                               {"id": node_id})
+                    db_delete_where(
+                        tx,
+                        "edges",
+                        [eq("from_id", node_id), is_in("kind", ("supported_by", "depends_on", "supersedes"))],
+                    )
 
             def edge(target, kind, source_id):
                 eid = hashlib.sha256(f"{node_id}\0{kind}\0{target}".encode()).hexdigest()
@@ -1297,7 +1364,7 @@ class Store:
                 tx.known = None
 
     def _revision(self, tx, record, *, source_rows=None):
-        insert_document(tx, "record_revisions", {"id": f"{record['id']}:{record['version']}", "project_id": record["project_id"],
+        db_insert_document(tx, "record_revisions", {"id": f"{record['id']}:{record['version']}", "project_id": record["project_id"],
                                         "record_id": record["id"], "version": record["version"], "snapshot": record, "recorded_at": utc_now()})
         self._record_graph(tx, record, source_rows=source_rows)
 
@@ -1313,9 +1380,11 @@ class Store:
             code_sources = [source_rows[sid] for sid in dict.fromkeys(sources)
                             if sid in source_rows and source_rows[sid].get("kind") == "code"]
         else:
-            code_sources = tx.query(
-                "SELECT id,uri,kind,content,metadata FROM sources WHERE project_id=:project AND id IN :ids AND kind='code'",
-                {"project": project_id, "ids": list(dict.fromkeys(sources))},
+            code_sources = db_find(
+                tx,
+                "sources",
+                [eq("project_id", project_id), is_in("id", list(dict.fromkeys(sources))), eq("kind", "code")],
+                columns=("id", "uri", "kind", "content", "metadata"),
             )
         if not code_sources:
             return None
@@ -1382,7 +1451,7 @@ class Store:
             raise RecordRefused("record must be an object")
         old = None
         if record.get("id"):
-            old = one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": record["id"], "project": project_id}, False)
+            old = db_find_one(tx, "records", {"id": record["id"], "project_id": project_id})
             if not old and not managed_batch:
                 raise ValueError("Cannot update an unknown record")
             if old and (type(record.get("expected_version")) is not int or record["expected_version"] != old["version"]):
@@ -1402,7 +1471,7 @@ class Store:
             sources = list(dict.fromkeys([*(json.loads(held) if isinstance(held, str) else held), *sources]))
             extra_sources = [sid for sid in sources if sid not in source_rows]
             for start in range(0, len(extra_sources), 500):
-                for row in tx.query("SELECT FROM sources WHERE id IN :ids", {"ids": extra_sources[start:start + 500]}):
+                for row in db_find(tx, "sources", is_in("id", extra_sources[start:start + 500])):
                     cleaned = clean_row(row)
                     source_rows[cleaned["id"]] = cleaned
         kind, status = record.get("kind", old["kind"] if old else None), record.get("status", old["status"] if old else "proposed")
@@ -1526,7 +1595,7 @@ class Store:
             metadata[EXTRACTOR_STAMP] = validate_extractor_stamp(extractor)
         supersedes = record.get("supersedes", old.get("supersedes") if old else None)
         if supersedes and (not old or supersedes != old.get("supersedes")):
-            previous = one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": supersedes, "project": project_id}, False)
+            previous = db_find_one(tx, "records", {"id": supersedes, "project_id": project_id})
             if not previous or previous["id"] == record_id or previous["status"] == "superseded":
                 raise ValueError("supersedes must identify an active record in the same project")
             if previous["kind"] != kind:
@@ -1549,15 +1618,16 @@ class Store:
                 cited = json.loads(cited) if isinstance(cited, str) else cited
                 previous["source_ids"] = list(dict.fromkeys([*cited, act["source_id"]]))
             previous.update(status="superseded", active_key=None, version=previous["version"] + 1, updated_at=utc_now())
-            update_document(tx, "records", previous, "id=:id", {"id": supersedes})
+            db_update_where(tx, "records", set_fields=previous, where={"id": supersedes})
             self._revision(tx, previous)
         # Recomputed on every write of a replacement, so a later source change never
         # leaves a stale warning behind. Warn, never block.
         metadata.pop("supersede_warning", None)
         metadata.pop("supersede_replaced_evidence_latest", None)
         if supersedes:
-            replaced = one_row(tx, "SELECT source_ids FROM records WHERE id=:id AND project_id=:project",
-                            {"id": supersedes, "project": project_id}, False) or {}
+            replaced = db_find_one(
+                tx, "records", {"id": supersedes, "project_id": project_id}, columns=("source_ids",)
+            ) or {}
             replaced_sources = replaced.get("source_ids") or []
             if isinstance(replaced_sources, str):
                 replaced_sources = json.loads(replaced_sources)
@@ -1584,10 +1654,10 @@ class Store:
         if confirmation:
             metadata[MARK] = confirmation
         active_key = json_text([project_id, kind, key]) if status != "superseded" else None
-        collision = one_row(tx, "SELECT id FROM records WHERE active_key=:key", {"key": active_key}, False) if active_key else None
+        collision = db_find_one(tx, "records", {"active_key": active_key}, columns=("id",)) if active_key else None
         if collision and collision["id"] != record_id:
             # A record a person confirmed is refused as such: updating it by id would only be refused again.
-            self._keep_verdict(one_row(tx, "SELECT FROM records WHERE id=:id", {"id": collision["id"]}), "key")
+            self._keep_verdict(db_find_one(tx, "records", {"id": collision["id"]}, required=True), "key")
             raise KeyTaken(collision["id"])
         now = utc_now()
         result = {"id": record_id, "project_id": project_id, "kind": kind, "key": key, "content": content, "status": status,
@@ -1597,13 +1667,16 @@ class Store:
             from .verification import validate_completion
             validate_completion(self, tx, project_id, {**result, "_completion_worktree": record.get("worktree")})
         if old:
-            updated = update_document(tx, "records", result, "id=:id AND version=:version",
-                                      {"id": record_id, "version": old["version"]})
-            if (isinstance(updated, list) and updated and isinstance(updated[0], dict)
-                    and type(updated[0].get("count")) is int and updated[0]["count"] != 1):
+            updated = db_update_where(
+                tx, "records", set_fields=result, where={"id": record_id, "version": old["version"]}
+            )
+            if isinstance(updated, list) and (
+                not updated
+                or (isinstance(updated[0], dict) and type(updated[0].get("count")) is int and updated[0]["count"] != 1)
+            ):
                 raise ValueError("Record version conflict; read the current version and retry")
         else:
-            insert_document(tx, "records", result)
+            db_insert_document(tx, "records", result)
         self._revision(tx, result, source_rows=source_rows)
         if managed and not managed_batch:
             from .plans import note_task_mutation
@@ -1645,7 +1718,11 @@ class Store:
         source = self.snapshot(project_id, f"checkpoint://{uuid4()}", content, "checkpoint",
                                note_metadata(self.settings, content, {"origin": "client"}))
         with self.transaction() as tx:
-            old = one_row(tx, "SELECT FROM records WHERE project_id=:project AND kind='checkpoint' AND `key`='latest' AND status!='superseded'", {"project": project_id}, False)
+            old = db_find_one(
+                tx,
+                "records",
+                [eq("project_id", project_id), eq("kind", "checkpoint"), eq("key", "latest"), ne("status", "superseded")],
+            )
             record = {"kind": "checkpoint", "key": "latest", "content": content, "metadata": state}
             if old:
                 record.update(id=old["id"], expected_version=old["version"])
@@ -1658,11 +1735,16 @@ class Store:
 
     def list_records(self, project_id, include_history=False):
         self._require_project(self, project_id)
-        return [clean_row(row) for row in self.query("SELECT FROM records WHERE project_id=:project" +
-            ("" if include_history else " AND status!='superseded'") + " ORDER BY updated_at DESC,id", {"project": project_id})]
+        conds = [eq("project_id", project_id)]
+        if not include_history:
+            conds.append(ne("status", "superseded"))
+        return [clean_row(row) for row in self.find("records", conds, order_by=(desc("updated_at"), asc("id")))]
 
     def record_history(self, record_id):
-        return [row["snapshot"] for row in self.query("SELECT snapshot FROM record_revisions WHERE record_id=:id ORDER BY version", {"id": record_id})]
+        return [
+            row["snapshot"]
+            for row in self.find("record_revisions", {"record_id": record_id}, columns=("snapshot",), order_by=(asc("version"),))
+        ]
 
     def enqueue(self, kind, project_id, payload, dedupe_key):
         if not kind or not isinstance(dedupe_key, str) or not dedupe_key:
@@ -1670,11 +1752,11 @@ class Store:
         with self.transaction() as tx:
             self._require_project(tx, project_id)
             job_key = json_text([kind, project_id, dedupe_key])
-            old = one_row(tx, "SELECT id FROM jobs WHERE job_key=:key", {"key": job_key}, False)
+            old = db_find_one(tx, "jobs", {"job_key": job_key}, columns=("id",))
             if old:
                 return old["id"]
             job_id, now = str(uuid4()), utc_now()
-            insert_document(tx, "jobs", {"id": job_id, "project_id": project_id, "kind": kind, "payload": payload, "dedupe_key": dedupe_key,
+            db_insert_document(tx, "jobs", {"id": job_id, "project_id": project_id, "kind": kind, "payload": payload, "dedupe_key": dedupe_key,
                                  "job_key": job_key, "state": "pending", "lease_until": None, "worker": None, "error": None,
                                  "attempts": 0, "created_at": now, "updated_at": now})
             return job_id
@@ -1696,20 +1778,22 @@ class Store:
             raise StoreNotWriter(self.not_writer)
         with self.transaction() as tx:
             # The jobs of a removed project wait until it is back (#327).
-            removed = [r["id"] for r in tx.query("SELECT id FROM projects WHERE removed_at IS NOT NULL")]
-            job = one_row(tx, "SELECT FROM jobs WHERE (state='pending' OR (state='running' AND lease_until<:now))" +
-                       (" AND kind IN :kinds" if kinds is not None else "") +
-                       (" AND project_id IN :projects" if project_ids is not None else "") +
-                       (" AND (project_id IS NULL OR project_id NOT IN :removed)" if removed else "") +
-                       " ORDER BY created_at,id LIMIT 1",
-                       {"now": time.time(), "kinds": kinds, "projects": project_ids, "removed": removed}, False)
+            removed = [r["id"] for r in db_find(tx, "projects", is_not_null("removed_at"), columns=("id",))]
+            conds = [any_of(eq("state", "pending"), all_of(eq("state", "running"), lt("lease_until", time.time())))]
+            if kinds is not None:
+                conds.append(is_in("kind", list(kinds)))
+            if project_ids is not None:
+                conds.append(is_in("project_id", list(project_ids)))
+            if removed:
+                conds.append(any_of(is_null("project_id"), not_in("project_id", removed)))
+            job = db_find_one(tx, "jobs", conds, order_by=(asc("created_at"), asc("id")))
             if not job:
                 return None
             if job["state"] == "running":
                 job["attempt_history"] = self._job_event(job, "lease_expired")
             job.update(state="running", worker=worker, lease_until=time.time() + lease_seconds, attempts=job.get("attempts", 0) + 1, updated_at=utc_now())
             job["diagnostics"] = {}
-            update_document(tx, "jobs", job, "id=:id", {"id": job["id"]})
+            db_update_where(tx, "jobs", set_fields=job, where={"id": job["id"]})
             return job
 
     @staticmethod
@@ -1725,7 +1809,7 @@ class Store:
         """Publish sanitized attempt diagnostics without completing/reclaiming a job."""
         cleaned = job_diagnostics(diagnostics)
         with self.transaction() as tx:
-            job = one_row(tx, "SELECT FROM jobs WHERE id=:id", {"id": job_id}, False)
+            job = db_find_one(tx, "jobs", {"id": job_id})
             if not job:
                 return False  # Project deletion never recreates operational rows.
             if (expected_attempts is not None and (job["state"] != "running"
@@ -1733,12 +1817,12 @@ class Store:
                 return False
             if worker is not None and (job["state"] != "running" or job.get("worker") != worker):
                 return False
-            update_document(tx, "jobs", {"diagnostics": cleaned, "updated_at": utc_now()}, "id=:id", {"id": job_id})
+            db_update_where(tx, "jobs", set_fields={"diagnostics": cleaned, "updated_at": utc_now()}, where={"id": job_id})
         return True
 
     def finish_job(self, job_id, error=None, *, worker=None, expected_attempts=None):
         with self.transaction() as tx:
-            job = one_row(tx, "SELECT FROM jobs WHERE id=:id", {"id": job_id}, False)
+            job = db_find_one(tx, "jobs", {"id": job_id})
             if (not job or (worker is not None and (job.get("worker") != worker or job["state"] != "running"))
                     or (expected_attempts is not None and (job["state"] != "running"
                         or job.get("attempts", 0) != expected_attempts))):
@@ -1748,15 +1832,15 @@ class Store:
                        "attempt_history": self._job_event(job, "finished", state=state, error=error)}
             if error:
                 updates.update(last_error=error, last_error_at=updates["updated_at"])
-            update_document(tx, "jobs", updates, "id=:id", {"id": job_id})
+            db_update_where(tx, "jobs", set_fields=updates, where={"id": job_id})
 
     def job_summary(self, project_id=None):
         self._require_project(self, project_id)
         summary = {name: {state: 0 for state in sorted(JOB_STATES)}
                    for name in ("archive", "indexing", "extraction", "other")}
-        for row in self.query("SELECT kind,state,count(*) AS total FROM jobs" +
-                              (" WHERE project_id=:project" if project_id else "") + " GROUP BY kind,state",
-                              {"project": project_id}):
+        for row in self.group_counts(
+            "jobs", ("kind", "state"), {"project_id": project_id} if project_id else (), count_alias="total"
+        ):
             group = {"import": "archive", "embed": "indexing", "extract": "extraction"}.get(row["kind"], "other")
             if row["state"] in JOB_STATES:
                 summary[group][row["state"]] += int(row["total"])
@@ -1770,17 +1854,18 @@ class Store:
             raise ValueError("Invalid job kind")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("Job list limit must be between 1 and 100")
-        rows = self.query("SELECT FROM jobs WHERE project_id=:project"
-                          + (" AND state=:state" if state else "") + (" AND kind=:kind" if kind else "")
-                          + " ORDER BY updated_at DESC,id LIMIT :limit",
-                          {"project": project_id, "state": state, "kind": kind, "limit": limit})
+        conds = [eq("project_id", project_id)]
+        if state:
+            conds.append(eq("state", state))
+        if kind:
+            conds.append(eq("kind", kind))
+        rows = self.find("jobs", conds, order_by=(desc("updated_at"), asc("id")), limit=limit)
         packets = self._job_proofs(project_id) if any(row["kind"] == "import" for row in rows) else []
         return [self._public_job(clean_row(row), packets=packets) for row in rows]
 
     def job_status(self, project_id, job_id):
         self._require_project(self, project_id)
-        job = one_row(self, "SELECT FROM jobs WHERE id=:id AND project_id=:project",
-                   {"id": job_id, "project": project_id}, False)
+        job = self.find_one("jobs", {"id": job_id, "project_id": project_id})
         if not job:
             raise JobNotFoundError("Unknown job in requested project")
         return self._public_job(job, detail=True,
@@ -1789,8 +1874,13 @@ class Store:
     def _job_proofs(self, project_id):
         # Read already published bounded evidence; never prepare, repair or
         # recapture a transcript merely to display operational diagnostics.
-        return self.query("SELECT id,created_at,payload FROM resume_packets WHERE project_id=:project "
-                          "ORDER BY created_at DESC,id LIMIT 100", {"project": project_id})
+        return self.find(
+            "resume_packets",
+            {"project_id": project_id},
+            columns=("id", "created_at", "payload"),
+            order_by=(desc("created_at"), asc("id")),
+            limit=100,
+        )
 
     def _import_job_coverage(self, job, packets):
         unknown = {"status": "scope_unknown", "scope": "requested_capture"}
@@ -1807,8 +1897,7 @@ class Store:
                 or type(capture.get("head_bytes")) is not int
                 or not isinstance(capture.get("head_sha256"), str)):
             return {**unknown, "reason": "legacy_missing_capture"}
-        event = one_row(self, "SELECT FROM session_events WHERE id=:id AND project_id=:project",
-                     {"id": event_id, "project": job["project_id"]}, False)
+        event = self.find_one("session_events", {"id": event_id, "project_id": job["project_id"]})
         if (not event or event.get("transcript_path") != path or event.get("client") != client
                 or event.get("transcript_watermark") != capture):
             return {**unknown, "reason": "capture_receipt_unavailable"}
@@ -1828,9 +1917,15 @@ class Store:
                 proof = {"packet_id": packet["id"], "at": packet["created_at"], "captured_size": row["size"]}
                 if (row.get("status") == "complete" and row.get("archived_offset", -1) >= row["size"]
                         and type(row.get("source_count")) is int and isinstance(row.get("source_ids_hash"), str)):
-                    sources = self.query("SELECT id FROM sources WHERE project_id=:project "
-                                         "AND metadata.import_path=:path AND metadata.byte_offset<:size",
-                                         {"project": job["project_id"], "path": path, "size": row["size"]})
+                    sources = self.find(
+                        "sources",
+                        [
+                            eq("project_id", job["project_id"]),
+                            eq("metadata.import_path", path),
+                            lt("metadata.byte_offset", row["size"]),
+                        ],
+                        columns=("id",),
+                    )
                     ids = sorted(source["id"] for source in sources)
                     digest = hashlib.sha256(json_text(ids).encode()).hexdigest()
                     if len(ids) == row["source_count"] and digest == row["source_ids_hash"]:
@@ -1910,8 +2005,7 @@ class Store:
             raise ValueError("Include omissions must be a boolean")
         with self.transaction() as tx:
             self._require_project(tx, project_id)
-            job = one_row(tx, "SELECT FROM jobs WHERE id=:id AND project_id=:project",
-                       {"id": job_id, "project": project_id}, False)
+            job = db_find_one(tx, "jobs", {"id": job_id, "project_id": project_id})
             if not job:
                 raise JobNotFoundError("Unknown job in requested project")
             eligible = job["state"] == "failed" or (include_omissions and self._all_proposals_rejected(job))
@@ -1942,25 +2036,29 @@ class Store:
                    "attempt_history": self._job_event(job, "retry_requested")}
         if job.get("error"):
             updates.update(last_error=job["error"], last_error_at=job.get("updated_at"))
-        update_document(tx, "jobs", updates, "id=:id AND state=:state", {"id": job["id"], "state": job["state"]})
+        db_update_where(tx, "jobs", set_fields=updates, where={"id": job["id"], "state": job["state"]})
 
-    def _count(self, collection, project_id=None, extra=""):
-        condition = " WHERE project_id=:project" if project_id else ""
+    def _count(self, collection, project_id=None, extra=()):
+        from .storage_query import normalize_where
+        conds = []
+        if project_id:
+            conds.append(eq("project_id", project_id))
         if extra:
-            condition += (" AND " if condition else " WHERE ") + extra
-        rows = self.query(f"SELECT count(*) AS total FROM {quote_name(collection)}{condition}", {"project": project_id})
-        return int(rows[0]["total"]) if rows else 0
+            conds.extend(normalize_where(extra))
+        return self.count(collection, conds)
 
     def status(self, project_id=None):
         self._require_project(self, project_id)
         counts = {key: self._count(key, project_id) for key in ("sources", "chunks", "records", "nodes", "edges", "embeddings")}
-        counts["projects"] = 1 if project_id else self._count("projects", extra="removed_at IS NULL")
-        counts["removed_projects"] = 0 if project_id else self._count("projects", extra="removed_at IS NOT NULL")
-        counts["jobs"] = {state: self._count("jobs", project_id, f"state='{state}'") for state in ("pending", "running", "completed", "failed")}
+        counts["projects"] = 1 if project_id else self._count("projects", extra=is_null("removed_at"))
+        counts["removed_projects"] = 0 if project_id else self._count("projects", extra=is_not_null("removed_at"))
+        counts["jobs"] = {state: self._count("jobs", project_id, eq("state", state)) for state in ("pending", "running", "completed", "failed")}
         counts["archived"] = counts["sources"]
-        counts["indexed"] = len(self.query("SELECT DISTINCT source_id FROM chunks" + (" WHERE project_id=:project" if project_id else ""), {"project": project_id}))
-        counts["processed"] = self._count("jobs", project_id, "kind='extract' AND state='completed'")
-        counts["unassigned_sources"], counts["inbox"] = self._count("sources", extra="project_id IS NULL"), self._count("ingestion_inbox")
+        counts["indexed"] = len(
+            self.find("chunks", {"project_id": project_id} if project_id else (), columns=("source_id",), distinct=True)
+        )
+        counts["processed"] = self._count("jobs", project_id, [eq("kind", "extract"), eq("state", "completed")])
+        counts["unassigned_sources"], counts["inbox"] = self._count("sources", extra=is_null("project_id")), self._count("ingestion_inbox")
         for collection in ("plans", "sessions", "check_runs"):
             counts[collection] = self._count(collection, project_id)
         return counts
@@ -1978,21 +2076,24 @@ class Store:
         # transaction of another project. Events are committed together with the journal
         # state, so every event up to the head read first is visible to the queries below.
         with self._stamp_lock:
-            state = self.query("SELECT epoch,seq,first_seq FROM journal_state WHERE id='current'")
+            state = self.find_one("journal_state", {"id": "current"}, columns=("epoch", "seq", "first_seq"))
             if not state:
                 raise ValueError("Journal state is unavailable")
-            head = {"epoch": state[0]["epoch"], "seq": state[0]["seq"]}
+            head = {"epoch": state["epoch"], "seq": state["seq"]}
             known = self._stamp_cursor
             if head != known:
                 position = known["seq"] if known and known["epoch"] == head["epoch"] else None
-                if position is not None and not state[0].get("first_seq", 1) - 1 <= position <= head["seq"]:
+                if position is not None and not state.get("first_seq", 1) - 1 <= position <= head["seq"]:
                     position = None
                 seq, shared, complete = dict(self._stamp_seq), self._stamp_global, position is not None
                 while complete and position < head["seq"]:
-                    rows = self.query(
-                        "SELECT project_id,entity_type,seq FROM journal_events WHERE epoch=:epoch AND seq>:position "
-                        "AND seq<=:upto ORDER BY seq LIMIT 1000",
-                        {"epoch": head["epoch"], "position": position, "upto": head["seq"]})
+                    rows = self.find(
+                        "journal_events",
+                        [eq("epoch", head["epoch"]), gt("seq", position), lte("seq", head["seq"])],
+                        columns=("project_id", "entity_type", "seq"),
+                        order_by=(asc("seq"),),
+                        limit=1000,
+                    )
                     # Sequence numbers are contiguous. A gap means the events were pruned or
                     # the journal was reset while we read.
                     if not rows or [row["seq"] for row in rows] != list(range(position + 1, position + 1 + len(rows))):
@@ -2017,9 +2118,10 @@ class Store:
         return hashlib.sha256(json_text(parts).encode()).hexdigest()
 
     def recent_job_errors(self, project_id=None, limit=10):
-        rows = self.query("SELECT FROM jobs WHERE state='failed'" +
-            (" AND project_id=:project" if project_id else "") + " ORDER BY updated_at DESC LIMIT :limit",
-            {"project": project_id, "limit": max(1, min(100, limit))})
+        conds = [eq("state", "failed")]
+        if project_id:
+            conds.append(eq("project_id", project_id))
+        rows = self.find("jobs", conds, order_by=(desc("updated_at"),), limit=max(1, min(100, limit)))
         proofs = {}
         for row in rows:
             if row["kind"] == "import" and row["project_id"] not in proofs:
@@ -2029,14 +2131,17 @@ class Store:
     def retry_jobs(self):
         """Explicit legacy global compatibility; every requeue retains its audit."""
         with self.transaction() as tx:
-            rows = tx.query("SELECT FROM jobs WHERE state='failed'")
+            rows = db_find(tx, "jobs", {"state": "failed"})
             for row in rows:
                 self._retry_job_locked(tx, clean_row(row))
         return {"retried": len(rows), "job_ids": [row["id"] for row in rows]}
 
     def missing_embeddings(self, namespace, project_id=None):
-        chunks = self.query("SELECT id,project_id FROM chunks WHERE is_current=true" + (" AND project_id=:project" if project_id else ""), {"project": project_id})
-        existing = {r["chunk_id"] for r in self.query("SELECT chunk_id FROM embeddings WHERE namespace=:namespace", {"namespace": namespace})}
+        conds = [eq("is_current", True)]
+        if project_id:
+            conds.append(eq("project_id", project_id))
+        chunks = self.find("chunks", conds, columns=("id", "project_id"))
+        existing = {r["chunk_id"] for r in self.find("embeddings", {"namespace": namespace}, columns=("chunk_id",))}
         return [{"id": row["id"], "project_id": row.get("project_id")} for row in chunks if row["id"] not in existing]
 
     def delete_embeddings(self, project_id):
@@ -2055,7 +2160,7 @@ class Store:
         for collection in collections:
             field = "id" if collection == "projects" else "project_id"
             result[collection] = [] if collection in VECTOR_COLLECTIONS or (collection == "ingestion_inbox" and project_id) else [
-                clean_row(row) for row in tx.query(f"SELECT FROM {quote_name(collection)}" + (f" WHERE {field}=:project" if project_id else ""), {"project": project_id})]
+                clean_row(row) for row in db_find(tx, collection, {field: project_id} if project_id else ())]
         result["vector_data"] = {}  # no vectors in an export, as in a backup (#187)
         return result
 
@@ -2173,15 +2278,7 @@ class Store:
 
     def _restore_from(self, source, claims=None):
         # DDL is deliberately outside the data transaction; no live data has been removed.
-        for registry in source.vector_indexes:
-            name, dimension = registry.get("type_name"), registry.get("dimension")
-            if not isinstance(name, str) or not name.startswith("vector_") or type(dimension) is not int or dimension <= 0:
-                raise ValueError("Invalid vector namespace in backup")
-            self.command(f"CREATE DOCUMENT TYPE {quote_name(name)} IF NOT EXISTS")
-            self.command(f"CREATE PROPERTY {quote_name(name)}.id IF NOT EXISTS STRING")
-            self.command(f"CREATE INDEX IF NOT EXISTS ON {quote_name(name)}(id) UNIQUE")
-            self.command(f"CREATE PROPERTY {quote_name(name)}.vector IF NOT EXISTS ARRAY_OF_FLOATS")
-            self.command(f"CREATE INDEX IF NOT EXISTS ON {quote_name(name)}(vector) LSM_VECTOR METADATA {{dimensions:{dimension},similarity:'COSINE',idPropertyName:'id'}}")
+        self.backend.ensure_restored_vector_types(source.vector_indexes)
         # Rows are deleted and written in transactions of bounded size, the engine's heap holding a transaction (#362).
         from .restore_staged import replace
         self.embed_jobs_requeued = replace(self, source, claims)
@@ -2191,19 +2288,23 @@ class Store:
         """A backup holds no vectors (#187): set each completed embed job of a current chunk back to pending, in the
         restore's transactions, and return how many. None when the backup brought vectors, which stay as they are."""
         tx = batches.tx
-        if tx.query("SELECT id FROM embeddings LIMIT 1"):
+        if db_find_one(tx, "embeddings", columns=("id",)):
             return None
         from .retrieval import json_value  # retrieval imports this module
-        current = {row["id"] for row in tx.query("SELECT id FROM chunks WHERE is_current=true")}
+        current = {row["id"] for row in db_find(tx, "chunks", {"is_current": True}, columns=("id",))}
         first = {}  # one job per chunk: a retry can leave two completed jobs of the same chunk
-        for row in tx.query("SELECT id, payload FROM jobs WHERE kind='embed' AND state='completed'"):
+        for row in db_find(tx, "jobs", {"kind": "embed", "state": "completed"}, columns=("id", "payload")):
             chunk = (json_value(row.get("payload"), {}) or {}).get("chunk_id")
             if chunk in current:
                 first.setdefault(chunk, row["id"])
         ids = list(first.values())
         for start in range(0, len(ids), 500):
-            update_document(batches.tx, "jobs", {"state": "pending", "error": None, "worker": None, "lease_until": None,
-                                                 "updated_at": utc_now()}, "id IN :ids", {"ids": ids[start:start + 500]})
+            db_update_where(
+                batches.tx,
+                "jobs",
+                set_fields={"state": "pending", "error": None, "worker": None, "lease_until": None, "updated_at": utc_now()},
+                where=is_in("id", ids[start:start + 500]),
+            )
             batches.wrote(len(ids[start:start + 500]))
         return len(ids)
 
@@ -2216,10 +2317,12 @@ class Store:
             self._require_project(tx, project_id)
             from .journal import Journal
             Journal.reset(tx, reason="forget")
-            self._delete_old_vectors(tx, [r["id"] for r in tx.query("SELECT id FROM sources WHERE project_id=:project", {"project": project_id})])
-            tx.command("DELETE FROM edges WHERE project_id=:project", {"project": project_id})
-            tx.command("DELETE FROM nodes WHERE project_id=:project", {"project": project_id})
+            self._delete_old_vectors(
+                tx, [r["id"] for r in db_find(tx, "sources", {"project_id": project_id}, columns=("id",))]
+            )
+            db_delete_where(tx, "edges", {"project_id": project_id})
+            db_delete_where(tx, "nodes", {"project_id": project_id})
             for collection in reversed(DOCUMENT_TYPES):
                 if collection != "projects":
-                    tx.command(f"DELETE FROM {quote_name(collection)} WHERE project_id=:project", {"project": project_id})
-            tx.command("DELETE FROM projects WHERE id=:project", {"project": project_id})
+                    db_delete_where(tx, collection, {"project_id": project_id})
+            db_delete_where(tx, "projects", {"id": project_id})

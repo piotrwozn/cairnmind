@@ -10,6 +10,8 @@ share, because nobody here reviewed it. Reviewed means confirmed or disputed; th
 """
 from __future__ import annotations
 
+from .storage_query import asc, db_find, eq, gt, is_in, is_not_null
+
 PAGE = 1000
 CHUNK = 200
 # Extracted records read at most; a project with more is reported as truncated, not read without bound.
@@ -33,11 +35,19 @@ def _first_versions(reader, project_id) -> tuple[dict, bool]:
     """Record id -> extractor version, for the records whose first version carries a stamp."""
     found, after = {}, ""
     while True:
-        rows = reader.query(
-            "SELECT record_id, snapshot.metadata.extractor.version AS extractor_version FROM record_revisions "
-            "WHERE project_id=:project AND version=1 AND snapshot.metadata.extractor IS NOT NULL "
-            "AND record_id>:last ORDER BY record_id LIMIT :limit",
-            {"project": project_id, "last": after, "limit": PAGE})
+        rows = db_find(
+            reader,
+            "record_revisions",
+            [
+                eq("project_id", project_id),
+                eq("version", 1),
+                is_not_null("snapshot.metadata.extractor"),
+                gt("record_id", after),
+            ],
+            columns=("record_id", ("snapshot.metadata.extractor.version", "extractor_version")),
+            order_by=(asc("record_id"),),
+            limit=PAGE,
+        )
         for row in rows:
             version = row.get("extractor_version")
             found[row["record_id"]] = version if type(version) is int else UNKNOWN
@@ -45,10 +55,19 @@ def _first_versions(reader, project_id) -> tuple[dict, bool]:
             # Truncated only when one more extracted record exists beyond the cap.
             if len(rows) < PAGE:
                 return found, False
-            more = reader.query(
-                "SELECT record_id FROM record_revisions WHERE project_id=:project AND version=1 "
-                "AND snapshot.metadata.extractor IS NOT NULL AND record_id>:last ORDER BY record_id LIMIT 1",
-                {"project": project_id, "last": rows[-1]["record_id"]})
+            more = db_find(
+                reader,
+                "record_revisions",
+                [
+                    eq("project_id", project_id),
+                    eq("version", 1),
+                    is_not_null("snapshot.metadata.extractor"),
+                    gt("record_id", rows[-1]["record_id"]),
+                ],
+                columns=("record_id",),
+                order_by=(asc("record_id"),),
+                limit=1,
+            )
             return found, bool(more)
         if len(rows) < PAGE:
             return found, False
@@ -61,11 +80,20 @@ def _heads(reader, project_id, ids) -> dict:
     for start in range(0, len(ids), CHUNK):
         chunk, after = ids[start:start + CHUNK], ""
         while True:
-            rows = reader.query(
-                "SELECT id, record_id, version, snapshot.status AS status, "
-                "snapshot.metadata.confirmation.`by` AS confirmation_by FROM record_revisions "
-                "WHERE project_id=:project AND record_id IN :ids AND id>:last ORDER BY id LIMIT :limit",
-                {"project": project_id, "ids": chunk, "last": after, "limit": PAGE})
+            rows = db_find(
+                reader,
+                "record_revisions",
+                [eq("project_id", project_id), is_in("record_id", chunk), gt("id", after)],
+                columns=(
+                    "id",
+                    "record_id",
+                    "version",
+                    ("snapshot.status", "status"),
+                    ("snapshot.metadata.confirmation.by", "confirmation_by"),
+                ),
+                order_by=(asc("id"),),
+                limit=PAGE,
+            )
             for row in rows:
                 best = heads.get(row["record_id"])
                 if best is None or row["version"] > best[0]:

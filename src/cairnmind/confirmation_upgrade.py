@@ -27,7 +27,8 @@ import json
 from .confirmation import MARK, PERSON_ROUTES, confirmation_of, local_verdict, person_mark, said
 from .memory_acts import record_evidence, record_identity
 from .memory_published_format import audit_covers, row_definition_hash
-from .sql import clean_row, insert_document, one_row, update_document, utc_now
+from .sql import clean_row, insert_document, utc_now
+from .storage_query import asc, db_find, db_find_one, db_update_where, eq, is_in
 
 META_NAME = "person_marks_before_rule"
 # The route of a person's act, from the action its audit names.
@@ -48,8 +49,13 @@ def _statement(row):
 
 def _act_revision(tx, record, source_id):
     """The snapshot of the version a person's act wrote: the first confirmed version that cites its note."""
-    for row in tx.query("SELECT version,snapshot FROM record_revisions WHERE record_id=:id AND project_id=:project "
-                        "ORDER BY version", {"id": record["id"], "project": record["project_id"]}):
+    for row in db_find(
+        tx,
+        "record_revisions",
+        {"record_id": record["id"], "project_id": record["project_id"]},
+        columns=("version", "snapshot"),
+        order_by=(asc("version"),),
+    ):
         snapshot = row.get("snapshot")
         if (isinstance(snapshot, dict) and snapshot.get("status") == "confirmed"
                 and source_id in (snapshot.get("source_ids") or [])):
@@ -91,7 +97,7 @@ def _form(tx, record, source):
         return None
     if str(source.get("uri", "")) != f"workspace://finding/{record.get('key')}":
         return None
-    first = one_row(tx, "SELECT snapshot FROM record_revisions WHERE id=:id", {"id": f"{record['id']}:1"}, False)
+    first = db_find_one(tx, "record_revisions", {"id": f"{record['id']}:1"}, columns=("snapshot",))
     saved = (first or {}).get("snapshot")
     if not isinstance(saved, dict) or saved.get("status") != "confirmed":
         return None
@@ -145,14 +151,13 @@ def mark_confirmed_before_rule(store, *, force=False) -> dict | None:
     """
     from .memory_paths import imported_source_ids
     with store.transaction() as tx:
-        done = one_row(tx, "SELECT FROM devbrain_meta WHERE name=:name", {"name": META_NAME}, False)
+        done = db_find_one(tx, "devbrain_meta", {"name": META_NAME})
         if done and not force:
             return None
         now, marked, left = utc_now(), 0, 0
-        for project in tx.query("SELECT id FROM projects"):
+        for project in db_find(tx, "projects", columns=("id",)):
             pid = project["id"]
-            records = [clean_row(row) for row in tx.query(
-                "SELECT FROM records WHERE project_id=:project AND status='confirmed'", {"project": pid})]
+            records = [clean_row(row) for row in db_find(tx, "records", {"project_id": pid, "status": "confirmed"})]
             records = [row for row in records if (confirmation_of(row) or {}).get("by") == "before_rule"]
             if not records:
                 continue
@@ -161,9 +166,12 @@ def mark_confirmed_before_rule(store, *, force=False) -> dict | None:
                              if isinstance(source_id, str)})
             sources = {}
             for start in range(0, len(wanted), 500):
-                for row in tx.query("SELECT id,project_id,uri,metadata,content,created_at FROM sources "
-                                    "WHERE id IN :ids AND project_id=:project",
-                                    {"ids": wanted[start:start + 500], "project": pid}):
+                for row in db_find(
+                    tx,
+                    "sources",
+                    [is_in("id", wanted[start:start + 500]), eq("project_id", pid)],
+                    columns=("id", "project_id", "uri", "metadata", "content", "created_at"),
+                ):
                     sources[row["id"]] = clean_row(row)
             for record in records:
                 try:
@@ -177,19 +185,27 @@ def mark_confirmed_before_rule(store, *, force=False) -> dict | None:
                 mark = {**person_mark(route, source, record["version"], at), "marked_at_upgrade": now}
                 metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
                 metadata = {**metadata, MARK: mark}
-                update_document(tx, "records", {"metadata": metadata}, "id=:id", {"id": record["id"]})
-                revision = one_row(tx, "SELECT snapshot FROM record_revisions WHERE id=:id",
-                                   {"id": f"{record['id']}:{record['version']}"}, False)
+                db_update_where(tx, "records", set_fields={"metadata": metadata}, where={"id": record["id"]})
+                revision = db_find_one(
+                    tx,
+                    "record_revisions",
+                    {"id": f"{record['id']}:{record['version']}"},
+                    columns=("snapshot",),
+                )
                 snapshot = (revision or {}).get("snapshot")
                 if isinstance(snapshot, dict):
                     kept = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
                     snapshot = {**snapshot, "metadata": {**kept, MARK: mark}}
-                    update_document(tx, "record_revisions", {"snapshot": snapshot}, "id=:id",
-                                    {"id": f"{record['id']}:{record['version']}"})
+                    db_update_where(
+                        tx,
+                        "record_revisions",
+                        set_fields={"snapshot": snapshot},
+                        where={"id": f"{record['id']}:{record['version']}"},
+                    )
                 marked += 1
         result = {"marked": marked, "before_rule": left, "at": now}
         if done:
-            update_document(tx, "devbrain_meta", {"value": 1, **result}, "name=:name", {"name": META_NAME})
+            db_update_where(tx, "devbrain_meta", set_fields={"value": 1, **result}, where={"name": META_NAME})
         else:
             insert_document(tx, "devbrain_meta", {"name": META_NAME, "value": 1, **result})
     return result

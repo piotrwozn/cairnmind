@@ -33,6 +33,7 @@ from .file_locks import lock_exclusive
 from .private_files import open_no_follow
 from .process_control import detached_popen_kwargs
 from .setup_profiles import SetupFailed, SetupRefused, render_one
+from .storage_query import db_find, eq, gte
 
 PROGRESS, LOG = "setup-change.json", "setup-change.log"
 STOP_SECONDS = 30
@@ -188,7 +189,7 @@ def _names(settings) -> dict:
     except (ValueError, OSError, RuntimeError):
         return {}
     try:
-        return {row["id"]: row.get("name") or row["id"] for row in store.query("SELECT id, name FROM projects")}
+        return {row["id"]: row.get("name") or row["id"] for row in db_find(store, "projects", columns=("id", "name"))}
     except (ValueError, OSError, RuntimeError, KeyError):
         return {}
     finally:
@@ -208,9 +209,13 @@ def _jobs(settings) -> tuple[str, dict] | None:
     except (ValueError, OSError, RuntimeError) as exc:
         return _unknown(settings, JOBS_UNKNOWN, JOBS_UNKNOWN_LOCAL, str(exc)[:200])
     try:
-        jobs = store.query("SELECT project_id, kind FROM jobs WHERE state='running' AND lease_until>=:now",
-                           {"now": time.time()})
-        names = {row["id"]: row.get("name") or row["id"] for row in store.query("SELECT id, name FROM projects")}
+        jobs = db_find(
+            store,
+            "jobs",
+            [eq("state", "running"), gte("lease_until", time.time())],
+            columns=("project_id", "kind"),
+        )
+        names = {row["id"]: row.get("name") or row["id"] for row in db_find(store, "projects", columns=("id", "name"))}
     except (ValueError, OSError, RuntimeError, KeyError) as exc:
         return _unknown(settings, JOBS_UNKNOWN, JOBS_UNKNOWN_LOCAL, str(exc)[:200])
     finally:

@@ -27,7 +27,8 @@ from cairnmind.brief import _line, _title
 from cairnmind.plans import PlanManager, _digest
 from cairnmind.scope import drift_warning, scope_drift
 from cairnmind.store import valid_argv
-from cairnmind.sql import PROFILE_NAME, one_row
+from cairnmind.sql import PROFILE_NAME
+from cairnmind.storage_query import db_find_one
 from cairnmind.verification import _PROFILE_PATHS, _root, criteria_status, load_profiles
 
 _SUMMARY = {"machine_fresh": "proven by a machine run", "machine_stale": "its check must be run again",
@@ -38,8 +39,8 @@ _BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 
 def _plan(store, project_id, plan_id, root):
     if plan_id is None:
-        state = one_row(store, "SELECT active_plan_id FROM worktree_states WHERE id=:id",
-                     {"id": _digest([project_id, str(root)])}, False)
+        state = db_find_one(store, "worktree_states", {"id": _digest([project_id, str(root)])},
+                            columns=("active_plan_id",))
         plan_id = (state or {}).get("active_plan_id")
         if not plan_id:
             raise ValueError("No plan is active in this worktree; name one with --plan-id")

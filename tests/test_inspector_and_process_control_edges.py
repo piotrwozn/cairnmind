@@ -19,11 +19,11 @@ class _MiniInspectorStore:
     def query(self, sql, params=None):
         if "project_roots" in sql:
             return [{"path": self.root}]
-        if "FROM records WHERE" in sql and "id=:id" in sql:
+        if "FROM records WHERE" in sql and "id=:" in sql:
             return list(self.rows)
-        if "FROM plans WHERE" in sql and "id=:id" in sql:
+        if "FROM plans WHERE" in sql and "id=:" in sql:
             return [{"id": "pl1", "project_id": "p1", "version": 1, "metadata": {}}]
-        if "FROM ingestion_inbox WHERE id=:id" in sql:
+        if "FROM ingestion_inbox WHERE id=:" in sql:
             return []
         if "count(*)" in sql:
             return [{"n": 0}]

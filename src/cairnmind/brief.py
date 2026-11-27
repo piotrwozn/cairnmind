@@ -17,6 +17,7 @@ import subprocess
 import unicodedata
 
 from cairnmind.first_start import BRIEF_REVIEW, BRIEF_START
+from cairnmind.storage_query import db_find
 from cairnmind.store import DERIVED_RECORD_METADATA, degraded_origin
 from cairnmind.terminal_safe import safe_text
 
@@ -238,8 +239,8 @@ def _scoped_records(store, project_id, root):
     """The same worktree rule as `context`: a record bound to another root is not part of this brief."""
     from cairnmind.memory_paths import bound_metadata, memory_bindings
     from cairnmind.retrieval import Retriever
-    roots = [Path(row["path"]).resolve() for row in store.query(
-        "SELECT path FROM project_roots WHERE project_id=:project", {"project": project_id})]
+    roots = [Path(row["path"]).resolve() for row in db_find(
+        store, "project_roots", {"project_id": project_id}, columns=("path",))]
     bindings = memory_bindings(store, project_id)
     return [record for record in store.list_records(project_id) if Retriever._matches_scope(
         bound_metadata(store, project_id, record.get("metadata"), bindings=bindings), root, roots)]

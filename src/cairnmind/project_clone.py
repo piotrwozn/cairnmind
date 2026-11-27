@@ -30,6 +30,7 @@ from .first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN
 from .memory_paths import PUBLISHED_RELATIVE, snapshot_directory
 from .path_spelling import lies_in
 from .process_control import quote_arg
+from .storage_query import db_find
 from .store_writer import StoreNotWriter
 from .terminal_safe import safe_text
 
@@ -322,8 +323,8 @@ def check_store_preflight(store, name: str, destination: Path) -> str:
             raise ValueError(PROJECT_NAME_TAKEN.format(name=safe_text(clean_name), root=safe_text(row["root"])))
         if row_root == resolved:
             raise ValueError(PROJECT_ROOT_TAKEN.format(name=safe_text(row_name or ""), root=safe_text(resolved)))
-    if hasattr(store, "query"):
-        for root_row in store.query("SELECT project_id FROM project_roots WHERE path=:path", {"path": path}):
+    if hasattr(store, "find") or getattr(store, "backend", None) is not None or hasattr(store, "query"):
+        for root_row in db_find(store, "project_roots", {"path": path}, columns=("project_id",)):
             owner = projects_by_id.get(root_row.get("project_id"))
             if owner:
                 raise ValueError(PROJECT_ROOT_TAKEN.format(name=safe_text(owner["name"]), root=safe_text(path)))

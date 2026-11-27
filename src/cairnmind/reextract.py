@@ -10,6 +10,7 @@ from .extraction_input import extraction_request
 from .retrieval import json_value
 from .sessions import _automatic_proposal
 from .sql import clean_row, json_text
+from .storage_query import asc, db_find, eq, gt, is_in, is_not_null
 
 PAGE = 1000
 CHUNK = 200
@@ -24,9 +25,15 @@ def stamp_version(record: dict) -> int:
 
 def replaceable(store, project_id: str, source: dict, below: int) -> list[dict]:
     """The untouched proposals of one source whose extractor version is below ``below``, oldest ids first."""
-    rows = [clean_row(row) for row in store.query(
-        "SELECT FROM records WHERE project_id=:project AND status='proposed' AND metadata.extraction_source_id=:source "
-        "ORDER BY id", {"project": project_id, "source": source["id"]})]
+    rows = [
+        clean_row(row)
+        for row in db_find(
+            store,
+            "records",
+            {"project_id": project_id, "status": "proposed", "metadata.extraction_source_id": source["id"]},
+            order_by=(asc("id"),),
+        )
+    ]
     return [row for row in rows if _automatic_proposal(row, {source["id"]: source}) and stamp_version(row) < below]
 
 
@@ -53,17 +60,32 @@ def plan(store, project_id: str, below: int, version: int) -> dict:
     skipped: set[str] = set()
     after = ""
     while True:
-        rows = [clean_row(row) for row in store.query(
-            "SELECT FROM records WHERE project_id=:project AND status='proposed' "
-            "AND metadata.extraction_source_id IS NOT NULL AND id>:last ORDER BY id LIMIT :limit",
-            {"project": project_id, "last": after, "limit": PAGE})]
+        rows = [
+            clean_row(row)
+            for row in db_find(
+                store,
+                "records",
+                [
+                    eq("project_id", project_id),
+                    eq("status", "proposed"),
+                    is_not_null("metadata.extraction_source_id"),
+                    gt("id", after),
+                ],
+                order_by=(asc("id"),),
+                limit=PAGE,
+            )
+        ]
         marks = sorted({r["metadata"]["extraction_source_id"] for r in rows
                         if isinstance(r["metadata"].get("extraction_source_id"), str)})
         sources = {}
         for start in range(0, len(marks), CHUNK):
-            sources.update({s["id"]: s for s in map(clean_row, store.query(
-                "SELECT FROM sources WHERE project_id=:project AND id IN :ids",
-                {"project": project_id, "ids": marks[start:start + CHUNK]}))})
+            sources.update({
+                s["id"]: s
+                for s in map(
+                    clean_row,
+                    db_find(store, "sources", [eq("project_id", project_id), is_in("id", marks[start:start + CHUNK])]),
+                )
+            })
         for row in rows:
             if _automatic_proposal(row, sources) and stamp_version(row) < below:
                 found.setdefault(row["metadata"]["extraction_source_id"], []).append(stamp_version(row))
@@ -71,8 +93,16 @@ def plan(store, project_id: str, below: int, version: int) -> dict:
         if len(rows) < PAGE:
             break
         after = rows[-1]["id"]
-    queued = {source for source in found if store.query(
-        "SELECT id FROM jobs WHERE job_key=:key", {"key": json_text(["extract", project_id, _key(source, version)])})}
+    queued = {
+        source
+        for source in found
+        if db_find(
+            store,
+            "jobs",
+            {"job_key": json_text(["extract", project_id, _key(source, version)])},
+            columns=("id",),
+        )
+    }
     per_version: dict[int, dict] = {}
     for source, versions in found.items():
         for number in versions:

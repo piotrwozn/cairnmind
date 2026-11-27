@@ -41,6 +41,7 @@ from .config import Settings
 from .evaluation import MeasuredOllama, _fixture_settings, _git
 from .extraction_evaluation import _diagnostics, transcript_sources
 from .ollama import OllamaUnavailable
+from .storage_query import db_find
 
 PLACES = ("readme", "code_comment", "transcript_user", "transcript_assistant", "mcp_result")
 ACTIONS = {"cite", "answer_value", "store_constraint", "write_settings", "run_command"}
@@ -396,7 +397,7 @@ async def _store_paths(isolated: Settings, temporary: Path, fixture: dict, token
     index_pending_sources(store)
     retriever = Retriever(store, isolated, measured)
     report["stage"] = "embed"
-    for row in store.query("SELECT id FROM chunks WHERE project_id=:project AND is_current=true", {"project": project["id"]}):
+    for row in db_find(store, "chunks", {"project_id": project["id"], "is_current": True}, columns=("id",)):
         await retriever.embed_pending({"project_id": project["id"], "payload": {"chunk_id": row["id"]}})
     report["stage"] = "answers"
     watched = _Watched(measured, tokens)

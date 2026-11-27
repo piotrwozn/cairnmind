@@ -98,23 +98,25 @@ def test_memory_published_import_stubs_store_and_plans_edges(monkeypatch):
         "id": sid, "project_id": pid, "kind": "published", "content": "hello",
         "metadata": {"published": src["ref"]},
     })
-    monkeypatch.setattr(mpi, "one_row", lambda tx, sql, params, required=True: {
+    monkeypatch.setattr(mpi, "db_find_one", lambda tx, col, where=(), **kw: {
         "id": "s1", "kind": "published", "content": "different", "metadata": {"published": {"kind": "file", "path": "a.py"}},
     })
     with pytest.raises(MemoryConflict, match="published differently"):
         imp._stubs(SimpleNamespace(), tree, "p1", {"stubs": 0})
 
     updated_docs = []
-    monkeypatch.setattr(mpi, "one_row", lambda tx, sql, params, required=True: {
+    monkeypatch.setattr(mpi, "db_find_one", lambda tx, col, where=(), **kw: {
         "id": "s1", "kind": "published", "content": "hello",
         "metadata": {"published": {"kind": "file", "path": "a.py"}, "published_quotes": []},
     })
-    monkeypatch.setattr(mpi, "update_document", lambda tx, tbl, data, where, params: updated_docs.append((tbl, data)))
+    monkeypatch.setattr(
+        mpi, "db_update_where", lambda tx, tbl, *, set_fields=None, remove_fields=(), where=(): updated_docs.append((tbl, set_fields))
+    )
     imp._stubs(SimpleNamespace(), tree, "p1", {"stubs": 0})
     assert len(updated_docs) == 1 and updated_docs[0][0] == "sources"
 
     # _store active_key collision raises MemoryConflict
-    monkeypatch.setattr(mpi, "one_row", lambda tx, sql, params, required=True: {"id": "other-rec"})
+    monkeypatch.setattr(mpi, "db_find_one", lambda tx, col, where=(), **kw: {"id": "other-rec"})
     with pytest.raises(MemoryConflict, match="belong to the local record"):
         imp._store(
             SimpleNamespace(),
@@ -138,6 +140,6 @@ def test_memory_published_import_stubs_store_and_plans_edges(monkeypatch):
             }
         }],
     )
-    monkeypatch.setattr(mpi, "one_row", lambda tx, sql, params, required=True: local_plan)
+    monkeypatch.setattr(mpi, "db_find_one", lambda tx, col, where=(), **kw: local_plan)
     with pytest.raises(MemoryConflict, match="diverged from the published memory"):
         imp._plans(fake_tx, "p1", plan_tree, {}, {}, {"plans": []}, "2026-01-03")

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 
+from .storage_query import all_of, any_of, asc, db_find, eq, gt, gte, like
+
 _MARKER = "token_usage_record"
 PAGE = 2000
 
@@ -32,29 +34,47 @@ def stored_records(store, project_id: str, start):
     An event of the period was imported after it happened, so ``created_at`` of its source is not before
     ``start``; older sources are never read. ``_`` in LIKE is a wildcard, so the lines are checked again.
     """
-    rows = _pages(store, "SELECT id,created_at,content FROM sources WHERE project_id=:project AND is_current=true "
-                         "AND uri LIKE :prefix AND created_at>=:start AND content LIKE :marker",
-                  {"project": project_id, "prefix": "transcript://codex/%", "marker": f"%{_MARKER}%",
-                   "start": start.isoformat(timespec="microseconds")})
+    rows = _pages(
+        store,
+        ("sources", ("id", "created_at", "content")),
+        [
+            eq("project_id", project_id),
+            eq("is_current", True),
+            like("uri", "transcript://codex/%"),
+            gte("created_at", start.isoformat(timespec="microseconds")),
+            like("content", f"%{_MARKER}%"),
+        ],
+    )
     yield from (row["content"] for row in rows if isinstance(row.get("content"), str))
 
 
-def _pages(store, sql, params):
-    """The rows of ``sql`` (a SELECT with id and created_at, ending in its conditions), in pages by created_at, id.
+def _pages(store, target, filters):
+    """The rows of ``target`` ``(collection, columns)`` matching ``filters`` (with id and created_at), in pages by created_at, id.
 
     A page starts after the last row of the one before, not at an offset. The store is read without a lock, so
     rows may be added or removed between pages: a row that stays unchanged the whole time is still read exactly
     once, where with SKIP a removed earlier row would shift an unread one out of every page. A row whose
     created_at is rewritten meanwhile can be read twice; a caller that counts must tell rows apart by id.
     """
-    last = {}
+    collection, columns = target
+    last = None
     while True:
-        after = " AND (created_at>:last_at OR (created_at=:last_at AND id>:last_id))" if last else ""
-        rows = store.query(f"{sql}{after} ORDER BY created_at,id LIMIT {PAGE}", {**params, **last})
+        where = list(filters)
+        if last is not None:
+            last_at, last_id = last
+            where.append(any_of(gt("created_at", last_at), all_of(eq("created_at", last_at), gt("id", last_id))))
+        rows = db_find(
+            store,
+            collection,
+            where,
+            columns=columns,
+            order_by=(asc("created_at"), asc("id")),
+            limit=PAGE,
+        )
         yield from rows
         if len(rows) < PAGE:
             return
-        last = {"last_at": rows[-1]["created_at"], "last_id": rows[-1]["id"]}
+        last = (rows[-1]["created_at"], rows[-1]["id"])
 
 
 def waiting_in_inbox(store, project_id: str, start) -> int:
@@ -67,9 +87,15 @@ def waiting_in_inbox(store, project_id: str, start) -> int:
     project, or is unknown. Rows of directories of other projects, or of none we know, are not ours.
     """
     waiting, ours, seen = 0, {}, set()
-    for row in _pages(store, "SELECT id,created_at,cwd,raw FROM ingestion_inbox WHERE client=:client "
-                             "AND created_at>=:start AND raw LIKE :marker",
-                      {"client": "codex", "marker": f"%{_MARKER}%", "start": start.isoformat(timespec="microseconds")}):
+    for row in _pages(
+        store,
+        ("ingestion_inbox", ("id", "created_at", "cwd", "raw")),
+        [
+            eq("client", "codex"),
+            gte("created_at", start.isoformat(timespec="microseconds")),
+            like("raw", f"%{_MARKER}%"),
+        ],
+    ):
         # Import parks a line again under the same id with a new time; such a row can come back on a later page.
         if row.get("id") in seen:
             continue

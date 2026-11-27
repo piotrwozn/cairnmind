@@ -22,7 +22,21 @@ from .memory_egress import HOSTED_PACKET_NOTE, Gate, ordered
 from .packet_origin import omitted_by_origin, preview_key, record_origins
 from .recorder_agent import RECORDER_PATH, agent_file
 from .store import EXTRACTION_MARK, ORIGIN_METADATA
-from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
+from .sql import clean_row, json_text, utc_now
+from .storage_query import (
+    asc,
+    db_find,
+    db_find_one,
+    db_group_counts,
+    db_insert_document,
+    db_update_where,
+    desc,
+    eq,
+    is_in,
+    is_not_null,
+    lt,
+    ne,
+)
 
 MAX_PACKET_BYTES = 24576
 MAX_RECORDS = 20
@@ -73,7 +87,7 @@ def _current_schema(packet: dict) -> bool:
 
 def _registered_roots(reader) -> list[str]:
     """Every registered project root as stored: the rows that decide what a code manifest leaves out (#255)."""
-    return sorted({row["path"] for row in reader.query("SELECT path FROM project_roots")
+    return sorted({row["path"] for row in db_find(reader, "project_roots", columns=("path",))
                    if isinstance(row.get("path"), str)})
 
 
@@ -278,9 +292,10 @@ class SessionManager:
     def _session(self, session_id: str) -> dict:
         if not isinstance(session_id, str) or not session_id:
             raise ValueError("A logical session ID is required")
-        session = one_row(self.store, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
-        removed = one_row(self.store, "SELECT FROM projects WHERE id=:id AND removed_at IS NOT NULL",
-                          {"id": session.get("project_id")}, False)
+        session = db_find_one(self.store, "sessions", {"id": session_id}, required=True)
+        removed = db_find_one(
+            self.store, "projects", [eq("id", session.get("project_id")), is_not_null("removed_at")],
+        )
         if removed:  # every call of a session of a removed project names the removal, the way back included (#327)
             from .project_removal import removed_text
             raise ValueError(f"Unknown project: {removed['id']}. " + removed_text(removed, self.store.data_dir))
@@ -289,8 +304,7 @@ class SessionManager:
     def _packet(self, session: dict) -> dict | None:
         if not session.get("packet_id"):
             return None
-        row = one_row(self.store, "SELECT FROM resume_packets WHERE id=:id",
-                   {"id": session["packet_id"]}, False)
+        row = db_find_one(self.store, "resume_packets", {"id": session["packet_id"]})
         return row.get("payload") if row else None
 
     def _own_continuity(self, session: dict) -> list[str]:
@@ -302,8 +316,7 @@ class SessionManager:
     def _root(self, project_id: str, worktree: str | None) -> tuple[dict, str]:
         project = self.store.resolve_project(project_id)
         root = str(Path(worktree or project["root"]).expanduser().resolve())
-        roots = self.store.query("SELECT path FROM project_roots WHERE project_id=:project",
-                                 {"project": project["id"]})
+        roots = db_find(self.store, "project_roots", {"project_id": project["id"]}, columns=("path",))
         if root not in {str(Path(row["path"]).resolve()) for row in roots}:
             raise ValueError("Resume worktree must be an exact registered project root")
         if not Path(root).is_dir():
@@ -313,7 +326,7 @@ class SessionManager:
     def _require_scope(self, tx, project_id: str, root: str) -> None:
         """Writer-transaction recheck; prior path resolution may race forgetting."""
         self.store._require_project(tx, project_id)
-        roots = tx.query("SELECT path FROM project_roots WHERE project_id=:project", {"project": project_id})
+        roots = db_find(tx, "project_roots", {"project_id": project_id}, columns=("path",))
         if root not in {str(Path(row["path"]).expanduser().resolve()) for row in roots}:
             raise ValueError("Resume worktree is no longer a registered project root")
 
@@ -389,9 +402,7 @@ class SessionManager:
         self._root(project_id, root)
         following = PlanManager(self.store).next_task(project_id, worktree=root)
         plan, task = following.get("plan"), following.get("task")
-        state_rows = self.store.query(
-            "SELECT FROM worktree_states WHERE project_id=:project AND worktree=:root",
-            {"project": project_id, "root": root})
+        state_rows = db_find(self.store, "worktree_states", {"project_id": project_id, "worktree": root})
         worktree_state = clean_row(state_rows[0]) if state_rows else None
         records = self.store.list_records(project_id)
         bindings = memory_bindings(self.store, project_id)
@@ -415,9 +426,10 @@ class SessionManager:
         current_items = [*([plan] if plan else []), *([task] if task else [])]
         all_source_ids = sorted({source_id for row in [*relevant, *current_items]
                                  for source_id in row.get("source_ids", [])})
-        source_rows = self.store.query(
-            "SELECT id,project_id,sha256 FROM sources WHERE id IN :ids",
-            {"ids": all_source_ids}) if all_source_ids else []
+        source_rows = db_find(
+            self.store, "sources", [is_in("id", all_source_ids)],
+            columns=("id", "project_id", "sha256"),
+        ) if all_source_ids else []
         sources_by_id = {row["id"]: row for row in source_rows}
         missing_sources = [source_id for source_id in all_source_ids
                            if sources_by_id.get(source_id, {}).get("project_id") != project_id]
@@ -433,7 +445,7 @@ class SessionManager:
         if code.get("status") != "fresh":
             empty_scope, inventory_hash, managed_paths = scope["empty_scope"]
             code["unverified_scope_fingerprint"] = inventory_hash
-            sources = self.store.query("SELECT uri,kind FROM sources WHERE project_id=:project", {"project": project_id})
+            sources = db_find(self.store, "sources", {"project_id": project_id}, columns=("uri", "kind"))
             initial_baseline = (empty_scope and not plan and not records and
                                 all(row.get("kind") in {"code", "document"} and row.get("uri") in managed_paths
                                     for row in sources))
@@ -620,8 +632,7 @@ class SessionManager:
     def _targets(self, session: dict, deadline: float) -> list[dict]:
         project, root = session["project_id"], session["worktree"]
         result = []
-        rows = self.store.query("SELECT FROM sessions WHERE project_id=:project AND worktree=:root",
-                                {"project": project, "root": root})
+        rows = db_find(self.store, "sessions", {"project_id": project, "worktree": root})
         for row in rows:
             result.extend(row.get("transcript_targets", []))
             if row.get("client") in AGENT_CLIENTS:
@@ -629,13 +640,17 @@ class SessionManager:
                 captured = capture_agent_target(self.settings, row)
                 if captured is not None:
                     result.append(captured)
-        cursors = self.store.query("SELECT FROM import_cursors WHERE project_id=:project", {"project": project})
+        cursors = db_find(self.store, "import_cursors", {"project_id": project})
         for cursor in cursors:
             if time.monotonic() > deadline:
                 raise TimeoutError("Resume preparation deadline exceeded")
-            metadata_rows = self.store.query(
-                "SELECT metadata FROM sources WHERE project_id=:project AND metadata.import_path=:path LIMIT 1",
-                {"project": project, "path": cursor["path"]})
+            metadata_rows = db_find(
+                self.store,
+                "sources",
+                [eq("project_id", project), eq("metadata.import_path", cursor["path"])],
+                columns=("metadata",),
+                limit=1,
+            )
             cwd = (metadata_rows[0].get("metadata") or {}).get("cwd") if metadata_rows else None
             if cwd and not _scope_contains(root, cwd):
                 continue
@@ -720,19 +735,24 @@ class SessionManager:
         durable SessionStart identifies the already prepared action. A later
         lifecycle boundary prevents this inference; its requirements are kept.
         """
-        events = self.store.query(
-            "SELECT FROM session_events WHERE session_id=:session "
-            "AND hook_event_name IN ['SessionStart','PreCompact'] ORDER BY created_at",
-            {"session": session["id"]})
+        events = db_find(
+            self.store,
+            "session_events",
+            [eq("session_id", session["id"]), is_in("hook_event_name", ("SessionStart", "PreCompact"))],
+            order_by=(asc("created_at"),),
+        )
         if len(events) == 1:
             event = events[0]
             if (event.get("hook_event_name") == "SessionStart"
                     and event.get("resume_reason") in {"startup", "resume"}
                     and event.get("native_session_id")
                     and event.get("native_session_id") == session.get("native_session_id")):
-                candidates = self.store.query(
-                    "SELECT FROM resume_packets WHERE session_id=:session AND epoch=:epoch ORDER BY created_at DESC",
-                    {"session": session["id"], "epoch": event.get("applied_epoch")})
+                candidates = db_find(
+                    self.store,
+                    "resume_packets",
+                    {"session_id": session["id"], "epoch": event.get("applied_epoch")},
+                    order_by=(desc("created_at"),),
+                )
                 for row in candidates:
                     prepared = row.get("payload") or {}
                     if (row.get("created_at", "") <= event.get("created_at", "")
@@ -763,17 +783,18 @@ class SessionManager:
         path = str(Path(target["path"]).expanduser().resolve())
         if path != target["path"]:
             return None
-        events = self.store.query(
-            "SELECT FROM session_events WHERE project_id=:project AND client=:client "
-            "AND transcript_path=:path ORDER BY created_at,id",
-            {"project": session["project_id"], "client": target["client"], "path": path})
+        events = db_find(
+            self.store,
+            "session_events",
+            {"project_id": session["project_id"], "client": target["client"], "transcript_path": path},
+            order_by=(asc("created_at"), asc("id")),
+        )
         bound = []
         for event in events:
             if time.monotonic() >= deadline:
                 raise TimeoutError("Resume preparation deadline exceeded")
             native = event.get("native_session_id")
-            owner = one_row(self.store, "SELECT FROM sessions WHERE id=:id",
-                         {"id": event.get("session_id")}, False)
+            owner = db_find_one(self.store, "sessions", {"id": event.get("session_id")})
             if (not isinstance(native, str) or not native or not owner
                     or (owner.get("project_id"), owner.get("client"), owner.get("worktree"),
                         owner.get("native_session_id")) !=
@@ -862,8 +883,7 @@ class SessionManager:
             if not target.get("proof"):
                 result["unknowns"].append(str(exc))
                 return result
-        cursor = one_row(self.store, "SELECT FROM import_cursors WHERE path=:path AND project_id=:project",
-                      {"path": str(path), "project": session["project_id"]}, False)
+        cursor = db_find_one(self.store, "import_cursors", {"path": str(path), "project_id": session["project_id"]})
         if not cursor or int(cursor.get("offset", 0)) < size:
             result["archived_offset"] = int(cursor.get("offset", 0)) if cursor else 0
             result["unknowns"].append("Import cursor has not archived the captured EOF")
@@ -878,10 +898,16 @@ class SessionManager:
         except (OSError, ValueError) as exc:
             result["unknowns"].append(f"Transcript compatibility repair failed: {exc}")
             return result
-        sources = self.store.query(
-            "SELECT id,uri,sha256,kind,metadata FROM sources WHERE project_id=:project "
-            "AND metadata.import_path=:path AND metadata.byte_offset<:horizon",
-            {"project": session["project_id"], "path": str(path), "horizon": size})
+        sources = db_find(
+            self.store,
+            "sources",
+            [
+                eq("project_id", session["project_id"]),
+                eq("metadata.import_path", str(path)),
+                lt("metadata.byte_offset", size),
+            ],
+            columns=("id", "uri", "sha256", "kind", "metadata"),
+        )
         by_offset = {}
         for row in sources:
             metadata = row.get("metadata") or {}
@@ -950,9 +976,9 @@ class SessionManager:
         return result
 
     def _pending_status(self, project_id: str, kind: str) -> dict:
-        rows = self.store.query(
-            "SELECT state,count(*) AS total FROM jobs WHERE project_id=:project AND kind=:kind GROUP BY state",
-            {"project": project_id, "kind": kind})
+        rows = db_group_counts(
+            self.store, "jobs", ("state",), {"project_id": project_id, "kind": kind}, count_alias="total"
+        )
         counts = {row["state"]: int(row["total"]) for row in rows}
         return {"status": "pending" if any(counts.get(key, 0) for key in ("pending", "running"))
                 else "failed" if counts.get("failed") else "complete", "counts": counts}
@@ -988,10 +1014,17 @@ class SessionManager:
             state = {**state, "records": [row for row in state["records"] if not gate.record_held(row)]}
         origins = record_origins(self.store, state["records"])
         previews = sorted(state["records"], key=lambda row: preview_key(row, origins[row["id"]]))[:MAX_RECORDS]
-        archived_agent_history = self.store.query(
-            "SELECT id FROM sources WHERE project_id=:project AND kind='agent_transcript' "
-            "AND metadata.agent_session_id!=:session LIMIT 1",
-            {"project": session["project_id"], "session": session["id"]})
+        archived_agent_history = db_find(
+            self.store,
+            "sources",
+            [
+                eq("project_id", session["project_id"]),
+                eq("kind", "agent_transcript"),
+                ne("metadata.agent_session_id", session["id"]),
+            ],
+            columns=("id",),
+            limit=1,
+        )
         packet_archives = [{key: value for key, value in row.items() if key != "source_ids"}
                            if row.get("kind") == "agent_journal" else row for row in archives]
         packet = {"id": str(uuid4()), "schema_version": PACKET_SCHEMA_VERSION, "project_id": session["project_id"],
@@ -1115,7 +1148,7 @@ class SessionManager:
         project, root = self._root(project_id, worktree)
         with self.store.transaction() as tx:
             self._require_scope(tx, project["id"], root)
-            session = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id}, False) if session_id else None
+            session = db_find_one(tx, "sessions", {"id": session_id}) if session_id else None
             if session:
                 if (session["project_id"], session["client"], session["worktree"]) != (project["id"], client, root):
                     raise ValueError("A logical session cannot change project, client or worktree")
@@ -1137,11 +1170,11 @@ class SessionManager:
                            "native_session_id": None, "packet_id": None, "ack_id": None,
                            "pending_start": reason != "refresh", "resume_targets": None,
                            "transcript_targets": [], "event_ids": [], "created_at": utc_now()}
-                insert_document(tx, "sessions", session)
+                db_insert_document(tx, "sessions", session)
             if held_classes is not None:  # a refresh without it keeps what the session was prepared with
                 session["held_classes"] = list(held_classes)
             session["updated_at"] = utc_now()
-            update_document(tx, "sessions", session, "id=:id", {"id": session["id"]})
+            db_update_where(tx, "sessions", set_fields=session, where={"id": session["id"]})
         archives, unknowns, targets = [], [], []
         capture_complete = session.get("resume_targets") is not None
         try:
@@ -1152,13 +1185,13 @@ class SessionManager:
                 # Persist before waiting: a retry must never chase a growing
                 # native transcript. Hooks retain later horizons separately.
                 with self.store.transaction() as tx:
-                    current = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session["id"]})
+                    current = db_find_one(tx, "sessions", {"id": session["id"]}, required=True)
                     if current["epoch"] != session["epoch"]:
                         return {"session_id": current["id"], "epoch": current["epoch"], "status": "partial",
                                 "packet": None, "unknowns": ["Session resumed during horizon capture; retry"]}
                     if current.get("resume_targets") is None:
                         current["resume_targets"] = captured
-                        update_document(tx, "sessions", current, "id=:id", {"id": current["id"]})
+                        db_update_where(tx, "sessions", set_fields=current, where={"id": current["id"]})
                     targets = current["resume_targets"]
                     capture_complete = True
             while True:
@@ -1206,20 +1239,21 @@ class SessionManager:
             proved.append(target)
         with self.store.transaction() as tx:
             self._require_scope(tx, project["id"], root)
-            current = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session["id"]})
+            current = db_find_one(tx, "sessions", {"id": session["id"]}, required=True)
             if current["epoch"] != session["epoch"]:
                 return {"session_id": current["id"], "epoch": current["epoch"], "status": "partial", "packet": None,
                         "unknowns": ["Session resumed again during packet preparation; retry"]}
-            insert_document(tx, "resume_packets", {"id": packet["id"], "project_id": project["id"],
-                                           "session_id": session["id"], "epoch": session["epoch"],
-                                           "hash": packet["hash"], "payload": packet, "created_at": packet["created_at"]})
+            db_insert_document(tx, "resume_packets", {"id": packet["id"], "project_id": project["id"],
+                                                      "session_id": session["id"], "epoch": session["epoch"],
+                                                      "hash": packet["hash"], "payload": packet,
+                                                      "created_at": packet["created_at"]})
             # A concurrent Stop may capture another horizon without changing epoch.
             # Keep that durable requirement for the next resume preparation.
             extra_targets = [target for target in current.get("transcript_targets", []) if target not in targets]
             current.update(packet_id=packet["id"], ack_id=None, status=packet["status"],
                            resume_targets=proved if capture_complete else None,
                            transcript_targets=self._merge_targets([*proved, *extra_targets]), updated_at=utc_now())
-            update_document(tx, "sessions", current, "id=:id", {"id": current["id"]})
+            db_update_where(tx, "sessions", set_fields=current, where={"id": current["id"]})
         return self._result(current, packet)
 
     def archive_agent_journal(self, session_id: str) -> dict:
@@ -1235,8 +1269,10 @@ class SessionManager:
         if target is None:
             return {"session_id": session_id, "status": "complete", "sequence": 0,
                     "source_ids": [], "unknowns": []}
-        rows = self.store.query("SELECT transcript_targets FROM sessions WHERE project_id=:project AND worktree=:root",
-                                {"project": session["project_id"], "root": session["worktree"]})
+        rows = db_find(
+            self.store, "sessions", {"project_id": session["project_id"], "worktree": session["worktree"]},
+            columns=("transcript_targets",),
+        )
         known = [value for row in rows for value in row.get("transcript_targets", [])
                  if value.get("kind") == "agent_journal" and value.get("agent_session_id") == session_id]
         merged = self._merge_targets([*known, target])
@@ -1251,10 +1287,10 @@ class SessionManager:
                         "public_sources_hash", "sequence", "chain_hash")}}
             with self.store.transaction() as tx:
                 self._require_scope(tx, session["project_id"], session["worktree"])
-                current = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
+                current = db_find_one(tx, "sessions", {"id": session_id}, required=True)
                 targets = self._merge_targets([*current.get("transcript_targets", []), proved])
-                update_document(tx, "sessions", {"transcript_targets": targets, "updated_at": utc_now()},
-                     "id=:id", {"id": session_id})
+                db_update_where(tx, "sessions", set_fields={"transcript_targets": targets, "updated_at": utc_now()},
+                                where={"id": session_id})
         return {"session_id": session_id, **archive}
 
     def exact_context(self, session_id: str, packet_id: str) -> dict:
@@ -1293,13 +1329,13 @@ class SessionManager:
             if kept is not None:
                 return (self._unchanged(session_id, kept, packet) if short else None) or self._result(session, packet)
             with self.store.transaction() as tx:
-                current_session = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
+                current_session = db_find_one(tx, "sessions", {"id": session_id}, required=True)
                 if current_session["epoch"] == session["epoch"]:
                     if "resume_targets" not in current_session:
                         current_session["resume_targets"] = self._legacy_action_targets(current_session, packet)
                     current_session.update(epoch=session["epoch"] + 1, packet_id=None, ack_id=None,
                                            status="partial", updated_at=utc_now())
-                    update_document(tx, "sessions", current_session, "id=:id", {"id": session_id})
+                    db_update_where(tx, "sessions", set_fields=current_session, where={"id": session_id})
         return self.prepare(session["project_id"], session["client"], session["worktree"], session_id,
                             reason="refresh", timeout=0)
 
@@ -1350,7 +1386,7 @@ class SessionManager:
         # hashing a slow worktree inside it let ArcadeDB expire it (#255).
         code = self._code(session)
         with self.store.transaction() as tx:
-            session = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
+            session = db_find_one(tx, "sessions", {"id": session_id}, required=True)
             packet = self._packet(session)
             self._refuse_ack(session, packet, packet_id, packet_hash, readback)
             continuity = self._own_continuity(session)
@@ -1359,16 +1395,16 @@ class SessionManager:
             state = self._state_locked(session, code)
             if state["state_hash"] != packet["state_hash"]:
                 raise ValueError("resume_required: relevant project state or code changed before ACK")
-            previous = one_row(tx, "SELECT FROM resume_acks WHERE id=:id", {"id": session.get("ack_id")}, False)
+            previous = db_find_one(tx, "resume_acks", {"id": session.get("ack_id")})
             if previous and previous.get("packet_id") == packet_id:
                 return self._with_newer(previous, state, packet)
             acknowledgment = {"id": str(uuid4()), "project_id": session["project_id"], "session_id": session_id,
                               "epoch": session["epoch"], "packet_id": packet_id, "packet_hash": packet_hash,
                               "readback": readback, "status": "acknowledged", "created_at": utc_now(),
                               "meaning": "Exact packet receipt/readback; not proof of understanding"}
-            insert_document(tx, "resume_acks", acknowledgment)
-            update_document(tx, "sessions", {"ack_id": acknowledgment["id"], "updated_at": utc_now()},
-                 "id=:id", {"id": session_id})
+            db_insert_document(tx, "resume_acks", acknowledgment)
+            db_update_where(tx, "sessions", set_fields={"ack_id": acknowledgment["id"], "updated_at": utc_now()},
+                            where={"id": session_id})
             return self._with_newer(acknowledgment, state, packet)
 
     def _write_refusal(self, session: dict, packet_id: str | None) -> str | None:
@@ -1377,7 +1413,7 @@ class SessionManager:
         if (not packet or packet.get("status") != "ready" or packet["epoch"] != session["epoch"]
                 or (packet_id is not None and packet_id != packet["id"]) or not session.get("ack_id")):
             return "resume_required: fetch and acknowledge the current ready resume packet"
-        acknowledgment = one_row(self.store, "SELECT FROM resume_acks WHERE id=:id", {"id": session["ack_id"]}, False)
+        acknowledgment = db_find_one(self.store, "resume_acks", {"id": session["ack_id"]})
         if (not acknowledgment or acknowledgment.get("packet_id") != packet["id"]
                 or acknowledgment.get("packet_hash") != packet["hash"]
                 or acknowledgment.get("epoch") != session["epoch"]):
@@ -1428,7 +1464,7 @@ class SessionManager:
         cwd = payload.get("cwd")
         project = self.store.resolve_project(cwd, recorded=True)
         # Most-specific registered root, not an inherited project environment hint.
-        roots = self.store.query("SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})
+        roots = db_find(self.store, "project_roots", {"project_id": project["id"]}, columns=("path",))
         matching = [str(Path(row["path"]).resolve()) for row in roots if _scope_contains(str(Path(row["path"]).resolve()), cwd)]
         if not matching:
             raise ValueError("Hook working directory is not a registered project scope")
@@ -1436,20 +1472,24 @@ class SessionManager:
         event_id = payload.get("event_id") or _hash(payload)
         with self.store.transaction() as tx:
             self._require_scope(tx, project["id"], root)
-            receipt = one_row(tx, "SELECT FROM session_events WHERE id=:id", {"id": event_id}, False)
+            receipt = db_find_one(tx, "session_events", {"id": event_id})
             if receipt:
-                old_session = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": receipt["session_id"]})
+                old_session = db_find_one(tx, "sessions", {"id": receipt["session_id"]}, required=True)
                 if ((old_session["project_id"], old_session["client"], old_session["worktree"])
                         != (project["id"], client, root) or (logical_id and logical_id != old_session["id"])):
                     raise ValueError("Hook event ID is already bound to another logical session")
                 return
-            session = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": logical_id}, False) if logical_id else None
+            session = db_find_one(tx, "sessions", {"id": logical_id}) if logical_id else None
             if logical_id and not session:
                 raise ValueError("Hook refers to an unknown logical session")
             if not session and native_id:
-                rows = tx.query("SELECT FROM sessions WHERE project_id=:project AND client=:client "
-                                "AND native_session_id=:native ORDER BY updated_at DESC LIMIT 1",
-                                {"project": project["id"], "client": client, "native": native_id})
+                rows = db_find(
+                    tx,
+                    "sessions",
+                    {"project_id": project["id"], "client": client, "native_session_id": native_id},
+                    order_by=(desc("updated_at"),),
+                    limit=1,
+                )
                 session = clean_row(rows[0]) if rows else None
             if session and (session["project_id"], session["client"], session["worktree"]) != (project["id"], client, root):
                 raise ValueError("Hook session does not match client/project/worktree")
@@ -1457,7 +1497,7 @@ class SessionManager:
                 session = {"id": str(uuid4()), "project_id": project["id"], "client": client, "worktree": root,
                            "native_session_id": native_id, "epoch": 1, "status": "partial", "packet_id": None,
                            "ack_id": None, "transcript_targets": [], "event_ids": [], "created_at": utc_now()}
-                insert_document(tx, "sessions", session)
+                db_insert_document(tx, "sessions", session)
             if native_id:
                 if session.get("native_session_id") and native_id != session["native_session_id"]:
                     raise ValueError("Logical session is already bound to a different native session")
@@ -1469,7 +1509,7 @@ class SessionManager:
             elif event == "SessionStart":
                 prepared_start = bool(session.get("pending_start", False)) and reason != "compact"
                 precompacted = reason == "compact" and bool(session.get("precompact_pending", False))
-                # update_document updates supplied fields; popping would leave persisted
+                # db_update_where updates supplied fields; popping would leave persisted
                 # true flags behind and suppress every later native boundary.
                 session["pending_start"] = False
                 session["precompact_pending"] = False
@@ -1483,14 +1523,14 @@ class SessionManager:
                 if target not in targets:
                     targets.append(target)
                 session["transcript_targets"] = targets
-            insert_document(tx, "session_events", {"id": event_id, "project_id": project["id"],
-                                           "session_id": session["id"], "native_session_id": native_id,
-                                           "client": client, "hook_event_name": event,
-                                           "resume_reason": reason, "transcript_path": payload.get("transcript_path"),
-                                           "transcript_watermark": self._encode_watermark(payload.get("transcript_watermark")),
-                                           "applied_epoch": session["epoch"], "created_at": utc_now()})
+            db_insert_document(tx, "session_events", {"id": event_id, "project_id": project["id"],
+                                                      "session_id": session["id"], "native_session_id": native_id,
+                                                      "client": client, "hook_event_name": event,
+                                                      "resume_reason": reason, "transcript_path": payload.get("transcript_path"),
+                                                      "transcript_watermark": self._encode_watermark(payload.get("transcript_watermark")),
+                                                      "applied_epoch": session["epoch"], "created_at": utc_now()})
             session.update(updated_at=utc_now())
-            update_document(tx, "sessions", session, "id=:id", {"id": session["id"]})
+            db_update_where(tx, "sessions", set_fields=session, where={"id": session["id"]})
 
     def status(self, session_id: str) -> dict:
         session = self._session(session_id)
