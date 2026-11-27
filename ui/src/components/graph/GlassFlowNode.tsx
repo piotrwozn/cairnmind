@@ -1,14 +1,16 @@
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 import { BookOpen, FileCode2, FlaskConical, Layers, Quote } from 'lucide-react';
 import { GlassBadge, statusToTone } from '@/components/glass/GlassBadge';
+import { OriginBadge } from '@/components/glass/OriginBadge';
 import { cn } from '@/lib/utils';
-import type { GraphNodeData } from '@/types/contracts';
+import type { GraphNodeData, OriginCategory } from '@/types/contracts';
 
 export interface FlowNodePayload extends Record<string, unknown> {
   node: GraphNodeData;
   dimmed: boolean;
   highlighted: boolean;
   selectedFocus: boolean;
+  draftPreview?: boolean;
 }
 
 export type CairnmindFlowNode = Node<FlowNodePayload, 'glassNode'>;
@@ -22,7 +24,13 @@ function nodeIcon(node: GraphNodeData) {
   return Layers;
 }
 
-function accentBorder(status: string, selectedFocus: boolean, highlighted: boolean): string {
+function accentBorder(
+  status: string,
+  selectedFocus: boolean,
+  highlighted: boolean,
+  draftPreview?: boolean,
+): string {
+  if (draftPreview) return 'border-dashed border-sky-400/70 bg-sky-500/[0.12]';
   if (selectedFocus) return 'border-sky-400/70 bg-sky-500/[0.12]';
   switch (status.toUpperCase()) {
     case 'REJECTED':
@@ -47,15 +55,22 @@ function accentBorder(status: string, selectedFocus: boolean, highlighted: boole
 }
 
 export function GlassFlowNode({ data }: NodeProps<CairnmindFlowNode>) {
-  const { node, dimmed, highlighted, selectedFocus } = data;
+  const { node, dimmed, highlighted, selectedFocus, draftPreview } = data;
   const Icon = nodeIcon(node);
   const tone = statusToTone(node.status);
+  const rawOriginCat = node.meta.origin_category;
+  const originCategory: OriginCategory | undefined =
+    rawOriginCat === 'ENGINE_VERIFIED' ||
+    rawOriginCat === 'HUMAN_REPO' ||
+    rawOriginCat === 'MCP_DEGRADED'
+      ? rawOriginCat
+      : undefined;
 
   return (
     <div
       className={cn(
-        'w-[228px] rounded-md border px-2.5 py-2 backdrop-blur-xl transition-all duration-150 shadow-[0_8px_24px_rgba(0,0,0,0.45),inset_0_1px_0_0_rgba(255,255,255,0.06)]',
-        accentBorder(node.status, selectedFocus, highlighted),
+        'w-[236px] rounded-md border px-2.5 py-2 backdrop-blur-xl transition-all duration-150 shadow-[0_8px_24px_rgba(0,0,0,0.45),inset_0_1px_0_0_rgba(255,255,255,0.06)]',
+        accentBorder(node.status, selectedFocus, highlighted, draftPreview),
         dimmed ? 'opacity-25' : 'opacity-100',
       )}
     >
@@ -74,16 +89,19 @@ export function GlassFlowNode({ data }: NodeProps<CairnmindFlowNode>) {
             {node.label}
           </span>
         </div>
-        <GlassBadge tone={tone} className="shrink-0 text-[10px]">
-          {node.status}
+        <GlassBadge tone={draftPreview ? 'sky' : tone} className="shrink-0 text-[10px]">
+          {draftPreview ? 'DRAFT' : node.status}
         </GlassBadge>
       </div>
 
-      <div
-        className="mt-1 truncate text-[10px] text-zinc-400 font-mono-tabular"
-        title={node.subtitle}
-      >
-        {node.subtitle}
+      <div className="mt-1 flex items-center justify-between gap-1.5">
+        <div
+          className="min-w-0 truncate text-[10px] text-zinc-400 font-mono-tabular"
+          title={node.subtitle}
+        >
+          {node.subtitle}
+        </div>
+        {originCategory && <OriginBadge category={originCategory} compact />}
       </div>
 
       {node.column < 3 && (

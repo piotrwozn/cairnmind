@@ -5,38 +5,63 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { CheckCircle2, FlaskConical, RefreshCw, ShieldAlert } from 'lucide-react';
+import { CheckCircle2, FlaskConical, History, RefreshCw, ShieldAlert } from 'lucide-react';
 import { GlassBadge, statusToTone } from '@/components/glass/GlassBadge';
+import { matchesOriginFilter, OriginBadge, OriginFilterBar } from '@/components/glass/OriginBadge';
 import { cn, formatShortTime } from '@/lib/utils';
-import type { PlanTask } from '@/types/contracts';
+import type { OriginFilter, PlanSummary, PlanTask } from '@/types/contracts';
 
 interface TaskGateTableProps {
   tasks: PlanTask[];
+  activePlan?: PlanSummary | null;
   selectedTaskId: string | null;
   onSelectTask: (task: PlanTask) => void;
   onReverify: () => void;
   reverifying: boolean;
+  writable?: boolean;
+  readOnlyReason?: string | null;
   stalePulseIds: ReadonlySet<string>;
+  originFilter: OriginFilter;
+  onChangeOriginFilter: (filter: OriginFilter) => void;
+  onOpenPlanVersions?: (planId: string) => void;
 }
 
 const columnHelper = createColumnHelper<PlanTask>();
 
 export function TaskGateTable({
   tasks,
+  activePlan,
   selectedTaskId,
   onSelectTask,
   onReverify,
   reverifying,
+  writable = true,
+  readOnlyReason,
   stalePulseIds,
+  originFilter,
+  onChangeOriginFilter,
+  onOpenPlanVersions,
 }: TaskGateTableProps) {
+  const filteredTasks = useMemo(
+    () => tasks.filter((t) => matchesOriginFilter(t.origin, originFilter)),
+    [originFilter, tasks],
+  );
+
   const columns = useMemo(
     () => [
       columnHelper.accessor('id', {
         header: 'Task ID',
         cell: (info) => (
-          <span className="whitespace-nowrap text-sky-400 font-mono-tabular font-medium">
-            {info.getValue()}
-          </span>
+          <div className="flex flex-col gap-0.5">
+            <span className="whitespace-nowrap text-sky-400 font-mono-tabular font-medium">
+              {info.getValue()}
+            </span>
+            {info.row.original.external_ref && (
+              <span className="text-[10px] text-zinc-500 font-mono-tabular">
+                {info.row.original.external_ref}
+              </span>
+            )}
+          </div>
         ),
       }),
       columnHelper.accessor('title', {
@@ -49,6 +74,11 @@ export function TaskGateTable({
             </div>
           </div>
         ),
+      }),
+      columnHelper.display({
+        id: 'origin',
+        header: 'Origin',
+        cell: ({ row }) => <OriginBadge origin={row.original.origin} />,
       }),
       columnHelper.accessor('state', {
         header: 'Status',
@@ -123,36 +153,57 @@ export function TaskGateTable({
   );
 
   const table = useReactTable({
-    data: tasks,
+    data: filteredTasks,
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
 
-  const planTitle = tasks[0]?.plan_title ?? 'Active Plan';
+  const planTitle = activePlan?.title ?? tasks[0]?.plan_title ?? 'Active Plan';
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex h-10 shrink-0 items-center justify-between border-b border-white/[0.06] px-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-xs font-semibold text-zinc-100">Task &amp; Gate Tree</span>
           <span className="truncate text-[11px] text-zinc-500 font-mono-tabular">
             {planTitle}
           </span>
+          {activePlan && (
+            <>
+              <OriginBadge origin={activePlan.origin} compact />
+              {onOpenPlanVersions && (
+                <button
+                  type="button"
+                  onClick={() => onOpenPlanVersions(activePlan.id)}
+                  title="Open plan version history & time-travel diff"
+                  className="flex h-6 items-center gap-1 rounded border border-white/[0.1] bg-white/[0.03] px-1.5 text-[10px] font-medium text-zinc-300 font-mono-tabular transition-colors hover:border-sky-500/35 hover:bg-sky-500/10 hover:text-sky-200"
+                >
+                  <History className="h-3 w-3 text-sky-400" strokeWidth={1.5} />
+                  <span>v{activePlan.version}</span>
+                </button>
+              )}
+            </>
+          )}
         </div>
 
-        <button
-          type="button"
-          disabled={reverifying}
-          onClick={onReverify}
-          className="flex h-7 items-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-2.5 text-xs font-medium text-sky-300 transition-colors duration-150 hover:bg-sky-500/20 hover:text-sky-200 disabled:opacity-50"
-        >
-          <RefreshCw className={cn('h-3.5 w-3.5', reverifying && 'animate-spin')} strokeWidth={1.5} />
-          <span>{reverifying ? 'Re-verifying…' : 'Re-verify Fingerprints'}</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <OriginFilterBar value={originFilter} onChange={onChangeOriginFilter} />
+
+          <button
+            type="button"
+            disabled={reverifying || !writable}
+            title={!writable ? readOnlyReason || 'Read-only mode enabled' : 'Scan worktree hashes and re-verify claims'}
+            onClick={onReverify}
+            className="flex h-7 items-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-2.5 text-xs font-medium text-sky-300 transition-colors duration-150 hover:bg-sky-500/20 hover:text-sky-200 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', reverifying && 'animate-spin')} strokeWidth={1.5} />
+            <span>{reverifying ? 'Re-verifying…' : 'Re-verify Fingerprints'}</span>
+          </button>
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        {tasks.length === 0 ? (
+        {filteredTasks.length === 0 ? (
           <div className="flex h-40 items-center justify-center text-xs text-zinc-500 font-mono-tabular">
             No tasks match the current filter.
           </div>

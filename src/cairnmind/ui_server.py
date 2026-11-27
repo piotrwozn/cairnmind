@@ -26,6 +26,24 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from cairnmind.ui_cockpit import (
+    CloneVersionRequest,
+    CreateFactRequest,
+    CreatePlanRequest,
+    CreateTaskRequest,
+    DecisionActionRequest,
+    ExportSnapshotRequest,
+    LiveCockpitMixin,
+    MockCockpitMixin,
+    PromotePlanRequest,
+    SimulateConflictRequest,
+    SimulateFileEditRequest,
+    UiAskRequest,
+    UpdatePlanRequest,
+    classify_audit_origin,
+    classify_record_origin,
+)
+
 MAX_CONTEXT_FILE_BYTES = 1_048_576
 MAX_CONTEXT_LINES = 400
 MAX_BUS_EVENTS = 250
@@ -36,6 +54,9 @@ UiEventType = Literal[
     "evidence.stale",
     "mcp.write.accepted",
     "mcp.write.rejected",
+    "repo_fingerprint_changed",
+    "reindex.progress",
+    "plan.conflict",
 ]
 
 
@@ -310,17 +331,20 @@ def enforce_write_contract(tool_name: str, args: dict, session_state: dict) -> N
 }
 
 
-class MockUiState:
+class MockUiState(MockCockpitMixin):
     """Stateful deterministic fixture for `?mock=1` so every UI state & action works end-to-end."""
 
-    def __init__(self, bus: UiEventBus) -> None:
+    def __init__(self, bus: UiEventBus, *, read_only: bool = False) -> None:
         self.bus = bus
+        self.read_only = read_only
+        self.llm_configured = True
         self._lock = threading.Lock()
         self.files = deepcopy(_MOCK_FILES)
         self.state_rev = 42
         self.updated_at = "2026-11-26T12:30:14.412Z"
         self.reverify_count = 0
         self._init_data()
+        self._init_cockpit_data()
 
     def _file_sha(self, path: str) -> str:
         return _sha256_text(self.files[path])
@@ -839,6 +863,7 @@ class MockUiState:
             add_edge(f"file:{claim['source_path']}", ev_id, "anchors_quote", ev_status)
 
             claim_node_id = f"claim:{claim['id']}"
+            claim_origin = claim.get("origin") or {}
             add_node({
                 "id": claim_node_id,
                 "column": 2,
@@ -847,7 +872,13 @@ class MockUiState:
                 "subtitle": claim["title"],
                 "status": claim["provenance_status"],
                 "ref_id": claim["id"],
-                "meta": {"kind": claim["kind"], "version": claim["version"]},
+                "meta": {
+                    "kind": claim["kind"],
+                    "version": claim["version"],
+                    "origin_category": claim_origin.get("category", "ENGINE_VERIFIED"),
+                    "origin_evidence": claim_origin.get("origin_evidence", "verified"),
+                    "origin_client": claim_origin.get("origin_client"),
+                },
             })
             add_edge(ev_id, claim_node_id, "supports_claim", ev_status)
 
@@ -869,6 +900,7 @@ class MockUiState:
                 else "VERIFIED"
             )
             task_node_id = f"task:{task['id']}"
+            task_origin = task.get("origin") or {}
             add_node({
                 "id": task_node_id,
                 "column": 3,
@@ -881,6 +913,9 @@ class MockUiState:
                     "profile": gate["profile_name"],
                     "gate_status": gate["status"],
                     "evidence": f"{task['evidence_verified']}/{task['evidence_total']}",
+                    "origin_category": task_origin.get("category", "ENGINE_VERIFIED"),
+                    "origin_evidence": task_origin.get("origin_evidence", "verified"),
+                    "origin_client": task_origin.get("origin_client"),
                 },
             })
             if gate.get("run_id"):
@@ -916,13 +951,16 @@ class MockUiState:
                     "fingerprint": fp,
                     "mode": "mock",
                 },
+                "capabilities": self.capabilities(),
                 "state_rev": self.state_rev,
                 "updated_at": self.updated_at,
                 "sessions": deepcopy([s for s in self.sessions if not s["dropped"]]),
+                "plans": deepcopy(self.plans),
                 "tasks": deepcopy(self.tasks),
                 "claims": deepcopy(self.claims),
                 "graph": self._build_graph(),
                 "audit_log": deepcopy(self.audit_log),
+                "drift_summary": self.drift_summary(),
             }
 
     def file_context(self, path: str, line_start: int = 1, line_end: int = 60) -> dict[str, Any]:
@@ -947,6 +985,7 @@ class MockUiState:
         }
 
     def reverify(self) -> dict[str, Any]:
+        self._require_writable()
         now = _utc_now()
         with self._lock:
             self.reverify_count += 1
@@ -984,6 +1023,7 @@ class MockUiState:
                     "state_rev": self.state_rev,
                     "stale_claims": stale_ids,
                 },
+                "origin": classify_audit_origin({"client": "cairnmind-ui", "message": "Re-verified source files"}),
             }
             self.audit_log.insert(0, audit_entry)
             rev = self.state_rev
@@ -1010,6 +1050,7 @@ class MockUiState:
         }
 
     def drop_session(self, session_id: str) -> dict[str, Any]:
+        self._require_writable()
         now = _utc_now()
         with self._lock:
             target = next((s for s in self.sessions if s["id"] == session_id and not s["dropped"]), None)
@@ -1035,6 +1076,7 @@ class MockUiState:
                 "target_id": session_id,
                 "arguments": {"session_id": session_id, "reason": "emergency_ui_drop"},
                 "violation_detail": {"rule": "OK", "state_rev": self.state_rev},
+                "origin": classify_audit_origin({"client": target["client"], "message": "Dropped session lock"}),
             }
             self.audit_log.insert(0, audit_entry)
             rev = self.state_rev
@@ -1087,14 +1129,23 @@ def _find_quote_lines(file_path: Path, quote: str) -> tuple[int, int]:
     return start, max(start, end)
 
 
-class LiveUiAdapter:
-    """Projects Cairnmind's ArcadeDB Store into `UI_SPEC.md` contracts without mutating read state."""
+class LiveUiAdapter(LiveCockpitMixin):
+    """Projects Cairnmind's ArcadeDB Store into Engineer Cockpit contracts."""
 
-    def __init__(self, store: Any, settings: Any, bus: UiEventBus, default_project: str | None = None) -> None:
+    def __init__(
+        self,
+        store: Any,
+        settings: Any,
+        bus: UiEventBus,
+        default_project: str | None = None,
+        *,
+        read_only: bool = False,
+    ) -> None:
         self.store = store
         self.settings = settings
         self.bus = bus
         self.default_project = default_project
+        self.read_only = read_only
 
     def _resolve_project(self, project_arg: str | None) -> dict[str, Any]:
         selected = project_arg or self.default_project
@@ -1276,6 +1327,7 @@ class LiveUiAdapter:
                 "updated_at": str(rec.get("updated_at") or rec.get("created_at") or now),
                 "task_ids": [],
                 "version": int(rec.get("version") or 1),
+                "origin": classify_record_origin(rec, provenance_status=prov_status),
             })
             if rel_path:
                 claims_by_source_path.setdefault(rel_path, []).append(rec["id"])
@@ -1352,6 +1404,8 @@ class LiveUiAdapter:
                 "source_paths": scope_paths,
                 "depends_on": list(meta.get("depends_on") or []),
                 "acceptance_criteria": list(meta.get("acceptance_criteria") or []),
+                "origin": classify_record_origin(task, provenance_status=ev_status),
+                "external_ref": meta.get("external_ref"),
             })
 
         # 4. Graph (4 deterministic columns)
@@ -1384,8 +1438,17 @@ class LiveUiAdapter:
                     "target_id": ev.get("session_id"),
                     "arguments": ev.get("payload") if isinstance(ev.get("payload"), dict) else {"kind": kind},
                     "violation_detail": {"rule": _classify_reason_code(msg) if rejected else "OK", "raw": ev},
+                    "origin": classify_audit_origin({"client": ev.get("client") or "mcp", "message": msg}),
                 })
+        for entry in audit_entries:
+            entry.setdefault("origin", classify_audit_origin(entry))
         audit_entries.sort(key=lambda row: str(row.get("timestamp") or ""), reverse=True)
+
+        plans_out = self._project_plans(pid, root_path, tasks_out)
+        active_plan = next((p for p in plans_out if p["status"] == "active"), None)
+        drifted_files = {c["source_path"] for c in claims_out if c["provenance_status"] != "VERIFIED" and c["source_path"]}
+        stale_tests = sum(1 for t in tasks_out if t["test_gate"]["status"] != "PASS")
+        pending_decisions = sum(1 for c in claims_out if c["status"] == "proposed")
 
         return {
             "project": {
@@ -1397,13 +1460,22 @@ class LiveUiAdapter:
                 "fingerprint": code.get("fingerprint"),
                 "mode": "live",
             },
+            "capabilities": self.capabilities(),
             "state_rev": state_rev,
             "updated_at": now,
             "sessions": sessions_out,
+            "plans": plans_out,
             "tasks": tasks_out,
             "claims": claims_out,
             "graph": graph,
             "audit_log": audit_entries[:100],
+            "drift_summary": {
+                "drifted_files_count": len(drifted_files),
+                "stale_tests_count": stale_tests,
+                "pending_decisions_count": pending_decisions,
+                "last_approved_plan_id": active_plan["id"] if active_plan else None,
+                "last_approved_plan_version": active_plan["version"] if active_plan else None,
+            },
         }
 
     def file_context(self, path: str, line_start: int, line_end: int, project_arg: str | None = None) -> dict[str, Any]:
@@ -1413,6 +1485,7 @@ class LiveUiAdapter:
     def reverify(self, project_arg: str | None = None) -> dict[str, Any]:
         from cairnmind.ingest import index_project_if_changed
 
+        self._require_writable()
         proj = self._resolve_project(project_arg)
         pid = proj["id"]
         with suppress(Exception):
@@ -1444,6 +1517,7 @@ class LiveUiAdapter:
     def drop_session(self, session_id: str, project_arg: str | None = None) -> dict[str, Any]:
         from cairnmind.sql import insert_document, update_document
 
+        self._require_writable()
         proj = self._resolve_project(project_arg)
         pid = proj["id"]
         rows = self.store.query(
@@ -1525,6 +1599,7 @@ def _build_graph_from_entities(claims: list[dict[str, Any]], tasks: list[dict[st
         if path:
             add_edge(f"file:{path}", ev_id, "anchors_quote", ev_status)
         claim_nid = f"claim:{claim['id']}"
+        claim_origin = claim.get("origin") or {}
         add_node({
             "id": claim_nid,
             "column": 2,
@@ -1533,7 +1608,13 @@ def _build_graph_from_entities(claims: list[dict[str, Any]], tasks: list[dict[st
             "subtitle": claim["title"],
             "status": claim.get("provenance_status", "VERIFIED"),
             "ref_id": claim["id"],
-            "meta": {"kind": claim["kind"], "version": claim["version"]},
+            "meta": {
+                "kind": claim["kind"],
+                "version": claim["version"],
+                "origin_category": claim_origin.get("category", "ENGINE_VERIFIED"),
+                "origin_evidence": claim_origin.get("origin_evidence", "verified"),
+                "origin_client": claim_origin.get("origin_client"),
+            },
         })
         add_edge(ev_id, claim_nid, "supports_claim", ev_status)
 
@@ -1545,6 +1626,7 @@ def _build_graph_from_entities(claims: list[dict[str, Any]], tasks: list[dict[st
             else "VERIFIED"
         )
         tnid = f"task:{task['id']}"
+        task_origin = task.get("origin") or {}
         add_node({
             "id": tnid,
             "column": 3,
@@ -1553,7 +1635,13 @@ def _build_graph_from_entities(claims: list[dict[str, Any]], tasks: list[dict[st
             "subtitle": task["title"],
             "status": task_status,
             "ref_id": task["id"],
-            "meta": {"profile": gate["profile_name"], "gate_status": gate["status"]},
+            "meta": {
+                "profile": gate["profile_name"],
+                "gate_status": gate["status"],
+                "origin_category": task_origin.get("category", "ENGINE_VERIFIED"),
+                "origin_evidence": task_origin.get("origin_evidence", "verified"),
+                "origin_client": task_origin.get("origin_client"),
+            },
         })
         for cid in task.get("claim_ids") or []:
             if f"claim:{cid}" in seen_nodes:
@@ -1566,63 +1654,74 @@ def _build_graph_from_entities(claims: list[dict[str, Any]], tasks: list[dict[st
 # FastAPI Router & App Factory
 # ---------------------------------------------------------------------------
 
-def create_ui_router(
+def _bind_cockpit_routes(
+    router: APIRouter,
     *,
-    store: Any = None,
-    settings: Any = None,
-    default_project: str | None = None,
-    default_mock: bool = False,
-    bus: UiEventBus | None = None,
-    dependencies: list[Any] | None = None,
-) -> APIRouter:
-    event_bus = bus or UiEventBus()
-    mock_state = MockUiState(event_bus)
-    live_adapter = LiveUiAdapter(store, settings, event_bus, default_project) if store is not None else None
-    router = APIRouter(prefix="/api/ui", tags=["ui"], dependencies=dependencies or [])
+    event_bus: UiEventBus,
+    mock_state: MockUiState,
+    live_adapter: LiveUiAdapter | None,
+    default_mock: bool,
+    project_path_param: bool = False,
+) -> None:
+    """Register all Engineer Cockpit REST + SSE routes on `router` (with optional `{project_id}` prefix)."""
 
     def _use_mock(mock: int | bool | None) -> bool:
         if mock is not None:
             return bool(mock)
         return default_mock or live_adapter is None
 
-    @router.get("/snapshot")
+    def _pick_project(project_id: str | None, project: str | None) -> str | None:
+        return project_id or project
+
+    p = "/projects/{project_id}" if project_path_param else ""
+
+    @router.get(f"{p}/snapshot")
     async def ui_snapshot(
+        project_id: str | None = None,
         project: str | None = Query(default=None),
         mock: int | None = Query(default=None),
     ):
         if _use_mock(mock):
             return mock_state.snapshot()
         assert live_adapter is not None
-        return await asyncio.to_thread(live_adapter.snapshot, project)
+        return await asyncio.to_thread(live_adapter.snapshot, _pick_project(project_id, project))
 
-    @router.get("/file-context")
+    @router.get(f"{p}/file-context")
     async def ui_file_context(
         path: str = Query(min_length=1, max_length=2048),
         lineStart: int = Query(default=1, ge=1),
         lineEnd: int = Query(default=60, ge=1),
+        project_id: str | None = None,
         project: str | None = Query(default=None),
         mock: int | None = Query(default=None),
     ):
         if _use_mock(mock):
             return mock_state.file_context(path, lineStart, lineEnd)
         assert live_adapter is not None
-        return await asyncio.to_thread(live_adapter.file_context, path, lineStart, lineEnd, project)
+        return await asyncio.to_thread(
+            live_adapter.file_context, path, lineStart, lineEnd, _pick_project(project_id, project)
+        )
 
-    @router.get("/events")
+    @router.get(f"{p}/events")
     async def ui_events(
         request: Request,
+        project_id: str | None = None,
         project: str | None = Query(default=None),
         mock: int | None = Query(default=None),
         once: bool = Query(default=False),
     ):
         use_mock = _use_mock(mock)
+        selected_project = _pick_project(project_id, project)
 
         async def stream():
             token = event_bus.subscribe()
             _, queue = token
             try:
-                # Immediate bootstrap event so clients confirm live stream connectivity.
-                snap = mock_state.snapshot() if use_mock else await asyncio.to_thread(live_adapter.snapshot, project)
+                snap = (
+                    mock_state.snapshot()
+                    if use_mock
+                    else await asyncio.to_thread(live_adapter.snapshot, selected_project)
+                )
                 init_payload = {
                     "id": "ui-init",
                     "type": "state.updated",
@@ -1658,29 +1757,292 @@ def create_ui_router(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    @router.post("/actions/reverify")
+    @router.post(f"{p}/ask")
+    async def ui_ask(
+        body: UiAskRequest,
+        project_id: str | None = None,
+        project: str | None = Query(default=None),
+        mock: int | None = Query(default=None),
+    ):
+        if _use_mock(mock):
+            return mock_state.ask(body)
+        assert live_adapter is not None
+        return await asyncio.to_thread(live_adapter.ask, body, _pick_project(project_id, project))
+
+    @router.get(f"{p}/drift")
+    async def ui_drift(
+        source: str = Query(default="all"),
+        directory: str | None = Query(default=None),
+        status: str = Query(default="all"),
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=5, ge=1, le=50),
+        project_id: str | None = None,
+        project: str | None = Query(default=None),
+        mock: int | None = Query(default=None),
+    ):
+        if _use_mock(mock):
+            return mock_state.drift_monitor(
+                source=source,
+                directory=directory,
+                status=status,
+                page=page,
+                page_size=page_size,
+            )
+        assert live_adapter is not None
+        return await asyncio.to_thread(
+            live_adapter.drift_monitor,
+            project_arg=_pick_project(project_id, project),
+            source=source,
+            directory=directory,
+            status=status,
+            page=page,
+            page_size=page_size,
+        )
+
+    @router.post(f"{p}/detected-decisions/{{decision_id}}/decide")
+    async def ui_decide_detected(
+        decision_id: str,
+        body: DecisionActionRequest,
+        project_id: str | None = None,
+        project: str | None = Query(default=None),
+        mock: int | None = Query(default=None),
+    ):
+        if _use_mock(mock):
+            return mock_state.decide_detected_decision(decision_id, body)
+        assert live_adapter is not None
+        return await asyncio.to_thread(
+            live_adapter.decide_detected_decision,
+            decision_id,
+            body,
+            _pick_project(project_id, project),
+        )
+
+    @router.post(f"{p}/plans")
+    async def ui_create_plan(
+        body: CreatePlanRequest,
+        project_id: str | None = None,
+        project: str | None = Query(default=None),
+        mock: int | None = Query(default=None),
+    ):
+        if _use_mock(mock):
+            return mock_state.create_plan(body)
+        assert live_adapter is not None
+        return await asyncio.to_thread(live_adapter.create_plan, body, _pick_project(project_id, project))
+
+    @router.patch(f"{p}/plans/{{plan_id}}")
+    async def ui_update_plan(
+        plan_id: str,
+        body: UpdatePlanRequest,
+        project_id: str | None = None,
+        project: str | None = Query(default=None),
+        mock: int | None = Query(default=None),
+    ):
+        if _use_mock(mock):
+            return mock_state.update_plan(plan_id, body)
+        assert live_adapter is not None
+        return await asyncio.to_thread(
+            live_adapter.update_plan, plan_id, body, _pick_project(project_id, project)
+        )
+
+    @router.post(f"{p}/plans/{{plan_id}}/promote")
+    async def ui_promote_plan(
+        plan_id: str,
+        body: PromotePlanRequest,
+        project_id: str | None = None,
+        project: str | None = Query(default=None),
+        mock: int | None = Query(default=None),
+    ):
+        if _use_mock(mock):
+            return mock_state.promote_plan(plan_id, body)
+        assert live_adapter is not None
+        return await asyncio.to_thread(
+            live_adapter.promote_plan, plan_id, body, _pick_project(project_id, project)
+        )
+
+    @router.post(f"{p}/tasks")
+    async def ui_create_task(
+        body: CreateTaskRequest,
+        project_id: str | None = None,
+        project: str | None = Query(default=None),
+        mock: int | None = Query(default=None),
+    ):
+        if _use_mock(mock):
+            return mock_state.create_task(body)
+        assert live_adapter is not None
+        return await asyncio.to_thread(live_adapter.create_task, body, _pick_project(project_id, project))
+
+    @router.post(f"{p}/facts")
+    async def ui_create_fact(
+        body: CreateFactRequest,
+        project_id: str | None = None,
+        project: str | None = Query(default=None),
+        mock: int | None = Query(default=None),
+    ):
+        if _use_mock(mock):
+            return mock_state.create_fact(body)
+        assert live_adapter is not None
+        return await asyncio.to_thread(live_adapter.create_fact, body, _pick_project(project_id, project))
+
+    @router.get(f"{p}/versions/{{entity_kind}}/{{entity_id}}")
+    async def ui_get_versions(
+        entity_kind: Literal["plan", "task", "claim"],
+        entity_id: str,
+        from_version: int | None = Query(default=None, ge=1),
+        to_version: int | None = Query(default=None, ge=1),
+        project_id: str | None = None,
+        project: str | None = Query(default=None),
+        mock: int | None = Query(default=None),
+    ):
+        if _use_mock(mock):
+            return mock_state.get_versions(entity_kind, entity_id, from_version=from_version, to_version=to_version)
+        assert live_adapter is not None
+        return await asyncio.to_thread(
+            live_adapter.get_versions,
+            entity_kind,
+            entity_id,
+            from_version=from_version,
+            to_version=to_version,
+            project_arg=_pick_project(project_id, project),
+        )
+
+    @router.post(f"{p}/versions/{{entity_kind}}/{{entity_id}}/clone-draft")
+    async def ui_clone_version(
+        entity_kind: Literal["plan", "task", "claim"],
+        entity_id: str,
+        body: CloneVersionRequest,
+        project_id: str | None = None,
+        project: str | None = Query(default=None),
+        mock: int | None = Query(default=None),
+    ):
+        if _use_mock(mock):
+            return mock_state.clone_version_as_draft(entity_kind, entity_id, body)
+        assert live_adapter is not None
+        return await asyncio.to_thread(
+            live_adapter.clone_version_as_draft,
+            entity_kind,
+            entity_id,
+            body,
+            _pick_project(project_id, project),
+        )
+
+    @router.post(f"{p}/actions/reverify")
     async def ui_reverify(
+        project_id: str | None = None,
         project: str | None = Query(default=None),
         mock: int | None = Query(default=None),
     ):
         if _use_mock(mock):
             return mock_state.reverify()
         assert live_adapter is not None
-        return await asyncio.to_thread(live_adapter.reverify, project)
+        return await asyncio.to_thread(live_adapter.reverify, _pick_project(project_id, project))
 
-    @router.post("/actions/sessions/{session_id}/drop")
+    @router.post(f"{p}/actions/reindex")
+    async def ui_reindex(
+        project_id: str | None = None,
+        project: str | None = Query(default=None),
+        mock: int | None = Query(default=None),
+    ):
+        if _use_mock(mock):
+            return mock_state.reindex()
+        assert live_adapter is not None
+        return await asyncio.to_thread(live_adapter.reindex, _pick_project(project_id, project))
+
+    @router.get(f"{p}/doctor")
+    async def ui_doctor(
+        project_id: str | None = None,
+        project: str | None = Query(default=None),
+        mock: int | None = Query(default=None),
+    ):
+        if _use_mock(mock):
+            return mock_state.doctor()
+        assert live_adapter is not None
+        return await asyncio.to_thread(live_adapter.doctor, _pick_project(project_id, project))
+
+    @router.post(f"{p}/actions/export-snapshot")
+    async def ui_export_snapshot(
+        body: ExportSnapshotRequest,
+        project_id: str | None = None,
+        project: str | None = Query(default=None),
+        mock: int | None = Query(default=None),
+    ):
+        if _use_mock(mock):
+            return mock_state.export_snapshot(body)
+        assert live_adapter is not None
+        return await asyncio.to_thread(live_adapter.export_snapshot, body, _pick_project(project_id, project))
+
+    @router.post(f"{p}/actions/sessions/{{session_id}}/drop")
     async def ui_drop_session(
         session_id: str,
+        project_id: str | None = None,
         project: str | None = Query(default=None),
         mock: int | None = Query(default=None),
     ):
         if _use_mock(mock):
             return mock_state.drop_session(session_id)
         assert live_adapter is not None
-        return await asyncio.to_thread(live_adapter.drop_session, session_id, project)
+        return await asyncio.to_thread(
+            live_adapter.drop_session, session_id, _pick_project(project_id, project)
+        )
 
+    @router.post(f"{p}/mock/simulate-conflict")
+    async def ui_mock_simulate_conflict(
+        body: SimulateConflictRequest,
+        mock: int | None = Query(default=None),
+    ):
+        if not _use_mock(mock):
+            raise HTTPException(400, "Simulation endpoints are only available in mock mode.")
+        return mock_state.simulate_conflict(body)
+
+    @router.post(f"{p}/mock/simulate-file-edit")
+    async def ui_mock_simulate_file_edit(
+        body: SimulateFileEditRequest,
+        mock: int | None = Query(default=None),
+    ):
+        if not _use_mock(mock):
+            raise HTTPException(400, "Simulation endpoints are only available in mock mode.")
+        return mock_state.simulate_file_edit(body)
+
+
+def create_ui_router(
+    *,
+    store: Any = None,
+    settings: Any = None,
+    default_project: str | None = None,
+    default_mock: bool = False,
+    read_only: bool = False,
+    bus: UiEventBus | None = None,
+    dependencies: list[Any] | None = None,
+    prefix: str = "/api/ui",
+    mock_state: MockUiState | None = None,
+    live_adapter: LiveUiAdapter | None = None,
+) -> APIRouter:
+    event_bus = bus or UiEventBus()
+    state = mock_state or MockUiState(event_bus, read_only=read_only)
+    adapter = live_adapter or (
+        LiveUiAdapter(store, settings, event_bus, default_project, read_only=read_only)
+        if store is not None
+        else None
+    )
+    router = APIRouter(prefix=prefix, tags=["ui"], dependencies=dependencies or [])
+    _bind_cockpit_routes(
+        router,
+        event_bus=event_bus,
+        mock_state=state,
+        live_adapter=adapter,
+        default_mock=default_mock,
+        project_path_param=False,
+    )
+    _bind_cockpit_routes(
+        router,
+        event_bus=event_bus,
+        mock_state=state,
+        live_adapter=adapter,
+        default_mock=default_mock,
+        project_path_param=True,
+    )
     router.event_bus = event_bus  # type: ignore[attr-defined]
-    router.mock_state = mock_state  # type: ignore[attr-defined]
+    router.mock_state = state  # type: ignore[attr-defined]
+    router.live_adapter = adapter  # type: ignore[attr-defined]
     return router
 
 
@@ -1691,12 +2053,14 @@ def attach_ui_routes(
     *,
     bus: UiEventBus | None = None,
     dependencies: list[Any] | None = None,
+    read_only: bool = False,
 ) -> UiEventBus:
-    """Attach `/api/ui/*` routes to the main Cairnmind FastAPI service."""
+    """Attach `/api/ui/*` (and `/api/ui/projects/{project_id}/*`) routes to the main Cairnmind service."""
     router = create_ui_router(
         store=store,
         settings=settings,
         default_mock=False,
+        read_only=read_only,
         bus=bus,
         dependencies=dependencies,
     )
@@ -1712,27 +2076,43 @@ def create_ui_app(
     settings: Any = None,
     default_project: str | None = None,
     default_mock: bool = False,
+    read_only: bool = False,
     static_dir: Path | None = None,
 ) -> FastAPI:
     """Standalone loopback FastAPI app for `cairnmind ui --port 4310`."""
     from cairnmind import __version__
 
-    app = FastAPI(title="Cairnmind UI Inspector", version=__version__)
-    router = create_ui_router(
+    app = FastAPI(title="Cairnmind Engineer Cockpit & Inspector", version=__version__)
+    ui_router = create_ui_router(
         store=store,
         settings=settings,
         default_project=default_project,
         default_mock=default_mock,
+        read_only=read_only,
+        prefix="/api/ui",
     )
-    app.include_router(router)
-    app.state.ui_event_bus = router.event_bus  # type: ignore[attr-defined]
+    # Also mount clean Rust-compatible `/api/*` and `/api/projects/{project_id}/*` aliases sharing the same state.
+    api_router = create_ui_router(
+        store=store,
+        settings=settings,
+        default_project=default_project,
+        default_mock=default_mock,
+        read_only=read_only,
+        bus=ui_router.event_bus,  # type: ignore[attr-defined]
+        mock_state=ui_router.mock_state,  # type: ignore[attr-defined]
+        live_adapter=ui_router.live_adapter,  # type: ignore[attr-defined]
+        prefix="/api",
+    )
+    app.include_router(ui_router)
+    app.include_router(api_router)
+    app.state.ui_event_bus = ui_router.event_bus  # type: ignore[attr-defined]
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        if request.url.path.startswith("/api/ui/"):
+        if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
         return response
 

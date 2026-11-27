@@ -7,7 +7,7 @@ import {
   ReactFlow,
   type NodeMouseHandler,
 } from '@xyflow/react';
-import { Crosshair, GitFork, RotateCcw } from 'lucide-react';
+import { Crosshair, Eye, GitFork, RotateCcw, X } from 'lucide-react';
 import { GlassBadge } from '@/components/glass/GlassBadge';
 import {
   AnimatedStatusEdge,
@@ -17,7 +17,7 @@ import {
   GlassFlowNode,
   type CairnmindFlowNode,
 } from '@/components/graph/GlassFlowNode';
-import type { DependencyGraph, GraphNodeData } from '@/types/contracts';
+import type { DependencyGraph, GraphNodeData, PlanSummary } from '@/types/contracts';
 
 interface BlastRadiusGraphProps {
   graph: DependencyGraph;
@@ -25,11 +25,14 @@ interface BlastRadiusGraphProps {
   onSelectBlastRoot: (nodeId: string | null) => void;
   onInspectNode: (node: GraphNodeData) => void;
   onlyStaleAndConflicts: boolean;
+  /** Optional Draft Plan preview overlay (`Preview Blast Radius` from Phase 3). */
+  previewDraftPlan?: PlanSummary | null;
+  onClearDraftPreview?: () => void;
 }
 
-const NODE_WIDTH = 228;
+const NODE_WIDTH = 236;
 const NODE_HEIGHT = 64;
-const COLUMN_X_STEP = 296;
+const COLUMN_X_STEP = 304;
 
 const COLUMN_LABELS = [
   '1 · Source Files',
@@ -42,15 +45,22 @@ const nodeTypes = { glassNode: GlassFlowNode };
 const edgeTypes = { statusEdge: AnimatedStatusEdge };
 
 /**
- * Compute all downstream node and edge IDs reachable from `rootId`.
+ * Compute all downstream node and edge IDs reachable from one or more root node IDs.
  */
 export function computeBlastRadius(
   graph: DependencyGraph,
   rootId: string | null,
 ): { nodes: Set<string>; edges: Set<string> } {
+  return computeMultiRootBlastRadius(graph, rootId ? [rootId] : []);
+}
+
+export function computeMultiRootBlastRadius(
+  graph: DependencyGraph,
+  rootIds: string[],
+): { nodes: Set<string>; edges: Set<string> } {
   const visitedNodes = new Set<string>();
   const visitedEdges = new Set<string>();
-  if (!rootId) return { nodes: visitedNodes, edges: visitedEdges };
+  if (rootIds.length === 0) return { nodes: visitedNodes, edges: visitedEdges };
 
   const outgoing = new Map<string, Array<{ edgeId: string; target: string }>>();
   for (const edge of graph.edges) {
@@ -59,8 +69,13 @@ export function computeBlastRadius(
     outgoing.set(edge.source, list);
   }
 
-  const queue: string[] = [rootId];
-  visitedNodes.add(rootId);
+  const queue: string[] = [];
+  for (const rid of rootIds) {
+    if (!visitedNodes.has(rid)) {
+      visitedNodes.add(rid);
+      queue.push(rid);
+    }
+  }
   while (queue.length > 0) {
     const current = queue.shift()!;
     for (const next of outgoing.get(current) ?? []) {
@@ -131,29 +146,111 @@ export function BlastRadiusGraph({
   onSelectBlastRoot,
   onInspectNode,
   onlyStaleAndConflicts,
+  previewDraftPlan,
+  onClearDraftPreview,
 }: BlastRadiusGraphProps) {
+  // Overlay virtual preview nodes/edges when previewing a Draft Plan's Blast Radius
+  const augmentedGraph = useMemo<{
+    graph: DependencyGraph;
+    draftNodeIds: Set<string>;
+    draftRootIds: string[];
+  }>(() => {
+    const draftNodeIds = new Set<string>();
+    const draftRootIds: string[] = [];
+    if (!previewDraftPlan) {
+      return { graph, draftNodeIds, draftRootIds };
+    }
+
+    const nodes = [...graph.nodes];
+    const edges = [...graph.edges];
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    const edgeIds = new Set(edges.map((e) => e.id));
+
+    const allFiles = Array.from(
+      new Set([
+        ...previewDraftPlan.linked_files,
+        ...previewDraftPlan.steps.flatMap((s) => s.scope),
+      ]),
+    );
+
+    for (const filePath of allFiles) {
+      const fid = `file:${filePath}`;
+      draftRootIds.push(fid);
+      if (!nodeIds.has(fid)) {
+        nodeIds.add(fid);
+        draftNodeIds.add(fid);
+        nodes.push({
+          id: fid,
+          column: 0,
+          category: 'source_file',
+          label: filePath.split('/').pop() ?? filePath,
+          subtitle: `${filePath} (new/untracked)`,
+          status: 'ACTIVE',
+          ref_id: filePath,
+          meta: { draft_preview: true },
+        });
+      }
+    }
+
+    for (const step of previewDraftPlan.steps) {
+      const tid = `draft-step:${previewDraftPlan.id}:${step.key}`;
+      if (!nodeIds.has(tid)) {
+        nodeIds.add(tid);
+        draftNodeIds.add(tid);
+        nodes.push({
+          id: tid,
+          column: 3,
+          category: 'task',
+          label: `DRAFT · ${step.key}`,
+          subtitle: step.title,
+          status: 'ACTIVE',
+          ref_id: previewDraftPlan.id,
+          meta: {
+            draft_preview: true,
+            origin_category: 'HUMAN_REPO',
+          },
+        });
+      }
+      const stepFiles = step.scope.length > 0 ? step.scope : allFiles;
+      for (const filePath of stepFiles) {
+        const fid = `file:${filePath}`;
+        const eid = `${fid}->${tid}`;
+        if (!edgeIds.has(eid)) {
+          edgeIds.add(eid);
+          edges.push({ id: eid, source: fid, target: tid, kind: 'draft_impacts', status: 'ACTIVE' });
+        }
+      }
+    }
+
+    return { graph: { nodes, edges }, draftNodeIds, draftRootIds };
+  }, [graph, previewDraftPlan]);
+
   const filteredGraph = useMemo<DependencyGraph>(() => {
-    if (!onlyStaleAndConflicts) return graph;
+    if (!onlyStaleAndConflicts || previewDraftPlan) return augmentedGraph.graph;
     const staleNodes = new Set(
-      graph.nodes
+      augmentedGraph.graph.nodes
         .filter((n) => n.status.toUpperCase() !== 'VERIFIED' && n.status.toUpperCase() !== 'PASS')
         .map((n) => n.id),
     );
     return {
-      nodes: graph.nodes.filter((n) => staleNodes.has(n.id)),
-      edges: graph.edges.filter((e) => staleNodes.has(e.source) && staleNodes.has(e.target)),
+      nodes: augmentedGraph.graph.nodes.filter((n) => staleNodes.has(n.id)),
+      edges: augmentedGraph.graph.edges.filter(
+        (e) => staleNodes.has(e.source) && staleNodes.has(e.target),
+      ),
     };
-  }, [graph, onlyStaleAndConflicts]);
+  }, [augmentedGraph.graph, onlyStaleAndConflicts, previewDraftPlan]);
 
   const positions = useMemo(() => layoutLayeredGraph(filteredGraph), [filteredGraph]);
 
-  const blast = useMemo(
-    () => computeBlastRadius(filteredGraph, blastRootId),
-    [filteredGraph, blastRootId],
-  );
+  const blast = useMemo(() => {
+    if (previewDraftPlan && augmentedGraph.draftRootIds.length > 0) {
+      return computeMultiRootBlastRadius(filteredGraph, augmentedGraph.draftRootIds);
+    }
+    return computeBlastRadius(filteredGraph, blastRootId);
+  }, [augmentedGraph.draftRootIds, blastRootId, filteredGraph, previewDraftPlan]);
 
   const flowNodes = useMemo<CairnmindFlowNode[]>(() => {
-    const hasBlast = Boolean(blastRootId && blast.nodes.size > 0);
+    const hasBlast = Boolean((blastRootId || previewDraftPlan) && blast.nodes.size > 0);
     return filteredGraph.nodes.map((node) => ({
       id: node.id,
       type: 'glassNode',
@@ -163,13 +260,24 @@ export function BlastRadiusGraph({
         node,
         dimmed: hasBlast && !blast.nodes.has(node.id),
         highlighted: hasBlast && blast.nodes.has(node.id),
-        selectedFocus: node.id === blastRootId,
+        selectedFocus:
+          node.id === blastRootId ||
+          (Boolean(previewDraftPlan) && augmentedGraph.draftRootIds.includes(node.id)),
+        draftPreview: augmentedGraph.draftNodeIds.has(node.id),
       },
     }));
-  }, [blast.nodes, blastRootId, filteredGraph.nodes, positions]);
+  }, [
+    augmentedGraph.draftNodeIds,
+    augmentedGraph.draftRootIds,
+    blast.nodes,
+    blastRootId,
+    filteredGraph.nodes,
+    positions,
+    previewDraftPlan,
+  ]);
 
   const flowEdges = useMemo<CairnmindFlowEdge[]>(() => {
-    const hasBlast = Boolean(blastRootId && blast.nodes.size > 0);
+    const hasBlast = Boolean((blastRootId || previewDraftPlan) && blast.nodes.size > 0);
     return filteredGraph.edges.map((edge) => ({
       id: edge.id,
       source: edge.source,
@@ -181,12 +289,14 @@ export function BlastRadiusGraph({
         dimmed: hasBlast && !blast.edges.has(edge.id),
       },
     }));
-  }, [blast.edges, blast.nodes.size, blastRootId, filteredGraph.edges]);
+  }, [blast.edges, blast.nodes.size, blastRootId, filteredGraph.edges, previewDraftPlan]);
 
   const handleNodeClick: NodeMouseHandler<CairnmindFlowNode> = useCallback(
     (_, flowNode) => {
       const raw = flowNode.data.node;
-      onInspectNode(raw);
+      if (!flowNode.data.draftPreview) {
+        onInspectNode(raw);
+      }
       if (raw.category === 'source_file' || raw.category === 'evidence' || raw.category === 'claim') {
         onSelectBlastRoot(blastRootId === raw.id ? null : raw.id);
       } else {
@@ -196,7 +306,11 @@ export function BlastRadiusGraph({
     [blastRootId, onInspectNode, onSelectBlastRoot],
   );
 
-  const affectedCount = blastRootId ? Math.max(0, blast.nodes.size - 1) : 0;
+  const affectedCount = previewDraftPlan
+    ? Math.max(0, blast.nodes.size - augmentedGraph.draftRootIds.length)
+    : blastRootId
+      ? Math.max(0, blast.nodes.size - 1)
+      : 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -220,7 +334,25 @@ export function BlastRadiusGraph({
         </div>
 
         <div className="flex items-center gap-2">
-          {blastRootId ? (
+          {previewDraftPlan ? (
+            <>
+              <GlassBadge tone="sky">
+                <Eye className="h-3 w-3" strokeWidth={1.5} />
+                <span>
+                  Draft Preview: {previewDraftPlan.external_ref || previewDraftPlan.title} ·{' '}
+                  {affectedCount} impacted
+                </span>
+              </GlassBadge>
+              <button
+                type="button"
+                onClick={onClearDraftPreview}
+                className="flex h-6 items-center gap-1 rounded-md border border-white/[0.1] bg-white/[0.04] px-2 text-[11px] text-zinc-300 transition-colors hover:bg-white/[0.08]"
+              >
+                <X className="h-3 w-3" strokeWidth={1.5} />
+                <span>Exit Preview</span>
+              </button>
+            </>
+          ) : blastRootId ? (
             <>
               <GlassBadge tone="amber">
                 <Crosshair className="h-3 w-3" strokeWidth={1.5} />

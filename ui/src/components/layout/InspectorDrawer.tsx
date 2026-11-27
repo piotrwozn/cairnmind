@@ -6,17 +6,26 @@ import {
   FileSearch,
   FlaskConical,
   GitFork,
+  History,
   Layers,
   ShieldAlert,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
 import { McpPayloadInspector } from '@/components/audit/McpPayloadInspector';
 import { GlassBadge, statusToTone } from '@/components/glass/GlassBadge';
+import { OriginBadge } from '@/components/glass/OriginBadge';
 import { computeBlastRadius } from '@/components/graph/BlastRadiusGraph';
 import { VerbatimCodeViewer } from '@/components/provenance/VerbatimCodeViewer';
 import { formatShortTime } from '@/lib/utils';
-import type { ActiveView, InspectorSelection, UiSnapshot } from '@/types/contracts';
+import type {
+  ActiveView,
+  EvidenceClaim,
+  InspectorSelection,
+  UiSnapshot,
+  VersionEntityKind,
+} from '@/types/contracts';
 
 interface InspectorDrawerProps {
   selection: InspectorSelection;
@@ -25,6 +34,7 @@ interface InspectorDrawerProps {
   onJumpTo: (view: ActiveView, selection: InspectorSelection) => void;
   onDropSession: (sessionId: string) => void;
   droppingSessionId: string | null;
+  onOpenVersions: (kind: VersionEntityKind, id: string, label?: string) => void;
 }
 
 export function InspectorDrawer({
@@ -34,9 +44,47 @@ export function InspectorDrawer({
   onJumpTo,
   onDropSession,
   droppingSessionId,
+  onOpenVersions,
 }: InspectorDrawerProps) {
+  const writable = snapshot?.capabilities?.writable ?? true;
+  const readOnlyReason = snapshot?.capabilities?.read_only_reason;
+
   const renderBody = () => {
     if (!selection || !snapshot) return null;
+
+    if (selection.kind === 'citation') {
+      const cit = selection.citation;
+      const syntheticClaim: EvidenceClaim = {
+        id: cit.id,
+        kind: 'citation',
+        key: `${cit.file_path}:${cit.line_start}-${cit.line_end}`,
+        title: `Ask Citation · ${cit.file_path}`,
+        content: cit.verbatim_quote,
+        status: 'confirmed',
+        provenance_status: cit.stale_now ? 'STALE' : 'VERIFIED',
+        source_path: cit.file_path,
+        line_start: cit.line_start,
+        line_end: cit.line_end,
+        verbatim_quote: cit.verbatim_quote,
+        recorded_sha256: cit.fingerprint,
+        current_disk_sha256: cit.fingerprint,
+        quote_survives: true,
+        drift_kind: cit.stale_now ? 'FILE_DRIFT_QUOTE_INTACT' : 'MATCH',
+        updated_at: snapshot.updated_at,
+        task_ids: [],
+        version: 1,
+        origin: cit.origin,
+      };
+      return (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <GlassBadge tone="sky">ASK CITATION</GlassBadge>
+            <OriginBadge origin={cit.origin} />
+          </div>
+          <VerbatimCodeViewer claim={syntheticClaim} />
+        </div>
+      );
+    }
 
     if (selection.kind === 'claim') {
       const claim = snapshot.claims.find((c) => c.id === selection.id);
@@ -44,11 +92,24 @@ export function InspectorDrawer({
       return (
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <GlassBadge tone="zinc">{claim.kind.toUpperCase()}</GlassBadge>
-              <GlassBadge tone={statusToTone(claim.provenance_status)}>
-                {claim.provenance_status}
-              </GlassBadge>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <GlassBadge tone="zinc">{claim.kind.toUpperCase()}</GlassBadge>
+                <OriginBadge origin={claim.origin} compact />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onOpenVersions('claim', claim.id, claim.key)}
+                  className="flex items-center gap-1 rounded border border-white/[0.1] bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-sky-300 font-mono-tabular hover:bg-sky-500/15"
+                >
+                  <History className="h-3 w-3" strokeWidth={1.5} />
+                  <span>v{claim.version}</span>
+                </button>
+                <GlassBadge tone={statusToTone(claim.provenance_status)}>
+                  {claim.provenance_status}
+                </GlassBadge>
+              </div>
             </div>
             <h3 className="text-sm font-semibold text-zinc-100 font-mono-tabular">{claim.key}</h3>
             <p className="text-xs leading-relaxed text-zinc-300">{claim.content}</p>
@@ -87,14 +148,30 @@ export function InspectorDrawer({
       return (
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-sky-400 font-mono-tabular">
-                {task.id} · v{task.version}
-              </span>
-              <GlassBadge tone={statusToTone(task.state)}>{task.state.toUpperCase()}</GlassBadge>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-semibold text-sky-400 font-mono-tabular">
+                  {task.id}
+                </span>
+                <OriginBadge origin={task.origin} compact />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onOpenVersions('task', task.id, task.title)}
+                  className="flex items-center gap-1 rounded border border-white/[0.1] bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-sky-300 font-mono-tabular hover:bg-sky-500/15"
+                >
+                  <History className="h-3 w-3" strokeWidth={1.5} />
+                  <span>v{task.version}</span>
+                </button>
+                <GlassBadge tone={statusToTone(task.state)}>{task.state.toUpperCase()}</GlassBadge>
+              </div>
             </div>
             <h3 className="text-sm font-semibold text-zinc-100">{task.title}</h3>
-            <span className="text-[11px] text-zinc-500 font-mono-tabular">{task.plan_title}</span>
+            <span className="text-[11px] text-zinc-500 font-mono-tabular">
+              {task.plan_title}
+              {task.external_ref ? ` · ${task.external_ref}` : ''}
+            </span>
           </div>
 
           {/* Test Gate detail */}
@@ -170,9 +247,12 @@ export function InspectorDrawer({
                       {claim.source_path}:L{claim.line_start}
                     </div>
                   </div>
-                  <GlassBadge tone={statusToTone(claim.provenance_status)}>
-                    {claim.provenance_status}
-                  </GlassBadge>
+                  <div className="flex items-center gap-1">
+                    <OriginBadge origin={claim.origin} compact />
+                    <GlassBadge tone={statusToTone(claim.provenance_status)}>
+                      {claim.provenance_status}
+                    </GlassBadge>
+                  </div>
                 </button>
               ))
             )}
@@ -231,9 +311,10 @@ export function InspectorDrawer({
 
           <button
             type="button"
-            disabled={droppingSessionId === session.id}
+            disabled={droppingSessionId === session.id || !writable}
+            title={!writable ? readOnlyReason || 'Read-only mode enabled' : 'Drop stale session lock'}
             onClick={() => onDropSession(session.id)}
-            className="flex h-8 items-center justify-center gap-1.5 rounded-md border border-rose-500/30 bg-rose-500/10 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-500/20 disabled:opacity-50"
+            className="flex h-8 items-center justify-center gap-1.5 rounded-md border border-rose-500/30 bg-rose-500/10 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-45"
           >
             <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
             <span>
@@ -255,12 +336,21 @@ export function InspectorDrawer({
         node.category === 'claim' || node.category === 'evidence'
           ? snapshot.claims.find((c) => c.id === node.ref_id)
           : undefined;
+      const originCat =
+        node.meta.origin_category === 'ENGINE_VERIFIED' ||
+        node.meta.origin_category === 'HUMAN_REPO' ||
+        node.meta.origin_category === 'MCP_DEGRADED'
+          ? node.meta.origin_category
+          : undefined;
 
       return (
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <GlassBadge tone="sky">{node.category.toUpperCase()}</GlassBadge>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <GlassBadge tone="sky">{node.category.toUpperCase()}</GlassBadge>
+                {originCat && <OriginBadge category={originCat} compact />}
+              </div>
               <GlassBadge tone={statusToTone(node.status)}>{node.status}</GlassBadge>
             </div>
             <h3 className="text-sm font-semibold text-zinc-100 font-mono-tabular">{node.label}</h3>
@@ -295,6 +385,28 @@ export function InspectorDrawer({
       );
     }
 
+    if (selection.kind === 'plan') {
+      const plan = (snapshot.plans ?? []).find((p) => p.id === selection.id);
+      if (!plan) return null;
+      return (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <OriginBadge origin={plan.origin} />
+            <button
+              type="button"
+              onClick={() => onOpenVersions('plan', plan.id, plan.title)}
+              className="flex items-center gap-1 rounded border border-white/[0.1] bg-white/[0.04] px-2 py-0.5 text-[11px] text-sky-300 font-mono-tabular hover:bg-sky-500/15"
+            >
+              <History className="h-3 w-3" strokeWidth={1.5} />
+              <span>Versions (v{plan.version})</span>
+            </button>
+          </div>
+          <h3 className="text-sm font-semibold text-zinc-100">{plan.title}</h3>
+          <p className="text-xs text-zinc-300">{plan.goal}</p>
+        </div>
+      );
+    }
+
     return null;
   };
 
@@ -305,12 +417,16 @@ export function InspectorDrawer({
         return { label: 'Task & Gate Detail', icon: Layers };
       case 'claim':
         return { label: 'Provenance & Quote Viewer', icon: FileSearch };
+      case 'citation':
+        return { label: 'Ask Quote & Fingerprint Viewer', icon: Sparkles };
       case 'audit':
         return { label: 'MCP Payload Diff Inspector', icon: ShieldAlert };
       case 'session':
         return { label: 'OCC Session Lock', icon: Cpu };
       case 'node':
         return { label: 'Graph Blast-Radius Node', icon: GitFork };
+      case 'plan':
+        return { label: 'Plan Detail', icon: Layers };
     }
   };
 

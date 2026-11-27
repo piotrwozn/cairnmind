@@ -9,6 +9,8 @@ interface SessionStripProps {
   onSelectSession: (session: AgentSession) => void;
   onDropSession: (sessionId: string) => void;
   droppingSessionId: string | null;
+  writable?: boolean;
+  readOnlyReason?: string | null;
 }
 
 export function SessionStrip({
@@ -17,6 +19,8 @@ export function SessionStrip({
   onSelectSession,
   onDropSession,
   droppingSessionId,
+  writable = true,
+  readOnlyReason,
 }: SessionStripProps) {
   return (
     <div className="shrink-0 border-b border-white/[0.06] px-3 py-2.5">
@@ -88,13 +92,13 @@ export function SessionStrip({
 
                   <button
                     type="button"
-                    disabled={isDropping}
+                    disabled={isDropping || !writable}
                     onClick={(e) => {
                       e.stopPropagation();
                       onDropSession(session.id);
                     }}
-                    title="Drop stale or orphaned session lock"
-                    className="flex items-center gap-1 rounded border border-white/[0.08] bg-zinc-950/60 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400 transition-colors duration-150 hover:border-rose-500/35 hover:bg-rose-500/15 hover:text-rose-300 disabled:opacity-50"
+                    title={!writable ? readOnlyReason || 'Read-only mode enabled' : 'Drop stale or orphaned session lock'}
+                    className="flex items-center gap-1 rounded border border-white/[0.08] bg-zinc-950/60 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400 transition-colors duration-150 hover:border-rose-500/35 hover:bg-rose-500/15 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     <Trash2 className="h-3 w-3" strokeWidth={1.5} />
                     <span>{isDropping ? 'Dropping…' : 'Drop Session'}</span>
