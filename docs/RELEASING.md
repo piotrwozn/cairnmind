@@ -4,9 +4,9 @@ One gate, then a short list of steps. Nothing here is automated except CI; every
 
 ## The release gate
 
-A release needs all four, on the release commit.
+A release needs all six conditions below on the release commit. Conditions 5 and 6 (together with the three-run rule in condition 1 and the upgrade trial in condition 4) were adopted for `0.13.0` (#454) and **stay permanently for every subsequent release**.
 
-1. **Green CI.** The required checks are `lint`, `fast-tests`, `macos-fast-tests`, `full-tests`, `windows-fast-tests` and `windows-arcade-tests` (`.github/workflows/ci.yml`). `macos-fast-tests` runs the fast tier on an Apple silicon macOS runner. `windows-fast-tests` and `windows-arcade-tests` run the fast tier and the full ArcadeDB tier (excluding POSIX-only `tmux` tests) on `windows-latest` with Java 21 and without `PYTHONUTF8`. `full-tests` runs the whole suite against the pinned ArcadeDB on Java 21 with tmux, on Linux only. The `coverage` job is informational and is not part of the gate. To run the same checks yourself: `uv run ruff check src tests`, `uv run pytest -m "not arcade and not tmux"` and `uv run pytest` (see [CONTRIBUTING.md](../CONTRIBUTING.md#running-checks)). The result is the CI run on the merge commit. `server-tests` and `restore-size` run only on main and by hand, never on a pull request, and are not required checks: before a release, open the last run of `ci.yml` on main and read every job, those two too, and fix a red one first (#417: `server-tests` failed on eight of nine pushes to main; the runs showed red, but no pull request runs the job and no required check waits for it, so nobody read it). A branch that touches the store, the engine's errors or the graph write has both started on it by hand (`gh workflow run ci.yml --ref BRANCH`) and green before its pull request is merged: production mode words some of the engine's answers differently from the managed engine (#455: `server-tests` failed on main right after #453, which only the managed engine had tested).
+1. **Green CI — three consecutive green runs on `main` (#454).** The required checks are `lint`, `fast-tests`, `macos-fast-tests`, `full-tests`, `windows-fast-tests` and `windows-arcade-tests` (`.github/workflows/ci.yml`), plus `contract-declaration` (`.github/workflows/contract-check.yml`) on pull requests that touch [STABLE_CONTRACT.md](STABLE_CONTRACT.md) or `tests/fixtures/contracts/`. `macos-fast-tests` runs the fast tier on an Apple silicon macOS runner. `windows-fast-tests` and `windows-arcade-tests` run the fast tier and the full ArcadeDB tier (excluding POSIX-only `tmux` tests) on `windows-latest` with Java 21 and without `PYTHONUTF8`. `full-tests` runs the whole suite against the pinned ArcadeDB on Java 21 with tmux, on Linux only. The `coverage` job is informational and is not part of the required checks. To run the same checks yourself: `uv run ruff check src tests`, `uv run pytest -m "not arcade and not tmux"` and `uv run pytest` (see [CONTRIBUTING.md](../CONTRIBUTING.md#running-checks)). `server-tests` and `restore-size` run only on `main` and by hand, never on a pull request: before a release, `main` must record **three consecutive green runs in a row across every job** (`server-tests` and `restore-size` included), with **no single job re-run** (#417, #454). A branch that touches the store, the engine's errors or the graph write has both started on it by hand (`gh workflow run ci.yml --ref BRANCH`) and green before its pull request is merged (#455).
 2. **Evaluations, when the release changes the knowledge agent, retrieval or extraction.** Run by hand with the local models; they are not part of CI ([EVALUATION.md](EVALUATION.md)):
 
    ```bash
@@ -18,9 +18,39 @@ A release needs all four, on the release commit.
 
    Exit code 0 is passed, 1 failed, 3 `not_run`, which is never a pass. Record the results in the release pull request (CONTRIBUTING asks for this for such changes), and in [EVALUATION.md](EVALUATION.md) or [evaluation/RESULTS.md](evaluation/RESULTS.md) when they are figures the release states. A release that touches none of these areas has nothing to run; the 0.9.0 release notes say that its recall results were not repeated.
 3. **The hand-off pilot.** [pilot/README.md](../pilot/README.md) prepares a fresh repository for a Codex, Claude Code, fresh Codex hand-off. It needs your own WSL2, a GPU, Ollama and both clients signed in. It runs the local evaluation first, then three real sessions, then compaction, restart and `stale` checks. Its section "Measurements and pass criteria" says when it passes: the real models pass the evaluation, the three sessions restore consistent states backed by sources, real tests and the review are recorded, and the compaction, restart and `stale` checks give the expected results. It sets no numeric threshold beyond the evaluation's own. It keeps its reports in a directory outside the repository, and the repository does not say where the outcome is written down, so state it in the release pull request.
-4. **A manual trial on a real installation.** Before a release, install the release candidate on a clean installation and run the trial checklist end to end in a real terminal. Testers that drive the terminal can do this; for 0.10.0 it was 65 steps in three parts, which found 42 product defects that the automated tests did not; 39 were fixed in #152 to #158 and the rest deferred to #160 and #161. A finding counts only when a second run reproduces it. Each confirmed finding is fixed before the release, or deferred in writing with an issue. State the result in the release pull request: the steps run, the findings, how many were fixed and how many deferred.
+4. **A whole manual trial from nothing and an upgrade from the previous release (#454).** Before every release, run both a clean installation from nothing and an upgrade from the previous published release with real data on the supported platforms (WSL/native Windows and macOS), following the published documents step by step (for `0.13.0`, together with the two-machine measurements of #225, #266, #362, #363, #371 and #372). Testers that drive the terminal can do this; for 0.10.0 it was 65 steps in three parts, which found 42 product defects that the automated tests did not; 39 were fixed in #152 to #158 and the rest deferred to #160 and #161. A finding counts only when a second run reproduces it. Each confirmed finding is fixed before the release, or deferred in writing with an issue. State the result in the release pull request: the steps run, the findings, how many were fixed and how many deferred.
+5. **Two consecutive dry rounds of attacks on the core (#454).** After every open pull request of the milestone is merged, run independent adversarial attack rounds against the core: the store and the single-writer rule, backup and restore, indexing and the code graph, upgrading from the previous release, a person's acts and what an agent may not do without them, and answer refusals. Every finding becomes an issue of the milestone and is fixed, which resets the counter to zero. Tagging requires **two consecutive rounds with zero findings in the core**. Record each round's scope, attacks and outcome on the milestone's release-gate issue.
+6. **Contract fixtures up to date ([STABLE_CONTRACT.md](STABLE_CONTRACT.md), #249).** Every frozen CLI `--json` and MCP tool example matches the release commit, and every previously published release's upgrade and legacy-file fixtures pass.
 
-A major release has a wider gate, described in issue #159.
+## Major release gate (1.0.0, #159)
+
+In addition to the standard gate above, a major release (`1.0.0` and later `X.0.0` releases) requires a wider manual qualification run on a clean installation from the release candidate:
+
+1. **Full updated checklist:** the manual trial checklist, updated for every feature added since `0.10.0`, run end to end.
+2. **Unscripted exploratory round with ten isolated testers:** ten independent testers run concurrently on isolated instances (each with its own data directory, database engine, service ports, tmux sessions and project — never touching the owner's data), given only the release candidate and its documentation, covering ten distinct areas:
+   1. installation and first run;
+   2. workspace panels and keyboard handling;
+   3. sessions and resume;
+   4. plans and stages;
+   5. the built-in agent and MCP tools;
+   6. memory (`ask`, `remember`, review, `impact`);
+   7. an external client over MCP;
+   8. the command line from the documentation (every documented command and option);
+   9. Polish locale and narrow terminals;
+   10. a hostile user (invalid input, interrupted operations, killed processes).
+3. **Every documented command and option** executed once and compared against the documentation.
+4. **Every supported platform** (Linux, Windows via WSL2 and native Windows 10/11, and macOS on Apple silicon) exercised in a real terminal by a person.
+5. **Reproduce and resolve:** a finding counts only after an independent second run reproduces it (testers also check the kernel log before reporting an OOM/crash under load). Every confirmed blocker or major finding must be fixed before tagging `1.0.0`; any deferred minor finding requires an issue and written rationale. Attach the full report (steps run, findings, fixed, deferred and why) to the release pull request.
+
+## Release candidate and freeze (1.0.0, #250)
+
+A major release is never published straight from a passing build. It goes through a release candidate and a freeze:
+
+1. **Publish `X.0.0-rc1`** as a GitHub pre-release, installable via the documented installation steps.
+2. **Freeze rules:** from `rc1` onward, **only defect fixes** are merged — no new features and no refactoring.
+3. **Qualification during the freeze:** the major release gate (#159: ten-tester exploratory round, upgrade trial, newcomer trial) runs on the candidate while the owner uses it daily.
+4. **7-day zero-defect rule:** the freeze ends only after **7 consecutive days with zero confirmed blocking defects**. Blocking means **any confirmed defect** (any finding reproduced a second time). Every confirmed defect is fixed, tagged as the next candidate (`rc2`, `rc3`, ...), and **resets the 7-day clock**.
+5. **Final tag and owner sign-off:** the owner decides when the freeze has passed. Final `X.0.0` is built and published from the **exact commit of the last release candidate, unchanged**.
 
 ## Steps
 

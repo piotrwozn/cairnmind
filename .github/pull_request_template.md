@@ -11,7 +11,7 @@
 
 ## Contracts
 
-<!-- Does this change a safety contract in docs/CONTRACTS.md or docs/MEMORY_CONTRACTS.md? If so, explain. -->
+<!-- Required together with the `contract-change` label whenever this PR modifies `docs/STABLE_CONTRACT.md` or `tests/fixtures/contracts/**` (#248). Explain any change to the stable 1.x contract or safety contracts in docs/STABLE_CONTRACT.md, docs/CONTRACTS.md or docs/MEMORY_CONTRACTS.md. -->
 
 ## Not verified
 

@@ -861,10 +861,13 @@ def _verify_snapshot_dir(snap_dir: Path, root: Path, git: dict[str, Any], broken
     except (OSError, ValueError) as exc:
         broken_refs.append(f"snapshot:{manifest_path.relative_to(root).as_posix()} invalid JSON ({exc})")
         return
+    manifest_version = manifest.get("format_version") if isinstance(manifest, dict) else None
+    if manifest_version is None and isinstance(manifest, dict):
+        manifest_version = manifest.get("version")
     if (
         not isinstance(manifest, dict)
         or manifest.get("format") not in FORMATS
-        or manifest.get("version") != VERSION
+        or manifest_version != VERSION
         or not isinstance(manifest.get("objects"), dict)
     ):
         broken_refs.append(f"snapshot:{manifest_path.relative_to(root).as_posix()} invalid manifest schema")

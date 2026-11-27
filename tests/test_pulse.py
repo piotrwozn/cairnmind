@@ -315,6 +315,28 @@ def test_pulse_detects_broken_snapshot_refs_and_missing_db_source(tmp_path):
     assert any("not found in Git history" in ref for ref in report["broken_refs"])
 
 
+def test_pulse_accepts_canonical_format_version_snapshot_manifest(tmp_path):
+    """Real `MemoryManager.snapshot` manifests store `format_version: 1` (not `version: 1`)."""
+    root = tmp_path / "repo"
+    _init_git_repo(root)
+    snap_dir = root / ".memory" / "cairnmind"
+    obj_dir = snap_dir / "objects"
+    obj_dir.mkdir(parents=True)
+    (obj_dir / "rec1.json").write_text('{"id": "r1"}', encoding="utf-8")
+    (snap_dir / "manifest.json").write_text(
+        json.dumps({
+            "format": "cairnmind-portable-memory",
+            "format_version": 1,
+            "snapshot_id": "snap-real",
+            "objects": {"records": [{"id": "r1", "sha256": "0" * 64, "path": "objects/rec1.json", "bytes": 12}]},
+        }),
+        encoding="utf-8",
+    )
+    broken_refs: list[str] = []
+    pulse._verify_snapshot_dir(snap_dir, root, {"available": False}, broken_refs)
+    assert broken_refs == []
+
+
 def test_pulse_large_repo_fast_path_skips_full_manifest_capture(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     head = _init_git_repo(root)

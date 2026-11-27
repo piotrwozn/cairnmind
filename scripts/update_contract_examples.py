@@ -47,8 +47,7 @@ def main() -> int:
         engine_settings.arcade_url = f"http://127.0.0.1:{port}"
         engine_settings.save()
         dist = os.environ.get("CAIRNMIND_ARCADE_DIST")
-        if dist:
-            install_engine(engine_settings, Path(dist))
+        install_engine(engine_settings, Path(dist) if dist else None)
         ensure_engine(engine_settings)
         saved_env = {k: os.environ.get(k) for k in ("CAIRNMIND_ARCADE_URL", "CAIRNMIND_ARCADE_PASSWORD",
                                                    "CAIRNMIND_ARCADE_DATABASE")}
@@ -73,12 +72,14 @@ def main() -> int:
             (cli_dir / f"{name}.json").write_text(
                 json.dumps(normalized, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
+                newline="\n",
             )
         for name, raw_payload in mcp_outputs.items():
             normalized = normalize_contract_payload(raw_payload, env, command_name=name)
             (mcp_dir / f"{name}.json").write_text(
                 json.dumps(normalized, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
+                newline="\n",
             )
     print(f"Generated {len(cli_outputs)} CLI and {len(mcp_outputs)} MCP frozen contract examples.")
     return 0

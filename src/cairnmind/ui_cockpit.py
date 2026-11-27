@@ -838,34 +838,62 @@ class MockCockpitMixin:
                     "timestamp": now,
                 }
 
+            is_polish = bool(re.search(r"[ąćęłńóśźż]", q_lower)) or any(
+                tok in q_lower
+                for tok in ("jakie", "ktore", "komponent", "przeplyw", "decyzj", "wykryto", "nieaktualn", "blokuj", "zadania", "dowody")
+            )
+
             if any(tok in q_lower for tok in ("komponent", "przepływ", "architecture", "component", "flow", "overview")):
                 matched_claims = [c for c in self.claims if c["id"] in {"clm-occ-gate", "clm-quote-verify", "clm-plan-cas", "clm-mcp-firewall"}]
                 citations = [build_citation_from_claim(c) for c in matched_claims]
-                answer = (
-                    "Główne komponenty Cairnminda tworzą czterostopniowy potok weryfikacji: "
-                    "(1) `SessionManager.require_ack` wymusza zgodność `acknowledged_rev` z `state_rev` (OCC gate), "
-                    "(2) `verify_verbatim_quote` porównuje SHA-256 i dosłowny cytat w kodzie, "
-                    "(3) `compare_and_swap_task` chroni atomowość planów i wersji zadań, oraz "
-                    "(4) `enforce_write_contract` blokuje zapisy MCP bez cytatów i zaliczonych testów."
-                )
+                if is_polish:
+                    answer = (
+                        "Główne komponenty Cairnminda tworzą czterostopniowy potok weryfikacji: "
+                        "(1) `SessionManager.require_ack` wymusza zgodność `acknowledged_rev` z `state_rev` (OCC gate), "
+                        "(2) `verify_verbatim_quote` porównuje SHA-256 i dosłowny cytat w kodzie, "
+                        "(3) `compare_and_swap_task` chroni atomowość planów i wersji zadań, oraz "
+                        "(4) `enforce_write_contract` blokuje zapisy MCP bez cytatów i zaliczonych testów."
+                    )
+                else:
+                    answer = (
+                        "Cairnmind's core components form a four-stage verification pipeline: "
+                        "(1) `SessionManager.require_ack` enforces `acknowledged_rev` matching `state_rev` (OCC gate), "
+                        "(2) `verify_verbatim_quote` checks the SHA-256 hash and verbatim quote in source code, "
+                        "(3) `compare_and_swap_task` protects atomic plan and task versions, and "
+                        "(4) `enforce_write_contract` blocks MCP writes lacking citations or passing checks."
+                    )
             elif any(tok in q_lower for tok in ("decyzj", "decision", "adr", "wykryto", "recent")):
                 matched_claims = [c for c in self.claims if c["kind"] in {"decision", "constraint"}][:3]
                 citations = [build_citation_from_claim(c) for c in matched_claims]
                 pending = [d["title"] for d in self.detected_decisions if d["status"] == "pending"][:3]
-                answer = (
-                    "Zatwierdzone decyzje i wykryte propozycje obejmują: rozróżnianie `FILE_DRIFT_QUOTE_INTACT` od "
-                    "`QUOTE_MUTATED` w `evidence.py`, podwójny CAS (`task` + `plan`) w `plans.py`, oraz oczekujące "
-                    f"wykryte decyzje z repo/PR/CI: {'; '.join(pending)}."
-                )
+                if is_polish:
+                    answer = (
+                        "Zatwierdzone decyzje i wykryte propozycje obejmują: rozróżnianie `FILE_DRIFT_QUOTE_INTACT` od "
+                        "`QUOTE_MUTATED` w `evidence.py`, podwójny CAS (`task` + `plan`) w `plans.py`, oraz oczekujące "
+                        f"wykryte decyzje z repo/PR/CI: {'; '.join(pending)}."
+                    )
+                else:
+                    answer = (
+                        "Confirmed decisions and detected proposals include: distinguishing `FILE_DRIFT_QUOTE_INTACT` "
+                        "from `QUOTE_MUTATED` in `evidence.py`, dual CAS (`task` + `plan`) in `plans.py`, and pending "
+                        f"detected decisions from repo/PR/CI: {'; '.join(pending)}."
+                    )
             elif any(tok in q_lower for tok in ("nieaktualn", "stale", "drift", "blokuj", "block")):
                 matched_claims = [c for c in self.claims if c["provenance_status"] != "VERIFIED"]
                 citations = [build_citation_from_claim(c) for c in matched_claims]
                 stale_tasks = [f"{t['id']} ({t['test_gate']['status']})" for t in self.tasks if t["test_gate"]["status"] != "PASS"]
-                answer = (
-                    f"Wykryto {len(matched_claims)} nieaktualne dowody (m.in. `clm-test-gate-fp` ze stanem `QUOTE_MUTATED` "
-                    f"w `verification.py` oraz `clm-occ-gate` z `FILE_DRIFT_QUOTE_INTACT` w `sessions.py`). "
-                    f"Zadania wymagające akcji: {', '.join(stale_tasks)}."
-                )
+                if is_polish:
+                    answer = (
+                        f"Wykryto {len(matched_claims)} nieaktualne dowody (m.in. `clm-test-gate-fp` ze stanem `QUOTE_MUTATED` "
+                        f"w `verification.py` oraz `clm-occ-gate` z `FILE_DRIFT_QUOTE_INTACT` w `sessions.py`). "
+                        f"Zadania wymagające akcji: {', '.join(stale_tasks)}."
+                    )
+                else:
+                    answer = (
+                        f"Detected {len(matched_claims)} stale evidence items (including `clm-test-gate-fp` with "
+                        f"`QUOTE_MUTATED` in `verification.py` and `clm-occ-gate` with `FILE_DRIFT_QUOTE_INTACT` in "
+                        f"`sessions.py`). Tasks requiring action: {', '.join(stale_tasks)}."
+                    )
             else:
                 # General lexical search across claims and mock files
                 terms = [t for t in re.findall(r"[a-z0-9_]{3,}", q_lower)]
@@ -886,13 +914,16 @@ class MockCockpitMixin:
                 citations = [build_citation_from_claim(c) for c in matched_claims]
                 if not citations:
                     latency_ms = max(10, int((time.perf_counter() - started) * 1000) + 14)
+                    unknown_answer = (
+                        "UNKNOWN — Brak dowodów w pamięci projektu ani w zindeksowanych plikach dla tego pytania."
+                        if is_polish
+                        else "UNKNOWN — No evidence found in project memory or indexed files for this question."
+                    )
                     return {
                         "id": f"ask-{uuid4().hex[:8]}",
                         "query": query,
                         "status": "UNKNOWN",
-                        "answer": (
-                            "UNKNOWN — Brak dowodów w pamięci projektu ani w zindeksowanych plikach dla tego pytania."
-                        ),
+                        "answer": unknown_answer,
                         "citations": [],
                         "tier_used": "tier_0_fts_evidence" if fallback_mode else "tier_2_verified_llm",
                         "latency_ms": latency_ms,
@@ -903,13 +934,19 @@ class MockCockpitMixin:
                         "timestamp": now,
                     }
                 snippets = "; ".join(f"{c['key']} ({c['source_path']})" for c in matched_claims)
-                answer = f"Znaleziono {len(matched_claims)} zweryfikowane dowody powiązane z zapytaniem: {snippets}."
+                answer = (
+                    f"Znaleziono {len(matched_claims)} zweryfikowane dowody powiązane z zapytaniem: {snippets}."
+                    if is_polish
+                    else f"Found {len(matched_claims)} verified evidence items related to the query: {snippets}."
+                )
 
             if fallback_mode:
-                answer = (
+                prefix = (
                     f"[Tier 0 FTS Evidence Mode] Bez LLM — znaleziono {len(citations)} dopasowane cytaty źródłowe. "
-                    + answer
+                    if is_polish
+                    else f"[Tier 0 FTS Evidence Mode] No LLM configured — found {len(citations)} matching source citations. "
                 )
+                answer = prefix + answer
 
             status = "PARTIAL" if fallback_mode else "VERIFIED"
             latency_ms = max(18, int((time.perf_counter() - started) * 1000) + (22 if fallback_mode else 64))
