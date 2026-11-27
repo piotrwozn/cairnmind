@@ -21,10 +21,15 @@ import socket
 import struct
 import subprocess
 import sys
-import termios
 import threading
 import time
-import fcntl
+
+if sys.platform != "win32":
+    import fcntl
+    import termios
+else:  # pragma: no cover - PTY terminal preview is POSIX-only (ADR-05)
+    fcntl = None  # type: ignore[assignment]
+    termios = None  # type: ignore[assignment]
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse

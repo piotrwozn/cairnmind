@@ -9,14 +9,21 @@ import argparse
 import asyncio
 import base64
 from contextlib import contextmanager
-import fcntl
 import json
 import os
 import re
 import signal
 import subprocess
-import termios
-import tty
+import sys
+
+if sys.platform != "win32":
+    import fcntl
+    import termios
+    import tty
+else:  # pragma: no cover - raw PTY bridge is POSIX-only (ADR-05)
+    fcntl = None  # type: ignore[assignment]
+    termios = None  # type: ignore[assignment]
+    tty = None  # type: ignore[assignment]
 
 from websockets.exceptions import WebSocketException
 

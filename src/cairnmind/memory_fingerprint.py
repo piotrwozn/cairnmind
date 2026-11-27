@@ -21,7 +21,6 @@ The local Ollama (and an Ollama profile) reports a digest: that is the identity 
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import math
 from pathlib import Path
@@ -29,6 +28,7 @@ import time
 from typing import Any
 
 from .ollama import OllamaUnavailable
+from .platform_locks import lock_file
 
 FINGERPRINT_TEXT = "Cairnmind embedding fingerprint: a fixed sentence that is the same on every computer."
 FILE = "models.fingerprints.json"
@@ -132,7 +132,7 @@ async def check(client, *, accept: bool = False) -> dict:
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     with (path / LOCK).open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock, exclusive=True)
         _cache.pop(path / FILE, None)
         records = dict(_read(path))
         record = records.get(base)

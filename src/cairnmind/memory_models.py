@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-import fcntl
 import hashlib
 import ipaddress
 import json
@@ -574,7 +573,8 @@ def save_role(data_dir: Path, role: str, row: dict | None, model: str) -> None:
     path = data_dir / "config.json"
     data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (data_dir / "config.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        from .platform_locks import lock_file
+        lock_file(lock, exclusive=True)
         values = json.loads(path.read_text()) if path.exists() else {}
         if not isinstance(values, dict):
             raise ValueError("config.json is not a settings object; nothing was saved.")

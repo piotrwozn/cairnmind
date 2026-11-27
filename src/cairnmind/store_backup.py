@@ -169,11 +169,8 @@ def publish(temporary: Path, destination) -> Path:
             os.fsync(handle.fileno())
         os.chmod(temporary, 0o600)
         temporary.replace(destination)
-        directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        from .platform_fs import sync_directory
+        sync_directory(destination.parent)
         return destination
     finally:
         temporary.unlink(missing_ok=True)

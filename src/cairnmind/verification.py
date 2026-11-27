@@ -16,6 +16,7 @@ import selectors
 import signal
 import stat
 import subprocess
+import sys
 import time
 import tomllib
 import threading
@@ -337,6 +338,23 @@ def declared_check_names(root) -> list[str] | None:
 
 
 def _stop_group(process):
+    if sys.platform == "win32":
+        from .platform_fs import terminate_windows_tree
+        try:
+            process.terminate()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=0.3)
+        except subprocess.TimeoutExpired:
+            pass
+        terminate_windows_tree(process.pid)
+        try:
+            process.kill()
+        except OSError:
+            pass
+        process.wait(timeout=3)
+        return
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -351,6 +369,70 @@ def _stop_group(process):
     except ProcessLookupError:
         pass
     process.wait(timeout=3)
+
+
+def _collect_pipes_threaded(process, buffers, logs, profile, started) -> str:
+    """Read stdout/stderr via bounded reader threads (cross-platform; required on Windows where
+    selectors.DefaultSelector only supports sockets, not anonymous pipes)."""
+    import queue
+
+    chunks: queue.Queue[tuple[str, bytes | None]] = queue.Queue()
+
+    def _reader(name: str, stream) -> None:
+        try:
+            fd = stream.fileno()
+            while True:
+                data = os.read(fd, 65536)
+                if not data:
+                    break
+                chunks.put((name, data))
+        except OSError:
+            pass
+        finally:
+            chunks.put((name, None))
+
+    threads = [
+        threading.Thread(target=_reader, args=(name, getattr(process, name)), daemon=True)
+        for name in buffers
+    ]
+    for thread in threads:
+        thread.start()
+
+    outcome = "completed"
+    open_streams = len(buffers)
+    while open_streams > 0:
+        elapsed = time.monotonic() - started
+        if elapsed >= profile["timeout_seconds"]:
+            outcome = "timeout"
+            break
+        wait_slice = min(0.05, max(0.005, profile["timeout_seconds"] - elapsed))
+        try:
+            name, chunk = chunks.get(timeout=wait_slice)
+        except queue.Empty:
+            continue
+        if chunk is None:
+            open_streams -= 1
+            continue
+        remaining = profile["output_limit_bytes"] - sum(len(b) for b in buffers.values())
+        bounded = chunk[:remaining]
+        buffers[name].extend(bounded)
+        logs[name].write(bounded)
+        if len(chunk) > remaining:
+            outcome = "output_limit"
+            break
+
+    if outcome != "completed":
+        _stop_group(process)
+    else:
+        remaining_time = max(0.001, profile["timeout_seconds"] - (time.monotonic() - started))
+        try:
+            process.wait(timeout=remaining_time)
+        except subprocess.TimeoutExpired:
+            outcome = "timeout"
+            _stop_group(process)
+    for thread in threads:
+        thread.join(timeout=1.0)
+    return outcome
 
 
 def _execute(profile, root, output_dir, on_start=None):
@@ -374,40 +456,48 @@ def _execute(profile, root, output_dir, on_start=None):
         cwd = (root / profile["cwd"]).resolve()
         if not cwd.is_relative_to(root):
             raise ValueError("Check cwd escaped its worktree")
+        popen_kwargs = (
+            {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+            if sys.platform == "win32"
+            else {"start_new_session": True}
+        )
         process = subprocess.Popen(profile["argv"], cwd=cwd, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, shell=False)
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False, **popen_kwargs)
         if on_start is not None:
             on_start(process.pid)
-        with selectors.DefaultSelector() as selector:
-            for name in buffers:
-                selector.register(getattr(process, name), selectors.EVENT_READ, name)
-            while selector.get_map():
-                if time.monotonic() - started >= profile["timeout_seconds"]:
-                    outcome = "timeout"
-                    break
-                for key, _ in selector.select(timeout=min(0.05, profile["timeout_seconds"])):
-                    chunk = os.read(key.fileobj.fileno(), 65536)
-                    if not chunk:
-                        selector.unregister(key.fileobj)
-                        continue
-                    remaining = profile["output_limit_bytes"] - sum(len(b) for b in buffers.values())
-                    bounded = chunk[:remaining]
-                    buffers[key.data].extend(bounded)
-                    logs[key.data].write(bounded)
-                    if len(chunk) > remaining:
-                        outcome = "output_limit"
+        if sys.platform == "win32":
+            outcome = _collect_pipes_threaded(process, buffers, logs, profile, started)
+        else:
+            with selectors.DefaultSelector() as selector:
+                for name in buffers:
+                    selector.register(getattr(process, name), selectors.EVENT_READ, name)
+                while selector.get_map():
+                    if time.monotonic() - started >= profile["timeout_seconds"]:
+                        outcome = "timeout"
+                        break
+                    for key, _ in selector.select(timeout=min(0.05, profile["timeout_seconds"])):
+                        chunk = os.read(key.fileobj.fileno(), 65536)
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                            continue
+                        remaining = profile["output_limit_bytes"] - sum(len(b) for b in buffers.values())
+                        bounded = chunk[:remaining]
+                        buffers[key.data].extend(bounded)
+                        logs[key.data].write(bounded)
+                        if len(chunk) > remaining:
+                            outcome = "output_limit"
+                            break
+                    if outcome != "completed":
                         break
                 if outcome != "completed":
-                    break
-            if outcome != "completed":
-                _stop_group(process)
-            else:
-                remaining_time = max(0.001, profile["timeout_seconds"] - (time.monotonic() - started))
-                try:
-                    process.wait(timeout=remaining_time)
-                except subprocess.TimeoutExpired:
-                    outcome = "timeout"
                     _stop_group(process)
+                else:
+                    remaining_time = max(0.001, profile["timeout_seconds"] - (time.monotonic() - started))
+                    try:
+                        process.wait(timeout=remaining_time)
+                    except subprocess.TimeoutExpired:
+                        outcome = "timeout"
+                        _stop_group(process)
         code = process.returncode
     except KeyboardInterrupt:
         outcome = "cancelled"
@@ -501,11 +591,8 @@ def _write_active(path, state):
         os.fsync(handle.fileno())
     temporary.chmod(0o600)
     temporary.replace(path)
-    descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    from .platform_fs import sync_directory
+    sync_directory(path.parent)
 
 
 def _output_source(store, project_id, run_id, name, data, remaining, **metadata):
@@ -545,11 +632,15 @@ def recover_interrupted_runs(store, settings) -> list[dict]:
             if (type(process_pid) is int and process_pid > 1 and active.get("process_identity")
                     and _process_identity(process_pid) == active["process_identity"]):
                 # This is the original group leader; do not signal a reused PID.
-                try:
-                    os.killpg(process_pid, signal.SIGTERM)
-                    os.killpg(process_pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                if sys.platform == "win32":
+                    from .platform_fs import terminate_windows_tree
+                    terminate_windows_tree(process_pid)
+                else:
+                    try:
+                        os.killpg(process_pid, signal.SIGTERM)
+                        os.killpg(process_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
             source_ids, total, rendered_total = {}, 0, 0
             for name in ("stdout", "stderr"):
                 log = path.parent / name

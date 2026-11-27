@@ -21,7 +21,6 @@ an item, or a list of them.
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import json
 import os
 import tempfile
@@ -35,6 +34,7 @@ from . import (database_credentials, database_mode, engine, engine_docker, knowl
 from .arcade import ArcadeError
 from .config import Settings, derived_database, env_names, env_value
 from .ollama import OllamaUnavailable
+from .platform_locks import lock_file
 from .terminal_safe import safe_text
 
 PROFILES = ("local", "remote-db", "remote")
@@ -466,7 +466,7 @@ def save_storage(data_dir: Path, fields: dict) -> None:
     path = data_dir / "config.json"
     data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (data_dir / "config.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock, exclusive=True)
         values = json.loads(path.read_text()) if path.exists() else {}
         if not isinstance(values, dict):
             raise ValueError("config.json is not a settings object; nothing was saved.")
@@ -477,7 +477,7 @@ def save_storage(data_dir: Path, fields: dict) -> None:
 def _put_back(path: Path, data: bytes) -> None:
     """config.json as it was, byte for byte: atomic, owner-readable, under the settings lock."""
     with (path.parent / "config.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock, exclusive=True)
         descriptor, name = tempfile.mkstemp(prefix=".config-", dir=path.parent)
         try:
             with os.fdopen(descriptor, "wb") as handle:
@@ -503,7 +503,7 @@ def _generated_password(path: Path, snapshot: bytes) -> str | None:
 def _keep_password(path: Path, password: str) -> None:
     """After a put-back: the password a started engine uses stays, unless config.json already holds one."""
     with (path.parent / "config.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock, exclusive=True)
         values = json.loads(path.read_text())
         values.setdefault("arcade_password", password)
         memory_models._write_json(path, values)

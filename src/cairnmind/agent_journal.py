@@ -8,7 +8,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
-import fcntl
 import hashlib
 import json
 import os
@@ -16,6 +15,9 @@ from pathlib import Path
 import re
 import stat
 from uuid import uuid4
+
+from .platform_fs import (O_CLOEXEC, O_NOFOLLOW, O_NONBLOCK, owner_matches, private_mode_ok, sync_directory)
+from .platform_locks import lock_file
 
 
 MAX_EVENT_BYTES = 4 * 1024 * 1024
@@ -40,8 +42,8 @@ class JournalError(ValueError):
 def _private_dir(path: Path):
     path.mkdir(mode=0o700, parents=False, exist_ok=True)
     info = path.lstat()
-    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
-            or stat.S_IMODE(info.st_mode) != 0o700):
+    if (not stat.S_ISDIR(info.st_mode) or not owner_matches(info)
+            or not private_mode_ok(info, 0o700)):
         raise JournalError("Agent journal directories must be private and owned by this user")
 
 
@@ -96,26 +98,26 @@ class AgentJournal:
     @contextmanager
     def lock(self):
         self._initialize()
-        fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
         try:
             info = os.fstat(fd)
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                    or stat.S_IMODE(info.st_mode) != 0o600):
+            if (not stat.S_ISREG(info.st_mode) or not owner_matches(info)
+                    or not private_mode_ok(info, 0o600)):
                 raise JournalError("Agent journal lock must be private")
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            lock_file(fd, exclusive=True)
             yield
         finally:
             os.close(fd)
 
     def _read_locked(self) -> list[dict]:
         try:
-            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+            fd = os.open(self.path, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
         except FileNotFoundError:
             return []
         with os.fdopen(fd, "rb") as handle:
             info = os.fstat(handle.fileno())
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > MAX_JOURNAL_BYTES):
+            if (not stat.S_ISREG(info.st_mode) or not owner_matches(info)
+                    or not private_mode_ok(info, 0o600) or info.st_size > MAX_JOURNAL_BYTES):
                 raise JournalError("Agent journal is not a private bounded regular file")
             raw = handle.read(MAX_JOURNAL_BYTES + 1)
         if len(raw) > MAX_JOURNAL_BYTES or raw and not raw.endswith(b"\n"):
@@ -170,12 +172,12 @@ class AgentJournal:
             raw = canonical(event) + b"\n"
             if len(raw) > MAX_EVENT_BYTES:
                 raise JournalError("Agent event exceeds its byte budget")
-            fd = os.open(self.path, os.O_CREAT | os.O_APPEND | os.O_WRONLY | os.O_NOFOLLOW
-                         | os.O_CLOEXEC | os.O_NONBLOCK, 0o600)
+            fd = os.open(self.path, os.O_CREAT | os.O_APPEND | os.O_WRONLY | O_NOFOLLOW
+                         | O_CLOEXEC | O_NONBLOCK, 0o600)
             try:
                 info = os.fstat(fd)
-                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                        or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size + len(raw) > MAX_JOURNAL_BYTES):
+                if (not stat.S_ISREG(info.st_mode) or not owner_matches(info)
+                        or not private_mode_ok(info, 0o600) or info.st_size + len(raw) > MAX_JOURNAL_BYTES):
                     raise JournalError("Agent journal is not private or its byte budget is exhausted")
                 remaining = memoryview(raw)
                 while remaining:
@@ -186,11 +188,7 @@ class AgentJournal:
                 os.fsync(fd)
             finally:
                 os.close(fd)
-            directory = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+            sync_directory(self.directory, nofollow=True)
             return event
 
     def messages(self) -> list[dict]:

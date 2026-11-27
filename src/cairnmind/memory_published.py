@@ -10,9 +10,11 @@ or pushes; the files are committed by a person with their branch.
 from __future__ import annotations
 
 from contextlib import contextmanager
-import fcntl
 import os
 from pathlib import Path
+
+from .platform_fs import O_NOFOLLOW
+from .platform_locks import lock_file
 
 from .memory_published_carrier import carrier_of, destination as carrier_destination, unbound_in_checkout
 from .memory_published_check import STATIC_FILES, check_files, format_bytes, read_tree, scan
@@ -203,9 +205,9 @@ class Publisher:
     def _lock(self, project_id):
         folder = self.store.data_dir / "runtime"
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-        descriptor = os.open(folder / f"publish-{project_id}.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        descriptor = os.open(folder / f"publish-{project_id}.lock", os.O_CREAT | os.O_RDWR | O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, "a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+            lock_file(handle, exclusive=True)
             yield
 
     def _collect(self, tx, project_id):

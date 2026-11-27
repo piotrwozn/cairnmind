@@ -1,7 +1,6 @@
 """Cairnmind CLI; native coding clients retain their own terminal and permissions."""
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 from contextlib import contextmanager
@@ -27,6 +26,7 @@ from cairnmind.cli_arguments import (
 from cairnmind.config import SERVICE_NAMES, Settings, drop_env, session_value, tls_verify
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.arcade import ArcadeError
+from cairnmind.platform_locks import lock_file
 
 class _ProjectFirstGroup(TyperGroup):
     """A command whose first argument is the project and that is given only one: the error says the project comes
@@ -314,7 +314,7 @@ def _service_stopped(settings: Settings, held: str, running: str):
         refuse(str(reason))  # a change of setup holds this data directory (#339)
     with (settings.data_dir / "service.lock").open("a") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(lock, exclusive=True, blocking=False)
         except BlockingIOError:
             refuse(held)
         if service_alive(settings):
@@ -1076,7 +1076,7 @@ def serve(ctx: typer.Context, defer_background_inference: bool = False):
     settings = ctx.obj
     with (settings.data_dir / "service.lock").open("a") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(lock, exclusive=True, blocking=False)
         except BlockingIOError:
             refuse("The service is already running for this store.")
         api = create_app(settings, background_inference=not defer_background_inference)

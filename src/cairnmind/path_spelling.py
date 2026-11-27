@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import sys
+
+from .platform_fs import O_CLOEXEC, O_DIRECTORY
 
 
 def identity(info) -> tuple[int, int]:
@@ -37,6 +40,22 @@ def is_alias(name: str, directory: int) -> bool:
         return not any(entry.name.casefold() == folded for entry in entries)
 
 
+def _is_alias_path(name: str, folder: Path) -> bool:
+    """Windows fallback for ``is_alias`` where directory descriptors / dir_fd are unavailable."""
+    if "~" not in name:
+        return False
+    try:
+        os.lstat(folder / name)
+    except OSError:
+        return False
+    folded = name.casefold()
+    try:
+        with os.scandir(folder) as entries:
+            return not any(entry.name.casefold() == folded for entry in entries)
+    except OSError:
+        return False
+
+
 def has_alias(path: Path, root: Path) -> bool:
     """Whether a part of `path` below `root` is a short alias (see is_alias); False when it cannot be read."""
     try:
@@ -46,15 +65,19 @@ def has_alias(path: Path, root: Path) -> bool:
     folder = root
     for part in parts:
         if "~" in part:
-            try:
-                fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-            except OSError:
-                return False
-            try:
-                if is_alias(part, fd):
+            if sys.platform == "win32" or not O_DIRECTORY:
+                if _is_alias_path(part, folder):
                     return True
-            finally:
-                os.close(fd)
+            else:
+                try:
+                    fd = os.open(folder, os.O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+                except OSError:
+                    return False
+                try:
+                    if is_alias(part, fd):
+                        return True
+                finally:
+                    os.close(fd)
         folder = folder / part
     return False
 

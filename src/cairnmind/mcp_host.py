@@ -282,6 +282,12 @@ class McpServer:
     def _signal(self, process, sent):
         if recorded(process.pid, self.birth) is not True:
             return  # the number belongs to another process now, or that cannot be told
+        if not hasattr(os, "killpg"):
+            try:
+                process.terminate() if sent == signal.SIGTERM else process.kill()
+            except OSError:
+                pass
+            return
         try:
             # The server's whole group: a child it started does not outlive the run.
             os.killpg(process.pid, sent)
@@ -309,7 +315,7 @@ class McpServer:
                 process.stdin.close()
             await self._reaped(process, 1)
             # Also after the leader exited: what is left of its group is killed.
-            self._signal(process, signal.SIGKILL)
+            self._signal(process, getattr(signal, "SIGKILL", signal.SIGTERM))
             if await self._reaped(process, 5):
                 self.process = None  # the handle is kept until the process is reaped
         reader, self._reader = self._reader, None

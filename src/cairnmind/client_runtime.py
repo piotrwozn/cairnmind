@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
-import fcntl
 import hashlib
 import json
 import os
@@ -21,14 +20,22 @@ import struct
 import subprocess
 import sys
 import tempfile
-import termios
 import time
 from uuid import uuid4
+
+if sys.platform != "win32":
+    import fcntl
+    import termios
+else:  # pragma: no cover - tmux/PTY runtime is POSIX-only (ADR-05)
+    fcntl = None  # type: ignore[assignment]
+    termios = None  # type: ignore[assignment]
 
 import httpx
 
 from . import platform_hints
 from .config import ENV_PREFIXES, Settings, tls_verify
+from .platform_fs import O_NOFOLLOW, owner_matches, private_mode_ok
+from .platform_locks import lock_file
 from .process_identity import start as process_start
 from .runtime_selection import resolve_tmux
 from .runtime_sockets import MAX_SOCKET_PATH, prepare_socket_base, socket_directory
@@ -94,6 +101,9 @@ class NativeRuntime:
     def diagnostics(self):
         result = {"available": False, "minimum_version": "3.4", "backend": "tmux", "version": None,
                   "executable": self.binary}
+        if platform_hints.host_system() == "windows":
+            return {**result, "code": "tmux_unsupported_platform", "platform_supported": False,
+                    "action": platform_hints.hint("tmux_action", "windows")}
         if self._binary_error:
             return {**result, "code": "tmux_invalid_executable", "error": self._binary_error}
         if not self.binary:
@@ -112,12 +122,12 @@ class NativeRuntime:
     def _initialize(self):
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         info = self.directory.lstat()
-        if stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        if stat.S_ISLNK(info.st_mode) or not owner_matches(info) or not private_mode_ok(info, 0o700):
             raise ValueError("Native runtime directory must be owner-only")
         prepare_socket_base()
         self.socket_directory.mkdir(exist_ok=True, mode=0o700)
         info = self.socket_directory.lstat()
-        if stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        if stat.S_ISLNK(info.st_mode) or not owner_matches(info) or not private_mode_ok(info, 0o700):
             raise ValueError("Native terminal socket directory must be owner-only")
         if len(os.fsencode(self.socket)) > MAX_SOCKET_PATH:
             raise ValueError("Native runtime Unix socket path is too long")
@@ -126,24 +136,24 @@ class NativeRuntime:
         if not self.config.exists():
             self.config.write_text(_CONFIG)
             self.config.chmod(0o600)
-        elif self.config.stat().st_uid != os.getuid() or stat.S_IMODE(self.config.stat().st_mode) != 0o600:
+        elif not owner_matches(self.config.stat()) or not private_mode_ok(self.config.stat(), 0o600):
             raise ValueError("Native runtime configuration must be owner-only")
 
     @contextmanager
     def _locked(self):
         self._initialize()
-        fd = os.open(self.directory / "registry.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        fd = os.open(self.directory / "registry.lock", os.O_CREAT | os.O_RDWR | O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+            lock_file(handle, exclusive=True)
             yield
 
     def _read(self):
         if not self.registry.exists():
             return []
-        fd = os.open(self.registry, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(self.registry, os.O_RDONLY | O_NOFOLLOW)
         with os.fdopen(fd) as handle:
             info = os.fstat(handle.fileno())
-            if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
+            if not owner_matches(info) or not private_mode_ok(info, 0o600):
                 raise ValueError("Native runtime registry must be owner-only")
             data = json.load(handle)
         if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("runs"), list):
@@ -154,6 +164,8 @@ class NativeRuntime:
         _atomic(self.registry, {"version": 1, "runs": rows})
 
     def _tmux(self, *args, check=True):
+        if platform_hints.host_system() == "windows":
+            raise ValueError(platform_hints.hint("tmux_code", "windows"))
         if self._binary_error:
             raise ValueError("tmux_invalid_executable: " + self._binary_error)
         if not self.binary:

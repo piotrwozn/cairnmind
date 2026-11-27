@@ -117,17 +117,19 @@ def _runtime_root(settings):
 
 
 def _private(path):
+    from .platform_fs import owner_matches, private_mode_ok
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     info = path.lstat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+    if not stat.S_ISDIR(info.st_mode) or not owner_matches(info) or not private_mode_ok(info, 0o700):
         raise CopilotError("copilot_runtime_invalid")
 
 
 def _tree_manifest(root):
+    from .platform_fs import owner_matches
     rows = []
     for path in sorted(root.rglob("*")):
         info = path.lstat()
-        if info.st_uid != os.getuid():
+        if not owner_matches(info):
             raise CopilotError("copilot_runtime_invalid")
         if stat.S_ISDIR(info.st_mode):
             continue
@@ -146,9 +148,10 @@ def _runtime_path(settings):
     if not receipt.exists():
         raise CopilotError("copilot_runtime_missing")
     try:
+        from .platform_fs import owner_matches, private_mode_ok
         info = receipt.lstat()
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 2 * 1024 * 1024):
+        if (not stat.S_ISREG(info.st_mode) or not owner_matches(info)
+                or not private_mode_ok(info, 0o600) or info.st_size > 2 * 1024 * 1024):
             raise ValueError
         value = json.loads(receipt.read_text())
         bundle = directory / RUNTIME_VERSION
@@ -257,7 +260,8 @@ def _prepare_worker(settings):
             relative = entrypoint.relative_to(staged).as_posix()
             files = _tree_manifest(staged)
             if bundle.exists():
-                if bundle.is_symlink() or bundle.lstat().st_uid != os.getuid():
+                from .platform_fs import owner_matches
+                if bundle.is_symlink() or not owner_matches(bundle.lstat()):
                     raise CopilotError("copilot_runtime_invalid")
                 os.replace(bundle, previous)
             os.replace(staged, bundle)

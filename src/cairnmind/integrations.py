@@ -335,7 +335,8 @@ def _write_changed(path: Path, text: str, *, new_mode: int = 0o666) -> bool:
             stream.write(encoded)
             stream.flush()
             if previous_mode is not None:
-                os.fchmod(stream.fileno(), previous_mode)
+                from .platform_fs import safe_fchmod
+                safe_fchmod(stream.fileno(), previous_mode)
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
@@ -979,11 +980,8 @@ def hook(settings: Settings, payload: dict[str, Any], client: str) -> dict[str, 
         handle.flush()
         os.fsync(handle.fileno())
     temporary.replace(event_path)
-    directory_fd = os.open(spool, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
+    from .platform_fs import sync_directory
+    sync_directory(spool)
     if event != "SessionStart":
         return {}
     return _hook_startup_context(settings, payload)
@@ -995,8 +993,9 @@ def _transcript_watermark(path: Path) -> dict[str, Any]:
     A pending tail remains explicit; finding the preceding newline never claims
     the physical file was fully archived. Capture never parses or imports JSON.
     """
+    from .platform_fs import O_NOFOLLOW, O_NONBLOCK, pread_bytes
     target = path.expanduser().resolve()
-    descriptor = os.open(target, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    descriptor = os.open(target, os.O_RDONLY | O_NONBLOCK | O_NOFOLLOW)
     try:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
@@ -1004,7 +1003,7 @@ def _transcript_watermark(path: Path) -> dict[str, Any]:
         observed_size = before.st_size
         complete_size = observed_size
         if observed_size:
-            final = os.pread(descriptor, 1, observed_size - 1)
+            final = pread_bytes(descriptor, 1, observed_size - 1)
             if len(final) != 1:
                 raise ValueError("Client transcript changed during watermark capture")
             if final != b"\n":
@@ -1013,7 +1012,7 @@ def _transcript_watermark(path: Path) -> dict[str, Any]:
                 complete_size = 0
                 while position > earliest:
                     start = max(earliest, position - 65536)
-                    block = os.pread(descriptor, position - start, start)
+                    block = pread_bytes(descriptor, position - start, start)
                     if len(block) != position - start:
                         raise ValueError("Client transcript changed during watermark capture")
                     newline = block.rfind(b"\n")
@@ -1023,11 +1022,11 @@ def _transcript_watermark(path: Path) -> dict[str, Any]:
                     position = start
                 if not complete_size and earliest:
                     raise ValueError("Client transcript unfinished tail exceeds bounded watermark capture")
-        head = os.pread(descriptor, min(4096, complete_size), 0)
+        head = pread_bytes(descriptor, min(4096, complete_size), 0)
         if len(head) != min(4096, complete_size):
             raise ValueError("Client transcript changed during watermark capture")
         pending = observed_size - complete_size
-        tail = os.pread(descriptor, pending, complete_size) if pending else b""
+        tail = pread_bytes(descriptor, pending, complete_size) if pending else b""
         if len(tail) != pending:
             raise ValueError("Client transcript changed during watermark capture")
         after = os.fstat(descriptor)

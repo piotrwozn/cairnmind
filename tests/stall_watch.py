@@ -12,7 +12,6 @@ Statements are printed without values (see statement()).
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
@@ -27,6 +26,7 @@ from urllib.parse import urlparse
 import warnings
 
 from cairnmind import process_identity
+from cairnmind.platform_locks import lock_file
 
 STALL_AFTER = 20.0
 DUMP_EVERY = 10.0  # at most one thread dump in this many seconds for all workers sharing the engine
@@ -54,7 +54,7 @@ def thread_dump(log: Path) -> str:
     """The engine's threads, taken once per DUMP_EVERY seconds across the workers (a file lock and a time stamp)."""
     with (log.parent / "stall-dump.stamp").open("a+") as handle:
         try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(handle, exclusive=True, blocking=False)
         except BlockingIOError:
             return "(not taken: another worker is taking one now, it is in engine.log)"
         handle.seek(0)

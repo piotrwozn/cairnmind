@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
 import gzip
 import hashlib
 import json
@@ -26,6 +25,7 @@ from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_doc
 from .arcade import REQUEST_TIMEOUT
 from .backup_reader import opened_backup
 from .path_spelling import lies_in
+from .platform_locks import lock_file, unlock_file
 from .store_backup import VECTOR_COLLECTIONS, payload_digest, streamed_backup, streamed_export, write_backup
 
 SCHEMA_VERSION = 4
@@ -369,11 +369,11 @@ class Store:
             yield  # this thread holds it already; a second flock on a new handle would wait for itself
             return
         with (self.data_dir / "database-writer.lock").open("a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+            lock_file(handle, exclusive=True)
             try:
                 yield
             finally:
-                fcntl.flock(handle, fcntl.LOCK_UN)
+                unlock_file(handle)
 
     def query(self, sql, params=None):
         return (getattr(self._local, "transaction", None) or self.client).query(sql, params)

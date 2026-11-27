@@ -56,7 +56,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-import fcntl
 import hashlib
 import json
 import os
@@ -69,6 +68,8 @@ import tempfile
 import time
 from uuid import UUID, uuid4
 
+from .platform_fs import windows_machine_guid
+from .platform_locks import lock_file
 from .sql import clean_row, insert_document, update_document, utc_now
 
 INSTALLATION_FILE = "installation.json"
@@ -135,11 +136,14 @@ def _darwin_identity() -> str | None:
 
 
 def machine_identity() -> str:
-    """What tells this machine from another: the platform UUID on macOS, the systemd machine id on Linux, else
+    """What tells this machine from another: the platform UUID on macOS, MachineGuid on Windows, the systemd machine id on Linux, else
     the host name."""
     if sys.platform == "darwin":
         value = _darwin_identity()
         return "platform-uuid:" + value if value else "host:" + socket.gethostname()
+    if sys.platform == "win32":
+        value = windows_machine_guid()
+        return "machine-guid:" + value if value else "host:" + socket.gethostname()
     for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
         try:
             value = Path(path).read_text(encoding="ascii").strip()
@@ -200,7 +204,7 @@ def installation(data_dir: Path) -> Installation:
     data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = data_dir / INSTALLATION_FILE
     with (data_dir / "config.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock, exclusive=True)
         fingerprint = _fingerprint(data_dir)
         stored = _read_identity(path)
         if stored and stored["bound_to"] == fingerprint:

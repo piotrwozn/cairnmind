@@ -84,7 +84,8 @@ def _registry(data_dir: Path):
 def _events(path: Path, counts: dict):
     """Yield (type, time, data) line by line; a damaged, oversized or truncated line is counted and skipped."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+        from .platform_fs import O_CLOEXEC, O_NOFOLLOW, O_NONBLOCK
+        fd = os.open(path, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
     except OSError:
         return
     with os.fdopen(fd, "rb") as handle:

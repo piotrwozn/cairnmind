@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 import errno
-import fcntl
 import hashlib
 import json
 import os
@@ -27,6 +26,8 @@ from .first_start import (
     ENGINE_EXITED, ENGINE_NOT_INSTALLED, ENGINE_STARTED, ENGINE_STARTING, ENGINE_TIMED_OUT, JAVA_NEEDED)
 from .database_mode import (address, connect_only, describe, engine_mode, is_managed_url, refusal,  # noqa: F401
                             server_version, supported_versions, version_problem)
+from .platform_fs import IS_WINDOWS, O_CLOEXEC, O_NOFOLLOW, O_NONBLOCK, safe_fchmod
+from .platform_locks import lock_file
 
 
 def runtime_dir(settings: Settings) -> Path:
@@ -84,7 +85,7 @@ def _make_private(path: Path) -> None:
     Best effort: a file the owner may not open or chmod (mode 0000, or owned by another user after a run under
     sudo) keeps its mode, because moving it needs only the folder and the size bound matters more (#238)."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        fd = os.open(path, os.O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
     except (FileNotFoundError, PermissionError):
         return
     except OSError as exc:
@@ -93,7 +94,7 @@ def _make_private(path: Path) -> None:
         raise
     try:
         if stat.S_ISREG(os.fstat(fd).st_mode):
-            os.fchmod(fd, 0o600)
+            safe_fchmod(fd, 0o600)
     except PermissionError:
         pass
     finally:
@@ -162,7 +163,7 @@ def install_engine(settings: Settings, distribution: Path | None = None) -> Path
         return destination
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (destination.parent / "install.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock, exclusive=True)
         if (destination / "lib").is_dir():
             return destination
         if distribution is not None:
@@ -316,7 +317,7 @@ def start_engine(settings: Settings) -> dict:
         raise ConnectOnly(refusal(settings, "start an engine"))
     settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (settings.data_dir / "engine.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock, exclusive=True)
         from .engine_docker import refuse_if_container_runs
         refuse_if_container_runs(settings)  # never two engines on one data directory (#272)
         existing = engine_status(settings)
@@ -373,14 +374,16 @@ def start_engine(settings: Settings) -> dict:
             note += (f"cairnmind: engine.log was not rotated ({type(exc).__name__}: {exc.strerror or exc}); "
                      "appending to it\n").encode()
         # Private like the other files of the data directory, whatever the umask (#238); a link is not followed.
-        fd = os.open(state / "engine.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
-        os.fchmod(fd, 0o600)
+        fd = os.open(state / "engine.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        safe_fchmod(fd, 0o600)
         with os.fdopen(fd, "ab") as log:
             if note:
                 log.write(note)
                 log.flush()
+            popen_kwargs = ({"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+                            if IS_WINDOWS else {"start_new_session": True})
             process = subprocess.Popen(command, cwd=state, stdin=subprocess.DEVNULL,
-                                       stdout=log, stderr=log, start_new_session=True)
+                                       stdout=log, stderr=log, **popen_kwargs)
         pid_file = state / "process.json"
         pid_file.write_text(json.dumps({"pid": process.pid, "url": settings.arcade_url,
                                        "root": str(state), "java_executable": java,

@@ -4,12 +4,14 @@ from __future__ import annotations
 import json
 import os
 import secrets
-import fcntl
 import tempfile
 import hashlib
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+from .platform_fs import default_user_data_base
+from .platform_locks import lock_file
 
 
 # Environment variables are spelled CAIRNMIND_<NAME>. The earlier spelling DEVBRAIN_<NAME> is
@@ -160,7 +162,7 @@ def default_data_dir(environ=None) -> Path:
     chosen = _home_override(environ)
     if chosen:
         return Path(chosen).expanduser().resolve()
-    base = Path("~/.local/share").expanduser()
+    base = default_user_data_base(environ)
     current, earlier = (base / name for name in DATA_DIR_NAMES)
     if _holds_a_store(earlier):
         return earlier.resolve()
@@ -171,7 +173,7 @@ def data_dir_note() -> str | None:
     """What a user should know about the directory chosen by default, or None."""
     if _home_override():
         return None
-    base = Path("~/.local/share").expanduser()
+    base = default_user_data_base()
     current, earlier = (base / name for name in DATA_DIR_NAMES)
     if _holds_a_store(earlier) and (current / "config.json").is_file():
         return (f"Both {earlier} and {current} hold data; {earlier} is used. "
@@ -256,7 +258,7 @@ class Settings:
         if create:
             root.mkdir(parents=True, exist_ok=True, mode=0o700)
             with (root / "config.lock").open("a") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX)
+                lock_file(lock, exclusive=True)
                 obj = cls.load(root, create=False)
                 changed = False
                 if not obj.token:

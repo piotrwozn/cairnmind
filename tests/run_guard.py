@@ -169,6 +169,8 @@ def tmux_socket(args, cwd) -> tuple[str, str] | None:
 
 def default_tmux_socket(path: str) -> bool:
     """tmux's own socket directory (tmux-UID under TMUX_TMPDIR or /tmp): never the test's."""
+    if not hasattr(os, "getuid"):
+        return False
     return Path(path).parent.name == f"tmux-{os.getuid()}"
 
 
@@ -239,6 +241,8 @@ def child_state(process: subprocess.Popen) -> str:
     here; "gone" when it was reaped before, by anyone, and its pid may now belong to someone else."""
     if process.returncode is not None:
         return "gone"
+    if not hasattr(os, "WNOHANG"):
+        return "alive" if process.poll() is None else "exited"
     try:
         pid, status = os.waitpid(process.pid, os.WNOHANG)
     except ChildProcessError:
@@ -251,6 +255,13 @@ def child_state(process: subprocess.Popen) -> str:
 
 def signal_child(process: subprocess.Popen, own_group: bool, number: int) -> None:
     """Signal a child (and its own group) that child_state has just found unreaped."""
+    if not hasattr(os, "killpg"):
+        with contextlib.suppress(OSError):
+            if number == signal.SIGTERM:
+                process.terminate()
+            else:
+                process.kill()
+        return
     with contextlib.suppress(ProcessLookupError, PermissionError):
         if own_group:
             os.killpg(process.pid, number)
@@ -260,7 +271,7 @@ def signal_child(process: subprocess.Popen, own_group: bool, number: int) -> Non
 
 def kill_group_of_exited(process: subprocess.Popen, own_group: bool) -> None:
     # Reaped by child_state an instant ago: what is left of its group is the test's too.
-    if own_group:
+    if own_group and hasattr(os, "killpg"):
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(process.pid, signal.SIGKILL)
 
@@ -292,7 +303,7 @@ def stop_processes(processes) -> list[str]:
         time.sleep(.05)
     for process, own_group in running:
         if child_state(process) == "alive":
-            signal_child(process, own_group, signal.SIGKILL)
+            signal_child(process, own_group, getattr(signal, "SIGKILL", signal.SIGTERM))
         else:
             kill_group_of_exited(process, own_group)
     deadline = time.monotonic() + 5
@@ -376,6 +387,8 @@ def remove_socket_directories(before: set[str]) -> list[str]:
     that another run on this machine has just made and whose server does not listen yet. shortcut: such a
     directory older than that, or one this run left in its last seconds, is still misjudged; a per-run socket
     base in the product would end that."""
+    if not hasattr(os, "getuid"):
+        return []
     removed = []
     for path in sorted(socket_directories() - before):
         with contextlib.suppress(OSError):

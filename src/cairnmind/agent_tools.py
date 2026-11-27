@@ -22,6 +22,7 @@ from .agent_journal import AgentJournal, JournalError
 from .agent_write_guard import ChangeLedger, change_of, change_preview, configures_execution
 from .config import ENV_PREFIXES
 from .path_spelling import entry_identity, identity, is_alias
+from .platform_fs import O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW
 from .process_identity import group_running, recorded, start as process_start
 
 
@@ -37,7 +38,7 @@ TERM_GRACE_SECONDS = 0.5
 KILL_WAIT_SECONDS = 1.0
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _SECRET_ENV = re.compile(r"(?:TOKEN|PASSWORD|SECRET|API_?KEY|AUTHORIZATION|CREDENTIAL)", re.I)
-_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+_FLAGS = os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
 _MEMORY_NAMES = ("cairnmind", "devbrain", "cairnmind-published")
 _MEMORY_PAIRS = tuple((".memory", name) for name in _MEMORY_NAMES)
 # A command's first step: enter the verified directory by its descriptor, close

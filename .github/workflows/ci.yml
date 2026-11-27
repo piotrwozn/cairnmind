@@ -82,6 +82,34 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  windows-fast-tests:
+    # Native Windows lightweight mode (ADR-05): CLI, locks, filesystem guards, verification runner,
+    # snapshot privacy/audit, verdict cache, VCR replay, and Windows foundation tests.
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked --extra dev
+      - name: CLI smoke checks on native Windows
+        shell: pwsh
+        run: |
+          uv run cairnmind --help | Out-Null
+          uv run cairnmind --data-dir "$env:RUNNER_TEMP\cm-win-smoke" doctor --json | Out-Null
+      - name: Windows foundation & cross-platform unit tests
+        shell: pwsh
+        run: |
+          uv run pytest -n 2 -q `
+            tests/test_phase5_windows_foundation.py `
+            tests/test_phase1_cli_demo.py `
+            tests/test_phase2_snapshot_privacy.py `
+            tests/test_phase3a_cache_vcr.py `
+            tests/test_phase3b_nli_cascade.py `
+            tests/test_citation_match.py `
+            tests/test_cli_messages.py `
+            tests/test_machine_identity.py `
+            tests/test_platform_hints.py
+
   tests:
     # The whole suite in four parts that run at the same time, each on a runner of its own: real pinned
     # ArcadeDB on Java 21 plus tmux, as on the target WSL host. `--shard I/4` picks a part by test id

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import fcntl
 import json
 import os
 import shlex
@@ -27,6 +26,9 @@ from pathlib import Path
 from typing import Callable
 
 import httpx
+
+from .platform_fs import IS_WINDOWS, O_NOFOLLOW
+from .platform_locks import lock_file
 
 from . import (database_mode, engine_docker, memory_models, project_removal, service_version, setup_mark,
                setup_profiles, store_writer, topology, upgrade_mark)
@@ -362,11 +364,13 @@ def begin(settings, request, expected: dict, language: str) -> subprocess.Popen:
     drop_env(env, *SESSION_NAMES)  # a helper is no child actor of a coding session
     for name in ("TMUX", "TMUX_PANE"):  # the workspace's key is found from the data directory, not from the pane
         env.pop(name, None)
-    log = os.open(settings.data_dir / LOG, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+    log = os.open(settings.data_dir / LOG, os.O_WRONLY | os.O_CREAT | os.O_APPEND | O_NOFOLLOW, 0o600)
     try:
+        popen_kwargs = ({"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+                        if IS_WINDOWS else {"start_new_session": True})
         process = subprocess.Popen([sys.executable, "-I", "-m", "cairnmind.setup_change", "--data-dir",
                                     str(settings.data_dir)], cwd=settings.data_dir, stdin=subprocess.PIPE,
-                                   stdout=log, stderr=log, start_new_session=True, env=env)
+                                   stdout=log, stderr=log, env=env, **popen_kwargs)
     finally:
         os.close(log)
     try:
@@ -472,7 +476,7 @@ class _Report:
 def _lock_free(settings) -> bool:
     with (settings.data_dir / "service.lock").open("a") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(lock, exclusive=True, blocking=False)
         except BlockingIOError:
             return False
         return True
@@ -546,7 +550,7 @@ def _apply(settings, request, expected, out) -> tuple[str, object]:
     ("not_put_back", item) or ("interrupted", None)."""
     with (settings.data_dir / "service.lock").open("a") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(lock, exclusive=True, blocking=False)
         except BlockingIOError:
             return "refused", (SERVICE_BACK, {})
         try:
@@ -753,7 +757,10 @@ def main(argv: list[str] | None = None) -> int:
         _signal[0] = number
         raise KeyboardInterrupt
 
-    for number in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+    signals = [signal.SIGTERM, signal.SIGINT]
+    if hasattr(signal, "SIGHUP"):
+        signals.append(signal.SIGHUP)
+    for number in signals:
         signal.signal(number, interrupted)
     raw = sys.stdin.buffer.read(_MAX_INPUT + 1)
     try:

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -11,6 +10,8 @@ import tempfile
 import threading
 
 from .api_profiles import ENV_NAME, PROFILE_ID
+from .platform_fs import O_CLOEXEC, O_NOFOLLOW, owner_matches, private_mode_ok, sync_directory
+from .platform_locks import lock_file
 
 
 def credential_environment_names():
@@ -51,20 +52,20 @@ class CredentialStore:
         if not self.root.exists() and not self.root.is_symlink():
             return False
         info = self.root.lstat()
-        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
-                or stat.S_IMODE(info.st_mode) != 0o700):
+        if (not stat.S_ISDIR(info.st_mode) or not owner_matches(info)
+                or not private_mode_ok(info, 0o700)):
             raise ValueError("The credential store must be a private folder of the user.")
         return True
 
     @contextmanager
     def _lock(self):
         self._directory(create=True)
-        fd = os.open(self.root / "keys.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        fd = os.open(self.root / "keys.lock", os.O_CREAT | os.O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
         try:
             info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
+            if not stat.S_ISREG(info.st_mode) or not owner_matches(info) or not private_mode_ok(info, 0o600):
                 raise ValueError("The credential lock must be private.")
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            lock_file(fd, exclusive=True)
             yield
         finally:
             os.close(fd)
@@ -73,15 +74,15 @@ class CredentialStore:
         if not self._directory():
             return {}
         try:
-            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            fd = os.open(self.path, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
         except FileNotFoundError:
             return {}
         except OSError:
             raise ValueError("The credential store cannot be read safely.") from None
         with os.fdopen(fd) as handle:
             info = os.fstat(handle.fileno())
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 1024 * 1024):
+            if (not stat.S_ISREG(info.st_mode) or not owner_matches(info)
+                    or not private_mode_ok(info, 0o600) or info.st_size > 1024 * 1024):
                 raise ValueError("The credential file must be a private file of the user.")
             try:
                 value = json.load(handle)
@@ -106,11 +107,7 @@ class CredentialStore:
                 os.fsync(handle.fileno())
             os.chmod(temporary, 0o600)
             os.replace(temporary, self.path)
-            directory = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+            sync_directory(self.root)
         finally:
             Path(temporary).unlink(missing_ok=True)
 

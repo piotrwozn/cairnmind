@@ -563,7 +563,8 @@ class SessionManager:
                             amount = smaller.get("size")
                             if type(amount) is not int or not 0 <= amount <= 64 * 1024 * 1024:
                                 continue
-                            fd = os.open(smaller["path"], os.O_RDONLY | os.O_NOFOLLOW)
+                            from .platform_fs import O_NOFOLLOW
+                            fd = os.open(smaller["path"], os.O_RDONLY | O_NOFOLLOW)
                             with os.fdopen(fd, "rb") as handle:
                                 prefix = handle.read(amount)
                             if len(prefix) != amount or hashlib.sha256(prefix).hexdigest() != smaller.get("sha256"):

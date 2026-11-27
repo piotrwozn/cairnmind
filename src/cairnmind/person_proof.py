@@ -83,6 +83,8 @@ def set_key_input(key: str) -> str:
 def workspace_socket(settings, value) -> Path | None:
     """The socket of this installation's workspace, or None. All checks must hold: the shape of the path, a
     private directory of the user (not a link), and a socket of the user."""
+    if sys.platform == "win32" or not hasattr(os, "getuid"):
+        return None
     if (not isinstance(value, str) or not value or "\0" in value or not os.path.isabs(value)
             or len(os.fsencode(value)) > MAX_SOCKET_PATH):
         return None

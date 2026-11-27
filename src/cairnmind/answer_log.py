@@ -27,7 +27,6 @@ source it cited before has lost sources.
 from __future__ import annotations
 
 from contextlib import contextmanager
-import fcntl
 import json
 import logging
 import os
@@ -37,6 +36,9 @@ import shutil
 import stat
 import time
 from uuid import uuid4
+
+from .platform_fs import O_CLOEXEC, O_NOFOLLOW, owner_matches, pread_bytes, private_mode_ok
+from .platform_locks import lock_file
 
 FORMAT_VERSION = 1
 DIRECTORY = "answer-log"
@@ -51,7 +53,7 @@ log = logging.getLogger(__name__)
 def _private_dir(path: Path) -> None:
     path.mkdir(mode=0o700, exist_ok=True)
     info = path.lstat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+    if not stat.S_ISDIR(info.st_mode) or not owner_matches(info) or not private_mode_ok(info, 0o700):
         raise ValueError(f"{path} must be a private directory owned by this user")
 
 
@@ -77,9 +79,9 @@ def _locked(settings, project_id: str, create: bool):
         return
     for path in (root / DIRECTORY, folder):
         _private_dir(path)
-    fd = os.open(folder / "answers.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    fd = os.open(folder / "answers.lock", os.O_CREAT | os.O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        lock_file(fd, exclusive=True)
         yield folder
     finally:
         os.close(fd)
@@ -141,19 +143,19 @@ def _parse(raw: bytes) -> tuple[list[dict], int]:
 
 def _read_file(path: Path) -> bytes:
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        fd = os.open(path, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
     except FileNotFoundError:
         return b""
     with os.fdopen(fd, "rb") as handle:
         info = os.fstat(handle.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+        if not stat.S_ISREG(info.st_mode) or not owner_matches(info):
             raise ValueError(f"{path} is not a regular file owned by this user")
         return handle.read(MAX_LOG_BYTES * 2)
 
 
 def _rewrite(folder: Path, lines: list[bytes]) -> None:
     temporary = folder / f".answers-{uuid4().hex}.tmp"
-    with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as handle:
+    with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | O_NOFOLLOW, 0o600), "wb") as handle:
         handle.writelines(lines)
         handle.flush()
         os.fsync(handle.fileno())
@@ -167,12 +169,12 @@ def append(settings, entry: dict) -> bool:
         return False
     with _locked(settings, entry["project_id"], create=True) as folder:
         path = folder / "answers.jsonl"
-        fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
         with os.fdopen(fd, "ab") as handle:
             info = os.fstat(handle.fileno())
             if not stat.S_ISREG(info.st_mode):
                 raise ValueError(f"{path} is not a regular file")
-            if info.st_size and os.pread(handle.fileno(), 1, info.st_size - 1) != b"\n":
+            if info.st_size and pread_bytes(handle.fileno(), 1, info.st_size - 1) != b"\n":
                 # An earlier write was cut short: end its fragment so it does not swallow this entry.
                 line = b"\n" + line
             handle.write(line)

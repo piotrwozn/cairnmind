@@ -7,7 +7,6 @@ container that has this installation's name and both labels, and refuse when tha
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
@@ -21,6 +20,8 @@ from urllib.parse import urlparse
 from . import __version__, config
 from .arcade import ArcadeError
 from .database_mode import MODE_INVALID, connect_only, refusal
+from .platform_fs import current_uid
+from .platform_locks import lock_file
 from .terminal_safe import safe_text
 
 LABEL_INSTALLATION = "io.cairnmind.installation"
@@ -384,7 +385,7 @@ def start_docker_engine(settings, *, local: bool | None = None, build: bool = Fa
         raise ConnectOnly(refusal(settings, "start an engine"))
     settings = replace(settings, engine_mode="docker")
     state = _state(settings)
-    if os.getuid() == 0:
+    if current_uid() == 0:
         raise ArcadeError(ROOT_REFUSED)
     if ":" in str(state) or any(ord(char) < 32 or ord(char) == 127 for char in str(state)):
         raise ArcadeError(PATH_UNSAFE.format(path=safe_text(state, limit=200)))
@@ -398,7 +399,7 @@ def start_docker_engine(settings, *, local: bool | None = None, build: bool = Fa
     context = build_context() if build else None
     settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (settings.data_dir / "engine.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock, exclusive=True)
         return _start_locked(settings, image, local_image, context, pull)
 
 
@@ -467,10 +468,11 @@ def _start_locked(settings, image: str, local_image: bool, context: Path | None,
         json.dump({"name": name, "installation": held[LABEL_INSTALLATION], "data_dir": str(settings.data_dir),
                    "image": image, "started_at": time.time()}, handle)
     os.chmod(record, 0o600)
+    user_args = ["--user", f"{os.getuid()}:{os.getgid()}"] if hasattr(os, "getuid") and hasattr(os, "getgid") else []
     done = run_docker(["run", "--detach", "--name", name,
                        "--label", f"{LABEL_INSTALLATION}={held[LABEL_INSTALLATION]}",
                        "--label", f"{LABEL_DATA_DIR}={held[LABEL_DATA_DIR]}",
-                       "--user", f"{os.getuid()}:{os.getgid()}",
+                       *user_args,
                        "--publish", f"{host}:{port}:2480",
                        "--volume", f"{state}:{CONTAINER_DATA}",
                        "--volume", f"{password_file}:{CONTAINER_PASSWORD}:ro",
@@ -533,7 +535,7 @@ def store_engine_mode(settings, mode: str, *, build: bool) -> bool:
     """Save the engine mode (and whether the image is built here) in config.json; True when that changed it."""
     settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (settings.data_dir / "config.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock, exclusive=True)
         stored = config.Settings.load(settings.data_dir)
         changed = stored.engine_mode != mode or stored.engine_docker_build != build
         stored.engine_mode, stored.engine_docker_build = mode, build

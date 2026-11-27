@@ -16,12 +16,13 @@ model requests) can name it; nothing reads it to skip ``format``.
 """
 from __future__ import annotations
 
-import fcntl
 import json
 from pathlib import Path
 import re
 import time
 from typing import Any
+
+from .platform_locks import lock_file
 
 REFUSED = "structured_output_unavailable"
 # The error text of the refusal; the status must be 501 as well (ollama._api_error_code).
@@ -48,7 +49,7 @@ def remember(data_dir, server: str, model: str) -> None:
         path = Path(data_dir)
         path.mkdir(parents=True, exist_ok=True, mode=0o700)
         with (path / LOCK).open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            lock_file(lock, exclusive=True)
             records = dict(_read(path))
             records[_name(server, model)] = {
                 "structured_output": False, "observed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}

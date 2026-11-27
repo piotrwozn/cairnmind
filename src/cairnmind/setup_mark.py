@@ -15,11 +15,12 @@ The English sentences are the source; MESSAGES is their Polish for the terminal 
 from __future__ import annotations
 
 from contextlib import contextmanager
-import fcntl
 import os
 from pathlib import Path
 
 from . import upgrade_mark
+from .platform_fs import O_NOFOLLOW
+from .platform_locks import lock_file
 from .service_version import Sentence
 
 MARK, LOCK, BEFORE = "setup-in-progress", "setup-change.lock", "setup-before.json"
@@ -129,16 +130,16 @@ def refusal(data_dir) -> Sentence | None:
 def held(data_dir):
     """Hold the lock of changes and the mark for this process's life; only this process's own mark is removed."""
     data_dir = Path(data_dir)
-    descriptor = os.open(data_dir / LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    descriptor = os.open(data_dir / LOCK, os.O_RDWR | os.O_CREAT | O_NOFOLLOW, 0o600)
     try:
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(descriptor, exclusive=True, blocking=False)
         except BlockingIOError:
             raise ChangeBusy(Sentence(BUSY)) from None
         # The lock is held, so a mark that is there belongs to a holder that is gone: it is replaced.
         own = f"{os.getpid()}\n".encode()
         private = data_dir / f".{MARK}.{os.getpid()}"
-        file = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        file = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | O_NOFOLLOW, 0o600)
         try:
             os.write(file, own)
             os.fsync(file)

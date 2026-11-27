@@ -21,7 +21,6 @@ CAIRNMIND_TEST_SCHEMA_TEMPLATE=0 builds every database from nothing instead.
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import os
 import re
@@ -31,7 +30,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-import termios
 import threading
 import time
 import types
@@ -39,12 +37,20 @@ from urllib.parse import quote, urlparse
 import uuid
 import zlib
 
+if sys.platform != "win32":
+    import fcntl
+    import termios
+else:  # pragma: no cover - Windows test runs skip POSIX PTY checks
+    fcntl = None  # type: ignore[assignment]
+    termios = None  # type: ignore[assignment]
+
 import pytest
 
 from cairnmind import process_identity
 from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import SESSION_NAMES, Settings, env_names, env_value
 from cairnmind.engine import install_engine, start_engine, stop_engine
+from cairnmind.platform_locks import lock_file, unlock_file
 import stall_watch
 
 # A time limit for every test, and a stop for what a test left running (#236).
@@ -83,6 +89,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_server_mode", "test_restore_messages", "test_command_start",
     "test_model_client_kept", "test_no_process_wide_time_patch",
     "test_phase1_cli_demo", "test_phase2_snapshot_privacy", "test_phase3a_cache_vcr", "test_phase3b_nli_cascade",
+    "test_phase5_windows_foundation",
 })
 
 TMUX_MODULES = frozenset({
@@ -434,8 +441,11 @@ def is_xdist_controller(config) -> bool:
 @contextlib.contextmanager
 def file_lock(path: Path):
     with path.open("a") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        yield
+        lock_file(handle, exclusive=True)
+        try:
+            yield
+        finally:
+            unlock_file(handle)
 
 
 def _pytest_alive(pid: int) -> bool:
@@ -524,19 +534,19 @@ def run_slot(request, tmp_path_factory):
     with (run_root / "test-slot.gate").open("a") as gate, (run_root / "test-slot.lock").open("a") as lock:
         # Bounded (#236): a test that hangs elsewhere must not keep this one, and every one behind it, waiting.
         with run_guard.waiting(run_guard.slot_wait(), "waiting for the test slot"):
-            fcntl.flock(gate, fcntl.LOCK_EX)
+            lock_file(gate, exclusive=True)
             if exclusive:
-                fcntl.flock(lock, fcntl.LOCK_EX)
+                lock_file(lock, exclusive=True)
             else:
-                fcntl.flock(lock, fcntl.LOCK_SH)
-                fcntl.flock(gate, fcntl.LOCK_UN)
+                lock_file(lock, exclusive=False)
+                unlock_file(gate)
         _slot_held = True
         try:
             yield
         finally:
             _slot_held = False
-            fcntl.flock(lock, fcntl.LOCK_UN)
-            fcntl.flock(gate, fcntl.LOCK_UN)
+            unlock_file(lock)
+            unlock_file(gate)
 
 
 @pytest.fixture(autouse=True)

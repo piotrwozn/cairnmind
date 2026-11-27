@@ -1006,11 +1006,14 @@ def _start_broker(settings, started):
             drop_env(env, *SESSION_NAMES)
             for key in ("TMUX", "TMUX_PANE"):
                 env.pop(key, None)
-            fd = os.open(folder / "server.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+            from .platform_fs import IS_WINDOWS, O_NOFOLLOW
+            fd = os.open(folder / "server.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "ab") as log:
+                popen_kwargs = ({"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+                                if IS_WINDOWS else {"start_new_session": True})
                 subprocess.Popen([sys.executable, "-I", "-m", "cairnmind", "--data-dir", str(settings.data_dir), "cockpit", "serve"],
                                  cwd=settings.data_dir, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-                                 start_new_session=True, env=env)
+                                 env=env, **popen_kwargs)
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline:
                 status = cockpit_status(settings)

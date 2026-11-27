@@ -18,17 +18,18 @@ from .client_runtime import LIVE, NativeRuntime, _ID, _atomic
 from .config import ENV_PREFIXES, Settings, tls_verify
 from .mcp_servers import MAX_SERVERS
 from .path_spelling import lies_in
+from .platform_fs import O_CLOEXEC, O_NOFOLLOW, owner_matches, private_mode_ok
 
 AGENT_CLIENTS = {"api", "copilot"}
 NATIVE_CLIENTS = {"codex", "claude"}
 
 
 def _read_private(path):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    fd = os.open(path, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
     with os.fdopen(fd) as stream:
         info = os.fstat(stream.fileno())
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 256 * 1024):
+        if (not stat.S_ISREG(info.st_mode) or not owner_matches(info)
+                or not private_mode_ok(info, 0o600) or info.st_size > 256 * 1024):
             raise ValueError("agent_configuration_invalid")
         value = json.load(stream)
     if not isinstance(value, dict):
@@ -195,7 +196,7 @@ class RuntimeSupervisor(NativeRuntime):
             configs = self.directory / "agent-configs"
             configs.mkdir(mode=0o700, exist_ok=True)
             info = configs.lstat()
-            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            if not stat.S_ISDIR(info.st_mode) or not owner_matches(info) or not private_mode_ok(info, 0o700):
                 raise ValueError("agent_configuration_invalid")
             _atomic(configs / (run_id + ".json"), configuration)
             launch = {"command": [sys.executable, "-I", "-m", "cairnmind.api_worker", "--data-dir",

@@ -10,7 +10,7 @@ import platform
 import subprocess
 import sys
 
-SYSTEMS = ("darwin", "wsl", "linux")
+SYSTEMS = ("darwin", "wsl", "linux", "windows")
 
 
 def is_wsl(release: str | None = None) -> bool:
@@ -19,57 +19,78 @@ def is_wsl(release: str | None = None) -> bool:
 
 
 def host_system(platform_name: str | None = None, release: str | None = None) -> str:
-    """'darwin' on a Mac, 'wsl' under WSL, otherwise 'linux' (the code's default, as before)."""
-    if (platform_name or sys.platform) == "darwin":
+    """'darwin' on a Mac, 'windows' on native Windows, 'wsl' under WSL, otherwise 'linux'."""
+    plat = platform_name or sys.platform
+    if plat == "darwin":
         return "darwin"
+    if plat == "win32":
+        return "windows"
     return "wsl" if is_wsl(release) else "linux"
 
 
 _TMUX_BREW = "Install tmux >= 3.4, for example with: brew install tmux"
 _TMUX_BREW_PL = "Zainstaluj tmux >= 3.4, na przykład poleceniem: brew install tmux"
 _CODE_BREW = "tmux_missing: install tmux >= 3.4, for example with: brew install tmux"
+_TMUX_WIN = "The terminal workspace requires Linux or macOS (tmux 3.4+); CLI and MCP commands work natively on Windows."
+_TMUX_WIN_PL = "Środowisko terminalowe wymaga systemu Linux lub macOS (tmux 3.4+); polecenia CLI i MCP działają natywnie na Windows."
+_CODE_WIN = "tmux_unsupported_platform: the terminal workspace requires Linux or macOS (tmux 3.4+)"
+_CODE_WIN_PL = "tmux_unsupported_platform: środowisko terminalowe wymaga systemu Linux lub macOS (tmux 3.4+)"
 
 # topic -> system -> (English, Polish). The WSL texts are the ones the code had before #233, word for word.
 TEXTS: dict[str, dict[str, tuple[str, str]]] = {
     "tmux_workspace": {
         "wsl": ("Install tmux >= 3.4 in the same WSL distribution as Cairnmind.",
                 "Zainstaluj tmux >= 3.4 w tej samej dystrybucji WSL co Cairnmind."),
-        "darwin": (_TMUX_BREW, _TMUX_BREW_PL)},
+        "darwin": (_TMUX_BREW, _TMUX_BREW_PL),
+        "windows": (_TMUX_WIN, _TMUX_WIN_PL)},
     "tmux_launch": {
         "wsl": ("Install tmux >= 3.4 in Ubuntu: sudo apt install tmux",
                 "Zainstaluj tmux >= 3.4 w Ubuntu: sudo apt install tmux"),
-        "darwin": (_TMUX_BREW, _TMUX_BREW_PL)},
+        "darwin": (_TMUX_BREW, _TMUX_BREW_PL),
+        "windows": (_TMUX_WIN, _TMUX_WIN_PL)},
     "tmux_action": {
         "wsl": ("Install tmux >= 3.4 in the same WSL distribution",
                 "Zainstaluj tmux >= 3.4 w tej samej dystrybucji WSL"),
-        "darwin": (_TMUX_BREW, _TMUX_BREW_PL)},
+        "darwin": (_TMUX_BREW, _TMUX_BREW_PL),
+        "windows": (_TMUX_WIN, _TMUX_WIN_PL)},
     "tmux_code": {
         "wsl": ("tmux_missing: install tmux >= 3.4 in this WSL distribution",
                 "tmux_missing: zainstaluj tmux >= 3.4 w tej dystrybucji WSL"),
-        "darwin": (_CODE_BREW, "tmux_missing: zainstaluj tmux >= 3.4, na przykład poleceniem: brew install tmux")},
+        "darwin": (_CODE_BREW, "tmux_missing: zainstaluj tmux >= 3.4, na przykład poleceniem: brew install tmux"),
+        "windows": (_CODE_WIN, _CODE_WIN_PL)},
     "client_missing": {
         "wsl": ("client_missing: install the native CLI in this WSL distribution",
                 "client_missing: zainstaluj natywne CLI w tej dystrybucji WSL"),
         "darwin": ("client_missing: install the native CLI on this machine",
-                   "client_missing: zainstaluj natywne CLI na tym komputerze")},
+                   "client_missing: zainstaluj natywne CLI na tym komputerze"),
+        "windows": ("client_missing: install the native CLI on Windows",
+                    "client_missing: zainstaluj natywne CLI na Windows")},
     "client_note": {
         "wsl": ("Install {client} in the same WSL distribution as Cairnmind.",
                 "Zainstaluj {client} w tej samej dystrybucji WSL co Cairnmind."),
         "darwin": ("Install {client} on the same machine as Cairnmind.",
-                   "Zainstaluj {client} na tym samym komputerze co Cairnmind.")},
+                   "Zainstaluj {client} na tym samym komputerze co Cairnmind."),
+        "windows": ("Install {client} on this Windows machine.",
+                    "Zainstaluj {client} na tym komputerze z Windows.")},
     "client_not_installed": {
         "wsl": ("{client} is not installed in this WSL distribution",
                 "{client} nie jest zainstalowany w tej dystrybucji WSL"),
-        "darwin": ("{client} is not installed on this machine", "{client} nie jest zainstalowany na tym komputerze")},
+        "darwin": ("{client} is not installed on this machine", "{client} nie jest zainstalowany na tym komputerze"),
+        "windows": ("{client} is not installed on this Windows machine",
+                    "{client} nie jest zainstalowany na tym komputerze z Windows")},
     "java": {
         "wsl": ("Install Java 21 or newer in WSL: sudo apt install -y openjdk-21-jre-headless",
                 "Zainstaluj Javę 21 lub nowszą w WSL: sudo apt install -y openjdk-21-jre-headless"),
         "darwin": ("Install Java 21 or newer, for example with: brew install openjdk@21",
-                   "Zainstaluj Javę 21 lub nowszą, na przykład poleceniem: brew install openjdk@21")},
+                   "Zainstaluj Javę 21 lub nowszą, na przykład poleceniem: brew install openjdk@21"),
+        "windows": ("Install Java 21 or newer on Windows (for example via winget install EclipseAdoptium.Temurin.21.JRE).",
+                    "Zainstaluj Javę 21 lub nowszą na Windows (na przykład przez winget install EclipseAdoptium.Temurin.21.JRE).")},
     "gpu_missing": {
         "wsl": ("nvidia-smi not found; verify Windows NVIDIA driver and WSL GPU access.",
                 "Nie znaleziono nvidia-smi; sprawdź sterownik NVIDIA w Windows i dostęp WSL do GPU."),
-        "darwin": ("The GPU is not checked on macOS.", "Na macOS GPU nie jest sprawdzane.")},
+        "darwin": ("The GPU is not checked on macOS.", "Na macOS GPU nie jest sprawdzane."),
+        "windows": ("nvidia-smi not found; GPU acceleration is optional on Windows.",
+                    "Nie znaleziono nvidia-smi; akceleracja GPU jest opcjonalna na Windows.")},
     "gpu_chip": {
         "darwin": ("{chip}, {gib} GiB unified memory shared with the models",
                    "{chip}, {gib} GiB pamięci współdzielonej z modelami")},

@@ -6,7 +6,6 @@ syntax, never from filename resemblance or generated answers.
 from __future__ import annotations
 
 import hashlib
-import fcntl
 import json
 import math
 import os
@@ -33,6 +32,7 @@ from cairnmind.journal import MAX_TRANSACTION_EVENTS
 from cairnmind.memory_paths import (bound_metadata, imported_source_ids, is_memory_path, is_reserved_below,
                                     memory_bindings, nested_reserved)
 from cairnmind.path_spelling import has_alias, lies_in, path_identity, same_or_below
+from cairnmind.platform_locks import lock_file, unlock_file
 from cairnmind.secret_mask import ingest_masker, masked_metadata
 from cairnmind import project_folders
 from cairnmind.sql import json_text as _json_text
@@ -124,23 +124,23 @@ def _ingestion_lock(store, category: str, identity: str, *, deadline: float | No
     try:
         if deadline is None:
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file(descriptor, exclusive=True, blocking=False)
             except BlockingIOError:
                 if waited is not None:
                     waited.append(True)  # whoever held it may have changed what was read before
-                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                lock_file(descriptor, exclusive=True, blocking=True)
         else:
             while True:
                 if time.monotonic() >= deadline:
                     raise TimeoutError("Transcript reparse deadline exceeded")
                 try:
-                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_file(descriptor, exclusive=True, blocking=False)
                     break
                 except BlockingIOError:
                     time.sleep(min(0.01, max(0, deadline - time.monotonic())))
         yield
     finally:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        unlock_file(descriptor)
         os.close(descriptor)
 
 

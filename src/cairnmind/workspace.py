@@ -10,7 +10,6 @@ from pathlib import Path
 import re
 import shlex
 import signal
-import stat
 import subprocess
 import sys
 import time
@@ -266,7 +265,8 @@ class WorkspaceManager:
         if self.config.is_symlink():
             raise ValueError("The workspace configuration must not be a link.")
         if not self.config.exists():
-            fd = os.open(self.config, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            from .platform_fs import O_NOFOLLOW
+            fd = os.open(self.config, os.O_WRONLY | os.O_CREAT | os.O_EXCL | O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "w") as handle:
                 handle.write("set -g prefix C-b\nunbind-key -a\nset -g mouse off\n"
                              "set -g default-terminal tmux-256color\nset -g status on\n"
@@ -276,7 +276,8 @@ class WorkspaceManager:
                              + "set -g remain-on-exit on\nset -g exit-empty off\nset -s set-clipboard off\n"
                              "set -g allow-passthrough off\nset -g history-limit 5000\n")
         info = self.config.stat()
-        if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
+        from .platform_fs import owner_matches, private_mode_ok
+        if not owner_matches(info) or not private_mode_ok(info, 0o600):
             raise ValueError("The workspace configuration must be a private file of the user.")
 
     def tmux(self, *args, check=True, timeout=8, input=None):

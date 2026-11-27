@@ -9,7 +9,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
-import fcntl
 import hashlib
 import json
 import math
@@ -22,6 +21,8 @@ from uuid import UUID, uuid4
 from .code_graph import code_graph_pending
 from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
 from .memory_size import WARN_FRACTION, package_size
+from .platform_fs import O_NOFOLLOW, sync_directory
+from .platform_locks import lock_file
 from .store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
                     validate_extractor_stamp)
 from .system_links import passes_planted_link
@@ -577,11 +578,7 @@ def manifest_summary(path):
 
 
 def _sync_directory(directory):
-    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    sync_directory(directory)
 
 
 def _atomic_write(path, data):
@@ -653,9 +650,9 @@ class MemoryManager:
         if not root.is_dir() or any(p.is_symlink() for p in (root / ".memory", folder)):
             raise ValueError("Memory publication needs a real project directory")
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-        descriptor = os.open(folder / ".publish.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        descriptor = os.open(folder / ".publish.lock", os.O_CREAT | os.O_RDWR | O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, "a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+            lock_file(handle, exclusive=True)
             yield
 
     def _capture(self, project_id, worktree=None, reader=None, authorize=None):

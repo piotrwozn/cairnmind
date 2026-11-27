@@ -10,10 +10,10 @@ and the service reads it when it starts.
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import time
 
 from . import config
+from .platform_locks import lock_file
 from .first_start import (ASK_LEFT_OUT, ASK_NO_MATCH, ASK_OFF, ASK_TIMED_OUT, CHOSE_DISABLED, CHOSE_ENABLED, GET_MODELS, KNOWLEDGE_DISABLED,
                           KNOWLEDGE_INVALID, MATCHES_HELD_BACK, MODEL_MISSING, MODELS_NOT_CONFIGURED, NEEDS_MODELS,
                           RESTART_FOR_MODELS, SERVER_DOWN, TURNED_ON)
@@ -36,7 +36,7 @@ def _store(settings, value: str) -> str:
     engine_mode; return the value stored before."""
     settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (settings.data_dir / "config.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock, exclusive=True)
         stored = config.Settings.load(settings.data_dir)
         before = stored.knowledge_agent
         if before != value:
