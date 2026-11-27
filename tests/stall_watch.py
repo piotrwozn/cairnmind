@@ -138,6 +138,14 @@ def capture(settings, client, method, path, kwargs, started) -> str:
     return "\n".join(parts)
 
 
+def _report_stream():
+    """Return pytest's stderr stream without writing into Click/Typer CliRunner's captured CLI output."""
+    stream = sys.stderr
+    if type(stream).__module__.startswith(("click.", "typer.")) and sys.__stderr__ is not None:
+        return sys.__stderr__
+    return stream
+
+
 def watch(settings, original, after: float = STALL_AFTER):
     """Wrap ArcadeClient._request: a timer per request, cancelled and joined when it ends, so no thread outlives it."""
     def request(client, method, path, **kwargs):
@@ -146,7 +154,7 @@ def watch(settings, original, after: float = STALL_AFTER):
 
         def fire():
             record.append(capture(settings, client, method, path, kwargs, started))
-            print(record[0], file=sys.stderr, flush=True)  # the failing test's captured stderr reaches the CI log
+            print(record[0], file=_report_stream(), flush=True)  # reaches pytest fd/sys stderr, never CliRunner.output
 
         timer = threading.Timer(after, fire)
         timer.daemon = True

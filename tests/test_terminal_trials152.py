@@ -361,7 +361,7 @@ async def test_keys_made_in_the_quiet_moment_move_nothing_however_late_they_are_
         await pilot.pause(HELD)
         for key in typed:
             app.post_message(key)
-        await pilot.pause()
+        await wait_until(pilot, lambda: bool(results))
         assert results == [False]  # the focus move was dropped, so the Enter landed on Cancel and refused at once
 
 

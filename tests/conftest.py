@@ -150,6 +150,10 @@ LEFT_OUT_ON_A_SERVER = {
         "`cairnmind eval memory` is refused on a connect-only installation",
     "test_graph_size":
         "starts an engine of its own with the default heap, which a run against a server does not own",
+    "test_release_contracts::test_upgrade_from_published_release_preserves_every_row_and_records_backup":
+        "loads a raw release database of its own name, which a connect-only installation never creates",
+    "test_release_contracts::test_frozen_cli_json_and_mcp_tool_examples_match_contract":
+        "checks the frozen status and doctor shapes of a managed installation, which a connect-only one reports as connect mode",
 }
 
 
@@ -451,10 +455,22 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "no_schema_template: every database of the test is built from nothing")
     config.addinivalue_line("markers", "exclusive: under xdist, runs while no other test of the run runs")
     # A worker's base directory is its own (<run root>/popen-gwN); a serial run's is the run root.
-    copy = config._tmp_path_factory.getbasetemp() / "mcp-fixture" / MCP_FIXTURE_SOURCE.name
+    base = config._tmp_path_factory.getbasetemp()
+    if is_xdist_controller(config):
+        # On Windows, .venv\Scripts\python.exe is a uv launcher shim, so a worker's os.getppid() is its own
+        # execnet shim (`python.exe -u -c ...`), not the pytest controller. Record the real controller PID here.
+        (base / "xdist-controller.json").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    copy = base / "mcp-fixture" / MCP_FIXTURE_SOURCE.name
     copy.parent.mkdir(exist_ok=True)
     shutil.copyfile(MCP_FIXTURE_SOURCE, copy)
     MCP_FIXTURE = str(copy)
+    if sys.platform == "win32":
+        import textual._time as textual_clock
+        import textual._win_sleep as textual_win_sleep
+        # textual._win_sleep blocks default-executor threads in WaitForMultipleObjects(INFINITE) and cancels via a new
+        # task on the same bounded ThreadPoolExecutor, deadlocking for 10 minutes under parallel TUI load on Windows.
+        textual_win_sleep.sleep = textual_win_sleep.time_sleep_coro
+        textual_clock.win_sleep = textual_win_sleep.time_sleep_coro
 
 
 def pytest_addoption(parser):
@@ -524,15 +540,17 @@ def _pytest_alive(pid: int) -> bool:
     return process_identity.alive(pid) if argv is None else any("pytest" in argument for argument in argv)
 
 
-def reap_orphan_engines(runs_root: Path) -> None:
+def reap_orphan_engines(runs_root: Path, *, current_run: Path | None = None) -> None:
     """Stop test engines whose owning pytest process is gone (killed, not torn down).
 
     Only engines this conftest started and recorded in owner.json are touched, and only when that
     process no longer runs pytest; stop_engine itself checks the process belongs to that directory.
     """
     for owner in runs_root.glob("pytest-*/arcade-engine*/owner.json"):
+        if current_run is not None and owner.parent.parent == current_run:
+            continue
         try:
-            pid = int(json.loads(owner.read_text())["pid"])
+            pid = int(json.loads(owner.read_text(encoding="utf-8"))["pid"])
         except (OSError, ValueError, KeyError, TypeError):
             continue
         if _pytest_alive(pid) or not (owner.parent / "arcade" / "process.json").exists():
@@ -542,7 +560,7 @@ def reap_orphan_engines(runs_root: Path) -> None:
 
 
 def record_owner(root: Path, pid: int) -> None:
-    (root / "owner.json").write_text(json.dumps({"pid": pid}))
+    (root / "owner.json").write_text(json.dumps({"pid": pid}), encoding="utf-8")
 
 
 def prepare_engine(root: Path, owner_pid: int) -> Settings:
@@ -960,12 +978,17 @@ def arcade_test_engine(tmp_path_factory, request):
         if worker:
             # A worker's base directory is <run root>/popen-gwN; the run root is shared by all workers.
             run_root = run_root.parent
-        reap_orphan_engines(run_root.parent)
+        reap_orphan_engines(run_root.parent, current_run=run_root)
         if worker:
             root = run_root / SHARED_ENGINE
             root.mkdir(exist_ok=True)
+            controller_file = run_root / "xdist-controller.json"
+            try:
+                owner_pid = int(json.loads(controller_file.read_text(encoding="utf-8"))["pid"])
+            except (OSError, ValueError, KeyError, TypeError):
+                owner_pid = os.getppid()
             with file_lock(run_root / (SHARED_ENGINE + ".lock")):
-                settings = prepare_engine(root, os.getppid())
+                settings = prepare_engine(root, owner_pid)
         else:
             settings = prepare_engine(tmp_path_factory.mktemp("arcade-engine"), os.getpid())
     if not server:

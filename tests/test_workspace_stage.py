@@ -55,9 +55,26 @@ def answer_stage(broker, value, *, runs=(), during=None):
 async def wait_for(app, pilot, kind):
     # A dialog becomes the current screen before its mount step fills it in (#145); reading or
     # moving in it earlier sees an empty list. Keys wait in the screen's queue and need no wait.
-    for _ in range(100):
+    from textual.css.query import NoMatches
+
+    for _ in range(250):
         await pilot.pause(.02)
-        if isinstance(app.screen, kind) and app.screen.is_mounted:
+        screen = app.screen
+        if not isinstance(screen, kind) or not screen.is_mounted:
+            continue
+        if isinstance(screen, ChoiceModal):
+            try:
+                table = screen.query_one("#choices")
+            except NoMatches:
+                continue
+            if table.row_count != len(screen.choices) or not table.region.area:
+                continue
+        elif (not screen.children
+              or not all(child.is_mounted for child in screen.walk_children())
+              or not all(body.region.area > 0 for body in screen.query("#message-body"))):
+            continue
+        await pilot.pause()
+        if app.screen is screen and any(strip.text.strip() for strip in screen._compositor.render_strips()):
             return
     raise AssertionError(f"{kind.__name__} did not open")
 
