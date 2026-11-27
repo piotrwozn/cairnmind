@@ -1288,10 +1288,20 @@ def ask(ctx: typer.Context, project: ProjectArg, question: QuestionArg, worktree
         answer_schema: Path | None = None,
         log: Annotated[bool, typer.Option("--log", help="Keep this answer and its citations in the project's "
                                           "answer log, for `cairnmind eval replay`.")] = False,
+        fast: Annotated[bool, typer.Option("--fast", help="Enable Tier-1 CPU NLI verification before escalating to Tier-2 LLM.")] = False,
+        verifier: Annotated[str | None, typer.Option("--verifier", help="Verification tier: llm (default, strict) or nli (opt-in Tier-1 NLI triage).")] = None,
+        strict_llm: Annotated[bool, typer.Option("--strict-llm", help="Force Tier-2 LLM verification (default).")] = False,
         as_json: JSON_FLAG = False):
     """Answer a question from the project's memory, with the sources it cites. Starts the service when needed."""
-    payload = {"project": project, "question": question,
-               "worktree": str(worktree.resolve()) if worktree else None}
+    if verifier is not None and verifier not in ("llm", "nli"):
+        raise typer.BadParameter("Choose 'llm' or 'nli'.", param_hint="--verifier")
+    if strict_llm and (fast or verifier == "nli"):
+        raise typer.BadParameter("--strict-llm cannot be combined with --fast or --verifier nli.")
+    chosen_verifier = "nli" if (fast or verifier == "nli") else "llm"
+    payload: dict[str, object] = {"project": project, "question": question,
+                                  "worktree": str(worktree.resolve()) if worktree else None}
+    if chosen_verifier != "llm":
+        payload["verifier"] = chosen_verifier
     if log:
         payload["log"] = True
     if answer_schema is not None:

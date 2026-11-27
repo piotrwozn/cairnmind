@@ -79,6 +79,7 @@ class AskBody(BaseModel):
     log: bool | None = None
     # Classes a hosted built-in run must not receive (#183); they can only shrink what the answer reads.
     held_classes: list[Literal["project", "conversation", "third_party"]] | None = None
+    verifier: Literal["llm", "nli"] = "llm"
 
 
 class RememberBody(BaseModel):
@@ -1237,7 +1238,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pending = await asyncio.to_thread(index_pending_sources, store)
         index_errors.extend(pending.get("errors", []))
         stamp = await asyncio.to_thread(store.cache_stamp, pid)
-        key = (pid, body.question, scope, stamp, identity, contract_key, also_held)
+        key = (pid, body.question, scope, stamp, identity, contract_key, also_held, body.verifier)
         hit = cache.get(key)
         if hit and identity is not None and not index_errors and time.monotonic() - hit[0] < 60:
             if keep:
@@ -1246,7 +1247,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         try:
             result = await asyncio.wait_for(
                 inference.submit(lambda: agent.ask(pid, body.question, worktree=scope,
-                                                   answer_schema=answer_schema, also_held=also_held), priority=0),
+                                                   answer_schema=answer_schema, also_held=also_held,
+                                                   verifier=body.verifier), priority=0),
                 timeout=settings.ask_timeout + 5,
             )
         except TimeoutError:
