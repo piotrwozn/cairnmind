@@ -94,6 +94,24 @@ def _stdout_is_terminal() -> bool:
     return sys.stdout.isatty()
 
 
+def _stderr_is_terminal() -> bool:
+    return sys.stderr.isatty()
+
+
+def _format_cli_stderr(prefix: str, message: str) -> str:
+    """Format a stderr line, applying human remediation in interactive terminals and NO_COLOR hygiene."""
+    from cairnmind.cli_human import format_human_error, strip_ansi
+    shown = message
+    if not _INVOCATION.get("as_json") and _stderr_is_terminal():
+        human = format_human_error(message)
+        if human is not None:
+            shown = human
+    line = _pasteable(f"{prefix}{shown}")
+    if os.environ.get("NO_COLOR"):
+        line = strip_ansi(line)
+    return line
+
+
 JSON_FLAG = Annotated[bool, typer.Option(
     "--json", help="Print the full result as JSON; the default when the output is not a terminal.")]
 
@@ -123,14 +141,15 @@ def initialized(command):
 
 def entrypoint() -> None:
     _NOTICES_SHOWN.clear()
+    _INVOCATION["as_json"] = "--json" in sys.argv[1:]
     try:
         app()
     except (ValueError, OSError, ArcadeError, httpx.HTTPError, OllamaUnavailable) as exc:
         from cairnmind.store_writer import StoreNotWriter
         if not (isinstance(exc, StoreNotWriter) and str(exc) in _NOTICES_SHOWN):
             # The reader's notice was printed when the store opened: the refusal is not said twice (#244).
-            typer.echo(_pasteable(f"Cairnmind: {_os_error_text(exc) if isinstance(exc, OSError) else exc}"),
-                       err=True)
+            raw = _os_error_text(exc) if isinstance(exc, OSError) else str(exc)
+            typer.echo(_format_cli_stderr("Cairnmind: ", raw), err=True)
         raise SystemExit(1) from None
 
 
@@ -503,7 +522,7 @@ def _refuse_other_version(settings: Settings) -> None:
 
 def refuse(message: str, code: int = 2):
     """A refusal that is not about the command line: no usage line and no "Invalid value" (#154)."""
-    typer.echo(_pasteable(f"Error: {message}"), err=True)
+    typer.echo(_format_cli_stderr("Error: ", message), err=True)
     raise typer.Exit(code)
 
 
@@ -647,9 +666,12 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
 
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context, data_dir: Annotated[Path | None, typer.Option("--data-dir")] = None):
+    from cairnmind.cli_human import color_enabled
+    ctx.color = color_enabled(sys.stdout)
     _INVOCATION.clear()
     ctx.obj = Settings.load(data_dir, create=False)
     _INVOCATION["data_dir"] = ctx.obj.data_dir
+    _INVOCATION["as_json"] = "--json" in sys.argv[1:]
     if ctx.invoked_subcommand is None:
         _launch_terminal_workspace(ctx)
 
@@ -1279,11 +1301,16 @@ def ask(ctx: typer.Context, project: ProjectArg, question: QuestionArg, worktree
     else:
         _refuse_unknown_project(ctx.obj, project)
     result = request(ctx.obj, "POST", "/ask", json=payload, matched=alive)  # matched: ensure_service would ask again
+    from cairnmind.cli_human import enrich_ask_json, has_degraded_origin
+    enriched = enrich_ask_json(result)
+    if (as_json or not _stdout_is_terminal()) and has_degraded_origin(enriched):
+        from cairnmind import first_start
+        typer.echo(f"Cairnmind: {first_start.DEGRADED_ORIGIN_NOTE}", err=True)
 
     def sentences():
         from cairnmind.terminal_commands import ask_summary  # the workspace's view of an answer
-        return ask_summary(result, str).split("\n")
-    _human_or_json(result, as_json, sentences)
+        return ask_summary(enriched, str).split("\n")
+    _human_or_json(enriched, as_json, sentences)
 
 
 @app.command()
@@ -1644,16 +1671,22 @@ def remember(ctx: typer.Context, project: ProjectArg,
         refuse(f"Record {exc.record_id} already holds the key {key!r} for a {kind}. Nothing was saved. Use "
                "another key, or dispute or decide that record in the inspector.")
 
+    from cairnmind.cli_human import has_degraded_origin
+    if (as_json or not _stdout_is_terminal()) and has_degraded_origin(result):
+        from cairnmind import first_start
+        typer.echo(f"Cairnmind: {first_start.DEGRADED_ORIGIN_NOTE}", err=True)
+
     def sentences():
         import shlex
         from cairnmind import first_start
         from cairnmind.terminal_safe import safe_text
         quoted = shlex.quote(safe_text(project))
+        extra = [first_start.DEGRADED_ORIGIN_NOTE] if has_degraded_origin(result) else []
         # brief lists a proposed record for review, except a task or a checkpoint, which it leaves out.
         if result.get("status") == "proposed" and kind not in {"task", "checkpoint"}:
-            return [first_start.REMEMBER_PROPOSED.format(kind=safe_text(kind), project=quoted)]
+            return [first_start.REMEMBER_PROPOSED.format(kind=safe_text(kind), project=quoted), *extra]
         return [first_start.REMEMBER_STORED.format(status=result.get("status"), kind=safe_text(kind),
-                                                   id=result.get("id"), project=quoted)]
+                                                   id=result.get("id"), project=quoted), *extra]
     _human_or_json(result, as_json, sentences)
 
 

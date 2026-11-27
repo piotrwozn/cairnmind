@@ -3,11 +3,30 @@
 [![CI](https://github.com/piotrwozn/cairnmind/actions/workflows/ci.yml/badge.svg)](https://github.com/piotrwozn/cairnmind/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpiotrwozn%2Fcairnmind%2Fbadges%2Fcoverage.json)](https://github.com/piotrwozn/cairnmind/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush)
 
-**Evidence-grounded project memory for coding agents, in your terminal.**
+**Memory as evidence, not notes — verified project memory for coding agents.**
 
-*A cairn is the pile of stones a walker leaves to mark the trail for the next one. Cairnmind is the memory one coding agent leaves for the next. Formerly DevBrain.*
+1. **Your agent does not guess:** `ask` returns a verbatim quote verified against the current code — or `unknown`.
+2. **Your agent does not lie that it finished:** marking a task `done` is blocked if the code changed after the last passing test run.
 
-Cairnmind is a local workspace for Codex CLI, Claude Code, GitHub Copilot and API-based coding agents (OpenAI, Anthropic, OpenAI-compatible endpoints and local Ollama). It keeps a durable, versioned memory of each project outside any single conversation, so the next session, or a different assistant, can pick up exactly where the last one stopped. It is not a plugin for one assistant and not a notes store that a model writes into: it is a separate local service that assistants connect to, and it does not treat a model's statement as evidence.
+![Cairnmind 60-second demo: without Cairnmind vs. with Cairnmind](docs/assets/demo-60s.svg)
+
+*60-second before & after on [`examples/sample-project`](examples/sample-project/README.md): **0:00–0:20** hallucinated flag vs. `unknown`; **0:20–0:45** stale `done` blocked after a code edit; **0:45–1:00** fresh check run pins the code fingerprint and unlocks verified `done`.*
+
+**Inspect a real project's memory in 30 seconds (Python + `uv` only — zero database or model setup):**
+walk through the [sample project memory](examples/sample-project/README.md) with `cairnmind memory show examples/sample-project/.memory/cairnmind`.
+
+*A cairn is the pile of stones a walker leaves to mark the trail for the next one. Cairnmind is the durable, versioned memory one coding agent leaves for the next — across Codex CLI, Claude Code, GitHub Copilot, API agents and MCP clients. Formerly DevBrain.*
+
+## How it works
+
+Cairnmind runs as a separate local service that coding assistants connect to. It never treats a model's claim as evidence:
+
+- **Verbatim source quotes or `unknown`.** Every `ask` answer must quote the source text verbatim; the service re-checks the quote against the current file and runs a support check before accepting the answer.
+- **Read-before-write resume.** A coding session cannot write to memory until it acknowledges the exact plan and task versions it read.
+- **Fresh machine proof for `done`.** Test-gated tasks require a passing local check run bound to the current code fingerprint; editing code invalidates earlier runs.
+- **Portable memory.** Snapshots and published team memory travel with the repository through Git without credentials.
+
+The full architecture taxonomy (`origin_evidence`, resume packets, plan versions, check profiles, guarantees and limits) lives in [docs/CONTRACTS.md](docs/CONTRACTS.md#architecture-taxonomy).
 
 ## Quick start
 
@@ -18,9 +37,9 @@ Cairnmind runs on Linux, on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the test
 - git and [uv](https://docs.astral.sh/uv/), which brings Python 3.12: on Ubuntu `sudo apt install -y git curl` and `curl -LsSf https://astral.sh/uv/install.sh | sh`, then open a new terminal; on macOS `brew install uv`.
 - One way to run the database engine. **Java 21** is the simplest: `sudo apt install -y openjdk-21-jre-headless` (macOS: `brew install openjdk@21`; the installer prints the one link command macOS still needs). Or **Docker**, running on this machine; the engine then runs in a container (not tested on macOS).
 
-Nothing else: no Ollama, no models, no GPU, no tmux and no coding assistant are needed for the steps below. Each adds something later.
+Nothing else: no Ollama, no models, no GPU, no tmux and no coding assistant are needed for the steps below. Each is optional and covered under [Optional integrations](#optional-integrations).
 
-**What gets installed:** the `cairnmind` command; a small local service that starts by itself when a command needs it and keeps running in the background (`cairnmind stop` stops it); and ArcadeDB, the database your project memory is kept in (about 86 MB, checked with SHA-256; with Docker instead, an engine image of about 640 MB on disk, pinned by its SHA-256 digest). Your memory and a native engine are kept in `~/.local/share/cairnmind`; the command is a uv tool, and a Docker engine's image lives in Docker's storage. `cairnmind stop` stops the service and `cairnmind engine stop` the engine, which also keeps running in the background once it has started.
+**What gets installed:** the `cairnmind` command; a small local service that starts on demand (`cairnmind stop` stops it); and ArcadeDB (about 86 MB, SHA-256 verified; or a pinned Docker image of about 640 MB). State lives in `~/.local/share/cairnmind`.
 
 ```bash
 git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
@@ -32,122 +51,89 @@ cairnmind brief my-app                         # 4. where work stands: your find
 cairnmind ask my-app "When do accounts lock?"  # 5. finds it again; passages of your files that use the question's words are searched too
 ```
 
-These commands say in a terminal what they did and what comes next, and a command that stops says what is missing and what to do. With `--json`, or in a pipe, a file or a script, `doctor`, `project add`, `project list`, `remember`, `ask`, `install`, `init`, `stop` and `engine stop` print the full JSON, as scripts expect; `context` and the record commands print JSON always. `cairnmind doctor` repeats the installer's check at any time; it exits 1 when something required is missing.
+In a terminal, commands explain what happened and how to fix blocks in plain language; with `--json` (or in a pipe/script), `stdout` emits pure JSON while hints and warnings go strictly to `stderr` (`NO_COLOR=1` disables ANSI styling). `cairnmind doctor` repeats the installer's check at any time and exits 1 when something required is missing.
 
 - If the installer prints `Add this directory to PATH`, do what that line says and open a new terminal.
-- `my-app` is any name you choose; `~/src/my-app` stands for the folder of a project you already have. A Git repository with at least one commit is best: `impact`, coding sessions and the commit list of `brief` need Git, and `project add` says when the folder has no repository or no commit.
-- `project add` indexes the files in its own process and starts no service. The extraction and embedding jobs it queues are run by the knowledge service: when it is stopped, `project add` says how many jobs wait (its JSON has `jobs`: `queued`, `service_running`, `waiting_because`), and `cairnmind index my-app` starts it and they run. Without models, while an upgrade is in progress, or while a change of setup from the workspace holds the data directory (`waiting_because`: `setup_in_progress`), it says why they wait. `waiting_because: null` means not known to wait: a running service can still hold them, for example one the workspace started or one that started before models were turned on.
-- What you and your assistants store is *proposed*, and nothing more is needed to go on: `brief`, `ask` and the assistants already use it, marked as unconfirmed. You can confirm or dispute it later in the memory inspector of the terminal workspace (below; it needs tmux 3.4+).
-- `ask` finds passages of your files by the words of the question (`accounts lock` does not find `locked`), and, once models are on, by meaning too, which needs vectors; right after `project add` they are still being built and `ask` says so. An answer cites only what it relies on, so the first one may cite your note alone.
-- Without models, `ask` makes no answer: in a terminal it says so and lists the passages that match words of the question as search results, not as evidence; its JSON reports `status: unavailable`. `cairnmind models pull` turns answers on (below).
+- `my-app` is any name you choose; `~/src/my-app` stands for a project folder (a Git repo with at least one commit unlocks `impact`, coding sessions and commit history in `brief`).
+- Findings stored via CLI or assistants start as *proposed* and are immediately usable in `brief` and `ask`; you can confirm or dispute them later in the memory inspector (see [Optional integrations](#optional-integrations)).
+- Without local models, `ask` searches passages deterministically without fabricating an answer (`status: unavailable` in `--json`). Enable local models below to turn on cited answers.
 
 ### Connect Codex or Claude Code
 
-With [Codex CLI](https://developers.openai.com/codex/cli) or [Claude Code](https://code.claude.com/docs/en/setup) installed and signed in, in the same system as Cairnmind:
+With [Codex CLI](https://developers.openai.com/codex/cli) or [Claude Code](https://code.claude.com/docs/en/setup) installed and signed in:
 
 ```bash
 cairnmind install my-app          # connects the installed clients to this project
 cairnmind run my-app claude       # or codex: starts the client bound to this project's memory
 ```
 
-`cairnmind install` writes into your project, keeping what is there and saying what it changed: for each installed client only, a marked Cairnmind block (`AGENTS.md` for Codex, `CLAUDE.md` for Claude Code), its MCP entry and its hooks (`.mcp.json` and `.claude/settings.local.json`; `.codex/config.toml` and `.codex/hooks.json`); a client that is not installed gets nothing. Cairnmind leaves its own block out of the project's index, so it never comes back in `ask`. Review the files before committing. On its first start in the project, each client asks you to trust Cairnmind's MCP server; Cairnmind answers no trust question for you.
+`cairnmind install` writes only for installed clients: a marked Cairnmind block (`AGENTS.md` for Codex, `CLAUDE.md` for Claude Code), its MCP entry and its hooks (`.mcp.json` and `.claude/settings.local.json`; `.codex/config.toml` and `.codex/hooks.json`). Cairnmind leaves its own block out of the project's index. Review the files before committing.
 
-Cursor, Cline, Zed and other MCP clients use the same memory through `cairnmind mcp --client external`, in a session that is never counted as verified: see [docs/EXTERNAL_CLIENTS.md](docs/EXTERNAL_CLIENTS.md).
+Cursor, Cline, Zed and other MCP clients connect via `cairnmind mcp --client external` in an evidence-degraded session: see [docs/EXTERNAL_CLIENTS.md](docs/EXTERNAL_CLIENTS.md).
 
-To see what Cairnmind keeps before you install anything, read the [sample project memory](examples/sample-project/README.md): a small project with its decisions, a plan and a check run committed next to it, and a read-only command that needs only Python and uv.
+**[Step-by-step installation guide](docs/INSTALL.md)**: preparing Windows and WSL2, installing from a release, native or Docker engine, connecting assistants, upgrading, uninstalling and troubleshooting.
 
-**[Step-by-step installation guide](docs/INSTALL.md)**: preparing Windows and WSL2, installing from a release, the engine natively or in Docker, connecting assistants, verifying, upgrading, uninstalling and troubleshooting. Node.js and a frontend build are not needed.
+## Optional integrations
 
-## Optional: local AI (Ollama) and the workspace (tmux)
+### Local models (Ollama)
 
-**Local models.** With [Ollama](https://ollama.com) running ([installation, step 2](docs/INSTALL.md#2-install-system-tools)):
+With [Ollama](https://ollama.com) running ([installation, step 2](docs/INSTALL.md#2-install-system-tools)):
 
 ```bash
 cairnmind models pull            # downloads qwen3.5:9b and qwen3-embedding:0.6b into Ollama (about 7 GB)
-cairnmind stop                   # the service reads the choice when it starts; the next command that needs it starts it again
+cairnmind stop                   # the service reads the choice on next start
 ```
 
-`cairnmind models pull` turns the knowledge agent on; after the restart the waiting extraction and embedding jobs run and `ask` answers with verified quotes. `cairnmind models set` chooses another model server instead: another Ollama or a server with the OpenAI-compatible API; a server on another computer needs HTTPS and your explicit consent, and receives only the sensitivity classes you allow ([docs/API.md](docs/API.md#the-knowledge-agents-models)). The reference setup uses an RTX 4080 Super with 16 GB of VRAM; the 9B model needs roughly 7 GB of GPU memory, and on CPU it works, but answers are slow. Check memory use and latency on your own machine.
+`cairnmind models pull` enables cited answers, semantic vectors and background extraction. `cairnmind models set` points at another Ollama or an OpenAI-compatible HTTPS server ([docs/API.md](docs/API.md#the-knowledge-agents-models)).
 
-**The terminal workspace.** With tmux 3.4+ (`sudo apt install tmux`, or `brew install tmux` on macOS), `cairnmind` opens the workspace: Codex and Claude Code run in panes beside the projects, the memory inspector and the graph ([docs/TERMINAL.md](docs/TERMINAL.md)). In the workspace, Ctrl+B then i opens the memory inspector, where you confirm or dispute proposed findings (view Proposed). The default Focus layout works at 80 × 24; the full Cockpit layout needs at least 140 × 42. Without tmux 3.4+, opening the workspace prints what is missing and the commands that work without it, and exits with code 1.
+### Terminal workspace (tmux 3.4+)
 
-## What sets it apart
-
-What sets it apart from a `CLAUDE.md` file or a generic memory layer is that Cairnmind treats memory as evidence, not as notes:
-
-- **Every answer cites its sources.** The local knowledge agent must back an `ask` answer with verbatim quotes. The service checks that each quote occurs literally in the source it read and that the source is still current, and then asks the local model once more whether the quotes state the answer; otherwise the answer is not presented as grounded. When the project does not contain the answer, the agent says `unknown`.
-- **Resuming is verified, not assumed.** A bound session can write to memory only after the model acknowledges the exact plan and task versions it read. The check happens in the service, not in a prompt.
-- **"Done" requires fresh proof.** For tasks that require tests, completion needs a passing run of each named test profile, bound to the task definition and to a fingerprint of the current code. A later code change marks that evidence stale.
-- **Memory travels with the repository.** A checksummed snapshot in `.memory/cairnmind/` moves one project's knowledge, plans and history to another machine without moving credentials.
-
-Cairnmind suits developers who work with Codex CLI or Claude Code every day, switch between assistants or return to projects after a break, and are comfortable running Linux, WSL2 or macOS on Apple silicon. It is a local tool for one person; a team shares the records it agreed on through Git ([Team memory](docs/MEMORY.md#team-memory)), and the database and the models can run on another computer you control. If you only want a lighter notes file for one assistant, a `CLAUDE.md` is simpler.
+With tmux 3.4+ (`sudo apt install tmux`, or `brew install tmux` on macOS), `cairnmind` opens the multi-pane workspace beside Codex, Claude Code, the memory inspector and the graph ([docs/TERMINAL.md](docs/TERMINAL.md)). Press `Ctrl+B then i` to open the memory inspector and confirm or dispute proposed findings. Every other CLI command works without `tmux`.
 
 ## How it compares
 
 | | Instruction file (`CLAUDE.md`, `AGENTS.md`) | Memory built into an assistant | Memory plugin or layer | Cairnmind |
 |---|---|---|---|---|
 | Who writes it | You, by hand | The model | The model | The model and you, each record tied to a source |
-| Checked against the source | No | Usually no | Usually no | An answer's quotes must occur literally in a current source |
-| Works across assistants | Each assistant reads its own file | No | Depends on the plugin | Codex CLI, Claude Code, Copilot, API agents; other MCP clients, marked unverified |
-| "Done" needs proof | No | No | Usually no | For tasks that require tests: a passing check bound to the current code |
-| Setup | None | None | Usually one command | Docker or Java 21 for the database, and uv; local models (Ollama) and tmux are optional |
+| Checked against the source | No | Usually no | Usually no | Every cited quote must occur literally in a current source |
+| Works across assistants | Each assistant reads its own file | No | Depends on the plugin | Codex CLI, Claude Code, Copilot, API agents; external MCP clients |
+| "Done" needs proof | No | No | Usually no | Fresh local check run bound to the current code fingerprint |
+| Setup | None | None | Usually one command | Java 21 or Docker + `uv`; Ollama and `tmux` are optional |
 
-The columns are kinds of tools, not products; a particular tool may do more than its column says. The last row is the price: Cairnmind is the heaviest of the four to install, even without the optional parts.
-
-Shared memory for a team works through Git ([Team memory](docs/MEMORY.md#team-memory)). Planned, not there yet: read-only views above a single project. The steps are on the [features board](https://github.com/users/piotrwozn/projects/2).
-
-## What it guarantees, and what it does not
-
-| It verifies | It does not verify |
-|---|---|
-| A cited quote occurs literally in the source version that was read, and that source is still current; the quote shown is always the source's own text | That the model interpreted the quote correctly. A second call to the local model, the support check, must agree that the quotes state the answer, or the answer is withheld; that check has known gaps |
-| A session acknowledged the exact packet, plan and task versions before writing | That the model understood what it acknowledged |
-| A test run passed for this task definition, check profile and code fingerprint, and whether it is still fresh | That passing tests mean every acceptance criterion is met, or that a review happened |
-| Where a stored finding came from, and when its evidence existed | That the finding is true |
-| What an external MCP client writes through its tools is marked `origin_evidence: degraded` and never shown or counted as verified | That what it reports is true; a `cairnmind` command its agent runs in a shell has no session and is stored unmarked |
-| Without models, `ask` makes no answer: it reports `unavailable` and lists full-text matches as search results | That a listed passage answers the question: no citation is made or checked |
-
-Local memory reduces how much history an assistant must carry, but it does not remove the context limits or the cost of the assistants themselves. Portable snapshots can contain full conversation text; review them before sharing. The full rules and their edge cases (what the citation check tolerates, what the support check misses, transcript record kinds a newer client writes, the limits of the analysis) are in [docs/CONTRACTS.md](docs/CONTRACTS.md#what-it-guarantees-and-what-it-does-not) and [Limits](docs/CONTRACTS.md#limits).
+For the complete guarantees-vs-non-guarantees table and known limits, see [docs/CONTRACTS.md](docs/CONTRACTS.md#what-it-guarantees-and-what-it-does-not). Shared team memory works through Git ([Team memory](docs/MEMORY.md#team-memory)).
 
 ## Measured results
 
-Measured with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an RTX 4080 Super, in isolated databases: on release 0.8.0 on 9 November 2026, and on the code of 0.11.0 on 16 November 2026 (one run of each command for the release, and three runs of the repository questions before it). The figures below are 0.11.0's; the release gate of 0.12.0, run on 18 November 2026, gave the same recall, memory and extraction results and 19 of 20 on the repository questions, none wrong (see [docs/EVALUATION.md](docs/EVALUATION.md#results-for-0120)). Recall, portable memory and extraction use synthetic fixtures; the repository questions use Cairnmind's own repository. None of them is proof of behaviour on every real project.
+Measured with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an RTX 4080 Super in isolated databases (0.11.0 / 0.12.0 release gate; see [docs/EVALUATION.md](docs/EVALUATION.md) and [docs/evaluation/RESULTS.md](docs/evaluation/RESULTS.md)):
 
 | Evaluation | Result |
 |---|---|
-| Recall: 20 golden questions, pass threshold 0.9 | 1.0 on 0.11.0; 1.0 in 6 of 6 runs on 0.8.0 |
-| Hand-off Codex → Claude Code → fresh Codex, real clients | passed once, before the 0.8.0 fixes; not repeated since |
-| Portable memory: extraction, transfer, cited recall, project isolation | passed on 0.11.0; 3 of 3 runs on 0.8.0 |
-| Extraction from conversations: share of proposals a person would reject | 29% of 28 proposals on 0.11.0, every kept record found; 65% on 0.10.0 |
-| Questions about Cairnmind's own repository, complete and right | 20 of 20 in the release run, 19, 19 and 20 in three runs before it; none complete and wrong |
-| Questions about things the repository does not have, refused | 20 of 21; the one answered (a name in lower case) was answered wrong |
-| 22 further questions about Cairnmind's own repository, one run before the release | 15 complete and right, 2 complete and wrong |
-
-Nothing was measured in deterministic-only mode: the evaluations need the models and report `not_run` (exit 3) without them. The method, the problems the measurement uncovered and the limits of these numbers are described in [docs/EVALUATION.md](docs/EVALUATION.md) and [docs/evaluation/RESULTS.md](docs/evaluation/RESULTS.md).
+| Recall: 20 golden questions (threshold 0.9) | 1.0 on 0.11.0 and 0.12.0; 1.0 in 6 of 6 runs on 0.8.0 |
+| Portable memory: extraction, transfer, cited recall, project isolation | passed on 0.11.0 and 0.12.0; 3 of 3 runs on 0.8.0 |
+| Extraction from conversations (rejected share) | 29% of 28 proposals (down from 65% on 0.10.0), every kept record found |
+| Questions about Cairnmind's own repository (complete and right) | 19–20 of 20; none complete and wrong |
+| Questions about absent features, refused | 20 of 21 (24 of 24 after subject/names checks; see [RESULTS.md](docs/evaluation/RESULTS.md)) |
 
 ## Documentation
 
-Version 0.12.0 is the current release, the first that runs on macOS with Apple silicon; 0.9.0 was the first under the name Cairnmind. New installations use the installer directly. The [changelog](CHANGELOG.md) lists every release, and [docs/UPGRADING.md](docs/UPGRADING.md) says how to upgrade from each. Planned work is tracked in [issues](https://github.com/piotrwozn/cairnmind/issues?q=is%3Aissue+label%3Aroadmap).
+Version 0.12.0 is the current release. See [CHANGELOG.md](CHANGELOG.md), [docs/UPGRADING.md](docs/UPGRADING.md) and the [roadmap issues](https://github.com/piotrwozn/cairnmind/issues?q=is%3Aissue+label%3Aroadmap).
 
-- [docs/INSTALL.md](docs/INSTALL.md): step-by-step installation, the engine natively or in Docker, the models, verification, uninstalling and troubleshooting.
-- [docs/TERMINAL.md](docs/TERMINAL.md): the terminal workspace, layout, navigation and diagnostics, and the commands to use without it.
-- [docs/EXTERNAL_CLIENTS.md](docs/EXTERNAL_CLIENTS.md): Cursor, Cline, Zed and other MCP clients in an evidence-degraded session.
-- [docs/WORKFLOW.md](docs/WORKFLOW.md): plan format, check profiles, plan stages, evidence states, MCP calls, the code fingerprint, `brief`, `usage`, the plan contract, the scope of a step and `impact`.
-- [docs/MEMORY.md](docs/MEMORY.md): portable snapshots, `memory show`, evidence states, the review of conflicts and proposed findings, and team memory.
-- [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md): the portable and published memory formats and the import rules.
-- [docs/STORAGE_AND_MAINTENANCE.md](docs/STORAGE_AND_MAINTENANCE.md): the data directory, backups, the single writer, `store size`, removing replaced chunks, pruning safety backups and rotating the engine log.
-- [docs/API.md](docs/API.md): API, Ollama and Copilot connections, the knowledge agent's models, permissions and third-party MCP tools.
-- [docs/EVALUATION.md](docs/EVALUATION.md): the explicit evaluations, the results for 0.12.0, 0.11.0 and 0.8.0 and, in [evaluation/RESULTS.md](docs/evaluation/RESULTS.md), the results on Cairnmind's own repository.
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): the database in a container, on a server or in Kubernetes, and connect-only installations.
-- [docs/UPGRADING.md](docs/UPGRADING.md): upgrading an existing installation.
-- [docs/CONTRACTS.md](docs/CONTRACTS.md): what Cairnmind guarantees and what it does not, its limits, the implementation contracts and the [extension surfaces](docs/CONTRACTS.md#extension-surfaces): what can be added (checks, reactions to events, MCP clients, model connections), what is planned, and why there are no plugins.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how it works, what it is built with, the repository layout and the development commands.
-- [CHANGELOG.md](CHANGELOG.md): release history.
+- [docs/CONTRACTS.md](docs/CONTRACTS.md): architecture taxonomy, guarantees, limits, implementation contracts and extension surfaces.
+- [docs/INSTALL.md](docs/INSTALL.md): installation, native or Docker engine, models, verification and troubleshooting.
+- [docs/WORKFLOW.md](docs/WORKFLOW.md): plans, check profiles, code fingerprints, evidence states, MCP tools, `brief`, `usage` and `impact`.
+- [docs/MEMORY.md](docs/MEMORY.md) & [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md): portable snapshots, team memory, secrets gate and import rules.
+- [docs/TERMINAL.md](docs/TERMINAL.md): terminal workspace, memory inspector and keyboard shortcuts.
+- [docs/EXTERNAL_CLIENTS.md](docs/EXTERNAL_CLIENTS.md): Cursor, Cline, Zed and other external MCP clients.
+- [docs/STORAGE_AND_MAINTENANCE.md](docs/STORAGE_AND_MAINTENANCE.md): data directory, backups, single writer and maintenance.
+- [docs/API.md](docs/API.md): API, Ollama, Copilot connections, sensitivity classes and third-party MCP tools.
+- [docs/EVALUATION.md](docs/EVALUATION.md): explicit evaluations and measured results.
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): containers, remote servers, Kubernetes and connect-only installations.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): system architecture, dependencies, repository layout and dev commands.
 
 ## Contributing
 
-Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first, and report vulnerabilities as described in [SECURITY.md](SECURITY.md). The development commands and the test tiers are also in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#development).
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first, and report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
-Cairnmind is licensed under the [Apache License 2.0](LICENSE). ArcadeDB, which Cairnmind downloads and manages, is licensed separately under the same license; see [NOTICE](NOTICE).
+Cairnmind is licensed under the [Apache License 2.0](LICENSE). ArcadeDB is licensed separately under the same license; see [NOTICE](NOTICE).
