@@ -16,8 +16,10 @@ interface EventDockProps {
 function eventTone(type: UiEventType): BadgeTone {
   switch (type) {
     case 'mcp.write.rejected':
+    case 'plan.conflict':
       return 'rose';
     case 'evidence.stale':
+    case 'repo_fingerprint_changed':
       return 'amber';
     case 'mcp.write.accepted':
     case 'session.ack':
@@ -30,6 +32,16 @@ function eventTone(type: UiEventType): BadgeTone {
 function summarizePayload(event: UiSseEvent): string {
   const p = event.payload;
   if (typeof p.message === 'string' && p.message) return p.message;
+  if (event.type === 'reindex.progress') {
+    const pct = typeof p.percent === 'number' ? `${p.percent}%` : '';
+    const stage = typeof p.stage === 'string' ? p.stage : 'indexing';
+    return `${stage} ${pct}`.trim();
+  }
+  if (event.type === 'repo_fingerprint_changed') {
+    const file = typeof p.file_path === 'string' ? p.file_path : 'repo';
+    const sha = typeof p.new_sha256 === 'string' ? p.new_sha256.slice(0, 7) : '';
+    return `${file} -> ${sha}`.trim();
+  }
   if (event.type === 'state.updated') {
     const rev = p.state_rev !== undefined ? `state_rev=#${String(p.state_rev)}` : '';
     const reason = typeof p.reason === 'string' ? p.reason : 'sync';
@@ -83,7 +95,7 @@ export function EventDock({ open, onToggle, events, onClear }: EventDockProps) {
         {open && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 128, opacity: 1 }}
+            animate={{ height: 112, opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.16, ease: 'easeOut' }}
             className="overflow-y-auto px-2 py-1"
@@ -91,7 +103,7 @@ export function EventDock({ open, onToggle, events, onClear }: EventDockProps) {
             {events.length === 0 ? (
               <div className="flex h-full items-center justify-center gap-2 text-xs text-zinc-500 font-mono-tabular">
                 <StatusDot tone="emerald" pulse />
-                <span>Listening for MCP calls, resume_packet ACKs, and fingerprint updates...</span>
+                <span>Listening for MCP calls, repo_fingerprint_changed, reindex, and OCC events...</span>
               </div>
             ) : (
               <div className="flex flex-col gap-0.5">
@@ -100,14 +112,17 @@ export function EventDock({ open, onToggle, events, onClear }: EventDockProps) {
                     key={event.id}
                     className={cn(
                       'flex items-center gap-2.5 rounded px-2 py-1 text-[11px] transition-colors hover:bg-white/[0.04]',
-                      event.type === 'mcp.write.rejected' && 'bg-rose-500/[0.06]',
-                      event.type === 'evidence.stale' && 'bg-amber-500/[0.05]',
+                      (event.type === 'mcp.write.rejected' || event.type === 'plan.conflict') &&
+                        'bg-rose-500/[0.06]',
+                      (event.type === 'evidence.stale' ||
+                        event.type === 'repo_fingerprint_changed') &&
+                        'bg-amber-500/[0.05]',
                     )}
                   >
                     <span className="w-[84px] shrink-0 text-zinc-500 font-mono-tabular">
                       {formatTimeMs(event.timestamp)}
                     </span>
-                    <GlassBadge tone={eventTone(event.type)} className="w-[144px] shrink-0 justify-center">
+                    <GlassBadge tone={eventTone(event.type)} className="w-[172px] shrink-0 justify-center">
                       {event.type}
                     </GlassBadge>
                     <span className="truncate text-zinc-300 font-mono-tabular">

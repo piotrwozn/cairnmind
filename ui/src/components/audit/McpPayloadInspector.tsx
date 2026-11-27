@@ -1,5 +1,6 @@
 import { Code2, ShieldAlert } from 'lucide-react';
 import { GlassBadge, statusToTone } from '@/components/glass/GlassBadge';
+import { OriginBadge } from '@/components/glass/OriginBadge';
 import { formatTimeMs } from '@/lib/utils';
 import type { GuardrailAuditEntry } from '@/types/contracts';
 
@@ -14,9 +15,12 @@ export function McpPayloadInspector({ entry }: McpPayloadInspectorProps) {
     <div className="flex flex-col gap-3">
       {/* Header metadata */}
       <div className="flex flex-col gap-2 rounded-md border border-white/[0.08] bg-zinc-950/60 p-2.5 text-xs">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="font-mono-tabular font-semibold text-sky-300">{entry.mcp_tool}</span>
-          <GlassBadge tone={statusToTone(entry.verdict)}>{entry.verdict}</GlassBadge>
+          <div className="flex items-center gap-1.5">
+            <OriginBadge origin={entry.origin} compact />
+            <GlassBadge tone={statusToTone(entry.verdict)}>{entry.verdict}</GlassBadge>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-1.5 text-[11px] font-mono-tabular">

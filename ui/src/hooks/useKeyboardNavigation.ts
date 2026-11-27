@@ -25,7 +25,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 /**
- * IDE-grade keyboard navigation: j/k list traversal, Esc dismiss, Cmd+K palette, 1-4 views, [ rail, ` dock.
+ * IDE-grade keyboard navigation: j/k list traversal, Esc dismiss, Cmd+K palette, 1-7 views, [ rail, ` dock.
  */
 export function useKeyboardNavigation({
   itemIds,
@@ -92,6 +92,18 @@ export function useKeyboardNavigation({
         case '4':
           event.preventDefault();
           onSwitchView('audit');
+          break;
+        case '5':
+          event.preventDefault();
+          onSwitchView('ask');
+          break;
+        case '6':
+          event.preventDefault();
+          onSwitchView('drift');
+          break;
+        case '7':
+          event.preventDefault();
+          onSwitchView('drafts');
           break;
         case '[':
           event.preventDefault();

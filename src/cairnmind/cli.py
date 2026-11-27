@@ -1069,9 +1069,10 @@ def ui(
     host: Annotated[str, typer.Option("--host", help="Loopback bind host (127.0.0.1, localhost, or ::1).")] = "127.0.0.1",
     project: Annotated[str | None, typer.Option("--project", help="Default project id, name, or folder.")] = None,
     mock: Annotated[bool, typer.Option("--mock", help="Serve the deterministic mock dataset without ArcadeDB.")] = False,
+    read_only: Annotated[bool, typer.Option("--read-only", help="Serve the cockpit in safe read-only preview mode (disables mutations).")] = False,
     no_open: Annotated[bool, typer.Option("--no-open", help="Do not open a browser tab automatically.")] = False,
 ):
-    """Serve the local State, Provenance & Concurrency Inspector web UI on localhost."""
+    """Serve the local Engineer Cockpit & Provenance Inspector web UI on localhost."""
     import threading
     import uvicorn
     import webbrowser
@@ -1087,16 +1088,18 @@ def ui(
     if not mock:
         if settings is None or not settings.token:
             refuse("Initialize Cairnmind first (`cairnmind init`), or pass `--mock` to preview with sample data.")
-        store = store_for(settings)
+        store = store_for_read(settings) if read_only else store_for(settings)
 
     api = create_ui_app(
         store=store,
         settings=settings,
         default_project=project,
         default_mock=mock,
+        read_only=read_only,
     )
     url = f"http://{host}:{port}" + ("/?mock=1" if mock else "/")
-    typer.echo(f"Cairnmind UI serving on {url}")
+    mode_tag = " [read-only]" if read_only else ""
+    typer.echo(f"Cairnmind UI serving on {url}{mode_tag}")
     if not no_open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     server = uvicorn.Server(uvicorn.Config(api, host=host, port=port, log_level="info"))

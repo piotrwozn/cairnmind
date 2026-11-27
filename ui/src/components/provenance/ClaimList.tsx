@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { FileCode2, RefreshCw, Search } from 'lucide-react';
 import { GlassBadge, statusToTone } from '@/components/glass/GlassBadge';
+import { matchesOriginFilter, OriginBadge, OriginFilterBar } from '@/components/glass/OriginBadge';
 import { StatusPulseHighlight } from '@/components/glass/StatusPulse';
 import { cn, formatShortTime, shortHash, SPRING_PHYSICS } from '@/lib/utils';
-import type { EvidenceClaim } from '@/types/contracts';
+import type { EvidenceClaim, OriginFilter } from '@/types/contracts';
 
 type ProvenanceFilter = 'ALL' | 'VERIFIED' | 'STALE';
 
@@ -16,6 +17,10 @@ interface ClaimListProps {
   stalePulseIds: ReadonlySet<string>;
   onReverify: () => void;
   reverifying: boolean;
+  writable?: boolean;
+  readOnlyReason?: string | null;
+  originFilter: OriginFilter;
+  onChangeOriginFilter: (filter: OriginFilter) => void;
 }
 
 const TABS: ProvenanceFilter[] = ['ALL', 'VERIFIED', 'STALE'];
@@ -28,6 +33,10 @@ export function ClaimList({
   stalePulseIds,
   onReverify,
   reverifying,
+  writable = true,
+  readOnlyReason,
+  originFilter,
+  onChangeOriginFilter,
 }: ClaimListProps) {
   const [filter, setFilter] = useState<ProvenanceFilter>('ALL');
   const [search, setSearch] = useState('');
@@ -39,6 +48,7 @@ export function ClaimList({
     return claims.filter((claim) => {
       if (effectiveFilter === 'VERIFIED' && claim.provenance_status !== 'VERIFIED') return false;
       if (effectiveFilter === 'STALE' && claim.provenance_status === 'VERIFIED') return false;
+      if (!matchesOriginFilter(claim.origin, originFilter)) return false;
       if (!q) return true;
       return (
         claim.key.toLowerCase().includes(q) ||
@@ -48,38 +58,42 @@ export function ClaimList({
         claim.recorded_sha256.toLowerCase().includes(q)
       );
     });
-  }, [claims, effectiveFilter, search]);
+  }, [claims, effectiveFilter, originFilter, search]);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-2">
-        <div className="flex items-center gap-1 rounded-md border border-white/[0.08] bg-zinc-950/60 p-0.5">
-          {TABS.map((tab) => {
-            const active = effectiveFilter === tab;
-            return (
-              <button
-                key={tab}
-                type="button"
-                disabled={onlyStaleAndConflicts && tab !== 'STALE'}
-                onClick={() => setFilter(tab)}
-                className={cn(
-                  'relative rounded px-2.5 py-1 text-[11px] font-medium transition-colors font-mono-tabular',
-                  active ? 'text-zinc-100' : 'text-zinc-500 hover:text-zinc-300',
-                  onlyStaleAndConflicts && tab !== 'STALE' && 'opacity-40 cursor-not-allowed',
-                )}
-              >
-                {active && (
-                  <motion.span
-                    layoutId="active-tab-indicator"
-                    transition={SPRING_PHYSICS}
-                    className="pointer-events-none absolute inset-0 rounded border border-white/[0.12] bg-white/[0.08]"
-                  />
-                )}
-                <span className="relative z-10">{tab}</span>
-              </button>
-            );
-          })}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 rounded-md border border-white/[0.08] bg-zinc-950/60 p-0.5">
+            {TABS.map((tab) => {
+              const active = effectiveFilter === tab;
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  disabled={onlyStaleAndConflicts && tab !== 'STALE'}
+                  onClick={() => setFilter(tab)}
+                  className={cn(
+                    'relative rounded px-2.5 py-1 text-[11px] font-medium transition-colors font-mono-tabular',
+                    active ? 'text-zinc-100' : 'text-zinc-500 hover:text-zinc-300',
+                    onlyStaleAndConflicts && tab !== 'STALE' && 'opacity-40 cursor-not-allowed',
+                  )}
+                >
+                  {active && (
+                    <motion.span
+                      layoutId="active-tab-indicator"
+                      transition={SPRING_PHYSICS}
+                      className="pointer-events-none absolute inset-0 rounded border border-white/[0.12] bg-white/[0.08]"
+                    />
+                  )}
+                  <span className="relative z-10">{tab}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <OriginFilterBar value={originFilter} onChange={onChangeOriginFilter} />
         </div>
 
         <div className="flex items-center gap-2">
@@ -93,15 +107,16 @@ export function ClaimList({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Filter claims, paths, quotes..."
-              className="h-7 w-52 rounded-md border border-white/[0.08] bg-zinc-950/60 pl-7 pr-2 text-xs text-zinc-200 placeholder:text-zinc-500 focus:border-sky-500/40 focus:outline-none"
+              className="h-7 w-48 rounded-md border border-white/[0.08] bg-zinc-950/60 pl-7 pr-2 text-xs text-zinc-200 placeholder:text-zinc-500 focus:border-sky-500/40 focus:outline-none"
             />
           </div>
 
           <button
             type="button"
-            disabled={reverifying}
+            disabled={reverifying || !writable}
+            title={!writable ? readOnlyReason || 'Read-only mode enabled' : 'Re-verify hashes on disk'}
             onClick={onReverify}
-            className="flex h-7 items-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-2.5 text-xs font-medium text-sky-300 transition-colors hover:bg-sky-500/20 disabled:opacity-50"
+            className="flex h-7 items-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-2.5 text-xs font-medium text-sky-300 transition-colors hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-45"
           >
             <RefreshCw className={cn('h-3.5 w-3.5', reverifying && 'animate-spin')} strokeWidth={1.5} />
             <span>Re-verify</span>
@@ -134,8 +149,9 @@ export function ClaimList({
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           <GlassBadge tone="zinc">{claim.kind.toUpperCase()}</GlassBadge>
+                          <OriginBadge origin={claim.origin} compact />
                           <span className="truncate text-xs font-semibold text-zinc-100 font-mono-tabular">
                             {claim.key}
                           </span>

@@ -8,14 +8,17 @@ import {
 import { motion } from 'framer-motion';
 import { CheckCircle2, ShieldAlert, XCircle } from 'lucide-react';
 import { GlassBadge, statusToTone } from '@/components/glass/GlassBadge';
+import { matchesOriginFilter, OriginBadge, OriginFilterBar } from '@/components/glass/OriginBadge';
 import { cn, formatTimeMs } from '@/lib/utils';
-import type { GuardrailAuditEntry } from '@/types/contracts';
+import type { GuardrailAuditEntry, OriginFilter } from '@/types/contracts';
 
 interface GuardrailAuditTableProps {
   entries: GuardrailAuditEntry[];
   selectedAuditId: string | null;
   onSelectAudit: (entry: GuardrailAuditEntry) => void;
   rejectedPulseIds: ReadonlySet<string>;
+  originFilter: OriginFilter;
+  onChangeOriginFilter: (filter: OriginFilter) => void;
 }
 
 const columnHelper = createColumnHelper<GuardrailAuditEntry>();
@@ -25,7 +28,14 @@ export function GuardrailAuditTable({
   selectedAuditId,
   onSelectAudit,
   rejectedPulseIds,
+  originFilter,
+  onChangeOriginFilter,
 }: GuardrailAuditTableProps) {
+  const filteredEntries = useMemo(
+    () => entries.filter((e) => matchesOriginFilter(e.origin, originFilter)),
+    [entries, originFilter],
+  );
+
   const columns = useMemo(
     () => [
       columnHelper.accessor('timestamp', {
@@ -42,6 +52,11 @@ export function GuardrailAuditTable({
             <div className="text-[10px] text-zinc-500">{info.row.original.client}</div>
           </div>
         ),
+      }),
+      columnHelper.display({
+        id: 'origin',
+        header: 'Origin',
+        cell: ({ row }) => <OriginBadge origin={row.original.origin} />,
       }),
       columnHelper.accessor('mcp_tool', {
         header: 'MCP Tool',
@@ -91,16 +106,16 @@ export function GuardrailAuditTable({
   );
 
   const table = useReactTable({
-    data: entries,
+    data: filteredEntries,
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
 
-  const rejectedCount = entries.filter((e) => e.verdict === 'REJECTED').length;
+  const rejectedCount = filteredEntries.filter((e) => e.verdict === 'REJECTED').length;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex h-10 shrink-0 items-center justify-between border-b border-white/[0.06] px-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-2">
         <div className="flex items-center gap-2">
           <ShieldAlert className="h-4 w-4 text-rose-400" strokeWidth={1.5} />
           <span className="text-xs font-semibold text-zinc-100">
@@ -110,14 +125,15 @@ export function GuardrailAuditTable({
             Hallucination Firewall
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <OriginFilterBar value={originFilter} onChange={onChangeOriginFilter} />
           <GlassBadge tone="rose">{rejectedCount} REJECTED</GlassBadge>
-          <GlassBadge tone="zinc">{entries.length} TOTAL</GlassBadge>
+          <GlassBadge tone="zinc">{filteredEntries.length} TOTAL</GlassBadge>
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        {entries.length === 0 ? (
+        {filteredEntries.length === 0 ? (
           <div className="flex h-40 items-center justify-center text-xs text-zinc-500 font-mono-tabular">
             No MCP guardrail events match the active filter.
           </div>
