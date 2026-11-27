@@ -119,6 +119,14 @@ PROJECT_FOLDER_MISSING = ("{root} does not exist. cairnmind project add NAME FOL
 PROJECT_ADDED = 'Registered {project} in {root}; files indexed: {files}.'
 PROJECT_ADDED_NEXT = ('Next: cairnmind remember {project} "..." stores a first finding, and cairnmind brief {project} '
                       'shows it.')
+PROJECT_CLONED = 'Cloned {source} into {root} with {tool}.'
+CLONE_SNAPSHOT_FOUND = ('Found portable project memory in {snapshot}. Nothing was registered yet so its project '
+                        'identity can be preserved.')
+CLONE_SNAPSHOT_NEXT = ('Next: inspect it with cairnmind memory inspect {snapshot} and import with cairnmind memory '
+                       'import {snapshot} --root {root} --dry-run (or register a separate identity with cairnmind '
+                       'project add {project} {root}).')
+CLONE_PUBLISHED_FOUND = ('Found team published memory in {published}. Review and import it with cairnmind memory '
+                         'import-published {quoted_published} --project {project} --dry-run.')
 JOBS_HELD_STOPPED = ("Extraction and embedding jobs waiting: {count}. The Cairnmind service runs them, and it is not "
                      "running; project add does not start it. cairnmind index {project} starts it now.")
 JOBS_HELD_UPGRADE = ("Extraction and embedding jobs waiting: {count}. The Cairnmind service runs them, and it is not "
@@ -424,6 +432,15 @@ MESSAGES[JOBS_HELD_NO_MODELS] = ("Zadania ekstrakcji i osadzania w kolejce: {cou
 MESSAGES[THIS_MAC] = "Ten Mac: {chip}, {gib} GiB pamięci zunifikowanej, współdzielonej z modelami."
 MESSAGES[PROCESS_OFF] = "Brak modeli. Uruchom `cairnmind models pull`, aby przetwarzać pamięć."
 MESSAGES[PROCESS_RESTART] = "Modele włączone. Zrestartuj usługę (`cairnmind stop`, potem start), by ich użyła."
+MESSAGES[PROJECT_CLONED] = "Sklonowano {source} do {root} przez {tool}."
+MESSAGES[CLONE_SNAPSHOT_FOUND] = ("Wykryto przenośną pamięć projektu w {snapshot}. Nic jeszcze nie zarejestrowano, "
+                                  "aby zachować tożsamość projektu.")
+MESSAGES[CLONE_SNAPSHOT_NEXT] = ("Dalej: sprawdź ją poleceniem cairnmind memory inspect {snapshot} i zaimportuj przez "
+                                 "cairnmind memory import {snapshot} --root {root} --dry-run (albo zarejestruj osobną "
+                                 "tożsamość poleceniem cairnmind project add {project} {root}).")
+MESSAGES[CLONE_PUBLISHED_FOUND] = ("Wykryto opublikowaną pamięć zespołu w {published}. Przejrzyj i zaimportuj ją "
+                                   "poleceniem cairnmind memory import-published {quoted_published} --project {project} "
+                                   "--dry-run.")
 
 
 def _version(found: dict) -> str:

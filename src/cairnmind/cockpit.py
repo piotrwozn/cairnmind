@@ -417,6 +417,65 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         present = await asyncio.to_thread(lambda: manifest.exists() or manifest.is_symlink())
         return {"root": str(root), "memory_snapshot": str(manifest.parent) if present else None}
 
+    @app.post("/api/projects/clone")
+    async def clone_project_repository(request: Request):
+        session_for(request)
+        value = await body(request)
+        fields(value, {"repo", "parent", "destination", "name", "via", "branch"}, {"repo"})
+        if not isinstance(value["repo"], str):
+            raise HTTPException(422, "Give a repository as owner/repo, HTTPS or SSH URL.")
+        from . import project_clone
+        via = value.get("via", "auto")
+        branch = value.get("branch")
+        raw_name = value.get("name")
+        if (not isinstance(via, str)
+                or (branch is not None and not isinstance(branch, str))
+                or (raw_name is not None and not isinstance(raw_name, str))):
+            raise HTTPException(422, "Invalid clone parameters.")
+        via = via.strip() or "auto"
+        branch = branch.strip() if isinstance(branch, str) and branch.strip() else None
+        raw_name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else None
+        try:
+            source = project_clone.parse_clone_source(value["repo"])
+            if branch is not None:
+                branch = project_clone.validate_branch(branch)
+            chosen_name = raw_name or source.default_name
+            if not chosen_name or len(chosen_name) > 256:
+                raise ValueError("Project name must be between 1 and 256 characters.")
+            if value.get("destination") is not None:
+                if not isinstance(value["destination"], str):
+                    raise ValueError("Give a valid folder path.")
+                target = await asyncio.to_thread(normalize_path, value["destination"])
+            elif value.get("parent") is not None:
+                if not isinstance(value["parent"], str):
+                    raise ValueError("Give a valid folder path.")
+                parent = await asyncio.to_thread(normalize_path, value["parent"])
+                if not await asyncio.to_thread(parent.is_dir):
+                    raise ValueError("The parent folder does not exist.")
+                target = parent / source.default_name
+            else:
+                raise ValueError("Give a parent or destination folder.")
+            destination = await asyncio.to_thread(project_clone.prepare_destination, target, settings.data_dir)
+            await asyncio.to_thread(project_clone.choose_tool, source, via)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        from .first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN
+        from .terminal_safe import safe_text
+        for row in await projects():
+            if row.get("name") == chosen_name:
+                raise HTTPException(409, PROJECT_NAME_TAKEN.format(
+                    name=safe_text(chosen_name), root=safe_text(row.get("root") or "")))
+            if row.get("root") and str(Path(row["root"]).resolve(strict=False)) == str(destination):
+                raise HTTPException(409, PROJECT_ROOT_TAKEN.format(
+                    name=safe_text(row.get("name") or ""), root=safe_text(str(destination))))
+        try:
+            cloned = await asyncio.to_thread(
+                project_clone.clone_repository, source, destination, via=via, branch=branch, interactive=False)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        found = await asyncio.to_thread(project_clone.inspect_cloned_memory, destination)
+        return {"cloned": cloned, "root": str(destination), "name": chosen_name, **found}
+
     @app.get("/api/settings")
     async def get_settings(request: Request):
         session_for(request)

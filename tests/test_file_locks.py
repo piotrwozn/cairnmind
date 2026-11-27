@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -149,6 +150,12 @@ def test_killing_lock_holder_releases_lock_for_next_process(tmp_path):
         process_control.terminate_pid(real_pid, force=True)
         holder.kill()
         holder.wait(timeout=15)
+        # On Windows, holder.pid is uv's .venv\Scripts\python.exe shim while real_pid is the child
+        # cpython process; TerminateProcess is asynchronous in the kernel, so wait until real_pid exits.
+        from cairnmind import process_identity
+        deadline = time.monotonic() + 5.0
+        while process_identity.alive(real_pid) and time.monotonic() < deadline:
+            time.sleep(0.01)
     finally:
         if real_pid is not None:
             try:

@@ -100,3 +100,27 @@ def test_one_thread_dump_for_requests_that_stall_together(tmp_path, monkeypatch)
     assert stall_watch.thread_dump(log) == "THREADS"
     assert "not taken" in stall_watch.thread_dump(log)  # a second worker, a moment later
     assert len(taken) == 1
+
+
+def test_late_answer_inside_clirunner_does_not_corrupt_json_output(tmp_path):
+    import json
+    import typer
+    from typer.testing import CliRunner
+
+    def slow(request):
+        time.sleep(0.35)
+        return httpx.Response(200, json={"result": []})
+
+    settings, client = make_client(tmp_path, transport=httpx.MockTransport(slow))
+    request = stall_watch.watch(settings, ArcadeClient._request, after=0.1)
+    app = typer.Typer()
+
+    @app.command()
+    def cmd():
+        request(client, "GET", "/api/v1/databases")
+        print(json.dumps({"ok": True}))
+
+    with pytest.warns(UserWarning, match="SLOW REQUEST"):
+        result = CliRunner().invoke(app)
+    assert result.exit_code == 0
+    assert json.loads(result.output) == {"ok": True}
