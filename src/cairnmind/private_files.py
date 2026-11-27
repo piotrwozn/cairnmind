@@ -655,6 +655,20 @@ def current_uid() -> int | None:
     return None if IS_WINDOWS else os.getuid()
 
 
+def owner_uid_mismatch(path: Path | str) -> tuple[int, int] | None:
+    """Return `(file_uid, effective_uid)` on POSIX when non-root euid differs from path owner; None on Windows."""
+    if IS_WINDOWS or not hasattr(os, "geteuid"):
+        return None
+    try:
+        st = Path(path).stat()
+        euid = os.geteuid()
+    except OSError:
+        return None
+    if st.st_uid != euid and euid != 0:
+        return st.st_uid, euid
+    return None
+
+
 def pread_at(fd: int, count: int, offset: int) -> bytes:
     """Read up to count bytes at offset without moving the file position (POSIX os.pread fallback on Windows)."""
     if hasattr(os, "pread"):

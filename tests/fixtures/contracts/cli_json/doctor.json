@@ -89,6 +89,7 @@
     "version": "<HOST_PROBED>"
   },
   "knowledge_agent": "disabled (deterministic-only mode)",
+  "mcp_presets": [],
   "memory_models": {
     "chat": {
       "base_url": "http://127.0.0.1:11434",
@@ -144,6 +145,10 @@
   "platform": "<HOST>",
   "project_folders": [],
   "projects": 1,
+  "pulse": {
+    "reason": "Current directory is not inside a registered project; pass --project PROJECT to check Memory Pulse.",
+    "status": "not_checked"
+  },
   "python": "<HOST_PROBED>",
   "python_executable": "<PYTHON_EXE>",
   "restore_unfinished": null,
@@ -236,6 +241,12 @@
     "runtime_dir": "<DATA_DIR>/runtime/scip",
     "timeout": 300.0
   },
+  "security_guards": {
+    "mcp_auto_approve_disabled": true,
+    "person_acts_require_workspace": true,
+    "read_before_write_ack": true,
+    "snapshot_profile": "none"
+  },
   "service": {
     "available": true,
     "health": {
@@ -247,6 +258,23 @@
   },
   "service_running": true,
   "service_url": "http://127.0.0.1:<PORT>",
+  "storage_preflight": {
+    "in_docker": false,
+    "network_fs": null,
+    "path_checks": [
+      {
+        "exists": true,
+        "name": "data_dir",
+        "path": "<DATA_DIR>",
+        "writable": true
+      }
+    ],
+    "uid_mismatch": false,
+    "warnings": [],
+    "writable": true,
+    "wsl": false,
+    "wsl_windows_mount": false
+  },
   "store_writer": {
     "installation": "<ID32_1>",
     "role": "writer",
