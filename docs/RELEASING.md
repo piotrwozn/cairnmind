@@ -57,7 +57,7 @@ A major release is never published straight from a passing build. It goes throug
 As done for 0.9.0 (#66, which changed `pyproject.toml`, `src/cairnmind/__init__.py`, `uv.lock`, `CHANGELOG.md` and the docs).
 
 1. **Release pull request.** Set the version in `pyproject.toml`, `src/cairnmind/__init__.py` and the `cairnmind` entry of `uv.lock`. Turn the `Unreleased` heading of `CHANGELOG.md` into the version heading. Update the docs that name the version (README, INSTALL, UPGRADING), and the supported versions in `SECURITY.md`: the new minor version `Yes`, the one before it `Security fixes only`, older `No`. Check the gate on the pull request. The owner merges it.
-2. **Build from the merge commit.** Only tracked files go into the artifacts, so build from an archive, not from the working directory. In WSL, in a clone with the merge commit checked out:
+2. **Build from the merge commit.** Only tracked files go into the artifacts, so build from an archive, not from the working directory. Node.js 22+ is used at build time (`CAIRNMIND_BUILD_UI=1`) so the wheel bundles `cairnmind/ui_dist/` and end users never need Node.js. In WSL, in a clone with the merge commit checked out:
 
    ```bash
    VERSION=X.Y.Z
@@ -65,7 +65,8 @@ As done for 0.9.0 (#66, which changed `pyproject.toml`, `src/cairnmind/__init__.
    rm -rf /tmp/cairnmind-$VERSION && mkdir /tmp/cairnmind-$VERSION
    git archive "$COMMIT" | tar -x -C /tmp/cairnmind-$VERSION
    cd /tmp/cairnmind-$VERSION
-   uv build        # dist/cairnmind-$VERSION-py3-none-any.whl and dist/cairnmind-$VERSION.tar.gz
+   CAIRNMIND_BUILD_UI=1 uv build   # dist/cairnmind-$VERSION-py3-none-any.whl (with cairnmind/ui_dist/) and .tar.gz
+   python3 -c "import zipfile; z=zipfile.ZipFile('dist/cairnmind-$VERSION-py3-none-any.whl'); assert 'cairnmind/ui_dist/index.html' in z.namelist()"
    cd dist
    sha256sum cairnmind-$VERSION-py3-none-any.whl cairnmind-$VERSION.tar.gz > SHA256SUMS
    ```

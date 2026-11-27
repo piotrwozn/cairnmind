@@ -2119,11 +2119,17 @@ def create_ui_app(
     else:
         @app.get("/", include_in_schema=False)
         async def missing_bundle():
+            has_source_ui = (Path(__file__).resolve().parent.parent.parent / "ui" / "package.json").is_file()
+            hint = (
+                "Run <code>cd ui &amp;&amp; npm ci &amp;&amp; npm run build</code>, then restart <code>cairnmind ui</code>."
+                if has_source_ui
+                else "Reinstall Cairnmind from a release wheel built with bundled UI assets (or set <code>CAIRNMIND_UI_DIST</code>)."
+            )
             return HTMLResponse(
                 "<!doctype html><html><body style='background:#060709;color:#e4e4e7;font-family:monospace;padding:24px'>"
                 "<h3>Cairnmind UI bundle not built</h3>"
-                "<p>Run <code>cd ui &amp;&amp; npm install &amp;&amp; npm run build</code>, then restart <code>cairnmind ui</code>.</p>"
-                "<p>API endpoints are live under <code>/api/ui/snapshot</code>.</p>"
+                f"<p>{hint}</p>"
+                "<p>Authenticated API endpoints are live under <code>/api/ui/snapshot</code>.</p>"
                 "</body></html>",
                 status_code=503,
             )

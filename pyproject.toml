@@ -59,8 +59,11 @@ packages = ["src/cairnmind", "src/devbrain"]
 # Bundled sample project for zero-setup `uvx cairnmind try` (ADR-06).
 "examples/sample-project" = "cairnmind/sample_project"
 
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build]
-exclude = ["node_modules", "frontend/dist", "frontend/test-results", "frontend/playwright-report", ".pytest_cache", ".ruff_cache", "__pycache__"]
+exclude = ["node_modules", "ui/node_modules", ".pytest_cache", ".ruff_cache", "__pycache__"]
 
 [tool.pytest.ini_options]
 junit_family = "xunit1"

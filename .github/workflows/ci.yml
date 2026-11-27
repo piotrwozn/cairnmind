@@ -57,6 +57,48 @@ jobs:
       - run: uv sync --locked --extra dev
       - run: uv run ruff check src tests
 
+  ui-tests-and-wheel:
+    # Type-checks, tests, and builds the React Engineer Cockpit (`ui/`) and verifies the wheel bundles `cairnmind/ui_dist/`.
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - run: test "${{ needs.changes.result }}" = success
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: "ui/package-lock.json"
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Install, type-check, test, and build UI
+        working-directory: ui
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Build wheel with bundled ui_dist and verify contents
+        env:
+          CAIRNMIND_BUILD_UI: "1"
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/wheel-out"
+          uv run python - <<'PY'
+          from pathlib import Path
+          import zipfile, os
+          wheels = list(Path(os.environ["RUNNER_TEMP"], "wheel-out").glob("cairnmind-*.whl"))
+          assert len(wheels) == 1, f"Expected 1 wheel, found {wheels}"
+          with zipfile.ZipFile(wheels[0]) as zf:
+              names = set(zf.namelist())
+          assert "cairnmind/ui_dist/index.html" in names, "Missing cairnmind/ui_dist/index.html in wheel"
+          assert any(n.startswith("cairnmind/ui_dist/assets/") for n in names), "Missing UI assets in wheel"
+          print(f"Verified wheel {wheels[0].name} bundles cairnmind/ui_dist ({sum(n.startswith('cairnmind/ui_dist/') for n in names)} files).")
+          PY
+
   fast-tests:
     # Modules that need neither ArcadeDB/Java nor a real tmux server.
     needs: changes
