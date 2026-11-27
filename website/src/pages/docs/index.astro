@@ -1,0 +1,69 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import Breadcrumbs from '@/components/astro/Breadcrumbs.astro';
+import { DOC_GROUPS, getAllDocs } from '@/lib/docs';
+import { breadcrumbListJsonLd } from '@/lib/seo';
+
+const allDocs = await getAllDocs();
+const grouped = DOC_GROUPS.map((group) => ({
+  group,
+  items: allDocs.filter((d) => d.group === group),
+})).filter((g) => g.items.length > 0);
+
+const pathname = '/docs/';
+const crumbs = [
+  { label: 'Home', href: '/' },
+  { label: 'Docs', href: pathname },
+];
+const jsonLd = [breadcrumbListJsonLd(crumbs)];
+---
+
+<BaseLayout
+  title="Cairnmind Docs: Install, Contracts & Architecture"
+  description="Canonical Cairnmind documentation rendered from the repo: install guides, workflow and test gates, 1.0 stable contract, MCP clients, and evals."
+  pathname={pathname}
+  jsonLd={jsonLd}
+>
+  <div class="container-shell section-band">
+    <Breadcrumbs items={crumbs} />
+
+    <header class="mt-5 max-w-3xl">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <span class="glass-pill glass-pill-accent">{allDocs.length} Canonical Guides</span>
+        <span class="glass-pill">Rendered directly from docs/*.md</span>
+      </div>
+      <h1 class="text-3xl sm:text-5xl font-semibold">Cairnmind Documentation</h1>
+      <p class="mt-4 text-lg text-[var(--text-muted)] leading-relaxed">
+        Every guide below is compiled straight from the repository’s canonical Markdown files at build time, with internal cross-references preserved and searchable via <kbd class="code-inline">Ctrl K</kbd>.
+      </p>
+    </header>
+
+    <div class="mt-10 space-y-10">
+      {grouped.map(({ group, items }) => (
+        <section aria-labelledby={`docs-group-${group.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}>
+          <h2
+            id={`docs-group-${group.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
+            class="text-xl font-semibold pb-3 border-b border-[var(--glass-border)] mb-4"
+          >
+            {group}
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {items.map((doc) => (
+              <a
+                href={`/docs/${doc.slug}/`}
+                class="glass-surface glass-interactive p-5 no-underline flex flex-col justify-between gap-3"
+              >
+                <div>
+                  <span class="font-mono text-[11px] text-[var(--text-dim)]">{doc.sourceRelPath}</span>
+                  <h3 class="mt-1.5 text-base font-semibold text-[var(--text-strong)]">{doc.title}</h3>
+                  <p class="mt-2 text-xs text-[var(--text-muted)] leading-relaxed">{doc.description}</p>
+                </div>
+                <span class="font-mono text-xs text-[var(--accent)]">Read guide →</span>
+              </a>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  </div>
+</BaseLayout>

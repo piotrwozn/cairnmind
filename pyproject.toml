@@ -60,7 +60,7 @@ packages = ["src/cairnmind", "src/devbrain"]
 "examples/sample-project" = "cairnmind/sample_project"
 
 [tool.hatch.build]
-exclude = ["node_modules", "frontend/dist", "frontend/test-results", "frontend/playwright-report", ".pytest_cache", ".ruff_cache", "__pycache__"]
+exclude = ["node_modules", "frontend/dist", "frontend/test-results", "frontend/playwright-report", "website", "website/**", ".pytest_cache", ".ruff_cache", "__pycache__"]
 
 [tool.pytest.ini_options]
 junit_family = "xunit1"

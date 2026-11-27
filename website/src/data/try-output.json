@@ -1,0 +1,31 @@
+{
+  "command": "uvx cairnmind try",
+  "sourceModule": "src/cairnmind/try_demo.py",
+  "filesIndexed": 4,
+  "lines": [
+    "Cairnmind Try Sandbox (ephemeral SQLite :memory:, zero files touched in your cwd)",
+    "================================================================================",
+    "Indexed 4 sample files in an isolated temporary directory.",
+    "",
+    "[1/3] Guarantee 1: Your agent does not guess",
+    "  Q: Does trail_notes support --turbo-cache-flag?",
+    "  A: unknown (no verbatim confirmation in the current project files)",
+    "  Q: How does read_note handle notes written before tags existed?",
+    "  A: Verified verbatim quote -> `note.setdefault(\"tags\", [])` (trail_notes/store.py)",
+    "",
+    "[2/3] Guarantee 2: Your agent cannot lie that it finished",
+    "  1. Ran check profile `unit` -> PASS (fingerprint: 193de0e7914e...)",
+    "  2. Edited trail_notes/store.py after tests passed.",
+    "  3. Tried marking task `done` -> BLOCKED (fingerprint_mismatch):",
+    "     Task completion requires fresh machine check evidence: no successful matching run for current code, profile and task definition",
+    "",
+    "[3/3] Fresh check unlocks verified done",
+    "  1. Re-ran `unit` on updated code -> PASS (fingerprint: c7cb171f638d...)",
+    "  2. Marked task `done` -> SUCCESS (task v2, state=done, pinned check_run=e0f24b6a)",
+    "",
+    "Next steps for your own repository:",
+    "  cairnmind init --backend sqlite",
+    "  cairnmind project add my-app /path/to/repo",
+    "  cairnmind check run my-app <task-id> unit"
+  ]
+}

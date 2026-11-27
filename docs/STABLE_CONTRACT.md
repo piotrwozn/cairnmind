@@ -1,6 +1,6 @@
 # Cairnmind 1.0.0 stable contract
 
-This document states what Cairnmind promises not to break across `1.x` releases without a new major version (`2.0.0`). Everything not listed under [Stable in 1.x](#stable-in-1x) — including surfaces listed under [Preview and experimental](#preview-and-experimental) and [Not part of the stable contract](#not-part-of-the-stable-contract) — may change in any minor or patch release.
+This document states what Cairnmind promises not to break across `1.x` releases without a new major version (`2.0.0`). Everything not listed under [Stable in 1.x](#stable-in-1x), including surfaces listed under [Preview and experimental](#preview-and-experimental) and [Not part of the stable contract](#not-part-of-the-stable-contract), may change in any minor or patch release.
 
 ## Stability policy and deprecation
 
@@ -14,7 +14,7 @@ Every item below names where it is specified and the automated test(s) that guar
 
 ### 1. Command-line interface and `--json` outputs
 
-- **Scope:** documented `cairnmind` commands, subcommands, positional arguments, options, exit codes (`0` success, `1` operational/check failure, `2` usage or policy refusal, `3` evaluation `not_run`), and the exact keys and shapes of `--json` outputs — including core workflow, memory, storage, importer (`importer add|remove|list`, `import --via`), `pulse`, `scan`, `scip status`, `memory heal-audit`, and `mcp generate` commands.
+- **Scope:** documented `cairnmind` commands, subcommands, positional arguments, options, exit codes (`0` success, `1` operational/check failure, `2` usage or policy refusal, `3` evaluation `not_run`), and the exact keys and shapes of `--json` outputs, including core workflow, memory, storage, importer (`importer add|remove|list`, `import --via`), `pulse`, `scan`, `scip status`, `memory heal-audit`, and `mcp generate` commands.
 - **Defined in:** [WORKFLOW.md](WORKFLOW.md), [MEMORY.md](MEMORY.md), [STORAGE_AND_MAINTENANCE.md](STORAGE_AND_MAINTENANCE.md), [EXTERNAL_CLIENTS.md](EXTERNAL_CLIENTS.md), [CONTRACTS.md](CONTRACTS.md), and `tests/fixtures/contracts/cli_json/*.json`.
 - **Guarded by:** `tests/test_release_contracts.py` (frozen `--json` examples and field-removal self-test), `tests/test_workspace_cli.py`, `tests/test_importers.py`, `tests/test_pulse.py`, `tests/test_pulse_arcade.py`, `tests/test_mcp_presets.py`, `tests/test_quote_healing.py`, `tests/test_scip_manager.py`.
 
