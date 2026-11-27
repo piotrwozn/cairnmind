@@ -103,41 +103,48 @@ def _file_sha256(path: Path) -> str | None:
         return None
 
 
-def _git_info(root: Path) -> dict[str, Any]:
-    """Inspect Git state cheaply without acquiring optional index locks."""
-    inside = _git_run(root, "rev-parse", "--is-inside-work-tree")
-    if inside is None or inside.returncode != 0 or inside.stdout.strip() != b"true":
-        return {"available": False, "has_commits": False, "toplevel": None, "head": None, "branch": None}
-    top_proc = _git_run(root, "rev-parse", "--show-toplevel")
-    toplevel = (
-        str(Path(os.fsdecode(top_proc.stdout).strip()).resolve())
-        if top_proc is not None and top_proc.returncode == 0 and top_proc.stdout.strip()
-        else None
-    )
-    head_proc = _git_run(root, "rev-parse", "--verify", "-q", "HEAD")
-    if head_proc is None or head_proc.returncode != 0 or not head_proc.stdout.strip():
-        # Fresh `git init` without commits -> fallback mode as required.
-        return {"available": False, "has_commits": False, "toplevel": toplevel, "head": None, "branch": None}
-    head = head_proc.stdout.decode("ascii", errors="replace").strip()
-    branch_proc = _git_run(root, "symbolic-ref", "--quiet", "--short", "HEAD")
-    branch = (
-        branch_proc.stdout.decode("utf-8", errors="replace").strip()
-        if branch_proc is not None and branch_proc.returncode == 0
-        else None
-    )
-    return {
-        "available": True,
-        "has_commits": True,
-        "toplevel": toplevel,
-        "head": head,
-        "branch": branch or "detached",
-    }
+def _has_git_marker(path: Path) -> bool:
+    """Fast pure-Python check for a `.git` file/directory in path or any ancestor."""
+    if os.environ.get("GIT_DIR"):
+        return True
+    current = path
+    while True:
+        if (current / ".git").exists():
+            return True
+        parent = current.parent
+        if parent == current:
+            return False
+        current = parent
 
 
-def _parse_porcelain_v2(raw: bytes, root: Path, toplevel: Path | None, nested: tuple[Path, ...]) -> list[str]:
-    """Parse `git status --porcelain=v2 -z` into root-relative POSIX paths, ignoring managed/reserved paths."""
+def _git_toplevel(root: Path) -> Path | None:
+    """Resolve Git worktree toplevel with 0 subprocesses for standard repo/worktree roots and non-Git dirs."""
+    resolved = root.resolve()
+    if not os.environ.get("GIT_DIR") and (resolved / ".git").exists():
+        return resolved
+    if not _has_git_marker(resolved):
+        return None
+    proc = _git_run(resolved, "rev-parse", "--show-toplevel")
+    if proc is None or proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        return Path(os.fsdecode(proc.stdout).strip()).resolve()
+    except OSError:
+        return None
+
+
+def _parse_porcelain_v2_with_branch(
+    raw: bytes,
+    root: Path,
+    toplevel: Path | None,
+    nested: tuple[Path, ...],
+) -> tuple[str | None, str | None, list[str], list[str]]:
+    """Parse `git status --porcelain=v2 --branch -z -uall` into (head, branch, dirty_files, untracked_files)."""
     tokens = raw.split(b"\0")
-    changed: list[str] = []
+    head: str | None = None
+    branch: str | None = None
+    dirty: list[str] = []
+    untracked: list[str] = []
     index = 0
     prefix = ""
     if toplevel is not None:
@@ -148,14 +155,16 @@ def _parse_porcelain_v2(raw: bytes, root: Path, toplevel: Path | None, nested: t
         except ValueError:
             prefix = ""
 
-    def normalize(raw_path: str) -> str | None:
+    def normalize(raw_path: str, *, include_managed: bool = False) -> str | None:
         rel = raw_path
         if prefix:
             if not rel.startswith(prefix):
                 return None
             rel = rel[len(prefix):]
         rel = rel.rstrip("/")
-        if not rel or is_reserved_memory(rel) or is_reserved_below(rel, nested) or is_managed_config_path(rel):
+        if not rel or is_reserved_memory(rel) or is_reserved_below(rel, nested):
+            return None
+        if not include_managed and is_managed_config_path(rel):
             return None
         return rel
 
@@ -165,6 +174,16 @@ def _parse_porcelain_v2(raw: bytes, root: Path, toplevel: Path | None, nested: t
         if not entry:
             continue
         text = os.fsdecode(entry)
+        if text.startswith("# branch.oid "):
+            oid = text[len("# branch.oid "):].strip()
+            head = None if oid in ("", "(initial)") else oid
+            continue
+        if text.startswith("# branch.head "):
+            raw_branch = text[len("# branch.head "):].strip()
+            branch = "detached" if raw_branch in ("", "(detached)") else raw_branch
+            continue
+        if text.startswith("# "):
+            continue
         kind = text[:1]
         if kind == "1":
             # 1 XY sub mH mI mW hH hI path
@@ -172,39 +191,164 @@ def _parse_porcelain_v2(raw: bytes, root: Path, toplevel: Path | None, nested: t
             if len(parts) == 9:
                 norm = normalize(parts[8])
                 if norm:
-                    changed.append(norm)
+                    dirty.append(norm)
         elif kind == "2":
             # 2 XY sub mH mI mW hH hI Xscore path\0origPath
             parts = text.split(" ", 9)
             if len(parts) == 10:
                 norm = normalize(parts[9])
                 if norm:
-                    changed.append(norm)
+                    dirty.append(norm)
             if index < len(tokens):
                 orig = normalize(os.fsdecode(tokens[index]))
                 index += 1
                 if orig:
-                    changed.append(orig)
+                    dirty.append(orig)
         elif kind == "u":
             # u XY sub m1 m2 m3 mW h1 h2 h3 path
             parts = text.split(" ", 10)
             if len(parts) == 11:
                 norm = normalize(parts[10])
                 if norm:
-                    changed.append(norm)
+                    dirty.append(norm)
         elif kind == "?":
             # ? path
-            norm = normalize(text[2:])
-            if norm:
-                changed.append(norm)
-    return sorted(set(changed))
+            raw_untracked = text[2:]
+            norm_dirty = normalize(raw_untracked, include_managed=False)
+            if norm_dirty:
+                dirty.append(norm_dirty)
+            norm_all = normalize(raw_untracked, include_managed=True)
+            if norm_all:
+                untracked.append(norm_all)
+    return head, branch, sorted(set(dirty)), sorted(set(untracked))
 
 
-def _tracked_file_count(root: Path, nested: tuple[Path, ...]) -> int | None:
-    proc = _git_run(root, "ls-files", "-z", *git_pathspec(nested))
+def _git_snapshot(root: Path, nested: tuple[Path, ...]) -> dict[str, Any]:
+    """Capture Git head, branch, dirty files, and untracked files in a single `git status` call."""
+    toplevel = _git_toplevel(root)
+    if toplevel is None:
+        return {
+            "available": False,
+            "has_commits": False,
+            "toplevel": None,
+            "head": None,
+            "branch": None,
+            "dirty_files": [],
+            "untracked_files": [],
+        }
+    proc = _git_run(root, "status", "--porcelain=v2", "--branch", "-z", "-uall", *git_pathspec(nested))
+    if proc is None or proc.returncode != 0:
+        return {
+            "available": False,
+            "has_commits": False,
+            "toplevel": str(toplevel),
+            "head": None,
+            "branch": None,
+            "dirty_files": [],
+            "untracked_files": [],
+        }
+    head, branch, dirty_files, untracked_files = _parse_porcelain_v2_with_branch(proc.stdout, root, toplevel, nested)
+    if not head:
+        # Fresh `git init` without commits -> fallback mode as required.
+        return {
+            "available": False,
+            "has_commits": False,
+            "toplevel": str(toplevel),
+            "head": None,
+            "branch": branch,
+            "dirty_files": dirty_files,
+            "untracked_files": untracked_files,
+        }
+    return {
+        "available": True,
+        "has_commits": True,
+        "toplevel": str(toplevel),
+        "head": head,
+        "branch": branch or "detached",
+        "dirty_files": dirty_files,
+        "untracked_files": untracked_files,
+    }
+
+
+def _staged_entries(root: Path, nested: tuple[Path, ...]) -> tuple[dict[str, str], list[str]] | None:
+    """List tracked Git index entries in one `git ls-files --stage -z` call."""
+    proc = _git_run(root, "ls-files", "--stage", "-z", *git_pathspec(nested))
     if proc is None or proc.returncode != 0:
         return None
-    return proc.stdout.count(b"\0")
+    modes: dict[str, str] = {}
+    unknowns: list[str] = []
+    for item in proc.stdout.split(b"\0"):
+        if not item:
+            continue
+        header, raw_path = item.split(b"\t", 1)
+        mode, _, stage = header.decode("ascii").split()
+        relative = os.fsdecode(raw_path)
+        if is_reserved_memory(relative) or is_reserved_below(relative, nested):
+            continue
+        modes[relative] = mode
+        if mode == "160000":
+            unknowns.append(f"submodule input requires unsupported recursive capture: {relative}")
+        if stage != "0":
+            unknowns.append(f"unmerged Git input: {relative}")
+    return modes, unknowns
+
+
+def _single_pass_code_state(
+    root: Path,
+    git: dict[str, Any],
+    modes: dict[str, str],
+    base_unknowns: list[str],
+    nested: tuple[Path, ...],
+    extra_inputs: Any = None,
+) -> dict[str, Any]:
+    """Compute the exact `verification.capture_code_state` fingerprint in one pass with zero extra Git calls."""
+    from .verification import _entry, _hash, _input_patterns, _inside, _names_git
+
+    patterns = _input_patterns(extra_inputs)
+    unknowns = list(base_unknowns)
+    paths: set[str] = set(modes) | set(git.get("untracked_files") or ())
+    for pattern in patterns:
+        matches = [p.relative_to(root).as_posix() for p in root.glob(pattern)]
+        if not matches:
+            unknowns.append(f"extra input has no matches: {pattern}")
+        for match in matches:
+            if _names_git(match) or is_reserved_memory(match) or is_reserved_below(match, nested):
+                continue
+            path = root / match
+            if not path.resolve().is_relative_to(root):
+                unknowns.append(f"external extra input: {match}")
+            elif path.is_dir() and not path.is_symlink():
+                for child in path.rglob("*"):
+                    rel_child = child.relative_to(root)
+                    if (
+                        not _names_git(rel_child)
+                        and not is_reserved_memory(rel_child)
+                        and not is_reserved_below(rel_child, nested)
+                        and (child.is_file() or child.is_symlink())
+                    ):
+                        paths.add(rel_child.as_posix())
+            else:
+                paths.add(Path(match).as_posix())
+
+    inside = _inside(root)
+    entries = [_entry(root, p, modes.get(p), unknowns, inside) for p in sorted(paths)]
+    below = bool(git.get("toplevel") and root.resolve() != Path(git["toplevel"]).resolve())
+    if below and not entries:
+        unknowns.append("Git lists no file of the registered root")
+    unknowns = sorted(set(unknowns))
+    manifest_hash = _hash(entries)
+    head = git["head"]
+    branch = None if git.get("branch") == "detached" else git.get("branch")
+    fingerprint = _hash({"head": head, "manifest": manifest_hash, "extra_inputs": patterns})
+    return {
+        "status": "fresh" if not unknowns else "unknown",
+        "worktree": str(root),
+        "head": head,
+        "branch": branch,
+        "fingerprint": fingerprint,
+        "manifest_hash": manifest_hash,
+        "unknowns": unknowns,
+    }
 
 
 def _resolve_project_and_root(
@@ -220,37 +364,38 @@ def _resolve_project_and_root(
         selected = store.resolve_project(project)
         scope = actor_scope(store, selected["id"], worktree)
         if scope is None:
-            # Prefer the registered worktree containing cwd when running inside a linked worktree.
-            cwd = Path.cwd().resolve()
-            git_top = _git_info(cwd).get("toplevel")
-            candidate = Path(git_top).resolve() if git_top else cwd
+            # Prefer the registered worktree containing cwd when a project has multiple worktrees.
             rows = store.query("SELECT path FROM project_roots WHERE project_id=:project", {"project": selected["id"]})
             roots = [Path(r["path"]).resolve() for r in rows if isinstance(r.get("path"), str)]
-            inside = [r for r in roots if candidate == r or candidate.is_relative_to(r)]
-            if inside:
-                scope = str(max(inside, key=lambda p: len(str(p))))
+            if len(roots) > 1:
+                cwd = Path.cwd().resolve()
+                inside = [r for r in roots if cwd == r or cwd.is_relative_to(r)]
+                if not inside:
+                    git_top = _git_toplevel(cwd)
+                    if git_top is not None:
+                        inside = [r for r in roots if git_top == r or git_top.is_relative_to(r)]
+                if inside:
+                    scope = str(max(inside, key=lambda p: len(str(p))))
         root = _root(store, selected["id"], scope)
         return selected, root
 
     # Project omitted: infer from --worktree or current working directory / git toplevel.
     base = Path(worktree).expanduser().resolve() if worktree else Path.cwd().resolve()
-    git_top = _git_info(base).get("toplevel")
-    probe_paths = [base]
-    if git_top and Path(git_top).resolve() != base:
-        probe_paths.append(Path(git_top).resolve())
-
     rows = store.query("SELECT project_id, path FROM project_roots")
-    matches: list[tuple[int, str, Path]] = []
-    for row in rows:
-        raw_path = row.get("path")
-        pid = row.get("project_id")
-        if not isinstance(raw_path, str) or not isinstance(pid, str):
-            continue
-        reg = Path(raw_path).resolve()
-        for probe in probe_paths:
-            if probe == reg or probe.is_relative_to(reg):
-                matches.append((len(str(reg)), pid, reg))
-                break
+    registered = [
+        (row["project_id"], Path(row["path"]).resolve())
+        for row in rows
+        if isinstance(row.get("path"), str) and isinstance(row.get("project_id"), str)
+    ]
+    matches = [(len(str(reg)), pid, reg) for pid, reg in registered if base == reg or base.is_relative_to(reg)]
+    if not matches:
+        git_top = _git_toplevel(base)
+        if git_top is not None and git_top != base:
+            matches = [
+                (len(str(reg)), pid, reg)
+                for pid, reg in registered
+                if git_top == reg or git_top.is_relative_to(reg)
+            ]
     if not matches:
         raise ValueError(
             f"No registered Cairnmind project contains {base}. "
@@ -351,13 +496,9 @@ def _check_file_drift(
                 "current_branch": git.get("branch"),
                 "baseline_source": baseline.get("source"),
             }
-        # 2. Fast Git status for dirty/untracked files in this worktree (-uall lists exact untracked paths so
-        #    managed files like .cursor/mcp.json are filtered cleanly while other files in .cursor/ are still caught).
-        proc = _git_run(root, "status", "--porcelain=v2", "-z", "-uall", *git_pathspec(nested))
-        if proc is not None and proc.returncode == 0:
-            toplevel = Path(git["toplevel"]) if git.get("toplevel") else None
-            dirty_git_files = _parse_porcelain_v2(proc.stdout, root, toplevel, nested)
-            drift_files.update(dirty_git_files)
+        # 2. Dirty/untracked files already captured by the single `_git_snapshot` call.
+        dirty_git_files = list(git.get("dirty_files") or ())
+        drift_files.update(dirty_git_files)
 
     # 3. Targeted check of file sources cited by active plans, tasks, and records.
     cited_ids: set[str] = set()
@@ -460,11 +601,7 @@ def _check_test_freshness(
 
     Returns (stale_test_tasks, would_block_done, recommended_actions, warnings, integrity_errors).
     """
-    from .verification import (
-        _verification_status,
-        capture_code_state,
-        load_profiles,
-    )
+    from .verification import _verification_status, load_profiles
 
     project_id = project["id"]
     project_label = project.get("name") or project_id
@@ -505,16 +642,17 @@ def _check_test_freshness(
     if not profiles:
         warnings.append("unverified_no_test_profile")
 
-    # Decide between exact capture (small/medium repos) and fast Git check (large monorepos).
-    file_count = _tracked_file_count(root, nested) if git["available"] else None
-    use_exact = bool(git["available"] and file_count is not None and file_count <= _SMALL_REPO_FILE_LIMIT)
+    # Decide between exact single-pass capture (small/medium repos) and fast Git check (large monorepos).
+    staged = _staged_entries(root, nested) if (git["available"] and profiles) else None
+    use_exact = bool(staged is not None and len(staged[0]) <= _SMALL_REPO_FILE_LIMIT)
 
     observed: dict[tuple[str, ...], dict[str, Any]] = {}
 
     def memo_capture(st, pid, wt=None, extra_inputs=None):
         key = tuple(sorted(extra_inputs or ()))
         if key not in observed:
-            observed[key] = capture_code_state(st, pid, wt, extra_inputs)
+            assert staged is not None
+            observed[key] = _single_pass_code_state(root, git, staged[0], staged[1], nested, extra_inputs)
         return observed[key]
 
     # Bulk-load check runs for relevant tasks when using fast path.
@@ -851,8 +989,8 @@ def run_pulse(
             active_records = [r for r in records if r.get("status") != "superseded"]
             tasks = [r for r in records if r.get("kind") == "task"]
             active_plan = _active_plan(store, pid, root)
-            git = _git_info(root)
-            nested = nested_reserved(store, root) if git["available"] else ()
+            nested = nested_reserved(store, root)
+            git = _git_snapshot(root, nested)
 
             drift_files, dirty_git_files, db_broken_refs, divergence = _check_file_drift(
                 store, pid, root, git, active_records, active_plan, nested

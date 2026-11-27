@@ -3,16 +3,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 
 import pytest
 from typer.testing import CliRunner
 
+from conftest import time_budget
 from cairnmind import cli, pulse
 from cairnmind.config import Settings
 
 runner = CliRunner()
+_LATENCY_SCALE = float(os.environ.get("CAIRNMIND_LATENCY_SCALE") or "1")
 
 
 def _init_git_repo(root: Path) -> str:
@@ -173,7 +176,7 @@ def test_pulse_no_git_and_fresh_git_init_fallback(tmp_path):
     plain.mkdir()
     app = plain / "main.py"
     app.write_text("x = 1\n", encoding="utf-8")
-    old_sha = hashlib.sha256(b"x = 1\n").hexdigest()
+    old_sha = hashlib.sha256(app.read_bytes()).hexdigest()
 
     data_dir = tmp_path / "memory"
     project = {"id": "p1", "name": "nogit", "root": str(plain.resolve())}
@@ -324,6 +327,10 @@ def test_pulse_large_repo_fast_path_skips_full_manifest_capture(tmp_path, monkey
         "cairnmind.verification.capture_code_state",
         lambda *a, **k: pytest.fail("Large-repo fast path must not double-hash entire repo"),
     )
+    monkeypatch.setattr(
+        "cairnmind.verification._entry",
+        lambda *a, **k: pytest.fail("Large-repo fast path must not hash tracked files"),
+    )
 
     data_dir = tmp_path / "memory"
     project = {"id": "p1", "name": "bigmono", "root": str(root.resolve())}
@@ -364,7 +371,7 @@ def test_pulse_large_repo_fast_path_skips_full_manifest_capture(tmp_path, monkey
     healthy = pulse.run_pulse(store.settings, "bigmono", store=store)
     assert healthy["status"] == "healthy"
     assert healthy["stale_test_tasks"] == []
-    assert healthy["latency_ms"] < 500
+    assert healthy["latency_ms"] < int(time_budget(0.5) * 1000 * _LATENCY_SCALE)
 
     # Edit file -> fast path catches drift & stale test immediately without scanning disk.
     (root / "app.py").write_text("VALUE = 99\n", encoding="utf-8")

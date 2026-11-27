@@ -2,18 +2,21 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 
 import pytest
 from typer.testing import CliRunner
 
+from conftest import time_budget
 from cairnmind import cli
 from cairnmind.ingest import index_project
 from cairnmind.store import Store
 from cairnmind.verification import run_check
 
 runner = CliRunner()
+_LATENCY_SCALE = float(os.environ.get("CAIRNMIND_LATENCY_SCALE") or "1")
 
 
 def _init_git_repo(root: Path) -> None:
@@ -67,7 +70,7 @@ def test_pulse_arcade_end_to_end_read_only_and_sub_500ms(tmp_path, monkeypatch):
     data1 = json.loads(res1.stdout)
     assert data1["status"] == "healthy"
     assert data1["would_block_done"] is False
-    assert data1["latency_ms"] < 500
+    assert data1["latency_ms"] < int(time_budget(0.5) * 1000 * _LATENCY_SCALE)
     assert data1["backend"] == "arcadedb"
 
     # Edit tracked file -> pulse catches drift + stale test!
