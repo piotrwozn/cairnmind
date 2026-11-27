@@ -41,26 +41,29 @@ The full architecture taxonomy (`origin_evidence`, resume packets, plan versions
 
 Cairnmind runs on Linux, on Windows (natively on Windows 10/11 or inside WSL2 Ubuntu via `wsl --install -d Ubuntu`; Ubuntu 24.04 is the tested platform) and on macOS with Apple silicon.
 
-**1. Try the zero-setup sandbox (15 seconds):**
+**Lightweight local start (embedded SQLite — Python + `uv` only, zero external services):**
 
-```bash
-uvx cairnmind try
+```sh
+uvx cairnmind try                                 # 15-second zero-setup sandbox over examples/sample-project
+uv tool install cairnmind                         # install the CLI
+cairnmind init --backend sqlite                   # initializes local SQLite WAL + FTS5 store in data_dir/state.db
 ```
 
-**2. Use Cairnmind on your own repository (embedded SQLite — zero Java/Docker required):**
+Scale losslessly to ArcadeDB at any time with `cairnmind migrate --to server`, or install the full ArcadeDB stack directly below.
+
+**What you need** (full ArcadeDB stack): `uv` (`curl -LsSf https://astral.sh/uv/install.sh | sh`) and one way to run the database — **Java 21** is the simplest (`sudo apt install -y openjdk-21-jre-headless` on Ubuntu/WSL2) or Docker. Nothing else is required upfront: no Ollama, no models, no GPU, no tmux and no coding assistant are needed.
+
+**What gets installed:** the `cairnmind` CLI via `uv`, the local ArcadeDB engine (or SQLite store with `--backend sqlite`), and the read-only health check at the end of installation.
 
 ```bash
-uv tool install cairnmind
-cairnmind init --backend sqlite                # 1. initializes local SQLite WAL + FTS5 store in data_dir/state.db
+bash scripts/install-wsl.sh                    # 1. installs Cairnmind + ArcadeDB and runs the readiness check
 cairnmind project add my-app ~/src/my-app      # 2. registers your project's folder and indexes its files
 cairnmind remember my-app "Accounts lock after five failed logins."   # 3. stores a first finding, as proposed
 cairnmind brief my-app                         # 4. where work stands: your finding is listed, marked as unconfirmed
 cairnmind ask my-app "When do accounts lock?"  # 5. finds it again; passages of your files that use the question's words are searched too
 ```
 
-**Need large-repo / multi-agent concurrency?** Scale losslessly to ArcadeDB (**Java 21** is the simplest choice, or Docker) at any time with `cairnmind migrate --to server` (or install with the full ArcadeDB script `bash scripts/install-wsl.sh`). Nothing else is required upfront: Ollama, `tmux`, NLI (`cairnmind[nli]`), and GitHub Copilot (`cairnmind[copilot]`) are all optional and covered under [Optional integrations](#optional-integrations).
-
-In a terminal, commands explain what happened and how to fix blocks in plain language; with `--json` (or in a pipe/script), `stdout` emits pure JSON while hints and warnings go strictly to `stderr` (`NO_COLOR=1` disables ANSI styling). `cairnmind doctor` repeats the installer's check at any time and exits 1 when something required is missing.
+In a terminal, commands explain what happened and how to fix blocks in plain language; with `--json` (or in a pipe/script), `stdout` emits pure JSON while hints and warnings go strictly to `stderr` (`NO_COLOR=1` disables ANSI styling). `cairnmind doctor` repeats the installer's check at any time and exits 1 when something required is missing. Optional integrations — Ollama, `tmux`, NLI (`cairnmind[nli]`), and GitHub Copilot (`cairnmind[copilot]`) — are covered under [Optional integrations](#optional-integrations).
 
 - If the installer prints `Add this directory to PATH`, do what that line says and open a new terminal.
 - `my-app` is any name you choose; `~/src/my-app` stands for a project folder (a Git repo with at least one commit unlocks `impact`, coding sessions and commit history in `brief`). To clone and register a repository in one step, use `cairnmind add --clone owner/repo` (or `cairnmind project add [NAME] [FOLDER] --clone REPO`, or an HTTPS/SSH URL directly).
@@ -80,7 +83,14 @@ cairnmind run my-app claude       # or codex: starts the client bound to this pr
 
 Cursor, Cline, Zed and other MCP clients connect via `cairnmind mcp --client external` in an evidence-degraded session: see [docs/EXTERNAL_CLIENTS.md](docs/EXTERNAL_CLIENTS.md).
 
-**[Step-by-step installation guide](docs/INSTALL.md)**: preparing Windows and WSL2 (Ubuntu 24.04 is the tested platform for the full ArcadeDB + tmux setup; macOS and native Windows lightweight mode are also supported), installing from a release, native or Docker engine, connecting assistants, upgrading, uninstalling and troubleshooting. The bundled sample project lives in `examples/sample-project`.
+### Fast health checks and universal MCP presets
+
+- **`cairnmind pulse [PROJECT]`**: read-only consistency micro-audit (< 500 ms) checking code drift, test freshness, `origin_evidence: degraded` records, and `.memory/cairnmind/` snapshot/reference integrity. Supports `--json` and `--strict` (exit `0` healthy / soft drift, `1` drift with `--strict`, `2` broken) for CI and `pre-push` hooks.
+- **`cairnmind mcp generate --client <name> [--write]`** (or `--auto`): generates and safely deep-merges MCP presets for `claude-code`, `claude-desktop`, `cursor`, `windsurf`, `vscode`, `cline`, `roo-code`, `codex`, `gemini-cli`, `zed` and `generic` (JSON, JSONC and TOML), creating `<file>.cairnmind.bak` backups with atomic writes and never adding auto-approval flags.
+- **`cairnmind mcp test-connection`**: verifies a live stdio JSON-RPC `initialize` + `tools/list` handshake and fails hard on any non-JSON-RPC output on `stdout`.
+- **`cairnmind doctor --check-mcp`**: combines storage, Memory Pulse, detected MCP presets, a bounded 5-second stdio handshake check, and Docker/WSL/permissions pre-flight diagnostics in one report.
+
+**[Step-by-step installation guide](docs/INSTALL.md)**: preparing Windows and WSL2 (Ubuntu 24.04 is the tested platform for the full ArcadeDB + tmux setup; macOS and native Windows lightweight mode are also supported), installing from a release, native or Docker engine, connecting assistants, upgrading, uninstalling and troubleshooting. To see what Cairnmind keeps before you install anything, read the [sample project memory](examples/sample-project/README.md) (`examples/sample-project`).
 
 ## Optional integrations
 

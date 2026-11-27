@@ -3,7 +3,7 @@ opt-in redaction, rebase-resilient reference hydration, and deterministic snapsh
 """
 from __future__ import annotations
 
-from copy import deepcopy
+from copy import copy, deepcopy
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
@@ -13,7 +13,9 @@ from typing import Any
 
 from .ignore_rules import IgnoreMatcher, escapes_root, is_git_worktree
 from .memory_published_release import CONFIG, config_text, registered_secrets
-from .memory_published_secrets import Rules, SecretRulesError, load_rules, redact_text, scan_text, value_sha256
+from .memory_published_secrets import (
+    HIGH_ENTROPY, Rules, SecretRulesError, load_rules, redact_text, scan_text, value_sha256,
+)
 
 PROFILE_TEAM = "team"
 PROFILE_FULL = "full"
@@ -216,6 +218,41 @@ def snapshot_rules(root: Path, settings=None, *, include_registered: bool = True
         raise SnapshotPrivacyError(f"Snapshot refused: {CONFIG}: {exc}") from None
 
 
+_PATH_LEAF_KEYS = frozenset({
+    "path", "uri", "root", "worktree", "origin_root", "local_root", "file_path", "relative_path",
+})
+
+
+def _blob_matches_sha(blob: bytes | None, expected_sha: str) -> bytes | None:
+    """Return matching blob bytes (allowing CRLF/LF equivalence from Git core.autocrlf) or None."""
+    if blob is None:
+        return None
+    if hashlib.sha256(blob).hexdigest() == expected_sha:
+        return blob
+    if b"\r" not in blob and b"\n" in blob:
+        crlf = blob.replace(b"\n", b"\r\n")
+        if hashlib.sha256(crlf).hexdigest() == expected_sha:
+            return crlf
+    if b"\r\n" in blob:
+        lf = blob.replace(b"\r\n", b"\n")
+        if hashlib.sha256(lf).hexdigest() == expected_sha:
+            return lf
+    return None
+
+
+def _is_filesystem_path_field(table: str, field_path: str, value: str, row: dict[str, Any]) -> bool:
+    """True for structural filesystem path/URI fields where OS temp-dir names must not trigger entropy hits."""
+    if value.startswith("file://"):
+        return True
+    has_sep = "/" in value or "\\" in value
+    if not has_sep:
+        return False
+    leaf = field_path.rsplit(".", 1)[-1]
+    if leaf in _PATH_LEAF_KEYS:
+        return True
+    return table == "nodes" and field_path == "label" and row.get("kind") == "source"
+
+
 def scan_and_optionally_redact_payload(
     payload: dict[str, list[dict[str, Any]]],
     rules: Rules,
@@ -231,10 +268,15 @@ def scan_and_optionally_redact_payload(
     """
     hits: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
+    path_rules = copy(rules)
+    path_rules.entropy_bits = 1e9
 
-    def walk_value(table: str, row_id: str, field_path: str, value: Any) -> Any:
+    def walk_value(table: str, row_id: str, field_path: str, value: Any, row: dict[str, Any]) -> Any:
         if isinstance(value, str):
-            found = scan_text(value, rules)
+            active_rules = path_rules if _is_filesystem_path_field(table, field_path, value, row) else rules
+            found = scan_text(value, active_rules)
+            if active_rules is path_rules:
+                found = [(kind, secret_val) for kind, secret_val in found if kind != HIGH_ENTROPY]
             if not found:
                 return value
             for kind, secret_val in found:
@@ -246,13 +288,13 @@ def scan_and_optionally_redact_payload(
                     "value_sha256": value_sha256(secret_val),
                 })
             if redact:
-                masked, local_counts = redact_text(value, rules)
+                masked, local_counts = redact_text(value, active_rules)
                 for tag, n in local_counts.items():
                     counts[tag] = counts.get(tag, 0) + n
                 return masked
             return value
         if isinstance(value, list):
-            return [walk_value(table, row_id, f"{field_path}[{idx}]", item) for idx, item in enumerate(value)]
+            return [walk_value(table, row_id, f"{field_path}[{idx}]", item, row) for idx, item in enumerate(value)]
         if isinstance(value, dict):
             updated = {}
             for key, item in value.items():
@@ -260,7 +302,7 @@ def scan_and_optionally_redact_payload(
                     updated[key] = item
                 else:
                     sub = f"{field_path}.{key}" if field_path else key
-                    updated[key] = walk_value(table, row_id, sub, item)
+                    updated[key] = walk_value(table, row_id, sub, item, row)
             return updated
         return value
 
@@ -268,7 +310,7 @@ def scan_and_optionally_redact_payload(
         new_rows = []
         for row in rows:
             row_id = str(row.get("id", ""))
-            scanned = walk_value(table, row_id, "", row)
+            scanned = walk_value(table, row_id, "", row, row)
             if redact and table == "sources":
                 ev_type = scanned.get("evidence_type")
                 if ev_type not in REF_EVIDENCE_TYPES:
@@ -372,13 +414,13 @@ def apply_snapshot_privacy(
                 matched_commit: str | None = None
                 if rel in head_tree and head_tree[rel][0] != "120000":
                     blob = head_blobs.get(head_tree[rel][1])
-                    if blob is not None and hashlib.sha256(blob).hexdigest() == original_sha:
+                    if _blob_matches_sha(blob, original_sha) is not None:
                         matched_commit = head_commit
                 if matched_commit is None:
                     hint_commit = (source.get("metadata") or {}).get("git_commit")
                     if isinstance(hint_commit, str) and _COMMIT_SHA.fullmatch(hint_commit):
                         blob = _blob_at_commit(root, hint_commit, rel)
-                        if blob is not None and hashlib.sha256(blob).hexdigest() == original_sha:
+                        if _blob_matches_sha(blob, original_sha) is not None:
                             matched_commit = hint_commit
                 if matched_commit is not None:
                     line_count = max(1, len(content.splitlines())) if content else 1
@@ -474,10 +516,10 @@ def resolve_snapshot_refs(payload: dict[str, list[dict[str, Any]]], root: Path) 
         resolution_mode: str | None = None
 
         if in_git and isinstance(rel, str) and isinstance(commit_sha, str):
-            blob = _blob_at_commit(root, commit_sha, rel)
-            if blob is not None and hashlib.sha256(blob).hexdigest() == expected_sha:
+            matched_blob = _blob_matches_sha(_blob_at_commit(root, commit_sha, rel), expected_sha)
+            if matched_blob is not None:
                 try:
-                    resolved_text = blob.decode("utf-8")
+                    resolved_text = matched_blob.decode("utf-8")
                     resolution_mode = "commit_exact"
                 except UnicodeDecodeError:
                     resolved_text = None
@@ -494,9 +536,10 @@ def resolve_snapshot_refs(payload: dict[str, list[dict[str, Any]]], root: Path) 
                         head_blob = local_file.read_bytes()
                     except OSError:
                         head_blob = None
-            if head_blob is not None and hashlib.sha256(head_blob).hexdigest() == expected_sha:
+            matched_head = _blob_matches_sha(head_blob, expected_sha)
+            if matched_head is not None:
                 try:
-                    resolved_text = head_blob.decode("utf-8")
+                    resolved_text = matched_head.decode("utf-8")
                     resolution_mode = "head_matched"
                 except UnicodeDecodeError:
                     resolved_text = None

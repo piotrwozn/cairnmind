@@ -165,9 +165,7 @@ async def _evaluate(stores: list[Store], roots: list[Path], settings: list[Setti
     from .memory import MemoryManager
 
     report["stage"] = "snapshot_export"
-    exported = MemoryManager(source_store).snapshot(
-        project["id"], worktree=source_root, profile="full", include_transcripts=True,
-    )
+    exported = MemoryManager(source_store).snapshot(project["id"], worktree=source_root)
     report["stage"] = "snapshot_import"
     imported = MemoryManager(destination).import_snapshot(Path(exported["path"]), destination_root)
     report["stage"] = "portable_integrity"
@@ -279,6 +277,9 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
         for field, model in (("chat", settings.chat_model), ("embedding", settings.embedding_model)):
             report["model_identities"][field] = await measured.model_identity(model)
 
+    from contextlib import nullcontext
+    from .vcr import CassetteMissError, VcrOllama, deterministic_uuid4
+
     try:
         asyncio.run(preflight())
         preflight_complete = True
@@ -299,8 +300,6 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
                 isolated = _fixture_settings(settings, temporary / f"data-{index}")
                 owned_settings.append(isolated)
                 stores.append(Store(isolated.data_dir, settings=isolated))
-            from contextlib import nullcontext
-            from .vcr import CassetteMissError, VcrOllama, deterministic_uuid4
             seed_ctx = deterministic_uuid4("cairnmind-eval-memory-v1") if isinstance(ollama, VcrOllama) else nullcontext()
             with seed_ctx:
                 asyncio.run(_evaluate(stores, roots, owned_settings, measured, report))

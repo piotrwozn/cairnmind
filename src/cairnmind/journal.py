@@ -208,16 +208,18 @@ class JournalTransaction:
         self._invalidate_known(collection)
         if hasattr(self.native, "insert_documents"):
             stored = self.native.insert_documents(collection, rows)
-        else:
-            stored = self.native.command(f"INSERT INTO {quote_name(collection)} CONTENT :rows", {"rows": rows})
+            if not isinstance(stored, list) or len(stored) != len(rows):
+                raise RuntimeError(f"The database did not store every row of a group in {collection}")
+            if self._is_tracked(collection) and self.reset_reason is None and rows:
+                cleaned = [_clean(row) for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)]
+                if cleaned:
+                    first_project = cleaned[0].get("id") if collection == "projects" else cleaned[0].get("project_id")
+                    if not self._skip_graph_row_tracking(collection, first_project):
+                        self._record(collection, [], cleaned)
+            return stored
+        stored = self.command(f"INSERT INTO {quote_name(collection)} CONTENT :rows", {"rows": rows})
         if not isinstance(stored, list) or len(stored) != len(rows):
             raise RuntimeError(f"The database did not store every row of a group in {collection}")
-        if self._is_tracked(collection) and self.reset_reason is None and rows:
-            cleaned = [_clean(row) for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)]
-            if cleaned:
-                first_project = cleaned[0].get("id") if collection == "projects" else cleaned[0].get("project_id")
-                if not self._skip_graph_row_tracking(collection, first_project):
-                    self._record(collection, [], cleaned)
         return stored
 
     def update_document(self, collection: str, data: dict, where: str, params: dict) -> list[dict]:

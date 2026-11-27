@@ -593,10 +593,14 @@ def _named_objects(path):
 
 
 def _summary(path, manifest, status="valid"):
-    return {"status": status, "path": str(path), "manifest_path": str(path), "format_version": VERSION,
-            **{key: deepcopy(manifest.get(key)) for key in
-               ("project", "snapshot_id", "parent_id", "state_hash", "origin_root", "active_plan_id", "counts",
-                "created_at", "processing", "completeness", "profile", "contains_transcripts", "redacted")}}
+    summary = {"status": status, "path": str(path), "manifest_path": str(path), "format_version": VERSION,
+               **{key: deepcopy(manifest.get(key)) for key in
+                  ("project", "snapshot_id", "parent_id", "state_hash", "origin_root", "active_plan_id", "counts",
+                   "created_at", "processing", "completeness")}}
+    for key in ("profile", "contains_transcripts", "redacted"):
+        if key in manifest:
+            summary[key] = deepcopy(manifest[key])
+    return summary
 
 
 def inspect_snapshot(path):
@@ -836,21 +840,23 @@ class MemoryManager:
                     "pending_analysis": processing["extract"]["pending"] + processing["extract"]["running"],
                     "failed_analysis": processing["extract"]["failed"]}}, payload
 
-    def preview(self, project_id, worktree=None, *, profile="team", include_transcripts=False,
+    def preview(self, project_id, worktree=None, *, profile=None, include_transcripts=False,
                 skip_uncommitted=False, redact=False):
-        from .snapshot_privacy import apply_snapshot_privacy
         captured, payload = self._capture(project_id, worktree)
-        privacy = apply_snapshot_privacy(
-            payload, Path(captured["origin_root"]), profile=profile,
-            include_transcripts=include_transcripts, skip_uncommitted=skip_uncommitted,
-            redact=redact, settings=self.store.settings,
-        )
-        captured["counts"] = {table: len(payload[table]) for table in TABLES}
-        captured["state_hash"] = _state_hash(payload)
-        captured["profile"] = privacy["profile"]
-        captured["contains_transcripts"] = privacy["contains_transcripts"]
-        captured["redacted"] = privacy["redacted"]
-        _validate(payload, project_id, captured.get("active_plan_id"))
+        privacy = None
+        if profile is not None:
+            from .snapshot_privacy import apply_snapshot_privacy
+            privacy = apply_snapshot_privacy(
+                payload, Path(captured["origin_root"]), profile=profile,
+                include_transcripts=include_transcripts, skip_uncommitted=skip_uncommitted,
+                redact=redact, settings=self.store.settings,
+            )
+            captured["counts"] = {table: len(payload[table]) for table in TABLES}
+            captured["state_hash"] = _state_hash(payload)
+            captured["profile"] = privacy["profile"]
+            captured["contains_transcripts"] = privacy["contains_transcripts"]
+            captured["redacted"] = privacy["redacted"]
+            _validate(payload, project_id, captured.get("active_plan_id"))
         objects = _descriptors(payload)
         # The manifest as snapshot() would write it, with the parent and ancestry of the tip (an earlier file
         # without a receipt makes snapshot() refuse, so the tip is the only parent that matters).
@@ -870,7 +876,7 @@ class MemoryManager:
                 "package_size": size, "worktree": captured["origin_root"],
                 "bytes": sum(d["bytes"] for rows in objects.values() for d in rows),
                 "contains_raw_sources": bool(payload["sources"]), "model_calls": 0,
-                **({"redaction_counts": privacy["redaction_counts"]} if privacy["redaction_counts"] else {})}
+                **({"redaction_counts": privacy["redaction_counts"]} if privacy and privacy["redaction_counts"] else {})}
 
     def _known_manifest(self, project_id, path):
         return one_row(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project AND path=:path ORDER BY created_at DESC,id DESC LIMIT 1",
@@ -935,27 +941,30 @@ class MemoryManager:
                 return None
         return _summary(path, manifest, "unchanged")
 
-    def snapshot(self, project_id, worktree=None, *, authorize=None, profile="team",
+    def snapshot(self, project_id, worktree=None, *, authorize=None, profile=None,
                  include_transcripts=False, skip_uncommitted=False, redact=False):
-        from .snapshot_privacy import apply_snapshot_privacy, validate_profile_options
-        validate_profile_options(profile, include_transcripts)
+        if profile is not None:
+            from .snapshot_privacy import apply_snapshot_privacy, validate_profile_options
+            validate_profile_options(profile, include_transcripts)
         with self._publisher_lock(project_id, worktree):
             captured, payload = self._capture(project_id, worktree, authorize=authorize)
             root, path = Path(captured["origin_root"]), self._path(Path(captured["origin_root"]))
             if not root.is_dir() or any(p.is_symlink() for p in
                     (root / ".memory", path.parent, path.parent / "objects", path.parent / "manifests")):
                 raise ValueError("Memory publication needs a real project directory")
-            privacy = apply_snapshot_privacy(
-                payload, root, profile=profile,
-                include_transcripts=include_transcripts, skip_uncommitted=skip_uncommitted,
-                redact=redact, settings=self.store.settings,
-            )
-            captured["counts"] = {table: len(payload[table]) for table in TABLES}
-            captured["state_hash"] = _state_hash(payload)
-            captured["profile"] = privacy["profile"]
-            captured["contains_transcripts"] = privacy["contains_transcripts"]
-            captured["redacted"] = privacy["redacted"]
-            _validate(payload, project_id, captured.get("active_plan_id"))
+            privacy = None
+            if profile is not None:
+                privacy = apply_snapshot_privacy(
+                    payload, root, profile=profile,
+                    include_transcripts=include_transcripts, skip_uncommitted=skip_uncommitted,
+                    redact=redact, settings=self.store.settings,
+                )
+                captured["counts"] = {table: len(payload[table]) for table in TABLES}
+                captured["state_hash"] = _state_hash(payload)
+                captured["profile"] = privacy["profile"]
+                captured["contains_transcripts"] = privacy["contains_transcripts"]
+                captured["redacted"] = privacy["redacted"]
+                _validate(payload, project_id, captured.get("active_plan_id"))
             previous, previous_raw = None, None
             known = self._known_manifest(project_id, path)
             if path.exists() or path.is_symlink():
@@ -1034,12 +1043,13 @@ class MemoryManager:
                 self._receipt(tx, project_id, path, raw, manifest, "local")
             self._retain(path, manifest)
             summary = _summary(path, manifest, "created")
-            if privacy["redaction_counts"]:
-                summary["redaction_counts"] = privacy["redaction_counts"]
-            if privacy["git_refs"]:
-                summary["git_refs"] = privacy["git_refs"]
-            if privacy["skipped_uncommitted"]:
-                summary["skipped_uncommitted"] = privacy["skipped_uncommitted"]
+            if privacy is not None:
+                if privacy["redaction_counts"]:
+                    summary["redaction_counts"] = privacy["redaction_counts"]
+                if privacy["git_refs"]:
+                    summary["git_refs"] = privacy["git_refs"]
+                if privacy["skipped_uncommitted"]:
+                    summary["skipped_uncommitted"] = privacy["skipped_uncommitted"]
             return summary
 
     def _retain(self, path, latest):

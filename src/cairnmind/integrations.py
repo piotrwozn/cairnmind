@@ -223,7 +223,6 @@ def doctor(settings: Settings) -> dict[str, Any]:
         "openssl": ssl.OPENSSL_VERSION, "platform": "Windows" if IS_WINDOWS else platform.system(),
         "wsl": platform_hints.is_wsl(),
         "data_dir": str(settings.data_dir),
-        "storage_backend": active_backend,
         "clients": {name: _probe_cli(name) for name in CLIENTS},
         "ollama": {"available": False}, "service": {"available": False},
         # The database block is read through ArcadeClient, so its rules (#72) apply to doctor too.
@@ -236,6 +235,7 @@ def doctor(settings: Settings) -> dict[str, Any]:
     if active_backend == "sqlite":
         from .sqlite_telemetry import evaluate_sqlite_health, maybe_emit_scale_hint
 
+        result["storage_backend"] = "sqlite"
         result["sqlite"] = evaluate_sqlite_health(settings)
         maybe_emit_scale_hint(settings, result["sqlite"])
     if on_a_mac or on_windows:

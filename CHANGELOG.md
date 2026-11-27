@@ -4,6 +4,13 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+### Pulse, universal MCP presets and pre-flight doctor
+
+- Added `cairnmind pulse [PROJECT] [--worktree PATH] [--strict] [--json]`: a fast (< 500 ms), strictly read-only consistency micro-audit checking Git/fingerprint code drift (with `(mtime_ns, size)` + SHA-256 fallback without Git, branch/tree divergence reporting, and worktree isolation), test freshness against current code, active `origin_evidence: degraded` entities, and `.memory/cairnmind/` snapshot, database reference and `migration.lock` integrity. Exits `0` for `HEALTHY` (or soft `DRIFT`), `1` for `DRIFT` with `--strict`, and `2` for `BROKEN`.
+- Added universal MCP presets via `cairnmind mcp generate --client <name>` / `--auto` (and optional `--mcp-client` on `cairnmind install`) covering `claude-code`, `claude-desktop`, `cursor`, `windsurf`, `vscode`, `cline`, `roo-code`, `codex`, `gemini-cli`, `zed` and `generic`, with string-aware JSONC + JSON + TOML deep-merge, `<file>.cairnmind.bak` backups, atomic `os.replace` writes, absolute binary resolution, multi-project protection for `--scope user` (`--name` / `--force`), zero auto-approval/consent-bypass keys, and indexer/drift exclusion for generated project MCP files.
+- Added `cairnmind mcp test-connection` to verify an isolated stdio JSON-RPC `initialize` + `tools/list` handshake for generated or existing presets with strict clean-`stdout` validation and bounded timeout cleanup.
+- Extended `cairnmind doctor` with pre-flight Memory Pulse (`--project` or current repo), detected MCP client presets, optional `--check-mcp` live 5-second stdio handshake verification, security guard summary, and Docker/WSL2 `/mnt/...`/network filesystem/UID/write-permission warnings.
+
 ### Out-of-process external history converters and cross-release contract guards
 
 - Added out-of-process external transcript converter commands (`importers.py`, `cli_importers.py`): register, list and remove converter commands in `<data_dir>/importers.json` with `cairnmind importer add|remove|list` and import external transcripts via `cairnmind import PATH --via NAME [--project PROJECT]` (both refused when `SESSION_ID` or `PACKET_ID` is set in the environment). Converters run without a shell in a cleaned environment with private working directories, bounded timeout and combined output limits, emit strict normalised JSONL v1, mask secrets before storage, and archive lines as `converted_transcript` sources marked `origin_evidence: "degraded"` without touching `import_cursors`, queuing extraction or altering native resume readiness (#127).

@@ -293,7 +293,7 @@ def test_contract_graph_cycle_safe_bounded_bfs(contract_store: Store, tmp_path: 
 
 def test_contract_definition_and_uri_search(contract_store: Store, tmp_path: Path):
     project, root = _seed_project(contract_store, tmp_path, "def_proj")
-    uri = f"file://{root / 'billing' / 'retry.py'}"
+    uri = (root / "billing" / "retry.py").as_uri()
     src = contract_store.snapshot(
         project["id"], uri, "MAX_RETRIES = 5\n", "code",
         {"root": str(root), "relative_path": "billing/retry.py", "path": str(root / "billing" / "retry.py")},

@@ -309,6 +309,18 @@ class Store:
     # What the one-time step that marks records confirmed before 0.11.0 did when it ran on this open or the
     # last restore ({"marked", "before_rule", "at"}, confirmation_upgrade, #215); None when it did not run.
     confirmations_before_rule = None
+    _backend = None
+
+    @property
+    def backend(self):
+        if self._backend is None:
+            from .arcade_backend import ArcadeBackend
+            self._backend = ArcadeBackend(self)
+        return self._backend
+
+    @backend.setter
+    def backend(self, value) -> None:
+        self._backend = value
     # After a restore: how many completed embed jobs it set back to pending because the backup brought no vectors
     # (#187); None when the backup brought them or nothing was restored.
     embed_jobs_requeued = None

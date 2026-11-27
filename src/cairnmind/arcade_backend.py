@@ -189,7 +189,9 @@ class ArcadeBackend:
         type_name = vector_type_name(project_id, namespace, dimension)
         index_name = f"{type_name}[vector]"
         if type_name in self._vector_indexes:
-            return self._vector_indexes[type_name]
+            if self._store.query("SELECT id FROM vector_indexes WHERE id=:id", {"id": type_name}):
+                return self._vector_indexes[type_name]
+            self._vector_indexes.pop(type_name, None)
         self._store.command(f"CREATE DOCUMENT TYPE {type_name} IF NOT EXISTS")
         self._store.command(f"CREATE PROPERTY {type_name}.id IF NOT EXISTS STRING")
         self._store.command(f"CREATE PROPERTY {type_name}.vector IF NOT EXISTS ARRAY_OF_FLOATS")

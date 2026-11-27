@@ -104,6 +104,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_ingest_and_service_routes_edges", "test_eval_retrieval_integrations_edges",
     "test_sessions_and_published_edges", "test_published_ui_agent_edges", "test_ui_server",
     "test_project_clone",
+    "test_pulse", "test_mcp_presets", "test_doctor_preflight",
 })
 
 TMUX_MODULES = frozenset({
