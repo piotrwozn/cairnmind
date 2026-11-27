@@ -825,7 +825,63 @@ class SidebarApp(BasePanel):
             Field("name", "Name (optional; defaults to folder name)")],
             submit="Add folder", on_submit=save))
 
-    async def register_project(self, name, root):
+    @work(group="sidebar-register", exclusive=True, exit_on_error=False)
+    async def clone_project(self):
+        from . import project_clone
+        from .terminal_client import BrokerClient
+        roots = self.data.get("settings", {}).get("scan_roots") or []
+        default_parent = roots[0] if roots and isinstance(roots[0], str) else ""
+        cloned_outcome: dict = {}
+
+        async def save(value):
+            try:
+                project_clone.parse_clone_source(value["repo"])
+            except ValueError as exc:
+                raise FieldError("repo", self.t(str(exc))) from None
+            via = (value["via"] or "auto").strip().lower()
+            if via not in project_clone.CLONE_TOOLS:
+                raise FieldError("via", self.t(project_clone.INVALID_VIA))
+            branch = value["branch"] or None
+            if branch is not None:
+                try:
+                    branch = project_clone.validate_branch(branch)
+                except ValueError as exc:
+                    raise FieldError("branch", self.t(str(exc))) from None
+            payload = {"repo": value["repo"], "parent": value["parent"], "via": via}
+            if value["name"]:
+                payload["name"] = value["name"]
+            if branch is not None:
+                payload["branch"] = branch
+            self.notice("Cloning repository…")
+            if isinstance(self.broker, BrokerClient):
+                # A slow clone must not hold the shared client's lock and stall sidebar refreshes.
+                def clone_once():
+                    with BrokerClient(self.settings, ensure=False) as client:
+                        return client.request("POST", "/api/projects/clone", json=payload, timeout=620)
+                cloned_outcome["result"] = await asyncio.to_thread(clone_once)
+            else:
+                cloned_outcome["result"] = await asyncio.to_thread(
+                    self.broker.request, "POST", "/api/projects/clone", json=payload, timeout=620)
+
+        try:
+            submitted = await self.push_screen_wait(FormModal("Clone repository", [
+                Field("repo", "Repository (owner/repo, HTTPS or SSH URL)", required=True),
+                Field("parent", "Parent folder (Windows or WSL)", default_parent, required=True, folder=True),
+                Field("name", "Name (optional; defaults to repository name)"),
+                Field("via", "Tool: auto, gh or git", "auto"),
+                Field("branch", "Branch or tag (optional)")],
+                note="Clones into a new subfolder named after the repository, using gh (if signed in) or git. No assistant is started.",
+                submit="Clone repository", on_submit=save))
+            if submitted is None or "result" not in cloned_outcome:
+                return
+            cloned = cloned_outcome["result"]
+            extra = (self.t("Team published memory found; import it under Memory → Team memory.")
+                     if cloned.get("published_memory") else None)
+            await self.register_project(cloned["name"], cloned["root"], extra_notice=extra)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice(exc)
+
+    async def register_project(self, name, root, *, extra_notice=None):
         inspected = await self.request("POST", "/api/projects/inspect", json={"root": root})
         root = inspected.get("root", root)
         snapshot = inspected.get("memory_snapshot")
@@ -846,7 +902,8 @@ class SidebarApp(BasePanel):
         self.show_page("project")
         from .project_removal import workspace_lines
         said = workspace_lines(self.t, project, root, result)  # brought back, or a removed one kept apart (#327)
-        self.notice(" ".join(said) if said else "Project opened. Choose Start work when ready.")
+        base = " ".join(said) if said else self.t("Project opened. Choose Start work when ready.")
+        self.notice(f"{base} {extra_notice}" if extra_notice else base)
 
     async def import_memory_form(self, path="", root="", name=""):
         checked = {}
@@ -1170,14 +1227,16 @@ class SidebarApp(BasePanel):
             ("Settings", "settings"), ("Technical details", "details"), ("Plan stages", "stages"),
             ("MCP servers", "mcp"), ("Transcript record kinds", "record_kinds"),
             ("Notices", "notices"), ("Old task groups", "legacy_groups"),
-            ("Delete project memory", "forget_project")]))
+            ("Delete project memory", "forget_project"),
+            ("Clone repository", "clone_project")]))
         actions = {"sessions": self.sessions, "assistants": self.edit_slots, "stages": self.edit_stages,
                    "mcp": self.edit_mcp_servers,
                    "scan": self.scan_projects,
                    "queue": self.action_queue,
                    "snapshot": self.action_snapshot, "import": self.import_memory, "settings": self.action_settings,
                    "notices": self.action_notices, "record_kinds": self.record_kinds,
-                   "legacy_groups": self.legacy_groups, "forget_project": self.forget_project}
+                   "legacy_groups": self.legacy_groups, "forget_project": self.forget_project,
+                   "clone_project": self.clone_project}
         if action == "details":
             await self.push_screen_wait(MessageModal("Status", self.workspace_data))
         elif action in actions:

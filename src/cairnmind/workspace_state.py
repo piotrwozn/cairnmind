@@ -17,7 +17,7 @@ _PANES = {"sidebar", "client1", "client2", "inspector", "graph"}
 # The commands a sidebar can be asked to run: what the state accepts, what the command menu sends and
 # what `--ui-command` takes. New ones go last.
 UI_COMMANDS = ("search", "add_project", "start_work", "connections", "sessions", "memory", "ask", "brief",
-               "more", "settings", "next_stage", "notices")
+               "more", "settings", "next_stage", "notices", "clone_project")
 _FIELDS = {"project_id", "project_name", "worktree", "intent", "work_request", "handled_work_request",
            "selected_entity", "slots", "visible_slot_ids", "run_ids", "focus", "layout", "zoom",
            "pane_ids", "cached_projects", "launch_errors", "last_error", "broker_available", "auth_runs",

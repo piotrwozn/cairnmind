@@ -19,10 +19,10 @@ import typer
 from typer.core import TyperArgument, TyperGroup
 
 from cairnmind.cli_arguments import (
-    AnswerIdArg, ClientArg, ExportArg, FolderArg, GroupArg, JobIdArg, PacketHashArg, PacketIdArg, PlanIdArg,
-    ProfileArg, ProjectArg, ProjectNameArg, ProjectRootArg, QuestionArg, ReadbackArg, RecordIdArg, RepositoryArg,
-    SessionClientArg, SessionIdArg, SnapshotArg, SourceIdArg, StateArg, StateFileArg, TaskIdArg, TitleArg,
-    TranscriptArg)
+    AnswerIdArg, ClientArg, ExportArg, FolderArg, GroupArg, JobIdArg, OptionalProjectNameArg,
+    OptionalProjectRootArg, PacketHashArg, PacketIdArg, PlanIdArg, ProfileArg, ProjectArg, QuestionArg,
+    ReadbackArg, RecordIdArg, RepositoryArg, SessionClientArg, SessionIdArg, SnapshotArg, SourceIdArg, StateArg,
+    StateFileArg, TaskIdArg, TitleArg, TranscriptArg)
 from cairnmind.config import SERVICE_NAMES, Settings, drop_env, session_value, tls_verify
 from cairnmind.file_locks import lock_exclusive, unlock
 from cairnmind.ollama import OllamaUnavailable
@@ -1150,38 +1150,100 @@ def stop(ctx: typer.Context, as_json: JSON_FLAG = False):
     _human_or_json(result, as_json, lambda: lines)
 
 
-@projects_app.command("add")
-@initialized
-def project_add(
-    ctx: typer.Context,
-    name: ProjectNameArg,
-    root: ProjectRootArg,
-    as_json: JSON_FLAG = False,
-    no_scip: Annotated[
-        bool,
-        typer.Option("--no-scip", help="Skip enqueueing automatic background SCIP indexing for detected languages."),
-    ] = False,
-):
-    """Register a project: its name and the folder of its files, which are indexed."""
+_CLONE_OPT = Annotated[str | None, typer.Option(
+    "--clone", help="Clone a Git repository (owner/repo, HTTPS or SSH URL) before registering.")]
+_VIA_OPT = Annotated[str, typer.Option(
+    "--via", help="Clone tool used with --clone: auto (default), gh or git.")]
+_BRANCH_OPT = Annotated[str | None, typer.Option(
+    "--branch", "-b", help="Branch or tag to check out when cloning.")]
+_FRESH_OPT = Annotated[bool, typer.Option(
+    "--fresh", help="When cloning a repository that contains .memory/cairnmind/, register a new project identity anyway.")]
+_NO_SCIP_OPT = Annotated[
+    bool,
+    typer.Option("--no-scip", help="Skip enqueueing automatic background SCIP indexing for detected languages."),
+]
+
+
+def _run_project_add(ctx: typer.Context, name: str | None, root: str | None, clone: str | None,
+                     via: str, branch: str | None, fresh: bool, as_json: bool, no_scip: bool = False) -> None:
     import shlex
-    from cairnmind import first_start
+    from cairnmind import first_start, project_clone
     from cairnmind.brief import _git_out
+    from cairnmind.process_control import quote_arg
     from cairnmind.terminal_safe import safe_text
-    try:
-        root = root.expanduser().resolve(strict=True)  # the folder is checked before the store is opened
-    except FileNotFoundError as exc:
-        if getattr(exc, "winerror", None) == 206:
-            raise
-        from cairnmind.process_control import quote_arg
-        given = safe_text(str(root.expanduser().absolute()))
-        raise ValueError(first_start.PROJECT_FOLDER_MISSING.format(root=given, quoted=quote_arg(given))) from None
-    if not root.is_dir():
-        raise typer.BadParameter("The path must be a folder, not a file")
-    store = store_for(ctx.obj)
+
+    clone_spec = clone
+    dest_arg: str | None = root
+    chosen_name: str | None = name
+    if clone_spec is None:
+        if project_clone.is_explicit_remote_url(name):
+            clone_spec = name
+            chosen_name = None
+            dest_arg = root
+        elif project_clone.is_explicit_remote_url(root):
+            clone_spec = root
+            dest_arg = None
+
+    clone_info = None
+    found_memory = {"memory_snapshot": None, "published_memory": None}
+    if clone_spec is None:
+        if (via or "auto").strip().lower() != "auto":
+            raise typer.BadParameter(project_clone.CLONE_ONLY_OPTION.format(option="--via"), param_hint="--via")
+        if branch is not None:
+            raise typer.BadParameter(project_clone.CLONE_ONLY_OPTION.format(option="--branch"), param_hint="--branch")
+        if fresh:
+            raise typer.BadParameter(project_clone.CLONE_ONLY_OPTION.format(option="--fresh"), param_hint="--fresh")
+        if chosen_name is None:
+            raise typer.BadParameter("Missing argument 'NAME'.", param_hint="NAME")
+        if dest_arg is None:
+            raise typer.BadParameter("Missing argument 'ROOT'.", param_hint="ROOT")
+        root_path = Path(dest_arg)
+        try:
+            resolved_root = root_path.expanduser().resolve(strict=True)  # the folder is checked before the store is opened
+        except FileNotFoundError as exc:
+            if getattr(exc, "winerror", None) == 206:
+                raise
+            given = safe_text(str(root_path.expanduser().absolute()))
+            raise ValueError(first_start.PROJECT_FOLDER_MISSING.format(root=given, quoted=quote_arg(given))) from None
+        if not resolved_root.is_dir():
+            raise typer.BadParameter("The path must be a folder, not a file")
+        store = store_for(ctx.obj)
+    else:
+        source = project_clone.parse_clone_source(clone_spec)
+        chosen_branch = project_clone.validate_branch(branch) if branch is not None else None
+        chosen_name = source.default_name if chosen_name is None else chosen_name
+        raw_dest = Path(dest_arg) if dest_arg is not None else Path.cwd() / source.default_name
+        dest = project_clone.prepare_destination(raw_dest, ctx.obj.data_dir)
+        project_clone.choose_tool(source, via)
+        store = store_for(ctx.obj)
+        chosen_name = project_clone.check_store_preflight(store, chosen_name, dest)
+        interactive = not as_json and _stdout_is_terminal() and sys.stdin.isatty() and sys.stderr.isatty()
+        clone_info = project_clone.clone_repository(
+            source, dest, via=via, branch=chosen_branch, interactive=interactive)
+        resolved_root = dest.resolve(strict=True)
+        found_memory = project_clone.inspect_cloned_memory(resolved_root)
+        if found_memory["memory_snapshot"] and not fresh:
+            snap = found_memory["memory_snapshot"]
+            shown_root = safe_text(str(resolved_root))
+            shown_snap = safe_text(snap)
+            next_step = first_start.CLONE_SNAPSHOT_NEXT.format(
+                snapshot=quote_arg(shown_snap), root=quote_arg(shown_root),
+                project=quote_arg(safe_text(chosen_name)))
+            payload = {"status": "snapshot_found", "cloned": clone_info, "memory_snapshot": snap,
+                       "registered": False, "next": next_step}
+            _human_or_json(payload, as_json, lambda: [
+                first_start.PROJECT_CLONED.format(source=safe_text(source.raw), root=shown_root,
+                                                  tool=clone_info["tool"]),
+                first_start.CLONE_SNAPSHOT_FOUND.format(snapshot=shown_snap),
+                next_step,
+            ])
+            raise typer.Exit(1)
+
     from cairnmind import project_removal as removal
     known = {row["id"] for row in store.list_projects()}
     removed = removal.removed_rows(store)
-    project = store.add_project(name, root)
+    project = store.add_project(chosen_name, resolved_root, restore=False) if fresh else store.add_project(
+        chosen_name, resolved_root)
     from cairnmind.ingest import index_project, register_default_histories
     result = index_project(store, project["id"])
     discovery = register_default_histories(store, project["id"], Path(project["root"]))
@@ -1189,38 +1251,68 @@ def project_add(
         scip_info = {"mode": "skipped", "detected_languages": [], "queued": False, "job_id": None}
     else:
         from cairnmind.scip_ingest import enqueue_project_scip
-        scip_info = enqueue_project_scip(store, ctx.obj, project["id"], root)
+        scip_info = enqueue_project_scip(store, ctx.obj, project["id"], resolved_root)
     # Said, never silent (#327): whether a removed project came back, or one that keeps its memory did not.
     restored, kept, details = removal.add_outcome(removed, known, project)
-    quoted = shlex.quote(safe_text(name))
+    quoted = shlex.quote(safe_text(chosen_name))
     jobs, waiting_line = _jobs_after_add(ctx.obj, store, project["id"], quoted)
+    published = found_memory.get("published_memory")
 
     def sentences():
-        shown = safe_text(str(root))
+        shown = safe_text(str(resolved_root))
         existed = project["id"] in known
-        lines = (removal.restored_lines(project, restored, result.get("files", 0)) if restored else
-                 [folder["message"] for folder in result["unavailable"]] if result.get("unavailable") else
-                 [(first_start.PROJECT_EXISTED if existed else first_start.PROJECT_ADDED).format(
-                     project=quoted, root=shown, files=result.get("files", 0))])
-        if _git_out(root, "rev-parse", "--is-inside-work-tree") is None:
+        lines = []
+        if clone_info is not None:
+            lines.append(first_start.PROJECT_CLONED.format(
+                source=safe_text(clone_info["source"]), root=shown, tool=clone_info["tool"]))
+        lines.extend(
+            removal.restored_lines(project, restored, result.get("files", 0)) if restored else
+            [folder["message"] for folder in result["unavailable"]] if result.get("unavailable") else
+            [(first_start.PROJECT_EXISTED if existed else first_start.PROJECT_ADDED).format(
+                project=quoted, root=shown, files=result.get("files", 0))])
+        if _git_out(resolved_root, "rev-parse", "--is-inside-work-tree") is None:
             lines.append(first_start.NOT_GIT.format(root=shown))
-        elif _git_out(root, "rev-parse", "--verify", "-q", "HEAD") is None:
+        elif _git_out(resolved_root, "rev-parse", "--verify", "-q", "HEAD") is None:
             lines.append(first_start.NO_COMMIT.format(root=shown))
         if scip_info.get("queued"):
             langs = ", ".join(scip_info["detected_languages"])
             lines.append(f"Queued background SCIP indexing for: {langs}.")
+        if published:
+            shown_pub = safe_text(published)
+            lines.append(first_start.CLONE_PUBLISHED_FOUND.format(
+                published=shown_pub, quoted_published=quote_arg(shown_pub), project=quoted))
         lines.extend(removal.not_brought_back(row) for row in kept)
         lines.extend([waiting_line] if waiting_line else [])
         # The warning comes before the next step, which stays last (#326).
         lines.append((first_start.PROJECT_EXISTED_NEXT if existed or restored else first_start.PROJECT_ADDED_NEXT)
                      .format(project=quoted))
         return lines
+
     scip_extra = {"scip": scip_info} if (scip_info.get("queued") or scip_info.get("detected_languages")) else {}
-    _human_or_json({"project": project, "indexed": result, "history": discovery, "jobs": jobs,
-                    **scip_extra, **details},
-                   as_json, sentences)
+    payload = {"project": project, "indexed": result, "history": discovery, "jobs": jobs, **scip_extra, **details}
+    if clone_info is not None:
+        payload["cloned"] = {**clone_info, **({"published_memory": published} if published else {})}
+    _human_or_json(payload, as_json, sentences)
     if result.get("unavailable"):  # a folder of another machine was not indexed: said above, and the exit code says so
         raise typer.Exit(1)
+
+
+@app.command("add")
+@initialized
+def add_project_shortcut(ctx: typer.Context, name: OptionalProjectNameArg = None, root: OptionalProjectRootArg = None,
+                         clone: _CLONE_OPT = None, via: _VIA_OPT = "auto", branch: _BRANCH_OPT = None,
+                         fresh: _FRESH_OPT = False, as_json: JSON_FLAG = False, no_scip: _NO_SCIP_OPT = False):
+    """Register a project folder, or clone a Git repository and register it (shortcut for `project add`)."""
+    _run_project_add(ctx, name, root, clone, via, branch, fresh, as_json, no_scip=no_scip)
+
+
+@projects_app.command("add")
+@initialized
+def project_add(ctx: typer.Context, name: OptionalProjectNameArg = None, root: OptionalProjectRootArg = None,
+                clone: _CLONE_OPT = None, via: _VIA_OPT = "auto", branch: _BRANCH_OPT = None,
+                fresh: _FRESH_OPT = False, as_json: JSON_FLAG = False, no_scip: _NO_SCIP_OPT = False):
+    """Register a project: its name and the folder of its files, which are indexed. With --clone (or an HTTPS/SSH Git URL) clones the repository first with gh or git."""
+    _run_project_add(ctx, name, root, clone, via, branch, fresh, as_json, no_scip=no_scip)
 
 
 def _jobs_after_add(settings: Settings, store, project_id: str, quoted: str) -> tuple[dict, str | None]:

@@ -7,6 +7,7 @@ from .engine_docker import MESSAGES as ENGINE_DOCKER_MESSAGES
 from .first_start import MESSAGES as FIRST_START_MESSAGES
 from .memory_models import MESSAGES as MEMORY_MODELS_MESSAGES
 from .platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
+from .project_clone import MESSAGES as PROJECT_CLONE_MESSAGES
 from .project_forget import MESSAGES as PROJECT_FORGET_MESSAGES
 from .project_folders import MESSAGES as PROJECT_FOLDER_MESSAGES
 from .project_removal import MESSAGES as PROJECT_REMOVAL_MESSAGES
@@ -692,6 +693,24 @@ CATALOG.update({
     "This session has ended.": "Ta sesja się zakończyła.",
     "This session has ended. Resume it or start a new one.":
         "Ta sesja się zakończyła. Wznów ją albo rozpocznij nową.",
+    # Cloning a repository into a project from the workspace (terminal_panels, terminal_commands).
+    "Clone repository": "Sklonuj repozytorium",
+    "Clone from GitHub or Git and register": "Sklonuj z GitHuba lub Gita i zarejestruj",
+    "Repository (owner/repo, HTTPS or SSH URL)": "Repozytorium (owner/repo, URL HTTPS lub SSH)",
+    "Parent folder (Windows or WSL)": "Folder nadrzędny (Windows lub WSL)",
+    "Name (optional; defaults to repository name)": "Nazwa (opcjonalnie; domyślnie nazwa repozytorium)",
+    "Tool: auto, gh or git": "Narzędzie: auto, gh albo git",
+    "Branch or tag (optional)": "Gałąź lub tag (opcjonalnie)",
+    "Clones into a new subfolder named after the repository, using gh (if signed in) or git. No assistant is started.":
+        "Klonuje do nowego podfolderu o nazwie repozytorium przez gh (jeśli zalogowano) albo git. Żaden asystent nie jest uruchamiany.",
+    "Cloning repository…": "Klonowanie repozytorium…",
+    "Team published memory found; import it under Memory → Team memory.":
+        "Wykryto opublikowaną pamięć zespołu; zaimportuj ją w Pamięć → Pamięć zespołu.",
+    "The parent folder does not exist.": "Folder nadrzędny nie istnieje.",
+    "Give a parent or destination folder.": "Podaj folder nadrzędny lub docelowy.",
+    "Give a repository as owner/repo, HTTPS or SSH URL.": "Podaj repozytorium jako owner/repo, URL HTTPS albo SSH.",
+    "Invalid clone parameters.": "Niepoprawne parametry klonowania.",
+    "Project name must be between 1 and 256 characters.": "Nazwa projektu musi mieć od 1 do 256 znaków.",
 })
 CATALOG.update(MESSAGES)  # fixed backend messages (#153)
 CATALOG.update(MCP_FAILURE_MESSAGES)  # a third-party MCP server that did not start (#209)
@@ -724,6 +743,7 @@ CATALOG.update(PROJECT_FORGET_MESSAGES)  # deleting a project's memory: the comm
 CATALOG.update(PROJECT_FORGET_VIEW_MESSAGES)  # deleting a project's memory in the workspace (#347)
 CATALOG.update(RECORDER_MESSAGES)  # the recorder subagent install writes for Claude Code (#376)
 CATALOG.update(PROJECT_FOLDER_MESSAGES)  # a project's folder this machine cannot read (#371)
+CATALOG.update(PROJECT_CLONE_MESSAGES)  # cloning a repository from GitHub or Git during project add
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 
