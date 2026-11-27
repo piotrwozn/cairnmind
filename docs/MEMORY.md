@@ -63,6 +63,21 @@ A proposed finding stays proposed until you confirm or dispute it, and old ones 
 
 Import keeps the project's identity and does not replace other projects in the database. Re-importing the same state duplicates nothing; diverging changes require conflict resolution. Search indexes are rebuilt locally. Historical `done` states are preserved, but checks carried over from another machine are not local `fresh` evidence. Logins, client configuration and new sessions are set up locally. See [MEMORY_CONTRACTS.md](MEMORY_CONTRACTS.md) for the format contract, limits and restore rules.
 
+## Self-healing quote references
+
+When importing a portable snapshot into a Git repository whose files have moved or been refactored since the snapshot was taken (or when running `cairnmind memory heal PROJECT`), Cairnmind scans Git diffs and uses tree-sitter AST scope/token analysis plus surrounding context matching to relocate moved quoted blocks automatically:
+
+- **SHA-256 content immutability:** a relocated quote is healed only when the SHA-256 checksum of the new location matches the original quote verbatim. Changing even a single character invalidates the reference (`stale_ref`).
+- **Partial modification guard:** if only a fragment of a quoted line was modified, Cairnmind never guesses the text; it rejects automatic repair and marks the evidence `validation_failed` (with `ref_status: stale_ref`), requiring human intervention.
+- **Ambiguity guard:** if multiple identical code blocks exist without unique surrounding or AST context, Cairnmind refuses to guess and reports `ambiguous_context`.
+- **Optimistic concurrency (CAS) and audit log:** every reference update rewrites `metadata.quote_ref` (new `commit_sha`, `line_start`, `line_end`, `path`), bumps the record version under CAS (`expected_version`), and records an immutable `heal://` audit entry readable via `cairnmind memory heal-audit PROJECT`.
+
+```bash
+cairnmind memory heal my-app --dry-run
+cairnmind memory heal my-app
+cairnmind memory heal-audit my-app
+```
+
 ## Team memory
 
 A snapshot carries one person's whole memory. To share what a team agreed on, publish it: only records a person confirmed (decisions, constraints, facts and tasks, and plans) are written, one readable file per record, to `.memory/cairnmind-published/` in the repository, and they go through review like code.

@@ -222,6 +222,12 @@ CATALOG = {
         "źródło się zmieniło; brak zweryfikowanego cytatu do porównania",
     "orphaned: no supporting source has a current version":
         "osierocone: żadne źródło nie ma aktualnej wersji",
+    "stale quote reference: the quoted content changed (SHA-256 mismatch)":
+        "nieaktualna referencja cytatu: treść cytatu uległa zmianie (niezgodność SHA-256)",
+    "quote validation failed: partial line modification rejected; intervention required":
+        "walidacja cytatu nie powiodła się: odrzucono częściową modyfikację linii; wymagana interwencja",
+    "ambiguous quote context: multiple identical blocks found without unique context":
+        "niejednoznaczny kontekst cytatu: znaleziono wiele identycznych bloków bez unikalnego kontekstu",
     "written by an external client's session, or resting only on one or on a third-party tool result; never verified":
         "zapisane przez sesję zewnętrznego klienta albo oparte tylko na niej lub na wyniku narzędzia zewnętrznego; "
         "nigdy niezweryfikowane",

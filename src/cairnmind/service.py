@@ -237,6 +237,20 @@ class MemoryImportBody(MemoryInspectBody):
     dry_run: bool = Field(default=False, strict=True)
     replace_confirmed: bool = Field(default=False, strict=True)
     expected_replaced: list[str] | None = Field(default=None, max_length=100_000)  # the list a person was shown (#333)
+    heal_quotes: bool = Field(default=True, strict=True)
+    packet_id: str | None = None
+
+
+class MemoryHealBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    project: str = Field(min_length=1)
+    worktree: str | None = Field(default=None, max_length=4096)
+    target_commit: str = Field(default="HEAD", min_length=1, max_length=256)
+    dry_run: bool = Field(default=False, strict=True)
+    expected_versions: dict[str, int] | None = None
+    expected_snapshot_id: str | None = Field(default=None, min_length=64, max_length=64)
+    record_ids: list[str] | None = Field(default=None, max_length=1000)
+    session_id: str | None = None
     packet_id: str | None = None
 
 
@@ -1033,7 +1047,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             return memory.import_snapshot(
                 body.path, body.root, body.name, body.dry_run,
                 expected_snapshot_id=inspected["snapshot_id"], expected_project_id=pid, authorize=authorize,
-                replace_confirmed=body.replace_confirmed, expected_replaced=body.expected_replaced)
+                replace_confirmed=body.replace_confirmed, expected_replaced=body.expected_replaced,
+                heal_quotes=body.heal_quotes)
         if body.dry_run:
             scope = await asyncio.to_thread(read_scope, pid, body.root, body.session_id)
             return await asyncio.to_thread(restore, scope)
@@ -1124,6 +1139,42 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         if not body.dry_run:
             cache.clear()
         return result
+
+    @app.post("/memory/heal", dependencies=auth)
+    async def memory_heal(body: MemoryHealBody):
+        from cairnmind.quote_healing import heal_project_quotes
+        pid = project(body.project)["id"]
+        if body.dry_run:
+            scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
+            return await asyncio.to_thread(
+                heal_project_quotes, store, pid, scope,
+                target_commit=body.target_commit, dry_run=True,
+                expected_versions=body.expected_versions, expected_snapshot_id=body.expected_snapshot_id,
+                record_ids=body.record_ids, actor=body.session_id or "service_api",
+            )
+        scope, authorize = await asyncio.to_thread(
+            memory_write_authorization, pid, body.worktree, body.session_id, body.packet_id)
+        if authorize is not None:
+            if hasattr(authorize, "refresh"):
+                await asyncio.to_thread(authorize.refresh)
+            await asyncio.to_thread(authorize)
+        result = await asyncio.to_thread(
+            heal_project_quotes, store, pid, scope,
+            target_commit=body.target_commit, dry_run=False,
+            expected_versions=body.expected_versions, expected_snapshot_id=body.expected_snapshot_id,
+            record_ids=body.record_ids, actor=body.session_id or "service_api",
+        )
+        cache.clear()
+        return result
+
+    @app.get("/memory/heal-audit", dependencies=auth)
+    async def memory_heal_audit(project: str, record_id: str | None = None, limit: int = 100,
+                                session_id: str | None = None):
+        from cairnmind.quote_healing import healing_audit_log
+        pid = store.resolve_project(project)["id"]
+        await asyncio.to_thread(read_scope, pid, None, session_id)
+        items = await asyncio.to_thread(healing_audit_log, store, pid, record_id=record_id, limit=limit)
+        return {"project_id": pid, "items": items, "total": len(items)}
 
     @app.get("/memory/status", dependencies=auth)
     async def memory_status(project: str, worktree: str | None = None, session_id: str | None = None):

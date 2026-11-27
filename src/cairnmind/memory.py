@@ -1070,7 +1070,7 @@ class MemoryManager:
                     entry.unlink()
 
     def import_snapshot(self, path, root, name=None, dry_run=False, *, expected_snapshot_id=None, expected_project_id=None,
-                        authorize=None, replace_confirmed=False, expected_replaced=None):
+                        authorize=None, replace_confirmed=False, expected_replaced=None, heal_quotes=True):
         from .snapshot_privacy import (
             PROFILE_TEAM, REF_EVIDENCE_TYPES, TRANSCRIPT_SOURCE_KINDS, _referenced_source_ids,
             resolve_snapshot_refs,
@@ -1085,6 +1085,14 @@ class MemoryManager:
             raise ValueError("Memory import target must be an existing directory")
         self.store.require_safe_project_root(root)
         stale_refs = resolve_snapshot_refs(payload, root)
+        # Phase 1 + 2 quote self-healing runs outside the database writer lock: read-only Git diff + AST + SHA-256.
+        healing_plan = None
+        if heal_quotes:
+            from .quote_healing import plan_snapshot_healing
+            healing_plan = plan_snapshot_healing(
+                payload, root, origin_root=manifest["origin_root"],
+                root_aliases=manifest.get("root_aliases", ()), snapshot_id=snapshot_id,
+            )
         chosen_name = manifest["project"]["name"] if name is None else _text(name, "project name").strip()
         result = {"status": "dry_run" if dry_run else "imported", "project": {"id": project_id, "name": chosen_name, "root": str(root)},
                   "snapshot_id": snapshot_id, "counts": manifest["counts"], "active_plan_id": manifest.get("active_plan_id"),
@@ -1241,6 +1249,8 @@ class MemoryManager:
             result["replaces_confirmed_here"] = {"total": len(replaced), "records": sorted(replaced),
                                                  "note": REPLACES_NOTE}
             if dry_run:
+                if healing_plan is not None:
+                    result["quote_healing"] = healing_plan.preview()
                 return result
             if expected_replaced is not None and sorted(expected_replaced) != sorted(replaced):
                 # The person agreed to the list their check showed; any other list is not their choice.
@@ -1339,8 +1349,9 @@ class MemoryManager:
             from .agent import source_text
             from .impact_verdicts import is_verdict_source
             from .agent_memory import is_mcp_source
+            from .quote_healing import is_healing_audit_source
             for source in payload["sources"]:
-                if is_verdict_source(source) or is_mcp_source(source):
+                if is_verdict_source(source) or is_mcp_source(source) or is_healing_audit_source(source):
                     continue  # imported with the memory, never searchable text
                 if tx.query("SELECT id FROM chunks WHERE source_id=:source LIMIT 1", {"source": source["id"]}):
                     continue
@@ -1369,6 +1380,14 @@ class MemoryManager:
                        "imported_at": utc_now()}
             insert_document(tx, "memory_imports", receipt)
             self._receipt(tx, project_id, path, raw, manifest, "import", str(root))
+            if healing_plan is not None:
+                if healing_plan.actions:
+                    from .quote_healing import apply_healing_plan
+                    result["quote_healing"] = apply_healing_plan(
+                        self.store, tx, project_id, healing_plan, actor="snapshot_import",
+                    )
+                else:
+                    result["quote_healing"] = healing_plan.preview()
         return result
 
     def configure_auto(self, project_id, enabled, interval_minutes=15, worktree=None):

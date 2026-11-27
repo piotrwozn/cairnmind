@@ -79,6 +79,37 @@ Text chunks are rebuilt from archived source views during import; semantic
 embeddings and current-code analysis rebuild locally. Original paths remain
 provenance, with local scope bindings kept separately.
 
+## Self-healing quote references
+
+When a portable snapshot is imported into a Git checkout (`MemoryManager.import_snapshot` with
+`heal_quotes=True`, or via `POST /memory/heal` / `cairnmind memory heal`), Cairnmind runs a
+three-phase deterministic self-healing pass (`cairnmind.quote_healing`) without calling any model:
+
+1. **Detection and change mapping (Phase 1):** outside the database writer lock, Cairnmind scans
+   Git diffs (`git diff --name-status -M`, `git diff -U0`) between each cited file source's
+   `git_commit` and the target commit (default `HEAD`). When a cited file changed or was renamed,
+   the engine projects line hunks and uses tree-sitter AST enclosing scopes, token streams and
+   surrounding context lines to locate the quoted block.
+2. **Content integrity validation (Phase 2):** a candidate location is accepted only if the SHA-256
+   checksum of its LF-normalized text equals the original quote's SHA-256 verbatim.
+   - Any character difference immediately invalidates the reference (`ref_status: stale_ref`).
+   - If a token-equivalent block has a SHA-256 mismatch or the block/file was replaced or removed,
+     the evidence is marked `stale_ref`.
+   - If only a fragment of a quoted line was edited (partial modification), automatic repair is
+     rejected without guessing and the evidence is marked `validation_failed` (with
+     `ref_status: stale_ref`, `requires_intervention: true`).
+   - If multiple identical blocks exist in the file without unique AST or surrounding context,
+     Cairnmind reports `ambiguous_context` with all candidate line ranges rather than risking a
+     wrong match.
+3. **Reference rewrite, CAS and audit (Phase 3):** inside a single store transaction, each updated
+   record is checked and written under optimistic concurrency CAS (`expected_version` and
+   `WHERE id=:id AND version=:version`, plus optional `expected_snapshot_id`). Concurrent
+   modifications by another agent raise `QuoteCASConflict` (HTTP 409) and write nothing. Each
+   operation writes an immutable `heal://<uuid>` audit source (`origin: quote_self_healing`, never
+   chunked and never anchoring evidence), updates `metadata.quote_ref` (store-derived and
+   confirmation-uncovered, preserving a person's confirmation when an unchanged quote moves), and
+   bumps the record version with a new immutable `record_revisions` entry.
+
 A record the archive brings as confirmed stays confirmed and is marked as
 confirmed elsewhere (see "Only a person confirms a record" below): the dry run
 and the import both report `confirmed_records` with the number of such records,

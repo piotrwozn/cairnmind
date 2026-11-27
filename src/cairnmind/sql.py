@@ -26,7 +26,7 @@ def parse_utc(value):
 
 # Origins of the notes that record an act on a record (a review, a review published elsewhere, a command
 # line confirmation, an evaluation's seed mark): they say that someone judged it, never why it is true.
-ACT_NOTE_ORIGINS = ("local_user_review", "publication_review", "cli_person", "evaluation_seed")
+ACT_NOTE_ORIGINS = ("local_user_review", "publication_review", "cli_person", "evaluation_seed", "quote_self_healing")
 
 
 def evidence_time(tx, source_ids, *, source_rows: dict | None = None):

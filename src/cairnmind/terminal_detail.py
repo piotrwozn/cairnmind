@@ -23,6 +23,14 @@ EVIDENCE_LABELS = {
     ("unverified", None): "imported file evidence has not been compared with local files yet",
     ("degraded", None): "written by an external client's session, or resting only on one or on a third-party tool result; never verified",
 }
+QUOTE_HEALING_LABELS = {
+    ("stale_ref", False): "stale quote reference: the quoted content changed (SHA-256 mismatch)",
+    ("stale_ref", None): "stale quote reference: the quoted content changed (SHA-256 mismatch)",
+    ("validation_failed", False): "quote validation failed: partial line modification rejected; intervention required",
+    ("validation_failed", None): "quote validation failed: partial line modification rejected; intervention required",
+    ("ambiguous_context", True): "ambiguous quote context: multiple identical blocks found without unique context",
+    ("ambiguous_context", None): "ambiguous quote context: multiple identical blocks found without unique context",
+}
 _EVIDENCE_TIME = {"stated": "Stated", "observed": "Observed no later than", "mixed": "Mixed evidence"}
 BAR = ("quote-bar", "  | ")
 # The sensitivity class the inspector derives for a source or a record (sensitivity.py, #180).
@@ -62,7 +70,8 @@ def task_state(item):
 
 def evidence_parts(item, translate):
     """The `Evidence:` line of a record, or nothing when its state has no sentence."""
-    label = EVIDENCE_LABELS.get((item.get("evidence_state"), item.get("quote_survives")))
+    key = (item.get("evidence_state"), item.get("quote_survives"))
+    label = EVIDENCE_LABELS.get(key) or QUOTE_HEALING_LABELS.get(key)
     if not label:
         return []
     return [labelled(translate("Evidence"), translate(label), evidence_style(item.get("evidence_state")))]

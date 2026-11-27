@@ -27,6 +27,7 @@ from cairnmind.arcade import ArcadeError
 from cairnmind.embed_jobs import queue_embed_jobs
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
+from cairnmind.quote_healing import is_healing_audit_source
 from cairnmind import graph_transactions
 from cairnmind.code_graph import code_graph_pending
 from cairnmind.graph_transactions import GraphTransactions, await_vertices
@@ -372,8 +373,8 @@ def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: d
                                {"source": source_id})
             if not sources or sources[0]["project_id"] != project_id:
                 raise ValueError("Chunk source does not belong to the requested project")
-            if is_verdict_source(sources[0]) or is_mcp_source(sources[0]):
-                return 0  # a person's verdict on an impact list is never searchable text
+            if is_verdict_source(sources[0]) or is_mcp_source(sources[0]) or is_healing_audit_source(sources[0]):
+                return 0  # a person's verdict or healing audit note is never searchable text
             if sources[0].get("is_current") is False:
                 return 0  # replaced meanwhile: its chunks were deleted with it and are not written again (#186)
             existing = tx.query("SELECT id,line_start,line_end FROM chunks WHERE source_id=:source", {"source": source_id})
@@ -538,7 +539,7 @@ def _write_files_once(store, project_id: str, batch: list[dict], limit: int = EV
             else:
                 source = store.snapshot_new(tx, project_id, item["uri"], item["content"], item["kind"], item["metadata"])
             sources.append(source)
-            if source is None or is_verdict_source(source) or is_mcp_source(source):
+            if source is None or is_verdict_source(source) or is_mcp_source(source) or is_healing_audit_source(source):
                 continue
             for number, (content, first, last) in enumerate(item["chunks"]):
                 chunk_id = _identifier(project_id, source["id"], number, first, last, content)
@@ -600,8 +601,8 @@ def index_pending_sources(store, limit: int = 100) -> dict:
     )
     counts = {"sources": 0, "chunks": 0, "errors": []}
     for row in rows:
-        if is_verdict_source(row) or is_mcp_source(row):
-            continue  # an audit note on an impact list: kept and exported, never chunked
+        if is_verdict_source(row) or is_mcp_source(row) or is_healing_audit_source(row):
+            continue  # an audit note on an impact list or quote healing: kept and exported, never chunked
         metadata = _metadata(row["metadata"])
         normalized = metadata.get("normalized_text")
         text = normalized if isinstance(normalized, str) and normalized.strip() else row["content"]
