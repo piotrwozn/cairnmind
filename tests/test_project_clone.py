@@ -356,6 +356,10 @@ def test_cli_accepts_unambiguous_remote_url_without_clone_flag_but_never_shortha
 
 
 def test_cli_clone_only_options_refused_for_local_folder_and_plain_json_unchanged(cli_world):
+    assert cli_world.invoke("add").exit_code == 2
+    a_file = cli_world.cwd / "not-a-dir.txt"
+    a_file.write_text("x", encoding="utf-8")
+    assert cli_world.invoke("add", "bad-root", str(a_file)).exit_code == 2
     folder = cli_world.cwd / "local-app"
     folder.mkdir()
     for extra in (("--via", "git"), ("--branch", "main"), ("--fresh",)):

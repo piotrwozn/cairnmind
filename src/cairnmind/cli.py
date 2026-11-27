@@ -1166,6 +1166,7 @@ _NO_SCIP_OPT = Annotated[
 
 def _run_project_add(ctx: typer.Context, name: str | None, root: str | None, clone: str | None,
                      via: str, branch: str | None, fresh: bool, as_json: bool, no_scip: bool = False) -> None:
+    import shlex
     from cairnmind import first_start, project_clone
     from cairnmind.brief import _git_out
     from cairnmind.process_control import quote_arg
@@ -1253,7 +1254,7 @@ def _run_project_add(ctx: typer.Context, name: str | None, root: str | None, clo
         scip_info = enqueue_project_scip(store, ctx.obj, project["id"], resolved_root)
     # Said, never silent (#327): whether a removed project came back, or one that keeps its memory did not.
     restored, kept, details = removal.add_outcome(removed, known, project)
-    quoted = quote_arg(safe_text(chosen_name))
+    quoted = shlex.quote(safe_text(chosen_name))
     jobs, waiting_line = _jobs_after_add(ctx.obj, store, project["id"], quoted)
     published = found_memory.get("published_memory")
 
