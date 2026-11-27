@@ -155,6 +155,7 @@ Measured with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an RTX 4080 Super in is
 
 Version 0.12.0 is the current release. See [CHANGELOG.md](CHANGELOG.md), [docs/UPGRADING.md](docs/UPGRADING.md) and the [roadmap issues](https://github.com/piotrwozn/cairnmind/issues?q=is%3Aissue+label%3Aroadmap).
 
+- [docs/STABLE_CONTRACT.md](docs/STABLE_CONTRACT.md): what the `1.x` stable contract covers (CLI `--json`, MCP tools, persistent formats, settings, safety rules, deprecation policy, supported matrix and PR enforcement).
 - [docs/CONTRACTS.md](docs/CONTRACTS.md): architecture taxonomy, guarantees, limits, implementation contracts and [extension surfaces](docs/CONTRACTS.md#extension-surfaces).
 - [docs/INSTALL.md](docs/INSTALL.md): installation, native or Docker engine, models, verification and troubleshooting.
 - [docs/WORKFLOW.md](docs/WORKFLOW.md): plans, check profiles, code fingerprints, evidence states, MCP tools, `brief`, `usage`, `impact`, [symbol-anchored evidence](docs/WORKFLOW.md#symbol-anchored-evidence), [opt-in code decisions](docs/WORKFLOW.md#opt-in-decisions-from-code-comments-adr-trailers) and [serverless CI `scan`](docs/WORKFLOW.md#serverless-ci-check-cairnmind-scan).

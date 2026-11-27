@@ -6,9 +6,9 @@ The default language is English. To switch the Cairnmind interface to Polish, ch
 
 ## Getting started
 
-You need Linux or Ubuntu on WSL2, Java 21+ or Docker (for the database engine), tmux 3.4+ (only the workspace needs it), an installed Cairnmind and an interactive Unicode/UTF-8 terminal. Install the coding clients in the same WSL distribution. Using the prebuilt package does not require Node.js, npm or a frontend build.
+You need Linux, Ubuntu on WSL2, macOS on Apple silicon, or native Windows 10/11, Java 21+ or Docker (for the ArcadeDB engine, or `--backend sqlite` for embedded SQLite), an installed Cairnmind and an interactive Unicode/UTF-8 terminal. On POSIX (Linux, WSL2, macOS), the multi-pane workspace also requires `tmux 3.4+`; on native Windows, `cairnmind` opens the standalone Textual workspace directly in Windows Terminal or PowerShell without `tmux` or WSL2. Using the prebuilt package does not require Node.js, npm or a frontend build.
 
-In Windows Terminal, open Ubuntu, or enter it from PowerShell:
+On native Windows, run `cairnmind` directly in Windows Terminal or PowerShell. In WSL2, open Ubuntu from Windows Terminal or enter it from PowerShell:
 
 ```powershell
 wsl -d Ubuntu

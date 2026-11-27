@@ -891,10 +891,23 @@ def test_cockpit_edge_branches_and_coverage(tmp_path, monkeypatch):
     # Mock cockpit additional branches
     app = create_ui_app(default_mock=True)
     with TestClient(app) as client:
-        # Ask: decisions prompt, general lexical match, general lexical unknown
-        assert client.post("/api/ask?mock=1", json={"query": "Jakie decyzje wykryto?"}).json()["status"] == "VERIFIED"
-        assert client.post("/api/ask?mock=1", json={"query": "SessionManager require_ack"}).json()["status"] == "VERIFIED"
-        assert client.post("/api/ask?mock=1", json={"query": "zzz_completely_absent_token_999"}).json()["status"] == "UNKNOWN"
+        # Ask: Polish and English prompts, general lexical match, general lexical unknown (#60)
+        pl_dec = client.post("/api/ask?mock=1", json={"query": "Jakie decyzje wykryto?"}).json()
+        assert pl_dec["status"] == "VERIFIED" and "Zatwierdzone decyzje" in pl_dec["answer"]
+        en_arch = client.post("/api/ask?mock=1", json={"query": "What are the main architecture components?"}).json()
+        assert en_arch["status"] == "VERIFIED" and "four-stage verification pipeline" in en_arch["answer"]
+        en_dec = client.post("/api/ask?mock=1", json={"query": "Which recent decisions were detected?"}).json()
+        assert en_dec["status"] == "VERIFIED" and "Confirmed decisions" in en_dec["answer"]
+        en_stale = client.post(
+            "/api/ask?mock=1",
+            json={"query": "Which tasks or claims are stale?", "verifier_mode": "fts_fallback"},
+        ).json()
+        assert en_stale["status"] == "PARTIAL"
+        assert "No LLM configured" in en_stale["answer"] and "Detected" in en_stale["answer"]
+        en_lex = client.post("/api/ask?mock=1", json={"query": "SessionManager require_ack"}).json()
+        assert en_lex["status"] == "VERIFIED" and "Found" in en_lex["answer"]
+        en_unk = client.post("/api/ask?mock=1", json={"query": "zzz_completely_absent_token_999"}).json()
+        assert en_unk["status"] == "UNKNOWN" and "No evidence found" in en_unk["answer"]
 
         # Drift filters & decision ignore + 404
         assert client.get("/api/drift", params={"mock": 1, "directory": "docs/adr/", "source": "local_file"}).status_code == 200

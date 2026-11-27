@@ -224,7 +224,11 @@ def build_contract_environment(tmp_path: Path) -> dict[str, Any]:
 
 
 def _normalize_scalar(value: str, replacements: list[tuple[str, str]], maps: dict[str, dict[str, str]]) -> str:
-    text = value.replace("\\", "/")
+    text = value
+    for src, dst in replacements:
+        if src:
+            text = text.replace(src, dst)
+    text = text.replace("\\", "/")
     for src, dst in replacements:
         if src:
             text = text.replace(src, dst)
@@ -252,6 +256,26 @@ def _normalize_scalar(value: str, replacements: list[tuple[str, str]], maps: dic
     if __version__ and text == __version__:
         text = "<VERSION>"
     return text
+
+
+def _normalize_scip_report(scip: dict[str, Any]) -> None:
+    """Normalize host-probed SCIP fields so every OS/runner produces an identical contract shape."""
+    scip["mode"] = "auto"
+    scip["docker_available"] = False
+    for idx_info in (scip.get("indexers") or {}).values():
+        if isinstance(idx_info, dict):
+            idx_info["mode"] = "<HOST_MODE>"
+            idx_info["executable"] = None
+            idx_info["installed"] = False
+            idx_info["missing_tools"] = []
+
+
+def _normalize_mcp_generate(normalized: dict[str, Any]) -> None:
+    """Normalize host-dependent temp-executable warnings in `mcp generate --json`."""
+    if isinstance(normalized.get("warnings"), list):
+        normalized["warnings"] = [
+            w for w in normalized["warnings"] if "inside a temporary directory" not in str(w)
+        ]
 
 
 def _normalize_doctor(normalized: dict[str, Any]) -> None:
@@ -306,14 +330,7 @@ def _normalize_doctor(normalized: dict[str, Any]) -> None:
                 entry.pop("error", None)
                 entry.pop("structured_output", None)
     if isinstance(normalized.get("scip"), dict):
-        normalized["scip"]["mode"] = "auto"
-        normalized["scip"]["docker_available"] = False
-        for idx_info in (normalized["scip"].get("indexers") or {}).values():
-            if isinstance(idx_info, dict):
-                idx_info["mode"] = "<HOST_MODE>"
-                idx_info["executable"] = None
-                idx_info["installed"] = False
-                idx_info["missing_tools"] = []
+        _normalize_scip_report(normalized["scip"])
     if isinstance(normalized.get("clients"), dict):
         for client_info in normalized["clients"].values():
             if isinstance(client_info, dict):
@@ -364,27 +381,23 @@ def _normalize_doctor(normalized: dict[str, Any]) -> None:
 
 def normalize_contract_payload(value: Any, env: dict[str, Any], *, command_name: str = "") -> Any:
     """Normalize machine/run-specific values while keeping EVERY object key, type, and shape exact."""
-    repo_posix = str(env["repo"]).replace("\\", "/")
-    data_posix = str(env["data_dir"]).replace("\\", "/")
-    tmp_posix = str(env["tmp_path"]).replace("\\", "/")
-    conv_posix = str(env["converter"]).replace("\\", "/")
-    foreign_posix = str(env["foreign_log"]).replace("\\", "/")
-    py_posix = str(sys.executable).replace("\\", "/")
+    def _path_variants(raw: Path | str, token: str) -> list[tuple[str, str]]:
+        s = str(raw)
+        posix = s.replace("\\", "/")
+        json_escaped = s.replace("\\", "\\\\")
+        variants = [(s, token), (posix, token)]
+        if json_escaped != s:
+            variants.append((json_escaped, token))
+        return variants
 
     replacements = sorted(
         [
-            (str(env["converter"]), "<CONVERTER_SCRIPT>"),
-            (conv_posix, "<CONVERTER_SCRIPT>"),
-            (str(env["foreign_log"]), "<FOREIGN_LOG>"),
-            (foreign_posix, "<FOREIGN_LOG>"),
-            (str(env["repo"]), "<WORKTREE>"),
-            (repo_posix, "<WORKTREE>"),
-            (str(env["data_dir"]), "<DATA_DIR>"),
-            (data_posix, "<DATA_DIR>"),
-            (str(env["tmp_path"]), "<TMP_ROOT>"),
-            (tmp_posix, "<TMP_ROOT>"),
-            (str(sys.executable), "<PYTHON_EXE>"),
-            (py_posix, "<PYTHON_EXE>"),
+            *_path_variants(env["converter"], "<CONVERTER_SCRIPT>"),
+            *_path_variants(env["foreign_log"], "<FOREIGN_LOG>"),
+            *_path_variants(env["repo"], "<WORKTREE>"),
+            *_path_variants(env["data_dir"], "<DATA_DIR>"),
+            *_path_variants(env["tmp_path"], "<TMP_ROOT>"),
+            *_path_variants(sys.executable, "<PYTHON_EXE>"),
             (str(env["settings"].url), "http://127.0.0.1:<PORT>"),
             (str(env["settings"].arcade_url), "http://127.0.0.1:<ARCADE_PORT>"),
             (str(env["settings"].arcade_database), "<ARCADE_DB>"),
@@ -402,6 +415,10 @@ def normalize_contract_payload(value: Any, env: dict[str, Any], *, command_name:
                 normalized[key] = walk(obj[key], (*path, key))
             if command_name == "doctor" and path == ():
                 _normalize_doctor(normalized)
+            elif command_name == "scip_status" and path == ():
+                _normalize_scip_report(normalized)
+            elif command_name == "mcp_generate" and path == ():
+                _normalize_mcp_generate(normalized)
             return normalized
         if isinstance(obj, list):
             items = obj
@@ -420,7 +437,8 @@ def normalize_contract_payload(value: Any, env: dict[str, Any], *, command_name:
             return out
         if isinstance(obj, (int, float)) and not isinstance(obj, bool) and path:
             if path[-1] in {
-                "port", "pid", "elapsed_ms", "elapsed_seconds", "duration_ms", "total_bytes", "package_size", "bytes",
+                "port", "pid", "elapsed_ms", "elapsed_seconds", "duration_ms", "latency_ms",
+                "total_bytes", "package_size", "bytes",
             } or (
                 "package_size" in path
                 and path[-1] in {"used", "fraction", "current", "replaced", "transcripts", "age_seconds"}
@@ -489,6 +507,10 @@ def capture_cli_json_contracts(env: dict[str, Any]) -> dict[str, Any]:
         commands: list[tuple[str, list[str]]] = [
             ("status", ["--data-dir", data_dir, "status"]),
             ("doctor", ["--data-dir", data_dir, "doctor", "--json"]),
+            ("pulse", ["--data-dir", data_dir, "pulse", "contract-app", "--worktree", repo, "--json"]),
+            ("scip_status", ["--data-dir", data_dir, "scip", "status", "contract-app"]),
+            ("mcp_generate", ["--data-dir", data_dir, "mcp", "generate", "--client", "claude-code",
+                              "--project", repo, "--dry-run", "--json"]),
             ("project_list", ["--data-dir", data_dir, "project", "list", "--json"]),
             ("store_writer", ["--data-dir", data_dir, "store", "writer"]),
             ("store_size", ["--data-dir", data_dir, "store", "size", "contract-app", "--json"]),
@@ -512,6 +534,7 @@ def capture_cli_json_contracts(env: dict[str, Any]) -> dict[str, Any]:
             ("memory_status", ["--data-dir", data_dir, "memory", "status", "contract-app"]),
             ("memory_inspect", ["--data-dir", data_dir, "memory", "inspect",
                                 str(Path(repo) / ".memory" / "cairnmind")]),
+            ("memory_heal_audit", ["--data-dir", data_dir, "memory", "heal-audit", "contract-app"]),
             ("memory_orphans", ["--data-dir", data_dir, "memory", "orphans", "contract-app", "--json"]),
             ("memory_decisions", ["--data-dir", data_dir, "memory", "decisions", "contract-app", "--json"]),
             ("memory_extraction_stats", ["--data-dir", data_dir, "memory", "extraction-stats", "contract-app", "--json"]),

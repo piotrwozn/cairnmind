@@ -1,0 +1,32 @@
+{
+  "backup": null,
+  "changed": true,
+  "client": "claude-code",
+  "content": "{\n  \"mcpServers\": {\n    \"cairnmind\": {\n      \"command\": \"<PYTHON_EXE>\",\n      \"args\": [\n        \"-I\",\n        \"-m\",\n        \"cairnmind\",\n        \"--data-dir\",\n        \"<DATA_DIR>\",\n        \"mcp\"\n      ],\n      \"env\": {\n        \"CAIRNMIND_SESSION_ID\": \"${CAIRNMIND_SESSION_ID:-}\",\n        \"CAIRNMIND_PACKET_ID\": \"${CAIRNMIND_PACKET_ID:-}\",\n        \"DEVBRAIN_SESSION_ID\": \"${DEVBRAIN_SESSION_ID:-}\",\n        \"DEVBRAIN_PACKET_ID\": \"${DEVBRAIN_PACKET_ID:-}\"\n      }\n    }\n  }\n}\n",
+  "diff": "--- a/.mcp.json\n+++ b/.mcp.json\n@@ -0,0 +1,21 @@\n+{\n+  \"mcpServers\": {\n+    \"cairnmind\": {\n+      \"command\": \"<PYTHON_EXE>\",\n+      \"args\": [\n+        \"-I\",\n+        \"-m\",\n+        \"cairnmind\",\n+        \"--data-dir\",\n+        \"<DATA_DIR>\",\n+        \"mcp\"\n+      ],\n+      \"env\": {\n+        \"CAIRNMIND_SESSION_ID\": \"${CAIRNMIND_SESSION_ID:-}\",\n+        \"CAIRNMIND_PACKET_ID\": \"${CAIRNMIND_PACKET_ID:-}\",\n+        \"DEVBRAIN_SESSION_ID\": \"${DEVBRAIN_SESSION_ID:-}\",\n+        \"DEVBRAIN_PACKET_ID\": \"${DEVBRAIN_PACKET_ID:-}\"\n+      }\n+    }\n+  }\n+}\n",
+  "entry": {
+    "args": [
+      "-I",
+      "-m",
+      "cairnmind",
+      "--data-dir",
+      "<DATA_DIR>",
+      "mcp"
+    ],
+    "command": "<PYTHON_EXE>",
+    "env": {
+      "CAIRNMIND_PACKET_ID": "${CAIRNMIND_PACKET_ID:-}",
+      "CAIRNMIND_SESSION_ID": "${CAIRNMIND_SESSION_ID:-}",
+      "DEVBRAIN_PACKET_ID": "${DEVBRAIN_PACKET_ID:-}",
+      "DEVBRAIN_SESSION_ID": "${DEVBRAIN_SESSION_ID:-}"
+    }
+  },
+  "format": "json",
+  "path": "<WORKTREE>/.mcp.json",
+  "root_key": "mcpServers",
+  "scope": "project",
+  "server_name": "cairnmind",
+  "title": "Claude Code",
+  "warnings": [],
+  "written": false
+}

@@ -106,14 +106,111 @@ def test_every_help_page_of_the_command_line_is_english(tmp_path):
     assert not (tmp_path / "absent").exists()
 
 
-def test_no_message_in_the_command_line_module_is_polish():
+# Modules that intentionally carry Polish translation catalogs (`MESSAGES`/`CATALOG`/`_PL`),
+# Polish language-processing rules, locale-aware OS parsers, or bilingual demo fixtures (#60).
+POLISH_ALLOWED_MODULES = frozenset({
+    "check_profile_messages.py",
+    "engine_docker.py",
+    "first_start.py",
+    "mcp_failure_notice.py",
+    "memory_models.py",
+    "platform_hints.py",
+    "project_clone.py",
+    "project_folders.py",
+    "project_forget.py",
+    "project_removal.py",
+    "recorder_agent.py",
+    "restore_claims.py",
+    "restore_staged.py",
+    "retrieval.py",
+    "service_autostart.py",
+    "service_version.py",
+    "setup_change.py",
+    "setup_mark.py",
+    "setup_profiles.py",
+    "store_prune.py",
+    "subject.py",
+    "terminal_agent_i18n.py",
+    "terminal_connection_hints.py",
+    "terminal_i18n.py",
+    "terminal_i18n_messages.py",
+    "terminal_inspector.py",
+    "terminal_legacy_groups.py",
+    "terminal_person_act.py",
+    "terminal_plan_confirm.py",
+    "terminal_preview.py",
+    "terminal_project_forget.py",
+    "terminal_published_import.py",
+    "terminal_record_kinds.py",
+    "terminal_release.py",
+    "terminal_replace.py",
+    "terminal_setup.py",
+    "terminal_setup_change.py",
+    "terminal_ui.py",
+    "topology.py",
+    "ui_cockpit.py",
+    "upgrade_mark.py",
+})
+
+# Core English modules explicitly translated and guarded by #37 and #60.
+ENGLISH_ONLY_GUARDED_MODULES = frozenset({
+    "cli.py",
+    "workspace.py",
+    "workspace_state.py",
+    "cockpit.py",
+    "cockpit_state.py",
+    "terminal_client.py",
+    "api_providers.py",
+    "copilot_adapter.py",
+    "api_credentials.py",
+    "api_profiles.py",
+    "api_runtime.py",
+    "service.py",
+    "agent.py",
+})
+
+
+def _polish_literals(path) -> list[tuple[int, str]]:
     import ast
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return [
+        (node.lineno, node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and (POLISH & set(node.value) or POLISH_WORDS & set(re.findall(r"[a-z]+", node.value.lower())))
+    ]
+
+
+def test_no_message_in_the_command_line_module_is_polish():
     from pathlib import Path
-    tree = ast.parse(Path(cli.__file__).read_text(encoding="utf-8"))
-    polish = [(node.lineno, node.value) for node in ast.walk(tree)
-              if isinstance(node, ast.Constant) and isinstance(node.value, str)
-              and (POLISH & set(node.value) or POLISH_WORDS & set(re.findall(r"[a-z]+", node.value.lower())))]
-    assert polish == []
+    assert _polish_literals(Path(cli.__file__)) == []
+
+
+def test_no_message_in_non_i18n_modules_is_polish():
+    """Guard cli.py, the 12 modules of #60, and all other non-i18n modules against Polish literals."""
+    from pathlib import Path
+    pkg_dir = Path(cli.__file__).parent
+    all_modules = {p.name: p for p in sorted(pkg_dir.glob("*.py"))}
+    assert ENGLISH_ONLY_GUARDED_MODULES <= set(all_modules)
+    assert ENGLISH_ONLY_GUARDED_MODULES.isdisjoint(POLISH_ALLOWED_MODULES)
+
+    unexpected: dict[str, list[tuple[int, str]]] = {}
+    stale_allowed: list[str] = []
+    for name, path in all_modules.items():
+        hits = _polish_literals(path)
+        if name in POLISH_ALLOWED_MODULES:
+            if not hits:
+                stale_allowed.append(name)
+        elif hits:
+            unexpected[name] = hits[:5]
+
+    missing_allowed = sorted(POLISH_ALLOWED_MODULES - set(all_modules))
+    assert not missing_allowed, f"POLISH_ALLOWED_MODULES names missing files: {missing_allowed}"
+    assert not stale_allowed, f"POLISH_ALLOWED_MODULES lists modules with no Polish literals: {stale_allowed}"
+    assert not unexpected, (
+        "Unexpected Polish literals in English-only modules (translate to English, or if this module "
+        f"intentionally stores Polish i18n catalog entries, add it to POLISH_ALLOWED_MODULES): {unexpected}"
+    )
 
 
 @pytest.mark.parametrize("arguments,expected", [

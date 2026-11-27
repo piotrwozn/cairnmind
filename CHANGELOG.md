@@ -4,6 +4,14 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+### Stable 1.0.0 contract, PR check, English-only guard and release gates
+
+- Published `docs/STABLE_CONTRACT.md` (linked from `README.md`) defining the `1.x` stability boundary — CLI commands and `--json` outputs, the 8 MCP tools and resume packet v2, persistent formats (store upgrades, backups, portable and published memory, external importers), `config.json` / `CAIRNMIND_*` (and `DEVBRAIN_*` deprecation window), safety invariants, deprecation policy, and supported matrix — while explicitly marking SQLite (`--backend sqlite`, `migrate`), NLI/VCR (`cairnmind[nli]`) and local web UI (`cairnmind ui`) as preview/experimental (#248).
+- Added `.github/workflows/contract-check.yml` (`scripts/check_contract_pr.py`, `tests/test_contract_pr_check.py`) and updated `.github/pull_request_template.md`: pull requests that touch `docs/STABLE_CONTRACT.md` or `tests/fixtures/contracts/` fail the `contract-declaration` check unless they carry both the `contract-change` label and a non-empty `## Contracts` declaration (#248).
+- Extended the frozen CLI `--json` contract examples in `tests/fixtures/contracts/cli_json/` (`tests/contract_store_fixture.py`) to cover `pulse`, `scip status`, `memory heal-audit` and `mcp generate` with cross-OS normalization, and fixed `cairnmind pulse` (`pulse.py`) to accept canonical `format_version: 1` portable snapshot manifests written by `MemoryManager.snapshot` (#249).
+- Extended the Polish-literal AST guard in `tests/test_workspace_cli.py` from `cli.py` to all 12 modules listed in #60 and every other non-i18n module in `src/cairnmind/` (with an explicit allowlist of intentional Polish i18n/locale modules), and made `cairnmind ui --mock` `/api/ask` responses bilingual (English for English queries, Polish for Polish queries) (#60).
+- Updated `docs/RELEASING.md` with the permanent release-gate rules adopted for `0.13.0` (two consecutive dry attack rounds on the core, full fresh + upgrade manual trial, three consecutive green `main` runs with no job reruns; #454), the 10-tester major release gate (#159), and the `1.0.0-rc1` 7-day zero-defect freeze procedure (#250), and updated native Windows getting-started/upgrade notes in `docs/TERMINAL.md` and `docs/UPGRADING.md` (#151).
+
 ### Pulse, universal MCP presets and pre-flight doctor
 
 - Added `cairnmind pulse [PROJECT] [--worktree PATH] [--strict] [--json]`: a fast (< 500 ms), strictly read-only consistency micro-audit checking Git/fingerprint code drift (with `(mtime_ns, size)` + SHA-256 fallback without Git, branch/tree divergence reporting, and worktree isolation), test freshness against current code, active `origin_evidence: degraded` entities, and `.memory/cairnmind/` snapshot, database reference and `migration.lock` integrity. Exits `0` for `HEALTHY` (or soft `DRIFT`), `1` for `DRIFT` with `--strict`, and `2` for `BROKEN`.
