@@ -58,6 +58,13 @@ cairnmind run my-app claude       # or codex: starts the client bound to this pr
 
 Cursor, Cline, Zed and other MCP clients use the same memory through `cairnmind mcp --client external`, in a session that is never counted as verified: see [docs/EXTERNAL_CLIENTS.md](docs/EXTERNAL_CLIENTS.md).
 
+### Fast health checks and universal MCP presets
+
+- **`cairnmind pulse [PROJECT]`**: read-only consistency micro-audit (< 500 ms) checking code drift, test freshness, `origin_evidence: degraded` records, and `.memory/cairnmind/` snapshot/reference integrity. Supports `--json` and `--strict` (exit `0` healthy / soft drift, `1` drift with `--strict`, `2` broken) for CI and `pre-push` hooks.
+- **`cairnmind mcp generate --client <name> [--write]`** (or `--auto`): generates and safely deep-merges MCP presets for `claude-code`, `claude-desktop`, `cursor`, `windsurf`, `vscode`, `cline`, `roo-code`, `codex`, `gemini-cli`, `zed` and `generic` (JSON, JSONC and TOML), creating `<file>.cairnmind.bak` backups with atomic writes and never adding auto-approval flags.
+- **`cairnmind mcp test-connection`**: verifies a live stdio JSON-RPC `initialize` + `tools/list` handshake and fails hard on any non-JSON-RPC output on `stdout`.
+- **`cairnmind doctor --check-mcp`**: combines storage, Memory Pulse, detected MCP presets, a bounded 5-second stdio handshake check, and Docker/WSL/permissions pre-flight diagnostics in one report.
+
 To see what Cairnmind keeps before you install anything, read the [sample project memory](examples/sample-project/README.md): a small project with its decisions, a plan and a check run committed next to it, and a read-only command that needs only Python and uv.
 
 **[Step-by-step installation guide](docs/INSTALL.md)**: preparing Windows and WSL2, installing from a release, the engine natively or in Docker, connecting assistants, verifying, upgrading, uninstalling and troubleshooting. Node.js and a frontend build are not needed.

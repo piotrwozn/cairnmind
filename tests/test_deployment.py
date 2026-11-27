@@ -301,9 +301,24 @@ def cli_commands() -> set[tuple[str, ...]]:
     return found
 
 
+def _invocable_groups() -> set[tuple[str, ...]]:
+    found = set()
+
+    def walk(command, path):
+        subs = getattr(command, "commands", {})
+        if path and subs and getattr(command, "invoke_without_command", False):
+            found.add(path)
+        for name, sub in subs.items():
+            walk(sub, (*path, name))
+
+    walk(typer.main.get_command(app), ())
+    return found
+
+
 def unknown_commands(text: str, commands: set[tuple[str, ...]]) -> list[tuple[str, ...]]:
     """The `cairnmind ...` commands of a Markdown text, at the start of a line or in backticks, that do not exist."""
     groups = {path[:-1] for path in commands if path}
+    invocable = _invocable_groups()
     used = re.findall(r"^\s*(?:\$ )?cairnmind ([^`\n]+)", text, re.M) + re.findall(r"`cairnmind ([^`\n]+)`", text)
     unknown = []
     for arguments in used:
@@ -313,9 +328,11 @@ def unknown_commands(text: str, commands: set[tuple[str, ...]]) -> list[tuple[st
         for word in words:
             if path not in groups:
                 break
+            if path in invocable and (*path, word) not in commands:
+                break
             path = (*path, word)
-        # Each word must name a command until one without subcommands is reached.
-        if path not in commands or path in groups:
+        # Each word must name a command until one without subcommands (or an invocable group) is reached.
+        if path not in commands or (path in groups and path not in invocable):
             unknown.append(tuple(words[:3]))
     return unknown
 

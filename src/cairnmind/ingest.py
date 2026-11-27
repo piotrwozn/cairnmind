@@ -164,6 +164,29 @@ def _is_secret(path: Path) -> bool:
     )
 
 
+_MANAGED_MCP_FILES = frozenset({
+    ".mcp.json",
+    ".cursor/mcp.json",
+    ".vscode/mcp.json",
+    ".roo/mcp.json",
+    ".codex/config.toml",
+    ".gemini/settings.json",
+    ".zed/settings.json",
+})
+_BACKUP_MARKERS = (".cairnmind.bak", ".cairnmind-backup-", ".devbrain-backup-")
+
+
+def _is_managed_mcp_config(path: Path, root: Path) -> bool:
+    """Skip generated MCP preset files and Cairnmind backups so adding a preset never creates false drift."""
+    if any(marker in path.name for marker in _BACKUP_MARKERS):
+        return True
+    try:
+        rel = path.relative_to(root).as_posix().casefold()
+    except ValueError:
+        return False
+    return rel in _MANAGED_MCP_FILES
+
+
 def _roots(store, project: dict) -> list[Path]:
     rows = store.query("SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})
     return list(dict.fromkeys([Path(project["root"]).resolve(), *[Path(r["path"]).resolve() for r in rows]]))
@@ -265,7 +288,7 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
         )
         for name in sorted(names):
             path = folder / name
-            if link(path) or _is_secret(path) or ignored(path):
+            if link(path) or _is_secret(path) or _is_managed_mcp_config(path, root) or ignored(path):
                 continue
             yield path
 
