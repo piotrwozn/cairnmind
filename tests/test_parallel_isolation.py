@@ -61,6 +61,23 @@ def test_an_engine_owner_whose_command_line_cannot_be_read_counts_as_alive(monke
     assert not conftest._pytest_alive(sleeper.pid)
 
 
+def test_reap_orphan_engines_never_stops_the_current_runs_shared_engine(tmp_path, monkeypatch):
+    stopped = []
+    monkeypatch.setattr(conftest, "stop_engine", lambda settings: stopped.append(settings.data_dir))
+    monkeypatch.setattr(conftest, "_pytest_alive", lambda pid: False)
+    current = tmp_path / "pytest-10"
+    engine_dir = current / "arcade-engine-shared"
+    (engine_dir / "arcade").mkdir(parents=True)
+    (engine_dir / "owner.json").write_text('{"pid": 999999}', encoding="utf-8")
+    (engine_dir / "arcade" / "process.json").write_text('{"pid": 999999}', encoding="utf-8")
+    stale = tmp_path / "pytest-9" / "arcade-engine-shared"
+    (stale / "arcade").mkdir(parents=True)
+    (stale / "owner.json").write_text('{"pid": 999999}', encoding="utf-8")
+    (stale / "arcade" / "process.json").write_text('{"pid": 999999}', encoding="utf-8")
+    conftest.reap_orphan_engines(tmp_path, current_run=current)
+    assert stopped == [stale]
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX process-group isolation (os.getpgid/os.killpg)")
 def test_the_fixture_servers_of_another_worker_are_not_this_workers(tmp_path):
     other_copy = tmp_path / "popen-gw9" / "mcp-fixture" / Path(conftest.MCP_FIXTURE).name

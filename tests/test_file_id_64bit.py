@@ -109,6 +109,7 @@ def test_unsigned_64bit_watermark_persists_in_real_arcadedb(arcade_test_engine, 
     ) is True
 
 
+@pytest.mark.exclusive
 def test_real_engine_pid_reuse_guard_and_kill_recovery(arcade_test_engine, tmp_path):
     """Real engine starts, refuses to kill a foreign PID on reuse, recovers after hard kill, and stops cleanly (#438)."""
     engine_settings = arcade_test_engine[0]
@@ -153,6 +154,10 @@ def test_real_engine_pid_reuse_guard_and_kill_recovery(arcade_test_engine, tmp_p
         # Restore real record, hard-kill the engine, and verify next start_engine recovers cleanly
         pid_file.write_text(json.dumps(record), encoding="utf-8")
         process_control.terminate_pid(real_pid, force=True)
+        if hasattr(os, "waitpid"):
+            import contextlib
+            with contextlib.suppress(ChildProcessError, OSError):
+                os.waitpid(real_pid, 0)
         assert engine.start_engine(iso)["available"] is True
         engine.stop_engine(iso)
         assert engine.engine_status(iso)["available"] is False
