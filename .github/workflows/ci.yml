@@ -101,6 +101,7 @@ jobs:
         run: |
           uv run pytest -n 2 -q `
             tests/test_phase5_windows_foundation.py `
+            tests/test_phase4b_sqlite_try.py `
             tests/test_phase1_cli_demo.py `
             tests/test_phase2_snapshot_privacy.py `
             tests/test_phase3a_cache_vcr.py `

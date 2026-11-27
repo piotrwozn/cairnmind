@@ -134,6 +134,10 @@ def initialized(command):
     @wraps(command)
     def invoke(ctx, *args, **kwargs):
         ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
+        if _INVOCATION.get("backend"):
+            ctx.obj.storage_backend = _INVOCATION["backend"]
+        if _INVOCATION.get("db_path"):
+            ctx.obj.db_path = _INVOCATION["db_path"]
         if ctx.obj._origin.get("connect_saved"):
             from cairnmind.database_mode import saved_note
             typer.echo(f"Cairnmind: {saved_note(ctx.obj)}", err=True)
@@ -219,7 +223,7 @@ def store_for(settings: Settings, *, notice: bool = True, for_restore: bool = Fa
     """The full store. notice=False for a command that only reads it on a reader, as backup and export do.
     for_restore=True opens a store that carries the mark of an unfinished restore, as only `restore` does (#362)."""
     from cairnmind.store import Store
-    store = Store(settings.data_dir, for_restore=for_restore)
+    store = Store(settings.data_dir, settings=settings, for_restore=for_restore)
     if store.not_writer and notice:
         # Another installation writes this database (#70): reads work, every write is refused with this reason.
         typer.echo(f"Cairnmind: {store.not_writer}", err=True)
@@ -667,11 +671,25 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
 
 
 @app.callback(invoke_without_command=True)
-def main(ctx: typer.Context, data_dir: Annotated[Path | None, typer.Option("--data-dir")] = None):
+def main(
+    ctx: typer.Context,
+    data_dir: Annotated[Path | None, typer.Option("--data-dir")] = None,
+    backend: Annotated[str | None, typer.Option("--backend", help="Storage backend: sqlite or arcade.")] = None,
+    db_path: Annotated[str | None, typer.Option("--db-path", help="Override SQLite database path (or :memory:).")] = None,
+):
     from cairnmind.cli_human import color_enabled
     ctx.color = color_enabled(sys.stdout)
     _INVOCATION.clear()
     ctx.obj = Settings.load(data_dir, create=False)
+    if backend is not None:
+        chosen = backend.strip().lower()
+        if chosen not in {"sqlite", "arcade"}:
+            refuse("Storage backend must be 'sqlite' or 'arcade'.")
+        ctx.obj.storage_backend = chosen
+        _INVOCATION["backend"] = chosen
+    if db_path is not None:
+        ctx.obj.db_path = db_path
+        _INVOCATION["db_path"] = db_path
     _INVOCATION["data_dir"] = ctx.obj.data_dir
     _INVOCATION["as_json"] = "--json" in sys.argv[1:]
     if ctx.invoked_subcommand is None:
@@ -758,27 +776,73 @@ def cockpit_stop(ctx: typer.Context, clients: bool = False):
     output(stop_cockpit(ctx.obj, stop_clients=clients))
 
 
+@app.command("try")
+def try_command(
+    non_interactive: Annotated[
+        bool, typer.Option("--non-interactive", help="Run all walkthrough steps without waiting for Enter.")
+    ] = False,
+    as_json: JSON_FLAG = False,
+):
+    """Try Cairnmind in an ephemeral in-memory sandbox without touching your current directory.
+
+    Runs a 3-step proof on the bundled sample project using embedded SQLite in memory: unknown on missing evidence, blocked done after a code edit, and verified done after a fresh check run."""
+    from cairnmind.try_demo import run_try_sandbox
+
+    emit_json = as_json or not _stdout_is_terminal()
+    interactive = (not non_interactive) and (not emit_json) and _interactive_terminal()
+    try:
+        result = run_try_sandbox(
+            interactive=interactive,
+            echo=None if emit_json else typer.echo,
+            prompt=input if interactive else None,
+        )
+    except KeyboardInterrupt:
+        typer.echo("Cairnmind: try sandbox interrupted and cleaned up.", err=True)
+        raise typer.Exit(130) from None
+    if emit_json:
+        output(result)
+
+
 @app.command()
 @initialized
-def init(ctx: typer.Context, as_json: JSON_FLAG = False):
+def init(
+    ctx: typer.Context,
+    backend: Annotated[str | None, typer.Option("--backend", help="Storage backend to initialize: sqlite or arcade.")] = None,
+    as_json: JSON_FLAG = False,
+):
     """Create the store, or open the one a connect-only installation was given.
 
     Downloads no models and changes no client configuration."""
+    from cairnmind.config import resolved_backend
     from cairnmind.database_mode import connect_only, engine_mode
     from cairnmind.engine_docker import choose_engine_mode, start_docker_engine
-    chosen = choose_engine_mode(ctx.obj)  # the first run chooses where the engine runs, and says which (#272)
-    if chosen:
-        typer.echo(f"Cairnmind: {chosen}", err=True)
-    if not connect_only(ctx.obj) and engine_mode(ctx.obj) == "docker":
-        start_docker_engine(ctx.obj, pull=True)  # the first start downloads the image; ensure_engine never does
+
+    if backend is not None:
+        chosen_backend = backend.strip().lower()
+        if chosen_backend not in {"sqlite", "arcade"}:
+            refuse("Storage backend must be 'sqlite' or 'arcade'.")
+        ctx.obj.storage_backend = chosen_backend
+        ctx.obj.save()
+
+    active_backend = resolved_backend(ctx.obj)
+    if active_backend == "arcade":
+        chosen = choose_engine_mode(ctx.obj)  # the first run chooses where the engine runs, and says which (#272)
+        if chosen:
+            typer.echo(f"Cairnmind: {chosen}", err=True)
+        if not connect_only(ctx.obj) and engine_mode(ctx.obj) == "docker":
+            start_docker_engine(ctx.obj, pull=True)  # the first start downloads the image; ensure_engine never does
     store = store_for(ctx.obj)
     from cairnmind.knowledge_mode import choose, enabled
     said = choose(ctx.obj)  # the first run chooses whether the knowledge agent has models, and says which (#274)
     if said:
         typer.echo(f"Cairnmind: {said}", err=True)
-    result = {"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor, then cairnmind project add NAME FOLDER"}
+    result = {
+        "data_dir": str(ctx.obj.data_dir),
+        "storage_backend": active_backend,
+        "next": "cairnmind doctor, then cairnmind project add NAME FOLDER",
+    }
     result["knowledge_agent"] = "enabled" if enabled(ctx.obj) else "disabled"
-    if not connect_only(ctx.obj):
+    if active_backend == "arcade" and not connect_only(ctx.obj):
         result["engine_mode"] = engine_mode(ctx.obj)
     if getattr(store, "not_writer", None):
         result["writer"] = store.writer_state()

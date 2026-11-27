@@ -54,7 +54,6 @@ version = "0.12.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
-    { name = "github-copilot-sdk" },
     { name = "httpx" },
     { name = "jsonschema" },
     { name = "mcp" },
@@ -71,9 +70,18 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "github-copilot-sdk" },
+    { name = "onnxruntime" },
+    { name = "tokenizers" },
+]
+copilot = [
+    { name = "github-copilot-sdk" },
+]
 dev = [
     { name = "coverage" },
     { name = "diff-cover" },
+    { name = "github-copilot-sdk" },
     { name = "httpx2" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -91,11 +99,14 @@ requires-dist = [
     { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.10,<8" },
     { name = "diff-cover", marker = "extra == 'dev'", specifier = ">=9.3.2,<11" },
     { name = "fastapi", specifier = ">=0.115,<1" },
-    { name = "github-copilot-sdk", specifier = "==1.0.29" },
+    { name = "github-copilot-sdk", marker = "extra == 'all'", specifier = "==1.0.29" },
+    { name = "github-copilot-sdk", marker = "extra == 'copilot'", specifier = "==1.0.29" },
+    { name = "github-copilot-sdk", marker = "extra == 'dev'", specifier = "==1.0.29" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2,<3" },
     { name = "jsonschema", specifier = ">=4,<5" },
     { name = "mcp", specifier = ">=1.9,<2" },
+    { name = "onnxruntime", marker = "extra == 'all'", specifier = ">=1.19,<2" },
     { name = "onnxruntime", marker = "extra == 'nli'", specifier = ">=1.19,<2" },
     { name = "pathspec", specifier = ">=0.12,<1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<10" },
@@ -104,6 +115,7 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.6,<4" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11,<1" },
     { name = "textual", specifier = ">=8,<9" },
+    { name = "tokenizers", marker = "extra == 'all'", specifier = ">=0.20,<1" },
     { name = "tokenizers", marker = "extra == 'nli'", specifier = ">=0.20,<1" },
     { name = "tomlkit", specifier = ">=0.13,<1" },
     { name = "tree-sitter", specifier = ">=0.24,<0.26" },
@@ -114,7 +126,7 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.34,<1" },
     { name = "websockets", specifier = ">=15,<16" },
 ]
-provides-extras = ["nli", "dev"]
+provides-extras = ["copilot", "nli", "all", "dev"]
 
 [[package]]
 name = "certifi"

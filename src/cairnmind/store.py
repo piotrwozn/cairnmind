@@ -331,10 +331,22 @@ class Store:
         from .store_readonly import read_consistently
         return read_consistently(self, read, kinds)
 
+    @classmethod
+    def open_memory(cls, data_dir: Path | None = None) -> Store:
+        """Open a fast ephemeral in-memory SQLite store (zero Java/Docker; used by ``cairnmind try``)."""
+        import tempfile
+        root = Path(data_dir).expanduser().resolve() if data_dir is not None else Path(tempfile.gettempdir()) / "cairnmind-memory"
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        settings = Settings(data_dir=root, storage_backend="sqlite", db_path=":memory:")
+        return cls(root, settings=settings, backend="sqlite", db_path=":memory:")
+
+    def close(self) -> None:
+        if hasattr(self, "backend") and self.backend is not None:
+            self.backend.close()
+
     def __init__(self, data_dir: Path, *, settings: Settings | None = None, for_takeover: bool = False,
-                 for_restore: bool = False):
-        from .arcade import ArcadeClient
-        from .engine import ensure_engine
+                 for_restore: bool = False, backend: str | None = None, db_path: Path | str | None = None):
+        from .config import resolved_backend, sqlite_db_path
         self._for_takeover = bool(for_takeover)
         self._for_restore = bool(for_restore)
         self.data_dir = Path(data_dir).expanduser().resolve()
@@ -344,11 +356,23 @@ class Store:
         self.settings = settings if settings is not None else Settings.load(self.data_dir, create=True)
         from .store_writer import installation
         self.installation = installation(self.data_dir)
-        ensure_engine(self.settings)
-        self.client = ArcadeClient(self.settings)
-        from .arcade_backend import ArcadeBackend
-        self.backend = ArcadeBackend(self)
-        self.client.ensure_database()
+        chosen = (backend or "").strip().lower() or resolved_backend(self.settings)
+        if chosen == "sqlite":
+            from .sqlite_backend import SQLiteBackend
+            target_db = db_path if db_path is not None else sqlite_db_path(self.settings)
+            self.backend = SQLiteBackend(target_db, store=self)
+            self.client = self.backend.as_client_proxy()
+            self.backend.ensure_database()
+        elif chosen == "arcade":
+            from .arcade import ArcadeClient
+            from .arcade_backend import ArcadeBackend
+            from .engine import ensure_engine
+            ensure_engine(self.settings)
+            self.client = ArcadeClient(self.settings)
+            self.backend = ArcadeBackend(self)
+            self.client.ensure_database()
+        else:
+            raise ValueError(f"Unsupported storage backend: {chosen!r}")
         self._local = threading.local()
         self._stamp_lock = threading.Lock()
         self._stamp_cursor, self._stamp_base, self._stamp_global, self._stamp_seq = None, 0, 0, {}
@@ -632,6 +656,9 @@ class Store:
 
     def _prepare_schema(self):
         """Create or upgrade the schema; called by init, with the writer lock held, when no other installation writes."""
+        if getattr(self.backend, "backend_kind", "arcade") == "sqlite":
+            self.backend.init_schema()
+            return
         self.client.command("CREATE DOCUMENT TYPE devbrain_meta IF NOT EXISTS")
         meta = {row.get("name"): row.get("value") for row in self.client.query(
             "SELECT FROM devbrain_meta WHERE name IN ['schema_version','lookup_indexes']")}

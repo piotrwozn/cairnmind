@@ -47,7 +47,7 @@ class _FakeEmbedOllama:
         return result
 
 
-@pytest.fixture(params=["arcade"])
+@pytest.fixture(params=["arcade", "sqlite"])
 def contract_store(request, tmp_path: Path):
     """Yield a fresh ``Store`` for each supported ``StorageBackend`` implementation."""
     kind = request.param
@@ -59,6 +59,19 @@ def contract_store(request, tmp_path: Path):
             yield store
         finally:
             store.backend.close()
+        return
+    if kind == "sqlite":
+        data_dir = tmp_path / "sqlite_data"
+        settings = Settings.load(data_dir, create=True)
+        settings.storage_backend = "sqlite"
+        settings.save()
+        store = Store(data_dir, settings=settings, backend="sqlite")
+        assert isinstance(store.backend, StorageBackend)
+        assert store.backend.backend_kind == "sqlite"
+        try:
+            yield store
+        finally:
+            store.close()
         return
     raise AssertionError(f"Unknown backend_kind: {kind}")
 

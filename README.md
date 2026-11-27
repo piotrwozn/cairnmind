@@ -12,8 +12,13 @@
 
 *60-second before & after on [`examples/sample-project`](examples/sample-project/README.md): **0:00–0:20** hallucinated flag vs. `unknown`; **0:20–0:45** stale `done` blocked after a code edit; **0:45–1:00** fresh check run pins the code fingerprint and unlocks verified `done`.*
 
-**Inspect a real project's memory in 30 seconds (Python + `uv` only — zero database or model setup):**
-walk through the [sample project memory](examples/sample-project/README.md) with `cairnmind memory show examples/sample-project/.memory/cairnmind`.
+**Try Cairnmind in 15 seconds (Python + `uv` only — zero external services, zero files written in your directory):**
+
+```bash
+uvx cairnmind try
+```
+
+Works on Linux, macOS, and native Windows using an ephemeral in-memory SQLite store over the bundled [`examples/sample-project`](examples/sample-project/README.md). You can also inspect the snapshot directly with `cairnmind memory show examples/sample-project/.memory/cairnmind`.
 
 *A cairn is the pile of stones a walker leaves to mark the trail for the next one. Cairnmind is the durable, versioned memory one coding agent leaves for the next — across Codex CLI, Claude Code, GitHub Copilot, API agents and MCP clients. Formerly DevBrain.*
 
@@ -30,26 +35,26 @@ The full architecture taxonomy (`origin_evidence`, resume packets, plan versions
 
 ## Quick start
 
-Cairnmind runs on Linux, on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the tested platform) and on macOS with Apple silicon (tested on an M3 Pro with macOS 27; installed with Homebrew). Native Windows is not supported. On Windows, run `wsl --install -d Ubuntu` in PowerShell first, restart when asked, and type everything below in the Ubuntu terminal.
+Cairnmind runs on Linux, macOS (Apple silicon), and native Windows (lightweight CLI/MCP/SQLite mode; the `tmux` terminal workspace and person-proof inspector run on Linux, macOS, and WSL2).
 
-**What you need**
-
-- git and [uv](https://docs.astral.sh/uv/), which brings Python 3.12: on Ubuntu `sudo apt install -y git curl` and `curl -LsSf https://astral.sh/uv/install.sh | sh`, then open a new terminal; on macOS `brew install uv`.
-- One way to run the database engine. **Java 21** is the simplest: `sudo apt install -y openjdk-21-jre-headless` (macOS: `brew install openjdk@21`; the installer prints the one link command macOS still needs). Or **Docker**, running on this machine; the engine then runs in a container (not tested on macOS).
-
-Nothing else: no Ollama, no models, no GPU, no tmux and no coding assistant are needed for the steps below. Each is optional and covered under [Optional integrations](#optional-integrations).
-
-**What gets installed:** the `cairnmind` command; a small local service that starts on demand (`cairnmind stop` stops it); and ArcadeDB (about 86 MB, SHA-256 verified; or a pinned Docker image of about 640 MB). State lives in `~/.local/share/cairnmind`.
+**1. Try the zero-setup sandbox (15 seconds):**
 
 ```bash
-git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
-cd ~/src/cairnmind
-bash scripts/install-wsl.sh                    # 1. installs all of the above and ends with a check: what is required, what is missing, what comes next
+uvx cairnmind try
+```
+
+**2. Use Cairnmind on your own repository (embedded SQLite — zero Java/Docker required):**
+
+```bash
+uv tool install cairnmind
+cairnmind init --backend sqlite                # 1. initializes local SQLite WAL + FTS5 store in data_dir/state.db
 cairnmind project add my-app ~/src/my-app      # 2. registers your project's folder and indexes its files
 cairnmind remember my-app "Accounts lock after five failed logins."   # 3. stores a first finding, as proposed
 cairnmind brief my-app                         # 4. where work stands: your finding is listed, marked as unconfirmed
 cairnmind ask my-app "When do accounts lock?"  # 5. finds it again; passages of your files that use the question's words are searched too
 ```
+
+**Need large-repo / multi-agent concurrency?** Scale losslessly to ArcadeDB (Java 21 or Docker) at any time with `cairnmind migrate --to server` (or install with the full ArcadeDB script `bash scripts/install-wsl.sh`). Nothing else is required upfront: Ollama, `tmux`, NLI (`cairnmind[nli]`), and GitHub Copilot (`cairnmind[copilot]`) are all optional and covered under [Optional integrations](#optional-integrations).
 
 In a terminal, commands explain what happened and how to fix blocks in plain language; with `--json` (or in a pipe/script), `stdout` emits pure JSON while hints and warnings go strictly to `stderr` (`NO_COLOR=1` disables ANSI styling). `cairnmind doctor` repeats the installer's check at any time and exits 1 when something required is missing.
 

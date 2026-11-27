@@ -171,7 +171,40 @@ def read_consistently(store, read, kinds, attempts: int = READ_ATTEMPTS):
 
 def open_readonly(store_class, settings: Settings):
     """A ``store_class`` instance that reads the existing store, or ``StoreNotReady`` saying what to run."""
+    from .config import resolved_backend, sqlite_db_path
     data_dir = Path(settings.data_dir).expanduser().resolve()
+    if resolved_backend(settings) == "sqlite":
+        db_target = sqlite_db_path(settings)
+        if str(db_target) != ":memory:" and not Path(db_target).is_file():
+            raise StoreNotReady(f"The Cairnmind SQLite database does not exist yet at {db_target}; create it with `cairnmind init --backend sqlite`.")
+        from .sqlite_backend import SQLiteBackend
+        from .store import SCHEMA_VERSION
+        store = store_class.__new__(store_class)
+        backend = SQLiteBackend(db_target, read_only=True, store=store)
+        try:
+            collections = backend.list_collections()
+            if "devbrain_meta" not in collections:
+                raise StoreNotReady("The Cairnmind database has no schema yet; create it with `cairnmind init --backend sqlite`.")
+            rows = backend.query("SELECT value FROM devbrain_meta WHERE name='schema_version'")
+            version = rows[0].get("value") if rows else None
+            if version != SCHEMA_VERSION:
+                raise StoreNotReady(
+                    f"Database schema version is incompatible: the database has version {version!r} "
+                    f"and this release reads version {SCHEMA_VERSION}."
+                )
+            if "journal_state" not in collections or not backend.query("SELECT id FROM journal_state WHERE id='current'"):
+                raise StoreNotReady("The Cairnmind database has no journal state.")
+        except BaseException:
+            backend.close()
+            raise
+        store.data_dir, store.settings = data_dir, settings
+        store.backend = backend
+        store.client = backend.as_client_proxy()
+        store.read_only = True
+        store._local = threading.local()
+        store._stamp_lock = threading.Lock()
+        store._stamp_cursor, store._stamp_base, store._stamp_global, store._stamp_seq = None, 0, 0, {}
+        return store
     if not (data_dir / "config.json").is_file():
         raise StoreNotReady(f"There is no Cairnmind configuration in {data_dir}; run `cairnmind init` first.")
     client = ArcadeClient(settings)
