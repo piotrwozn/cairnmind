@@ -455,7 +455,12 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "no_schema_template: every database of the test is built from nothing")
     config.addinivalue_line("markers", "exclusive: under xdist, runs while no other test of the run runs")
     # A worker's base directory is its own (<run root>/popen-gwN); a serial run's is the run root.
-    copy = config._tmp_path_factory.getbasetemp() / "mcp-fixture" / MCP_FIXTURE_SOURCE.name
+    base = config._tmp_path_factory.getbasetemp()
+    if is_xdist_controller(config):
+        # On Windows, .venv\Scripts\python.exe is a uv launcher shim, so a worker's os.getppid() is its own
+        # execnet shim (`python.exe -u -c ...`), not the pytest controller. Record the real controller PID here.
+        (base / "xdist-controller.json").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    copy = base / "mcp-fixture" / MCP_FIXTURE_SOURCE.name
     copy.parent.mkdir(exist_ok=True)
     shutil.copyfile(MCP_FIXTURE_SOURCE, copy)
     MCP_FIXTURE = str(copy)
@@ -535,15 +540,17 @@ def _pytest_alive(pid: int) -> bool:
     return process_identity.alive(pid) if argv is None else any("pytest" in argument for argument in argv)
 
 
-def reap_orphan_engines(runs_root: Path) -> None:
+def reap_orphan_engines(runs_root: Path, *, current_run: Path | None = None) -> None:
     """Stop test engines whose owning pytest process is gone (killed, not torn down).
 
     Only engines this conftest started and recorded in owner.json are touched, and only when that
     process no longer runs pytest; stop_engine itself checks the process belongs to that directory.
     """
     for owner in runs_root.glob("pytest-*/arcade-engine*/owner.json"):
+        if current_run is not None and owner.parent.parent == current_run:
+            continue
         try:
-            pid = int(json.loads(owner.read_text())["pid"])
+            pid = int(json.loads(owner.read_text(encoding="utf-8"))["pid"])
         except (OSError, ValueError, KeyError, TypeError):
             continue
         if _pytest_alive(pid) or not (owner.parent / "arcade" / "process.json").exists():
@@ -553,7 +560,7 @@ def reap_orphan_engines(runs_root: Path) -> None:
 
 
 def record_owner(root: Path, pid: int) -> None:
-    (root / "owner.json").write_text(json.dumps({"pid": pid}))
+    (root / "owner.json").write_text(json.dumps({"pid": pid}), encoding="utf-8")
 
 
 def prepare_engine(root: Path, owner_pid: int) -> Settings:
@@ -971,12 +978,17 @@ def arcade_test_engine(tmp_path_factory, request):
         if worker:
             # A worker's base directory is <run root>/popen-gwN; the run root is shared by all workers.
             run_root = run_root.parent
-        reap_orphan_engines(run_root.parent)
+        reap_orphan_engines(run_root.parent, current_run=run_root)
         if worker:
             root = run_root / SHARED_ENGINE
             root.mkdir(exist_ok=True)
+            controller_file = run_root / "xdist-controller.json"
+            try:
+                owner_pid = int(json.loads(controller_file.read_text(encoding="utf-8"))["pid"])
+            except (OSError, ValueError, KeyError, TypeError):
+                owner_pid = os.getppid()
             with file_lock(run_root / (SHARED_ENGINE + ".lock")):
-                settings = prepare_engine(root, os.getppid())
+                settings = prepare_engine(root, owner_pid)
         else:
             settings = prepare_engine(tmp_path_factory.mktemp("arcade-engine"), os.getpid())
     if not server:
