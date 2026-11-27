@@ -206,6 +206,20 @@ class MemorySnapshotBody(MemoryScopeBody):
     packet_id: str | None = None
 
 
+class MemoryPreviewBody(MemoryScopeBody):
+    profile: str = Field(default="team")
+    include_transcripts: bool = Field(default=False, strict=True)
+    skip_uncommitted: bool = Field(default=False, strict=True)
+    redact: bool = Field(default=False, strict=True)
+
+
+class MemorySnapshotExportBody(MemorySnapshotBody):
+    profile: str = Field(default="team")
+    include_transcripts: bool = Field(default=False, strict=True)
+    skip_uncommitted: bool = Field(default=False, strict=True)
+    redact: bool = Field(default=False, strict=True)
+
+
 class BackgroundInferenceBody(MemorySnapshotBody):
     model_config = {"extra": "forbid"}
 
@@ -843,17 +857,25 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         return require(), require
 
     @app.post("/memory/preview", dependencies=auth)
-    async def memory_preview(body: MemoryScopeBody):
+    async def memory_preview(body: MemoryPreviewBody):
         pid = project(body.project)["id"]
         scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
-        return await asyncio.to_thread(memory.preview, pid, scope)
+        return await asyncio.to_thread(
+            memory.preview, pid, scope,
+            profile=body.profile, include_transcripts=body.include_transcripts,
+            skip_uncommitted=body.skip_uncommitted, redact=body.redact,
+        )
 
     @app.post("/memory/snapshot", dependencies=auth)
-    async def memory_snapshot(body: MemorySnapshotBody):
+    async def memory_snapshot(body: MemorySnapshotExportBody):
         pid = project(body.project)["id"]
         scope, authorize = await asyncio.to_thread(
             memory_write_authorization, pid, body.worktree, body.session_id, body.packet_id)
-        return await asyncio.to_thread(memory.snapshot, pid, scope, authorize=authorize)
+        return await asyncio.to_thread(
+            memory.snapshot, pid, scope, authorize=authorize,
+            profile=body.profile, include_transcripts=body.include_transcripts,
+            skip_uncommitted=body.skip_uncommitted, redact=body.redact,
+        )
 
     @app.post("/memory/inspect", dependencies=auth)
     async def memory_inspect(body: MemoryInspectBody):

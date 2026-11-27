@@ -2232,11 +2232,36 @@ SNAPSHOT_WAIT_SECONDS = 1800
 
 @memory_app.command("snapshot")
 @initialized
-def memory_snapshot(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None, preview: bool = False):
-    """Save the project's full memory; --preview shows the scope without writing a snapshot."""
-    payload = {"project": project, "worktree": str(worktree.expanduser().resolve()) if worktree else None}
+def memory_snapshot(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None, preview: bool = False,
+                    profile: Annotated[str, typer.Option(
+                        "--profile", help="Snapshot profile: team (default, no transcripts, quote-by-reference) or full.")] = "team",
+                    include_transcripts: Annotated[bool, typer.Option(
+                        "--include-transcripts", help="Required with --profile full to export raw transcripts and full source contents.")] = False,
+                    skip_uncommitted: Annotated[bool, typer.Option(
+                        "--skip-uncommitted", help="In team profile, skip uncommitted or untracked file evidence instead of blocking.")] = False,
+                    redact: Annotated[bool, typer.Option(
+                        "--redact", help="Mask detected secrets with [REDACTED:...] markers instead of aborting export.")] = False):
+    """Save the project's portable memory snapshot; defaults to --profile team (fail-closed privacy).
+
+    Use --preview to inspect scope and size without writing. Use --profile full --include-transcripts only for private local backups that will not be pushed to a remote Git repository.
+    """
+    from cairnmind.snapshot_privacy import PROFILE_TEAM, validate_profile_options
+    try:
+        validate_profile_options(profile, include_transcripts)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    payload: dict[str, object] = {"project": project, "worktree": str(worktree.expanduser().resolve()) if worktree else None}
+    if profile != PROFILE_TEAM:
+        payload["profile"] = profile
+    if include_transcripts:
+        payload["include_transcripts"] = True
+    if skip_uncommitted:
+        payload["skip_uncommitted"] = True
+    if redact:
+        payload["redact"] = True
     if preview:
-        output(request(ctx.obj, "POST", "/memory/preview", json=payload))
+        result = request(ctx.obj, "POST", "/memory/preview", json=payload)
+        output(result)
         return
     try:
         # A large project writes tens of thousands of objects: far longer than an ordinary request (#158).
@@ -2247,6 +2272,16 @@ def memory_snapshot(ctx: typer.Context, project: ProjectArg, worktree: Path | No
             f"No answer within {SNAPSHOT_WAIT_SECONDS // 60} minutes. The snapshot is still being written by "
             f"the service; leaving did not stop it. It is done when `cairnmind memory status {project}` shows "
             "the new snapshot; until then another snapshot waits for this one.") from None
+    if isinstance(result, dict):
+        if result.get("contains_transcripts"):
+            typer.echo(
+                "Warning: this snapshot includes raw transcripts (contains_transcripts=true). "
+                "Do not commit or push it to a remote Git repository.",
+                err=True,
+            )
+        if result.get("redacted") and result.get("redaction_counts"):
+            summary = ", ".join(f"{tag}={count}" for tag, count in sorted(result["redaction_counts"].items()))
+            typer.echo(f"Redacted secrets before writing snapshot: {summary}", err=True)
     output(result)
 
 
@@ -2418,14 +2453,17 @@ def install(ctx: typer.Context, project: ProjectArg, as_json: JSON_FLAG = False,
             recorder: Annotated[bool, typer.Option("--recorder", help="Turn the Claude Code cairnmind-recorder "
                                                    "subagent on again for the project and write it.")] = False,
             no_recorder: Annotated[bool, typer.Option("--no-recorder", help="Remove the cairnmind-recorder subagent "
-                                                      "file Cairnmind wrote and keep it off for the project.")] = False):
+                                                      "file Cairnmind wrote and keep it off for the project.")] = False,
+            pre_commit: Annotated[bool, typer.Option("--pre-commit", help="Add the cairnmind-memory-audit hook to "
+                                                     ".pre-commit-config.yaml in the project root.")] = False):
     """Add the project's MCP server, hooks and instructions, keeping the existing configuration."""
     from cairnmind.integrations import install_integrations
     if recorder and no_recorder:
         raise typer.BadParameter("Choose one of --recorder and --no-recorder.")
     store = store_for(ctx.obj)
     selected = store.resolve_project(project)
-    result = install_integrations(ctx.obj, selected, recorder=True if recorder else False if no_recorder else None)
+    result = install_integrations(ctx.obj, selected, recorder=True if recorder else False if no_recorder else None,
+                                  pre_commit=pre_commit)
     import shlex
     from cairnmind import first_start
     from cairnmind.terminal_safe import safe_text

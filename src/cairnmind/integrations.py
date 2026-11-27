@@ -661,8 +661,41 @@ def _merge_instructions(path: Path, project: dict[str, Any], settings: Settings)
     return _write_changed(path, updated.lstrip("\n").rstrip() + "\n")
 
 
+PRE_COMMIT_HOOK_ID = "cairnmind-memory-audit"
+_PRE_COMMIT_ENTRY = """  - repo: local
+    hooks:
+      - id: cairnmind-memory-audit
+        name: Cairnmind memory audit
+        entry: cairnmind memory audit
+        language: system
+        pass_filenames: false
+        files: (^|/)\\.memory/(cairnmind|cairnmind-published|devbrain)/
+"""
+
+
+def install_pre_commit_hook(root: Path) -> bool:
+    """Add `cairnmind-memory-audit` to `<root>/.pre-commit-config.yaml` idempotently."""
+    path = root / ".pre-commit-config.yaml"
+    if path.is_symlink():
+        raise ValueError(f"{path} must not be a symbolic link")
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+        if re.search(rf"^\s*-?\s*id:\s*{re.escape(PRE_COMMIT_HOOK_ID)}\s*$", text, re.M):
+            return False
+        if re.search(r"^\s*repos:\s*$", text, re.M):
+            updated = text.rstrip("\n") + "\n" + _PRE_COMMIT_ENTRY
+        elif not text.strip():
+            updated = "repos:\n" + _PRE_COMMIT_ENTRY
+        else:
+            updated = text.rstrip("\n") + "\nrepos:\n" + _PRE_COMMIT_ENTRY
+    else:
+        updated = "repos:\n" + _PRE_COMMIT_ENTRY
+    return _write_changed(path, updated)
+
+
 def install_integrations(settings: Settings, project: dict[str, Any],
-                         clients: tuple[str, ...] = CLIENTS, recorder: bool | None = None) -> dict[str, Any]:
+                         clients: tuple[str, ...] = CLIENTS, recorder: bool | None = None,
+                         pre_commit: bool = False) -> dict[str, Any]:
     """Merge only project-local files; report unsupported capabilities explicitly.
 
     `recorder` False or True turns the Claude Code recorder subagent off or on for the project and is remembered;
@@ -675,6 +708,14 @@ def install_integrations(settings: Settings, project: dict[str, Any],
         remember(settings, project, recorder)
     told = False  # a changed choice is always answered by one recorder sentence
     results: dict[str, Any] = {"project": project["id"], "clients": {}, "changed": [], "warnings": []}
+    if pre_commit:
+        try:
+            if install_pre_commit_hook(root):
+                results["changed"].append(str(root / ".pre-commit-config.yaml"))
+            results["pre_commit_configured"] = True
+        except (ValueError, OSError) as exc:
+            results["pre_commit_configured"] = False
+            results["warnings"].append(str(exc))
     for client in clients:
         if client not in CLIENTS:
             raise ValueError(f"Unsupported client: {client}")

@@ -162,7 +162,9 @@ async def _evaluate(stores: list[Store], roots: list[Path], settings: list[Setti
     from .memory import MemoryManager
 
     report["stage"] = "snapshot_export"
-    exported = MemoryManager(source_store).snapshot(project["id"], worktree=source_root)
+    exported = MemoryManager(source_store).snapshot(
+        project["id"], worktree=source_root, profile="full", include_transcripts=True,
+    )
     report["stage"] = "snapshot_import"
     imported = MemoryManager(destination).import_snapshot(Path(exported["path"]), destination_root)
     report["stage"] = "portable_integrity"

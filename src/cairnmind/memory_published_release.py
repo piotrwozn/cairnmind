@@ -86,7 +86,7 @@ def checkout_rules(directory, config=None) -> Rules:
         if text is None:
             raise SecretRulesError(f"{config} is not a file")
         return load_rules(text)
-    if directory.name.casefold() == "cairnmind-published" and directory.parent.name.casefold() == ".memory":
+    if directory.name.casefold() in {"cairnmind-published", "cairnmind", "devbrain"} and directory.parent.name.casefold() == ".memory":
         return load_rules(config_text(directory.parent.parent))
     return Rules()
 
@@ -101,7 +101,7 @@ def import_rules(directory, settings, *, config=None) -> Rules:
         base = load_rules(config) if directory is None else checkout_rules(directory)
     except SecretRulesError as exc:
         raise SecretsRefused(f"Import refused: {CONFIG}: {exc}") from None
-    return Rules(registered_secrets(settings), base.personal, base.patterns)
+    return base.with_registered(registered_secrets(settings))
 
 
 def commit_config_text(root, commit):

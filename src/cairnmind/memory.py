@@ -296,7 +296,21 @@ def _validate(payload, project_id, active_plan_id=None, *, graph=True):
 
     for source in maps["sources"].values():
         content = source.get("content")
-        if (not isinstance(content, str) or not isinstance(source.get("metadata"), dict)
+        evidence_type = source.get("evidence_type")
+        if evidence_type in {"git_ref", "working_tree_ref", "transcript_ref_omitted"}:
+            if (not isinstance(content, str) or not isinstance(source.get("metadata"), dict)
+                    or type(source.get("is_current")) is not bool
+                    or not _SHA.fullmatch(str(source.get("content_sha256") or ""))
+                    or source.get("sha256") != source.get("content_sha256")):
+                raise ValueError("Corrupt memory source snapshot")
+            if evidence_type == "git_ref":
+                _text(source.get("file_path"), "source file_path")
+                if not isinstance(source.get("commit_sha"), str) or not re.fullmatch(r"[0-9a-f]{40,64}", source["commit_sha"]):
+                    raise ValueError("Corrupt memory source snapshot")
+                if (type(source.get("line_start")) is not int or type(source.get("line_end")) is not int
+                        or source["line_start"] < 1 or source["line_end"] < source["line_start"]):
+                    raise ValueError("Corrupt memory source snapshot")
+        elif (not isinstance(content, str) or not isinstance(source.get("metadata"), dict)
                 or type(source.get("is_current")) is not bool
                 or hashlib.sha256(content.encode()).hexdigest() != source.get("sha256")):
             raise ValueError("Corrupt memory source snapshot")
@@ -540,7 +554,7 @@ def _summary(path, manifest, status="valid"):
     return {"status": status, "path": str(path), "manifest_path": str(path), "format_version": VERSION,
             **{key: deepcopy(manifest.get(key)) for key in
                ("project", "snapshot_id", "parent_id", "state_hash", "origin_root", "active_plan_id", "counts",
-                "created_at", "processing", "completeness")}}
+                "created_at", "processing", "completeness", "profile", "contains_transcripts", "redacted")}}
 
 
 def inspect_snapshot(path):
@@ -675,8 +689,21 @@ class MemoryManager:
                     "pending_analysis": processing["extract"]["pending"] + processing["extract"]["running"],
                     "failed_analysis": processing["extract"]["failed"]}}, payload
 
-    def preview(self, project_id, worktree=None):
+    def preview(self, project_id, worktree=None, *, profile="team", include_transcripts=False,
+                skip_uncommitted=False, redact=False):
+        from .snapshot_privacy import apply_snapshot_privacy
         captured, payload = self._capture(project_id, worktree)
+        privacy = apply_snapshot_privacy(
+            payload, Path(captured["origin_root"]), profile=profile,
+            include_transcripts=include_transcripts, skip_uncommitted=skip_uncommitted,
+            redact=redact, settings=self.store.settings,
+        )
+        captured["counts"] = {table: len(payload[table]) for table in TABLES}
+        captured["state_hash"] = _state_hash(payload)
+        captured["profile"] = privacy["profile"]
+        captured["contains_transcripts"] = privacy["contains_transcripts"]
+        captured["redacted"] = privacy["redacted"]
+        _validate(payload, project_id, captured.get("active_plan_id"))
         objects = _descriptors(payload)
         # The manifest as snapshot() would write it, with the parent and ancestry of the tip (an earlier file
         # without a receipt makes snapshot() refuse, so the tip is the only parent that matters).
@@ -695,7 +722,8 @@ class MemoryManager:
         return {"status": "preview", **captured, "path": str(self._path(Path(captured["origin_root"]))),
                 "package_size": size, "worktree": captured["origin_root"],
                 "bytes": sum(d["bytes"] for rows in objects.values() for d in rows),
-                "contains_raw_sources": bool(payload["sources"]), "model_calls": 0}
+                "contains_raw_sources": bool(payload["sources"]), "model_calls": 0,
+                **({"redaction_counts": privacy["redaction_counts"]} if privacy["redaction_counts"] else {})}
 
     def _known_manifest(self, project_id, path):
         return one_row(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project AND path=:path ORDER BY created_at DESC,id DESC LIMIT 1",
@@ -713,13 +741,27 @@ class MemoryManager:
         if not tx.query("SELECT id FROM memory_snapshots WHERE id=:id", {"id": row["id"]}):
             insert_document(tx, "memory_snapshots", row)
 
-    def snapshot(self, project_id, worktree=None, *, authorize=None):
+    def snapshot(self, project_id, worktree=None, *, authorize=None, profile="team",
+                 include_transcripts=False, skip_uncommitted=False, redact=False):
+        from .snapshot_privacy import apply_snapshot_privacy, validate_profile_options
+        validate_profile_options(profile, include_transcripts)
         with self._publisher_lock(project_id, worktree):
             captured, payload = self._capture(project_id, worktree, authorize=authorize)
             root, path = Path(captured["origin_root"]), self._path(Path(captured["origin_root"]))
             if not root.is_dir() or any(p.is_symlink() for p in
                     (root / ".memory", path.parent, path.parent / "objects", path.parent / "manifests")):
                 raise ValueError("Memory publication needs a real project directory")
+            privacy = apply_snapshot_privacy(
+                payload, root, profile=profile,
+                include_transcripts=include_transcripts, skip_uncommitted=skip_uncommitted,
+                redact=redact, settings=self.store.settings,
+            )
+            captured["counts"] = {table: len(payload[table]) for table in TABLES}
+            captured["state_hash"] = _state_hash(payload)
+            captured["profile"] = privacy["profile"]
+            captured["contains_transcripts"] = privacy["contains_transcripts"]
+            captured["redacted"] = privacy["redacted"]
+            _validate(payload, project_id, captured.get("active_plan_id"))
             previous, previous_raw = None, None
             known = self._known_manifest(project_id, path)
             if path.exists() or path.is_symlink():
@@ -786,7 +828,14 @@ class MemoryManager:
             with self.store.transaction() as tx:
                 self._receipt(tx, project_id, path, raw, manifest, "local")
             self._retain(path, manifest)
-            return _summary(path, manifest, "created")
+            summary = _summary(path, manifest, "created")
+            if privacy["redaction_counts"]:
+                summary["redaction_counts"] = privacy["redaction_counts"]
+            if privacy["git_refs"]:
+                summary["git_refs"] = privacy["git_refs"]
+            if privacy["skipped_uncommitted"]:
+                summary["skipped_uncommitted"] = privacy["skipped_uncommitted"]
+            return summary
 
     def _retain(self, path, latest):
         wanted = [latest["snapshot_id"], *latest.get("ancestors", [])]
@@ -807,6 +856,10 @@ class MemoryManager:
 
     def import_snapshot(self, path, root, name=None, dry_run=False, *, expected_snapshot_id=None, expected_project_id=None,
                         authorize=None, replace_confirmed=False, expected_replaced=None):
+        from .snapshot_privacy import (
+            PROFILE_TEAM, REF_EVIDENCE_TYPES, TRANSCRIPT_SOURCE_KINDS, _referenced_source_ids,
+            resolve_snapshot_refs,
+        )
         path, raw, manifest, payload = _load_snapshot(path)
         project_id, snapshot_id = manifest["project"]["id"], manifest["snapshot_id"]
         if ((expected_snapshot_id is not None and expected_snapshot_id != snapshot_id)
@@ -816,10 +869,12 @@ class MemoryManager:
         if not root.is_dir():
             raise ValueError("Memory import target must be an existing directory")
         self.store.require_safe_project_root(root)
+        stale_refs = resolve_snapshot_refs(payload, root)
         chosen_name = manifest["project"]["name"] if name is None else _text(name, "project name").strip()
         result = {"status": "dry_run" if dry_run else "imported", "project": {"id": project_id, "name": chosen_name, "root": str(root)},
                   "snapshot_id": snapshot_id, "counts": manifest["counts"], "active_plan_id": manifest.get("active_plan_id"),
-                  "verification": "historical", "model_calls": 0}
+                  "verification": "historical", "model_calls": 0,
+                  **({"stale_refs": stale_refs} if stale_refs else {})}
         if hasattr(authorize, "refresh"):
             authorize.refresh()  # hashes the worktree: never inside the transaction below (#255)
         with self.store.transaction() as tx:
@@ -848,7 +903,22 @@ class MemoryManager:
                                  {"project": project_id}, False)
                 baseline = published or prior
                 exact_current = existing_payload == payload
-                unchanged = bool(baseline) and (captured["state_hash"] == baseline["state_hash"] or exact_current)
+                team_state_hash = captured["state_hash"]
+                if manifest.get("profile") == PROFILE_TEAM:
+                    referenced = _referenced_source_ids(existing_payload)
+                    team_view = {
+                        **existing_payload,
+                        "sources": [
+                            s for s in existing_payload["sources"]
+                            if not (s.get("kind") in TRANSCRIPT_SOURCE_KINDS and s["id"] not in referenced)
+                        ],
+                    }
+                    team_state_hash = _state_hash(team_view)
+                unchanged = bool(baseline) and (
+                    captured["state_hash"] == baseline["state_hash"]
+                    or team_state_hash == baseline["state_hash"]
+                    or exact_current
+                )
                 if baseline and baseline["snapshot_id"] == snapshot_id and unchanged:
                     # This store's own latest snapshot (#239): a manifest never lists itself among its ancestors.
                     if not roots:
@@ -898,8 +968,12 @@ class MemoryManager:
                     raise MemoryConflict("Incoming memory regresses an existing knowledge head")
             for row in payload["sources"]:
                 old = existing["sources"].get(row["id"])
-                if old and any(old.get(k) != row.get(k) for k in ("project_id", "uri", "content", "sha256")):
-                    raise MemoryConflict("An immutable memory source conflicts locally")
+                if old:
+                    if row.get("evidence_type") in REF_EVIDENCE_TYPES:
+                        if any(old.get(k) != row.get(k) for k in ("project_id", "uri", "sha256")):
+                            raise MemoryConflict("An immutable memory source conflicts locally")
+                    elif any(old.get(k) != row.get(k) for k in ("project_id", "uri", "content", "sha256")):
+                        raise MemoryConflict("An immutable memory source conflicts locally")
             if current and any(r["id"] not in {i["id"] for i in payload["records"]} for r in existing_payload["records"]):
                 raise MemoryConflict("Incoming memory omits existing knowledge records")
             origins = sorted(set([manifest["origin_root"], *manifest.get("root_aliases", [])]))
@@ -1005,6 +1079,8 @@ class MemoryManager:
                             continue
                         foreign_file = row["kind"] in {"code", "document", "file"} and isinstance(row["metadata"].get("path"), str)
                         current_source = row["is_current"] and not foreign_file
+                        for ref_field in ("evidence_type", "file_path", "commit_sha", "line_start", "line_end", "content_sha256"):
+                            row.pop(ref_field, None)
                         row.update(is_current=current_source,
                                    current_key=json_text([project_id, row["uri"]]) if current_source else None)
                     elif table == "records":
