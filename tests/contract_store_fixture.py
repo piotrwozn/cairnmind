@@ -342,6 +342,24 @@ def _normalize_doctor(normalized: dict[str, Any]) -> None:
         for k in ("host", "machine"):
             if k in normalized["store_writer"]:
                 normalized["store_writer"][k] = "<HOST>"
+    if isinstance(normalized.get("mcp_presets"), list):
+        # Detected presets depend on what editors are configured in the runner's $HOME.
+        normalized["mcp_presets"] = []
+    if isinstance(normalized.get("storage_preflight"), dict):
+        sp = normalized["storage_preflight"]
+        sp["in_docker"] = False
+        sp["wsl"] = False
+        sp["wsl_windows_mount"] = False
+        sp["network_fs"] = None
+        sp["uid_mismatch"] = False
+        sp["writable"] = True
+        sp["warnings"] = []
+        if isinstance(sp.get("path_checks"), list):
+            for chk in sp["path_checks"]:
+                if isinstance(chk, dict):
+                    chk["writable"] = True
+                    if chk.get("name") == "data_dir":
+                        chk["path"] = "<DATA_DIR>"
 
 
 def normalize_contract_payload(value: Any, env: dict[str, Any], *, command_name: str = "") -> Any:
