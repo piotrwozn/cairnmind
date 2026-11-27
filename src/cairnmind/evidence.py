@@ -56,6 +56,8 @@ def _is_audit(source):
              and _metadata(source).get("origin") == "local_user_review")
             # The note of a command line confirmation, or of an evaluation's seed (#177): the same kind of note.
             or _metadata(source).get("origin") in ("cli_person", "evaluation_seed")
+            or (str(source.get("uri", "")).startswith("heal://")
+                and _metadata(source).get("origin") == "quote_self_healing")
             or (source.get("kind") == "published" and _metadata(source).get("origin") == "publication_review"))
 
 
@@ -386,15 +388,26 @@ def evidence_states(store, project_id, records, *, quotes=True):
             verified = [replacement for original, replacement in replaced if quote in body(original)]
             if verified:
                 survives = any(quote in body(replacement) for replacement in verified)
+        own = _metadata(record)
+        quote_ref = own.get("quote_ref") if isinstance(own.get("quote_ref"), dict) else None
+        ref_failure = quote_ref.get("status") if (quote_ref and quote_ref.get("status") in (
+            "stale_ref", "validation_failed", "ambiguous_context")) else None
+        if ref_failure and state != "degraded" and counts["current"] == 0:
+            state = ref_failure
+            if ref_failure in ("stale_ref", "validation_failed"):
+                survives = False
         entry = {"evidence_state": state, "quote_survives": survives,
                  "sources_current": counts["current"], "sources_replaced": counts["replaced"],
                  "sources_gone": counts["gone"], "sources_unverified": counts["pending"]}
         if extra:
             entry.update(extra)
+        if ref_failure and state == ref_failure:
+            entry["quote_ref_status"] = ref_failure
+            entry["ref_status"] = quote_ref.get("ref_status", ref_failure)
+            entry["requires_intervention"] = bool(quote_ref.get("requires_intervention", True))
         result[record["id"]] = entry
         if state == "unverified" and published:
             result[record["id"]]["unverified_by"] = "published_elsewhere"
-        own = _metadata(record)
         if state == "degraded" and (third_party_origin(own) if degraded_origin(own) else external == third_party):
             # Only for this cause, so every other result stays exactly what it was.
             result[record["id"]]["degraded_by"] = "third_party_tool"
@@ -438,10 +451,11 @@ def unanchored(store, project_id, records, *, quotes=True):
     """Records whose evidence does not stand, each with its state; orphaned first."""
     records = [record for record in records if record.get("status") != "superseded"]
     states = evidence_states(store, project_id, records, quotes=quotes)
-    order = {"orphaned": 0, "evidence_replaced": 1, "unverified": 2, "degraded": 3}
+    order = {"orphaned": 0, "stale_ref": 1, "validation_failed": 2, "ambiguous_context": 3,
+             "evidence_replaced": 4, "unverified": 5, "degraded": 6}
     found = [{"record": record, **states[record["id"]]} for record in records
              if states[record["id"]]["evidence_state"] != "anchored"]
-    found.sort(key=lambda row: (order[row["evidence_state"]], row["record"]["kind"], row["record"]["id"]))
+    found.sort(key=lambda row: (order.get(row["evidence_state"], 99), row["record"]["kind"], row["record"]["id"]))
     return found
 
 
@@ -495,6 +509,15 @@ def orphans_report(store, project, root, records):
     if groups["orphaned"]:
         lines += ["", f"Orphaned: no supporting source has a current version ({len(groups['orphaned'])})"]
         lines += [entry(row) + symbol_note(row) for row in groups["orphaned"]]
+    for heal_state, heading in (
+        ("stale_ref", "Stale quote references: quoted content changed and checksum failed"),
+        ("validation_failed", "Quote validation failed: partial line modification rejected; intervention required"),
+        ("ambiguous_context", "Ambiguous quote context: multiple identical blocks found without unique context"),
+    ):
+        matched = [row for row in rows if row["evidence_state"] == heal_state]
+        if matched:
+            lines += ["", f"{heading} ({len(matched)})"]
+            lines += [entry(row) for row in matched]
     if groups["evidence_replaced"]:
         lines += ["", f"No supporting version is current and a supporting file changed ({len(groups['evidence_replaced'])})"]
         lines += [entry(row) + f"; {_QUOTE[row['quote_survives']]}" + symbol_note(row)

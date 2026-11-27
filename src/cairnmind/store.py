@@ -238,7 +238,7 @@ _PROMPT_SHA = re.compile(r"[0-9a-f]{16}")
 # person's act it checked itself, an importer sets it for what a package brings, and no client can.
 DERIVED_RECORD_METADATA = ("evidence_earliest", "evidence_latest", "evidence_basis",
                            "supersede_warning", "supersede_replaced_evidence_latest", EXTRACTION_MARK,
-                           EXTRACTOR_STAMP, *ORIGIN_METADATA, "publication", "confirmation",
+                           EXTRACTOR_STAMP, *ORIGIN_METADATA, "publication", "confirmation", "quote_ref",
                            "symbol_anchor", "comment_anchor", "adr_anchor", "trailer_anchor")
 
 
@@ -1364,7 +1364,7 @@ class Store:
     def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False,
                   replace_origin=False, replace_metadata=False, mark_only_changes=False, extracted_from=None,
                   extractor=None, slot=False, new_id=None, symbol_anchor=None, comment_anchor=None,
-                  adr_anchor=None, trailer_anchor=None):
+                  adr_anchor=None, trailer_anchor=None, quote_ref=None):
         """Write one record version.
 
         new_id: the ID of a new record, chosen by a person's act whose audit names it before the write (#222).
@@ -1431,6 +1431,10 @@ class Store:
             updates = {key: value for key, value in updates.items() if key not in CONFLICT_REVIEW_METADATA
                        and not (old and key == "possible_conflicts")}
         metadata.update({key: value for key, value in updates.items() if key not in DERIVED_RECORD_METADATA})
+        if quote_ref is not None:
+            metadata["quote_ref"] = quote_ref
+        elif old and "evidence" in updates and updates["evidence"] != (old.get("metadata") or {}).get("evidence"):
+            metadata.pop("quote_ref", None)
         if "depends_on" in metadata and metadata["depends_on"] is None:
             # A model's metadata may say depends_on: null; that is no dependencies, not a failed write (#238).
             del metadata["depends_on"]
@@ -1597,7 +1601,11 @@ class Store:
             from .verification import validate_completion
             validate_completion(self, tx, project_id, {**result, "_completion_worktree": record.get("worktree")})
         if old:
-            update_document(tx, "records", result, "id=:id AND version=:version", {"id": record_id, "version": old["version"]})
+            updated = update_document(tx, "records", result, "id=:id AND version=:version",
+                                      {"id": record_id, "version": old["version"]})
+            if (isinstance(updated, list) and updated and isinstance(updated[0], dict)
+                    and type(updated[0].get("count")) is int and updated[0]["count"] != 1):
+                raise ValueError("Record version conflict; read the current version and retry")
         else:
             insert_document(tx, "records", result)
         self._revision(tx, result, source_rows=source_rows)

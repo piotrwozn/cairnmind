@@ -605,7 +605,7 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
         pass
     elif (method.upper() == "POST" and (retry_job or path in {
             "/remember", "/findings", "/checkpoint", "/plans/save", "/plans/activate",
-            "/memory/snapshot", "/memory/import", "/memory/publish", "/memory/import-published",
+            "/memory/snapshot", "/memory/import", "/memory/heal", "/memory/publish", "/memory/import-published",
             "/memory/import-commit", "/memory/carrier"})
             or method.upper() == "PATCH" and path == "/memory/settings"):
         session_id = session_value("SESSION_ID")
@@ -621,7 +621,7 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
             payload = dict(kwargs.get("json") or {})
             payload["session_id"] = session_id
             kwargs["json"] = payload
-    elif method.upper() == "GET" and (path in {"/context", "/checks", "/jobs", "/memory/status"}
+    elif method.upper() == "GET" and (path in {"/context", "/checks", "/jobs", "/memory/status", "/memory/heal-audit"}
                                       or path.startswith("/jobs/")):
         session_id = session_value("SESSION_ID")
         if session_id:
@@ -2688,7 +2688,9 @@ def memory_import(ctx: typer.Context, path: SnapshotArg,
                   replace_confirmed: Annotated[bool, typer.Option(
                       "--replace-confirmed", help="Ask to replace records that were confirmed or disputed on this "
                       "machine; refused outside the workspace, where Import in the memory view does it. The dry "
-                      "run lists them.")] = False):
+                      "run lists them.")] = False,
+                  no_heal: Annotated[bool, typer.Option(
+                      "--no-heal", help="Skip automatic Git-diff and AST quote self-healing during import.")] = False):
     """Import the memory of this project only; --dry-run needs a running service and writes nothing."""
     from cairnmind.memory import inspect_snapshot
     selected = str(path.expanduser().absolute())
@@ -2698,9 +2700,37 @@ def memory_import(ctx: typer.Context, path: SnapshotArg,
     payload = {"path": selected, "root": str(root.expanduser().resolve()), "dry_run": dry_run}
     if replace_confirmed:
         payload["replace_confirmed"] = True
+    if no_heal:
+        payload["heal_quotes"] = False
     if name is not None:
         payload["name"] = name
     output(request(ctx.obj, "POST", "/memory/import", start_service=not dry_run, json=payload))
+
+
+@memory_app.command("heal")
+@initialized
+def memory_heal(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None,
+                commit: Annotated[str, typer.Option("--commit", help="Target Git revision to heal quotes against.")] = "HEAD",
+                dry_run: bool = False):
+    """Self-heal moved file quotes via Git diffs, AST context, SHA-256 verification, CAS, and audit logging."""
+    payload = {
+        "project": project,
+        "worktree": str(worktree.expanduser().resolve()) if worktree else None,
+        "target_commit": commit,
+        "dry_run": dry_run,
+    }
+    output(request(ctx.obj, "POST", "/memory/heal", start_service=not dry_run, json=payload))
+
+
+@memory_app.command("heal-audit")
+def memory_heal_audit(ctx: typer.Context, project: ProjectArg,
+                      record: Annotated[str | None, typer.Option("--record", help="Filter audit entries by record ID.")] = None,
+                      limit: Annotated[int, typer.Option("--limit", min=1, max=1000)] = 100):
+    """Read the immutable quote self-healing audit log for a project."""
+    params = {"project": project, "limit": limit}
+    if record is not None:
+        params["record_id"] = record
+    output(request(ctx.obj, "GET", "/memory/heal-audit", start_service=False, params=params))
 
 
 @memory_app.command("auto")
