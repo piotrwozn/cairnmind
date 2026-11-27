@@ -336,6 +336,9 @@ def run_repository_evaluation(settings: Settings, root: Path, questions_path: Pa
             except OllamaUnavailable as exc:
                 report.update(status="failed", failure_stage=report.get("stage"), error=measured._error(exc))
             except Exception as exc:  # noqa: BLE001 - the report records the failure, never a pass
+                from .vcr import CassetteMissError
+                if isinstance(exc, CassetteMissError):
+                    raise
                 report.update(status="failed", failure_stage=report.get("stage", "setup"), error=measured._error(exc))
             finally:
                 if isolated is not None:

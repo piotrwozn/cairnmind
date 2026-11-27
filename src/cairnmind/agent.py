@@ -30,8 +30,8 @@ from .retrieval import (Retriever, json_value, last_warnings, public_metadata, p
 from .store import validate_task_state
 from . import subject as _subject
 from .subject import NAMES_GAP, SUBJECT_GAP, found_names, unnamed_answer_names, unnamed_subject
-from .support import (NAMES_SCHEMA, NAMES_TOKENS, SUPPORT_SCHEMA, SUPPORT_TOKENS, names_messages, names_verdict,
-                      support_messages, support_verdict)
+from .support import (NAMES_SCHEMA, NAMES_SYSTEM, NAMES_TOKENS, SUPPORT_SCHEMA, SUPPORT_SYSTEM, SUPPORT_TOKENS,
+                      names_messages, names_verdict, support_messages, support_verdict)
 
 
 SYSTEM = """You are the local evidence-grounded knowledge agent for a programming workspace.
@@ -1083,19 +1083,50 @@ class KnowledgeAgent:
             return self._result("partial", "The model's answer could not be verified in the sources.",
                                 evidence, [*result.get("unknowns", []), SUBJECT_GAP + ", ".join(unnamed)],
                                 started, result["sources"], code="answer_unsupported")
-        try:
-            response = await self.ollama.chat(
-                support_messages(question, result["answer"], result["sources"]), tools=None,
-                format=deepcopy(SUPPORT_SCHEMA), options={"num_predict": SUPPORT_TOKENS})
-        except OllamaUnavailable:
-            supported, reason = False, None
-            diagnostics["support_check"] = "failed"
+        from .verdict_cache import VerdictCache, prompt_fingerprint, verdict_cache_key
+        vcache = VerdictCache(self.settings.data_dir) if getattr(self.settings, "data_dir", None) else None
+        if hasattr(self.ollama, "verdict_cache_id"):
+            model_cache_id = str(self.ollama.verdict_cache_id)
+        elif hasattr(self.ollama, "base_url") or hasattr(self.ollama, "cassette_path"):
+            model_cache_id = str(self.settings.chat_model)
         else:
-            diagnostics["model_calls"] = [*diagnostics["model_calls"][-1:],
-                                          _model_diagnostics(response, "support")]
-            supported, reason = support_verdict(response)
-            diagnostics["support_check"] = ("supported" if supported else
-                                            "unsupported" if reason else "failed")
+            # Injected test doubles without a transport URL are scoped per instance so swapping
+            # mocks within one test fixture never reuses another mock's verdict.
+            model_cache_id = f"{self.settings.chat_model}@mock:{id(self.ollama)}"
+        support_key = verdict_cache_key(
+            stage="support",
+            question=question,
+            claim=result["answer"],
+            sources=result["sources"],
+            model_id=model_cache_id,
+            prompt_hash=prompt_fingerprint(SUPPORT_SYSTEM, SUPPORT_SCHEMA),
+            verification_mode="strict_llm",
+            evidence=evidence,
+            source_text_fn=source_text,
+        ) if vcache is not None else None
+        cached_support = vcache.get(support_key) if (vcache is not None and support_key is not None) else None
+        if cached_support is not None:
+            supported = bool(cached_support.get("supported"))
+            reason = cached_support.get("reason")
+            diagnostics["support_check"] = "supported" if supported else "unsupported"
+            diagnostics["verdict_cache"] = "hit"
+        else:
+            try:
+                response = await self.ollama.chat(
+                    support_messages(question, result["answer"], result["sources"]), tools=None,
+                    format=deepcopy(SUPPORT_SCHEMA), options={"num_predict": SUPPORT_TOKENS})
+            except OllamaUnavailable:
+                supported, reason = False, None
+                diagnostics["support_check"] = "failed"
+            else:
+                diagnostics["model_calls"] = [*diagnostics["model_calls"][-1:],
+                                              _model_diagnostics(response, "support")]
+                supported, reason = support_verdict(response)
+                diagnostics["support_check"] = ("supported" if supported else
+                                                "unsupported" if reason else "failed")
+                if vcache is not None and support_key is not None and (supported or reason is not None):
+                    vcache.put(support_key, "support", {"supported": supported, "reason": reason})
+                    diagnostics["verdict_cache"] = "miss"
         gap = None  # the sentence for a names check that withholds the answer; None: the judge's own gap
         if supported and plain:
             diagnostics["support_check"] = NAMES_PENDING  # a timeout from here on is a names check's
@@ -1108,15 +1139,34 @@ class KnowledgeAgent:
         if supported and plain:
             # One more call (#245): the names the answer asserts, each stated by the quotes or not. A lower-case
             # name has no shape for the subject check; this is how it is read. Fail closed, like the judge.
-            try:
-                response = await self.ollama.chat(
-                    names_messages(result["answer"], result["sources"]), tools=None,
-                    format=deepcopy(NAMES_SCHEMA), options={"num_predict": NAMES_TOKENS})
-            except OllamaUnavailable:
-                unstated = None
+            names_key = verdict_cache_key(
+                stage="names",
+                question="",
+                claim=result["answer"],
+                sources=result["sources"],
+                model_id=model_cache_id,
+                prompt_hash=prompt_fingerprint(NAMES_SYSTEM, NAMES_SCHEMA),
+                verification_mode="strict_llm",
+                evidence=evidence,
+                source_text_fn=source_text,
+            ) if vcache is not None else None
+            cached_names = vcache.get(names_key) if (vcache is not None and names_key is not None) else None
+            if cached_names is not None and isinstance(cached_names.get("unstated"), list):
+                unstated = list(cached_names["unstated"])
+                diagnostics["names_cache"] = "hit"
             else:
-                diagnostics["model_calls"] = [*diagnostics["model_calls"][-2:], _model_diagnostics(response, "names")]
-                unstated = names_verdict(response)
+                try:
+                    response = await self.ollama.chat(
+                        names_messages(result["answer"], result["sources"]), tools=None,
+                        format=deepcopy(NAMES_SCHEMA), options={"num_predict": NAMES_TOKENS})
+                except OllamaUnavailable:
+                    unstated = None
+                else:
+                    diagnostics["model_calls"] = [*diagnostics["model_calls"][-2:], _model_diagnostics(response, "names")]
+                    unstated = names_verdict(response)
+                    if vcache is not None and names_key is not None and unstated is not None:
+                        vcache.put(names_key, "names", {"unstated": unstated})
+                        diagnostics["names_cache"] = "miss"
             if unstated:
                 # A name the model calls unstated that a cited source has (the question does not count) is not one (#245);
                 # a reader sees both lists. Only a name found in neither withholds the answer.

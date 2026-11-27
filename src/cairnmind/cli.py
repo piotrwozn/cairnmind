@@ -68,6 +68,7 @@ workspace_app = typer.Typer(help="The terminal workspace: status, detaching and 
 store_app = typer.Typer(help="How large the store is, which installation writes it, and removing rows that nothing reads.")
 db_app = typer.Typer(help="Access to a database on another host: its own user (#72).")
 answers_app = typer.Typer(help="The opt-in log of ask answers and the evidence they cited.")
+cache_app = typer.Typer(help="Inspect or clear the local verification verdict cache.")
 app.add_typer(projects_app, name="project")
 app.add_typer(tasks_app, name="task")
 app.add_typer(models_app, name="models")
@@ -84,6 +85,7 @@ app.add_typer(workspace_app, name="workspace")
 app.add_typer(store_app, name="store")
 app.add_typer(db_app, name="db")
 app.add_typer(answers_app, name="answers")
+app.add_typer(cache_app, name="cache")
 
 
 def output(value) -> None:
@@ -2054,17 +2056,48 @@ def session_ack(ctx: typer.Context, session_id: SessionIdArg, packet_id: PacketI
         "readback": _json_file(readback_json)}))
 
 
+def _eval_vcr_client(settings, *, record: Path | None, replay: Path | None, suite: str):
+    if record is not None and replay is not None:
+        raise typer.BadParameter("Choose at most one of --record or --replay.")
+    if replay is not None:
+        from cairnmind.vcr import VcrOllama
+        try:
+            return VcrOllama.replay(replay), None
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--replay") from None
+    if record is not None:
+        from cairnmind.memory_models import from_settings
+        from cairnmind.vcr import VcrOllama
+        client = VcrOllama.record(from_settings(settings), record, suite=suite)
+        return client, client
+    return None, None
+
+
 @eval_app.command("run")
 @initialized
 def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None = None,
-             skip_claude: bool = False):
+             skip_claude: bool = False,
+             record: Annotated[Path | None, typer.Option("--record", help="Record model responses to a VCR cassette JSON file.")] = None,
+             replay: Annotated[Path | None, typer.Option("--replay", help="Replay model responses offline from a VCR cassette JSON file.")] = None):
+    """Run twenty isolated recall cases against local inference or a deterministic VCR cassette."""
     from cairnmind.evaluation import run_evaluation
+    from cairnmind.vcr import CassetteMissError
     if skip_claude and not clients:
         raise typer.BadParameter("--skip-claude requires --clients")
-    _not_run_without_models(ctx.obj, "cairnmind eval run")
+    vcr_client, recorder = _eval_vcr_client(ctx.obj, record=record, replay=replay, suite="eval_run")
+    if replay is None:
+        _not_run_without_models(ctx.obj, "cairnmind eval run")
     _managed_only(ctx.obj, "`cairnmind eval run`")
-    result = run_evaluation(ctx.obj, clients=clients, report_dir=report_dir, skip_claude=skip_claude)
-    _record_evaluation(ctx.obj, "recall", result)
+    try:
+        result = run_evaluation(ctx.obj, clients=clients, report_dir=report_dir, skip_claude=skip_claude,
+                                ollama=vcr_client)
+    except CassetteMissError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+    if recorder is not None:
+        recorder.save()
+    if replay is None:
+        _record_evaluation(ctx.obj, "recall", result)
     output(result)
     if result.get("status") == "failed":
         raise typer.Exit(1)
@@ -2074,13 +2107,25 @@ def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None 
 
 @eval_app.command("memory")
 @initialized
-def eval_memory(ctx: typer.Context, report_dir: Path | None = None):
-    """Explicitly check extraction, transfer and restoration of memory with the local Ollama."""
+def eval_memory(ctx: typer.Context, report_dir: Path | None = None,
+                record: Annotated[Path | None, typer.Option("--record", help="Record model responses to a VCR cassette JSON file.")] = None,
+                replay: Annotated[Path | None, typer.Option("--replay", help="Replay model responses offline from a VCR cassette JSON file.")] = None):
+    """Explicitly check extraction, transfer and restoration of memory with local Ollama or a VCR cassette."""
     from cairnmind.memory_evaluation import run_memory_evaluation
-    _not_run_without_models(ctx.obj, "cairnmind eval memory")
+    from cairnmind.vcr import CassetteMissError
+    vcr_client, recorder = _eval_vcr_client(ctx.obj, record=record, replay=replay, suite="eval_memory")
+    if replay is None:
+        _not_run_without_models(ctx.obj, "cairnmind eval memory")
     _managed_only(ctx.obj, "`cairnmind eval memory`")
-    result = run_memory_evaluation(ctx.obj, report_dir=report_dir)
-    _record_evaluation(ctx.obj, "memory", result)
+    try:
+        result = run_memory_evaluation(ctx.obj, report_dir=report_dir, ollama=vcr_client)
+    except CassetteMissError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+    if recorder is not None:
+        recorder.save()
+    if replay is None:
+        _record_evaluation(ctx.obj, "memory", result)
     output(result)
     if result.get("status") != "passed":
         raise typer.Exit(3 if result.get("status") == "not_run" else 1)
@@ -2089,18 +2134,28 @@ def eval_memory(ctx: typer.Context, report_dir: Path | None = None):
 @eval_app.command("extraction")
 @initialized
 def eval_extraction(ctx: typer.Context, transcripts: Path | None = None, runs: int = 3,
-                    report_dir: Path | None = None):
+                    report_dir: Path | None = None,
+                    record: Annotated[Path | None, typer.Option("--record", help="Record model responses to a VCR cassette JSON file.")] = None,
+                    replay: Annotated[Path | None, typer.Option("--replay", help="Replay model responses offline from a VCR cassette JSON file.")] = None):
     """Measure what extraction proposes from conversations against the records a person would keep.
 
-    TRANSCRIPTS defaults to docs/evaluation/extraction-transcripts.json of the current directory. Needs Ollama with the configured chat model, no engine; nothing is stored. Exits 3 without the model.
+    TRANSCRIPTS defaults to docs/evaluation/extraction-transcripts.json of the current directory. Needs Ollama with the configured chat model (or --replay CASSETTE), no engine; nothing is stored. Exits 3 without the model, or 1 on cassette miss or failure.
     """
     from cairnmind.extraction_evaluation import run_extraction_evaluation
-    _not_run_without_models(ctx.obj, "cairnmind eval extraction")
+    from cairnmind.vcr import CassetteMissError
+    vcr_client, recorder = _eval_vcr_client(ctx.obj, record=record, replay=replay, suite="eval_extraction")
+    if replay is None:
+        _not_run_without_models(ctx.obj, "cairnmind eval extraction")
     path = transcripts or Path("docs") / "evaluation" / "extraction-transcripts.json"
     try:
-        result = run_extraction_evaluation(ctx.obj, path, runs=runs, report_dir=report_dir)
+        result = run_extraction_evaluation(ctx.obj, path, runs=runs, report_dir=report_dir, ollama=vcr_client)
+    except CassetteMissError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
     except ValueError as exc:
         refuse(_shortened(str(exc), 1000))  # the file or the log, not the command line (#244)
+    if recorder is not None:
+        recorder.save()
     output({key: value for key, value in result.items() if key != "runs"}
            | {"runs": [{"run": run["run"], **run["summary"], "failures": run["failures"]} for run in result["runs"]]})
     if result.get("status") != "passed":
@@ -2111,20 +2166,31 @@ def eval_extraction(ctx: typer.Context, transcripts: Path | None = None, runs: i
 @initialized
 def eval_repository(ctx: typer.Context, root: RepositoryArg,
                     questions: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
-                    report_dir: Path | None = None):
+                    report_dir: Path | None = None,
+                    record: Annotated[Path | None, typer.Option("--record", help="Record model responses to a VCR cassette JSON file.")] = None,
+                    replay: Annotated[Path | None, typer.Option("--replay", help="Replay model responses offline from a VCR cassette JSON file.")] = None):
     """Ask questions with known answers about a real repository, in a throwaway copy and database.
 
-    QUESTIONS defaults to ROOT/docs/evaluation/repository-questions.json. Needs Ollama with the configured models and a running engine; exits 3 when the models are not available.
+    QUESTIONS defaults to ROOT/docs/evaluation/repository-questions.json. Needs Ollama with the configured models (or --replay CASSETTE) and a running engine; exits 3 when the models are not available, or 1 on cassette miss or failure.
     """
     from cairnmind.repository_evaluation import run_repository_evaluation
-    _not_run_without_models(ctx.obj, "cairnmind eval repository")
+    from cairnmind.vcr import CassetteMissError
+    vcr_client, recorder = _eval_vcr_client(ctx.obj, record=record, replay=replay, suite="eval_repository")
+    if replay is None:
+        _not_run_without_models(ctx.obj, "cairnmind eval repository")
     _managed_only(ctx.obj, "`cairnmind eval repository`")
     path = questions or Path(root) / "docs" / "evaluation" / "repository-questions.json"
     try:
-        result = run_repository_evaluation(ctx.obj, root, path, report_dir=report_dir)
+        result = run_repository_evaluation(ctx.obj, root, path, report_dir=report_dir, ollama=vcr_client)
+    except CassetteMissError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
     except ValueError as exc:
         refuse(_shortened(str(exc), 1000))  # the file or the log, not the command line (#244)
-    _record_evaluation(ctx.obj, "repository", result)
+    if recorder is not None:
+        recorder.save()
+    if replay is None:
+        _record_evaluation(ctx.obj, "repository", result)
     output(result)
     if result.get("status") != "passed":
         raise typer.Exit(3 if result.get("status") == "not_run" else 1)
@@ -2225,6 +2291,20 @@ def answers_prune(ctx: typer.Context, project: ProjectArg,
     from cairnmind.answer_log import prune
     pid = store_for_read(ctx.obj).resolve_project(project)["id"]
     output(prune(ctx.obj, pid, keep))
+
+
+@cache_app.command("clear")
+def cache_clear(ctx: typer.Context):
+    """Clear all cached verification verdicts without starting the engine or service."""
+    from cairnmind.verdict_cache import VerdictCache
+    output(VerdictCache(ctx.obj.data_dir).clear())
+
+
+@cache_app.command("status")
+def cache_status(ctx: typer.Context):
+    """Show the size and entry count of the local verification verdict cache. Read-only."""
+    from cairnmind.verdict_cache import VerdictCache
+    output(VerdictCache(ctx.obj.data_dir).stats())
 
 
 SNAPSHOT_WAIT_SECONDS = 1800

@@ -661,7 +661,11 @@ def run_evaluation(settings: Settings, *, clients: bool = False, skip_claude: bo
         isolated = _fixture_settings(settings, temporary / "data")
         store = Store(isolated.data_dir, settings=isolated)
         try:
-            project, cases, canonical = _seed(store, worktree, other)
+            from contextlib import nullcontext
+            from .vcr import VcrOllama, deterministic_uuid4
+            seed_ctx = deterministic_uuid4("cairnmind-eval-recall-v1") if isinstance(ollama, VcrOllama) else nullcontext()
+            with seed_ctx:
+                project, cases, canonical = _seed(store, worktree, other)
             results = asyncio.run(_local_cases(store, isolated, project, cases, canonical,
                                                 ollama or from_settings(isolated, credentials=settings)))
             # Deterministic checks are scored independently of model availability.
