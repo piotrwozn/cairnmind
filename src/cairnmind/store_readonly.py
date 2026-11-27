@@ -178,6 +178,8 @@ def open_readonly(store_class, settings: Settings):
     check_ready(client, settings)
     store = store_class.__new__(store_class)
     store.data_dir, store.settings, store.client, store.read_only = data_dir, settings, ReadOnlyClient(client), True
+    from .arcade_backend import ArcadeBackend
+    store.backend = ArcadeBackend(store)
     store._local = threading.local()
     store._stamp_lock = threading.Lock()
     store._stamp_cursor, store._stamp_base, store._stamp_global, store._stamp_seq = None, 0, 0, {}

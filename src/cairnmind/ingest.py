@@ -1443,14 +1443,17 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
 
 
 def _save_cursor(store, path: Path, project_id: str | None, client: str, offset: int) -> None:
+    from .arcade_backend import ArcadeBackend
+    backend = getattr(store, "backend", None) or ArcadeBackend(store)
     with store.transaction() as tx:
         if project_id and not tx.query("SELECT id FROM projects WHERE id=:project", {"project": project_id}):
             raise ValueError("Project no longer exists; history cursor was not recreated")
-        tx.command(
-            "UPDATE import_cursors SET id=:id,path=:path,project_id=:project,client=:client,`offset`=:offset,"
-            "fingerprint=:fingerprint,updated_at=:updated UPSERT WHERE path=:path",
-            {"id": _identifier(path), "path": str(path), "project": project_id, "client": client,
-             "offset": offset, "fingerprint": _fingerprint(path, offset), "updated": _now()},
+        backend.upsert_document(
+            tx,
+            "import_cursors",
+            {"id": _identifier(path), "path": str(path), "project_id": project_id, "client": client,
+             "offset": offset, "fingerprint": _fingerprint(path, offset), "updated_at": _now()},
+            key_field="path",
         )
 
 
@@ -1827,14 +1830,17 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
                 counts["unknown"] += 1
                 reason = reason or UNKNOWN_TRANSCRIPT_WARNING
             if not resolved:
-                store.command(
-                    "UPDATE ingestion_inbox SET id=:id,path=:path,source_offset=:offset,sha256=:sha256,"
-                    "raw=:raw,client=:client,cwd=:cwd,reason=:reason,created_at=:created "
-                    "UPSERT WHERE id=:id",
-                    {"id": _identifier(path, event_offset, text), "path": str(path), "offset": event_offset,
-                     "sha256": hashlib.sha256(raw).hexdigest(), "raw": text, "client": detected, "cwd": cwd,
-                     "reason": reason or "No registered project matches working directory", "created": _now()},
-                )
+                from .arcade_backend import ArcadeBackend
+                backend = getattr(store, "backend", None) or ArcadeBackend(store)
+                with store.transaction() as inbox_tx:
+                    backend.upsert_document(
+                        inbox_tx,
+                        "ingestion_inbox",
+                        {"id": _identifier(path, event_offset, text), "path": str(path), "source_offset": event_offset,
+                         "sha256": hashlib.sha256(raw).hexdigest(), "raw": text, "client": detected, "cwd": cwd,
+                         "reason": reason or "No registered project matches working directory", "created_at": _now()},
+                        key_field="id",
+                    )
                 counts["inbox"] += 1
             else:
                 # Every complete source event is archived, including unrecognized records.
