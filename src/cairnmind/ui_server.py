@@ -129,14 +129,14 @@ def safe_read_file_context(
         raise HTTPException(404, f"File not found: {normalized}")
     try:
         size = target.stat().st_size
-    except OSError as exc:
-        raise HTTPException(404, f"Cannot inspect file: {exc}") from None
+    except OSError:
+        raise HTTPException(404, "Cannot inspect file") from None
     if size > MAX_CONTEXT_FILE_BYTES:
         raise HTTPException(413, "File exceeds 1 MiB inspection limit")
     try:
         raw = target.read_bytes()
-    except OSError as exc:
-        raise HTTPException(500, f"Cannot read file: {exc}") from None
+    except OSError:
+        raise HTTPException(500, "Cannot read file") from None
     if b"\x00" in raw[:8192]:
         raise HTTPException(415, "Binary files cannot be displayed as quote context")
     text = raw.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
@@ -2078,11 +2078,19 @@ def create_ui_app(
     default_mock: bool = False,
     read_only: bool = False,
     static_dir: Path | None = None,
+    host: str = "127.0.0.1",
+    port: int = 4310,
+    auth: Any = None,
 ) -> FastAPI:
     """Standalone loopback FastAPI app for `cairnmind ui --port 4310`."""
     from cairnmind import __version__
+    from cairnmind.ui_auth import UiSessionAuth, install_ui_security
 
     app = FastAPI(title="Cairnmind Engineer Cockpit & Inspector", version=__version__)
+    ui_auth = auth if isinstance(auth, UiSessionAuth) else UiSessionAuth.create(host=host, port=port)
+    install_ui_security(app, ui_auth)
+    app.state.ui_auth = ui_auth
+
     ui_router = create_ui_router(
         store=store,
         settings=settings,
@@ -2091,30 +2099,8 @@ def create_ui_app(
         read_only=read_only,
         prefix="/api/ui",
     )
-    # Also mount clean Rust-compatible `/api/*` and `/api/projects/{project_id}/*` aliases sharing the same state.
-    api_router = create_ui_router(
-        store=store,
-        settings=settings,
-        default_project=default_project,
-        default_mock=default_mock,
-        read_only=read_only,
-        bus=ui_router.event_bus,  # type: ignore[attr-defined]
-        mock_state=ui_router.mock_state,  # type: ignore[attr-defined]
-        live_adapter=ui_router.live_adapter,  # type: ignore[attr-defined]
-        prefix="/api",
-    )
     app.include_router(ui_router)
-    app.include_router(api_router)
     app.state.ui_event_bus = ui_router.event_bus  # type: ignore[attr-defined]
-
-    @app.middleware("http")
-    async def security_headers(request: Request, call_next):
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Referrer-Policy"] = "no-referrer"
-        if request.url.path.startswith("/api/"):
-            response.headers["Cache-Control"] = "no-store"
-        return response
 
     dist = resolve_ui_dist(static_dir)
     if dist is not None:
@@ -2124,7 +2110,7 @@ def create_ui_app(
 
         @app.get("/{full_path:path}", include_in_schema=False)
         async def spa_fallback(full_path: str):
-            if full_path.startswith("api/"):
+            if full_path.startswith("api/") or full_path == "api":
                 return JSONResponse({"detail": "Not found"}, status_code=404)
             candidate = (dist / full_path).resolve()
             if full_path and candidate.is_relative_to(dist) and candidate.is_file():

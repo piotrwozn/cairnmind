@@ -2279,6 +2279,7 @@ class LiveCockpitMixin:
         req: DecisionActionRequest,
         project_arg: str | None = None,
     ) -> dict[str, Any]:
+        from cairnmind import person_proof
         from cairnmind.sql import update_document
 
         self._require_writable()
@@ -2290,16 +2291,39 @@ class LiveCockpitMixin:
         )
         if not rows:
             raise HTTPException(404, f"Detected decision not found: {decision_id}")
+        current = rows[0]
+        cur_status = str(current.get("status") or "proposed")
+        proven = person_proof.present()
+        if cur_status in {"confirmed", "disputed"} and not proven:
+            raise HTTPException(403, person_proof.PROOF_MISSING)
         now = utc_now()
-        next_status = "confirmed" if req.action == "accept" else "superseded"
+        meta = dict(current.get("metadata") or {}) if isinstance(current.get("metadata"), dict) else {}
+        if req.action == "accept":
+            # Only a workspace person_proof may transition a record to confirmed (STABLE_CONTRACT §5).
+            next_status = "confirmed" if proven else "proposed"
+            meta["ui_triaged"] = "confirmed" if proven else "accepted_proposed"
+        else:
+            next_status = "superseded"
+            meta["ui_triaged"] = "ignored"
         with self.store.transaction() as tx:
-            updated = {**rows[0], "status": next_status, "version": int(rows[0].get("version") or 1) + 1, "updated_at": now}
+            updated = {
+                **current,
+                "status": next_status,
+                "metadata": meta,
+                "version": int(current.get("version") or 1) + 1,
+                "updated_at": now,
+            }
             update_document(tx, "records", updated, "id=:id", {"id": decision_id})
         rev = self._state_rev(pid)
         self.bus.publish("state.updated", {"state_rev": rev, "reason": f"detected_decision_{req.action}", "decision_id": decision_id})
         return {
             "ok": True,
-            "decision": {"id": decision_id, "status": "accepted" if req.action == "accept" else "ignored"},
+            "decision": {
+                "id": decision_id,
+                "status": "accepted" if req.action == "accept" else "ignored",
+                "record_status": next_status,
+                "requires_person_confirmation": req.action == "accept" and not proven,
+            },
             "created_claim_id": decision_id if req.action == "accept" else None,
             "state_rev": rev,
         }
@@ -2590,6 +2614,7 @@ class LiveCockpitMixin:
         }
 
     def create_fact(self, req: CreateFactRequest, project_arg: str | None = None) -> dict[str, Any]:
+        from cairnmind import person_proof
         from cairnmind.sql import insert_document
 
         self._require_writable()
@@ -2604,13 +2629,15 @@ class LiveCockpitMixin:
             ok, sha = safe_file_fingerprint(root_path, path)
             if ok and sha:
                 disk_sha = sha
+        proven = person_proof.present()
+        record_status = "confirmed" if proven else "proposed"
         doc = {
             "id": claim_id,
             "project_id": pid,
             "kind": req.kind,
             "key": req.key.strip(),
             "content": req.content.strip(),
-            "status": "confirmed",
+            "status": record_status,
             "version": 1,
             "source_ids": [],
             "metadata": {
@@ -2621,6 +2648,7 @@ class LiveCockpitMixin:
                 "line_end": max(req.line_start, req.line_end),
                 "evidence": req.verbatim_quote.strip(),
                 "recorded_sha256": disk_sha,
+                "requires_person_confirmation": not proven,
             },
             "created_at": now,
             "updated_at": now,
@@ -2637,8 +2665,8 @@ class LiveCockpitMixin:
                 "key": doc["key"],
                 "title": req.title.strip(),
                 "content": doc["content"],
-                "status": "confirmed",
-                "provenance_status": "VERIFIED",
+                "status": record_status,
+                "provenance_status": "VERIFIED" if disk_sha else "UNVERIFIED",
                 "source_path": path,
                 "line_start": req.line_start,
                 "line_end": max(req.line_start, req.line_end),

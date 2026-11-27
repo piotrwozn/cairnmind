@@ -45,6 +45,18 @@ export class ApiReadOnlyError extends Error {
   }
 }
 
+export class ApiAuthError extends Error {
+  readonly status = 401;
+
+  constructor(message: string) {
+    super(
+      message ||
+        'UI session authentication required. Open the bootstrap URL printed by `cairnmind ui`.',
+    );
+    this.name = 'ApiAuthError';
+  }
+}
+
 export interface MockControls {
   simulateConflict: (planId: string, client?: string) => Promise<{ current_version: number; state_rev: number }>;
   simulateFileEdit: (filePath: string) => Promise<{ file_path: string; new_sha256: string; claim_ids: string[] }>;

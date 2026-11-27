@@ -1300,6 +1300,7 @@ def ui(
     import threading
     import uvicorn
     import webbrowser
+    from cairnmind.ui_auth import UiSessionAuth
     from cairnmind.ui_server import create_ui_app
 
     if host not in {"127.0.0.1", "localhost", "::1"}:
@@ -1314,14 +1315,18 @@ def ui(
             refuse("Initialize Cairnmind first (`cairnmind init`), or pass `--mock` to preview with sample data.")
         store = store_for_read(settings) if read_only else store_for(settings)
 
+    ui_auth = UiSessionAuth.create(host=host, port=port)
     api = create_ui_app(
         store=store,
         settings=settings,
         default_project=project,
         default_mock=mock,
         read_only=read_only,
+        host=host,
+        port=port,
+        auth=ui_auth,
     )
-    url = f"http://{host}:{port}" + ("/?mock=1" if mock else "/")
+    url = ui_auth.bootstrap_url(host=host, mock=mock, project=project)
     mode_tag = " [read-only]" if read_only else ""
     typer.echo(f"Cairnmind UI serving on {url}{mode_tag}")
     if not no_open:

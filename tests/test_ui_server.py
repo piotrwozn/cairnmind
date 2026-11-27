@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
+import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli, ui_server
+from cairnmind.ui_auth import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE, UiSessionAuth
 from cairnmind.ui_server import (
     LiveUiAdapter,
     UiEventBus,
@@ -15,6 +18,16 @@ from cairnmind.ui_server import (
     resolve_ui_dist,
     safe_read_file_context,
 )
+
+UI_BASE_URL = "http://127.0.0.1:4310"
+
+
+def _auth_client(app) -> tuple[TestClient, dict[str, str]]:
+    """Create a loopback TestClient with valid session Bearer headers for `app`."""
+    auth: UiSessionAuth = app.state.ui_auth
+    client = TestClient(app, base_url=UI_BASE_URL)
+    headers = {"Authorization": f"Bearer {auth.session_token}"}
+    return client, headers
 
 
 def test_mock_snapshot_file_context_reverify_drop_and_sse(tmp_path):
@@ -25,18 +38,23 @@ def test_mock_snapshot_file_context_reverify_drop_and_sse(tmp_path):
     (assets / "app.js").write_text("console.log('ok');", encoding="utf-8")
 
     app = create_ui_app(default_mock=True, static_dir=dist)
-    with TestClient(app) as client:
+    client, headers = _auth_client(app)
+    with client:
         # Static SPA & security headers
         root_res = client.get("/")
         assert root_res.status_code == 200
         assert root_res.headers["x-content-type-options"] == "nosniff"
         assert root_res.headers["referrer-policy"] == "no-referrer"
+        assert root_res.headers["x-frame-options"] == "DENY"
+        assert "default-src 'self'" in root_res.headers["content-security-policy"]
         assert client.get("/assets/app.js").status_code == 200
         assert client.get("/provenance").status_code == 200
         assert client.get("/api/nonexistent").status_code == 404
+        # Redundant /api/* alias is removed; only canonical /api/ui/* exists
+        assert client.get("/api/snapshot?mock=1", headers=headers).status_code == 404
 
         # Initial snapshot
-        snap_res = client.get("/api/ui/snapshot?mock=1")
+        snap_res = client.get("/api/ui/snapshot?mock=1", headers=headers)
         assert snap_res.status_code == 200
         assert snap_res.headers["cache-control"] == "no-store"
         snap = snap_res.json()
@@ -53,6 +71,7 @@ def test_mock_snapshot_file_context_reverify_drop_and_sse(tmp_path):
         ctx_res = client.get(
             "/api/ui/file-context",
             params={"path": "src/cairnmind/sessions.py", "lineStart": 10, "lineEnd": 22, "mock": 1},
+            headers=headers,
         )
         assert ctx_res.status_code == 200
         ctx_body = ctx_res.json()
@@ -63,25 +82,28 @@ def test_mock_snapshot_file_context_reverify_drop_and_sse(tmp_path):
         assert client.get(
             "/api/ui/file-context",
             params={"path": "../secret.txt", "mock": 1},
+            headers=headers,
         ).status_code == 403
         assert client.get(
             "/api/ui/file-context",
             params={"path": ".git/config", "mock": 1},
+            headers=headers,
         ).status_code == 403
         assert client.get(
             "/api/ui/file-context",
             params={"path": "does/not/exist.py", "mock": 1},
+            headers=headers,
         ).status_code == 404
 
         # SSE bootstrap frame (`once=true`)
-        sse_res = client.get("/api/ui/events", params={"mock": 1, "once": "true"})
+        sse_res = client.get("/api/ui/events", params={"mock": 1, "once": "true"}, headers=headers)
         assert sse_res.status_code == 200
         assert "text/event-stream" in sse_res.headers["content-type"]
         assert "event: state.updated" in sse_res.text
         assert '"state_rev": 42' in sse_res.text
 
         # Reverify action bumps state_rev and updates audit log
-        rev_res = client.post("/api/ui/actions/reverify?mock=1")
+        rev_res = client.post("/api/ui/actions/reverify?mock=1", headers=headers)
         assert rev_res.status_code == 200
         rev_body = rev_res.json()
         assert rev_body["ok"] is True
@@ -89,15 +111,88 @@ def test_mock_snapshot_file_context_reverify_drop_and_sse(tmp_path):
         assert rev_body["stale_claims"] >= 1
 
         # Drop session lock removes session and rejects second drop with 404
-        drop_res = client.post("/api/ui/actions/sessions/sess-codex-3c81/drop?mock=1")
+        drop_res = client.post("/api/ui/actions/sessions/sess-codex-3c81/drop?mock=1", headers=headers)
         assert drop_res.status_code == 200
         assert drop_res.json()["dropped"] is True
         assert drop_res.json()["state_rev"] == 44
-        assert client.post("/api/ui/actions/sessions/sess-codex-3c81/drop?mock=1").status_code == 404
+        assert client.post("/api/ui/actions/sessions/sess-codex-3c81/drop?mock=1", headers=headers).status_code == 404
 
-        snap_after = client.get("/api/ui/snapshot?mock=1").json()
+        snap_after = client.get("/api/ui/snapshot?mock=1", headers=headers).json()
         assert snap_after["state_rev"] == 44
         assert all(s["id"] != "sess-codex-3c81" for s in snap_after["sessions"])
+
+
+def test_ui_security_auth_csrf_host_and_origin_guards(tmp_path):
+    """Verify standalone UI enforces session token, CSRF double-submit, Host (DNS rebinding), and Origin checks."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><html><body>OK</body></html>", encoding="utf-8")
+
+    app = create_ui_app(default_mock=True, static_dir=dist, host="127.0.0.1", port=4310)
+    auth: UiSessionAuth = app.state.ui_auth
+
+    with TestClient(app, base_url=UI_BASE_URL) as client:
+        # 1. Unauthenticated /api/ui/* calls are rejected with 401
+        assert client.get("/api/ui/snapshot?mock=1").status_code == 401
+        assert client.get("/api/ui/file-context", params={"path": "src/cairnmind/sessions.py", "mock": 1}).status_code == 401
+        assert client.get("/api/ui/events", params={"mock": 1, "once": "true"}).status_code == 401
+        assert client.post("/api/ui/plans?mock=1", json={"title": "x", "goal": ""}).status_code == 401
+        assert client.post("/api/ui/facts?mock=1", json={"key": "k", "title": "t", "content": "c"}).status_code == 401
+        assert client.post("/api/ui/actions/sessions/sess-codex-3c81/drop?mock=1").status_code == 401
+
+        # Wrong bearer token -> 401
+        assert client.get("/api/ui/snapshot?mock=1", headers={"Authorization": "Bearer wrong"}).status_code == 401
+
+        # 2. Invalid Host header (DNS rebinding) -> 403 even with valid bearer token
+        assert client.get(
+            "/api/ui/snapshot?mock=1",
+            headers={"Host": "evil.example:4310", "Authorization": f"Bearer {auth.session_token}"},
+        ).status_code == 403
+        assert client.get("/", headers={"Host": "evil.example:4310"}).status_code == 403
+
+        # 3. Cross-origin / cross-site headers -> 403 even with valid bearer token
+        assert client.post(
+            "/api/ui/actions/reverify?mock=1",
+            headers={"Origin": "https://evil.example", "Authorization": f"Bearer {auth.session_token}"},
+        ).status_code == 403
+        assert client.get(
+            "/api/ui/snapshot?mock=1",
+            headers={"Sec-Fetch-Site": "cross-site", "Authorization": f"Bearer {auth.session_token}"},
+        ).status_code == 403
+
+        # 4. Invalid bootstrap token -> 401
+        assert client.get("/auth/bootstrap?token=bogus", follow_redirects=False).status_code == 401
+
+        # 5. Valid bootstrap sets HttpOnly session cookie + CSRF cookie and redirects 303 without token in URL
+        boot = client.get(f"/auth/bootstrap?token={auth.session_token}&mock=1", follow_redirects=False)
+        assert boot.status_code == 303
+        assert boot.headers["location"] == "/?mock=1"
+        assert auth.session_token not in boot.headers["location"]
+        assert boot.cookies.get(SESSION_COOKIE) == auth.session_token
+        assert boot.cookies.get(CSRF_COOKIE) == auth.csrf_token
+
+        # Cookie-authenticated GET snapshot and SSE work without custom header (EventSource compatible)
+        assert client.get("/api/ui/snapshot?mock=1").status_code == 200
+        sse = client.get("/api/ui/events", params={"mock": 1, "once": "true"})
+        assert sse.status_code == 200
+        assert "event: state.updated" in sse.text
+
+        # Cookie-authenticated mutations AND file-context REQUIRE X-Cairnmind-UI-Token CSRF header
+        assert client.post("/api/ui/actions/reverify?mock=1").status_code == 403
+        assert client.post("/api/ui/actions/reverify?mock=1", headers={CSRF_HEADER: "bad"}).status_code == 403
+        assert client.get(
+            "/api/ui/file-context",
+            params={"path": "src/cairnmind/sessions.py", "mock": 1},
+        ).status_code == 403
+
+        # With valid CSRF header and matching loopback Origin -> succeeds
+        csrf_headers = {CSRF_HEADER: auth.csrf_token, "Origin": UI_BASE_URL}
+        assert client.post("/api/ui/actions/reverify?mock=1", headers=csrf_headers).status_code == 200
+        assert client.get(
+            "/api/ui/file-context",
+            params={"path": "src/cairnmind/sessions.py", "mock": 1},
+            headers=csrf_headers,
+        ).status_code == 200
 
 
 def test_safe_read_file_context_security_and_limits(tmp_path):
@@ -155,7 +250,7 @@ def test_event_bus_and_missing_bundle_fallback(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ui_server, "resolve_ui_dist", lambda override=None: None)
     app = create_ui_app(default_mock=True)
-    with TestClient(app) as client:
+    with TestClient(app, base_url=UI_BASE_URL) as client:
         res = client.get("/")
         assert res.status_code == 503
         assert "Cairnmind UI bundle not built" in res.text
@@ -318,7 +413,7 @@ def test_cli_ui_command_validation_and_launch(monkeypatch):
     bad_port = runner.invoke(cli.app, ["ui", "--port", "70000", "--mock", "--no-open"])
     assert bad_port.exit_code != 0
 
-    # Mock launch invokes uvicorn.Server.run on 127.0.0.1:4310
+    # Mock launch invokes uvicorn.Server.run on 127.0.0.1:4310 with bootstrap URL
     started: dict = {}
 
     class FakeServer:
@@ -336,7 +431,13 @@ def test_cli_ui_command_validation_and_launch(monkeypatch):
     assert started["host"] == "127.0.0.1"
     assert started["port"] == 4310
     assert started["ran"] is True
-    assert "http://127.0.0.1:4310/?mock=1" in ok.output
+    assert "http://127.0.0.1:4310/auth/bootstrap?token=" in ok.output
+    # Extract URL and verify token matches the app's UiSessionAuth
+    url_token = ok.output.split("serving on ", 1)[1].split()[0]
+    parsed = urlparse(url_token)
+    qs = parse_qs(parsed.query)
+    assert qs["mock"] == ["1"]
+    assert started["app"].state.ui_auth.verify_session_token(qs["token"][0])
 
 
 def test_resolve_ui_dist_finds_override(tmp_path):
@@ -482,23 +583,25 @@ def test_ui_server_additional_edge_branches(tmp_path, monkeypatch):
     except HTTPException as exc:
         assert exc.status_code == 404
 
-    # attach_ui_routes + live endpoints via TestClient
+    # attach_ui_routes in read-only mode (as service.py mounts it) blocks mutations
     host_app = FastAPI()
-    bus = ui_server.attach_ui_routes(host_app, DriftStore(), SimpleNamespace())
+    bus = ui_server.attach_ui_routes(host_app, DriftStore(), SimpleNamespace(), read_only=True)
     assert host_app.state.ui_event_bus is bus
     with TestClient(host_app) as client:
         assert client.get("/api/ui/snapshot").status_code == 200
         assert client.get("/api/ui/file-context", params={"path": "mod.py"}).status_code == 200
-        assert client.post("/api/ui/actions/reverify").status_code == 200
-        assert client.post("/api/ui/actions/sessions/missing/drop").status_code == 404
+        assert client.post("/api/ui/actions/reverify").status_code == 403
+        assert client.post("/api/ui/facts", json={"key": "k", "title": "t", "content": "c"}).status_code == 403
+        assert client.post("/api/ui/detected-decisions/c-unver/decide", json={"action": "accept"}).status_code == 403
 
 
 def test_cockpit_phases_1_to_4_mock_and_project_prefix():
     """Verify Ask, Drift Monitor, Drafts + 409 CAS, Versions, Reindex, Doctor, Export & project_id prefixes."""
     app = create_ui_app(default_mock=True)
-    with TestClient(app) as client:
-        # 1. Capabilities, origin badges, plans, and multi-project prefix alias
-        snap = client.get("/api/projects/demo-proj/snapshot?mock=1").json()
+    client, headers = _auth_client(app)
+    with client:
+        # 1. Capabilities, origin badges, plans, and multi-project prefix under /api/ui
+        snap = client.get("/api/ui/projects/demo-proj/snapshot?mock=1", headers=headers).json()
         assert snap["capabilities"]["writable"] is True
         assert snap["capabilities"]["multi_project"] is True
         assert len(snap["plans"]) >= 3
@@ -508,8 +611,9 @@ def test_cockpit_phases_1_to_4_mock_and_project_prefix():
 
         # 2. Phase 1: Interactive Ask (VERIFIED, UNKNOWN, and Tier 0 FTS fallback)
         ask_ok = client.post(
-            "/api/ask?mock=1",
+            "/api/ui/ask?mock=1",
             json={"query": "Jakie są główne komponenty i przepływ danych?"},
+            headers=headers,
         )
         assert ask_ok.status_code == 200
         ask_body = ask_ok.json()
@@ -517,16 +621,18 @@ def test_cockpit_phases_1_to_4_mock_and_project_prefix():
         assert len(ask_body["citations"]) >= 2
 
         ask_unk = client.post(
-            "/api/ask?mock=1",
+            "/api/ui/ask?mock=1",
             json={"query": "How does Stripe billing work?"},
+            headers=headers,
         )
         assert ask_unk.status_code == 200
         assert ask_unk.json()["status"] == "UNKNOWN"
         assert ask_unk.json()["citations"] == []
 
         ask_fts = client.post(
-            "/api/ask?mock=1",
+            "/api/ui/ask?mock=1",
             json={"query": "Które zadania lub dowody są teraz nieaktualne?", "verifier_mode": "fts_fallback"},
+            headers=headers,
         )
         assert ask_fts.status_code == 200
         assert ask_fts.json()["status"] == "PARTIAL"
@@ -535,8 +641,9 @@ def test_cockpit_phases_1_to_4_mock_and_project_prefix():
 
         # 3. Phase 2: Plan & Drift Monitor + Detected Decisions pagination/filtering + Accept/Ignore
         drift = client.get(
-            "/api/drift",
+            "/api/ui/drift",
             params={"mock": 1, "source": "github", "status": "pending", "page": 1, "page_size": 2},
+            headers=headers,
         )
         assert drift.status_code == 200
         drift_body = drift.json()
@@ -548,8 +655,9 @@ def test_cockpit_phases_1_to_4_mock_and_project_prefix():
 
         first_det_id = drift_body["detected_decisions"]["items"][0]["id"]
         dec = client.post(
-            f"/api/detected-decisions/{first_det_id}/decide?mock=1",
+            f"/api/ui/detected-decisions/{first_det_id}/decide?mock=1",
             json={"action": "accept"},
+            headers=headers,
         )
         assert dec.status_code == 200
         assert dec.json()["decision"]["status"] == "accepted"
@@ -559,13 +667,14 @@ def test_cockpit_phases_1_to_4_mock_and_project_prefix():
         sim_edit = client.post(
             "/api/ui/mock/simulate-file-edit?mock=1",
             json={"file_path": "src/cairnmind/evidence.py"},
+            headers=headers,
         )
         assert sim_edit.status_code == 200
         assert sim_edit.json()["old_sha256"] != sim_edit.json()["new_sha256"]
 
         # 4. Phase 3: Draft Plan, Quick Task, Add Fact, Pre-check Warning & 409 stale_plan_version
         created_plan = client.post(
-            "/api/plans?mock=1",
+            "/api/ui/plans?mock=1",
             json={
                 "title": "JIRA-5555 Webhook Backoff",
                 "goal": "Add exponential backoff without triggering execution.",
@@ -575,6 +684,7 @@ def test_cockpit_phases_1_to_4_mock_and_project_prefix():
                 "steps": [{"key": "add-backoff", "title": "Implement backoff helper"}],
                 "expected_version": 0,
             },
+            headers=headers,
         )
         assert created_plan.status_code == 200
         draft_id = created_plan.json()["plan"]["id"]
@@ -585,14 +695,16 @@ def test_cockpit_phases_1_to_4_mock_and_project_prefix():
         sim_conflict = client.post(
             "/api/ui/mock/simulate-conflict?mock=1",
             json={"plan_id": draft_id, "client": "codex-cli"},
+            headers=headers,
         )
         assert sim_conflict.status_code == 200
         assert sim_conflict.json()["current_version"] == 2
 
         # Saving with stale expected_version=1 MUST return 409 stale_plan_version with diff
         conflict_res = client.patch(
-            f"/api/plans/{draft_id}?mock=1",
+            f"/api/ui/plans/{draft_id}?mock=1",
             json={"expected_version": 1, "goal": "My local stale edit"},
+            headers=headers,
         )
         assert conflict_res.status_code == 409
         conflict_detail = conflict_res.json()["detail"]
@@ -603,24 +715,27 @@ def test_cockpit_phases_1_to_4_mock_and_project_prefix():
 
         # Saving with fresh expected_version=2 succeeds
         ok_patch = client.patch(
-            f"/api/plans/{draft_id}?mock=1",
+            f"/api/ui/plans/{draft_id}?mock=1",
             json={"expected_version": 2, "goal": "Merged goal"},
+            headers=headers,
         )
         assert ok_patch.status_code == 200
         assert ok_patch.json()["plan"]["version"] == 3
 
         # Promote draft with missing/drifted file triggers pre-check confirmation first
         precheck = client.post(
-            "/api/plans/plan-draft-stale-paths/promote?mock=1",
+            "/api/ui/plans/plan-draft-stale-paths/promote?mock=1",
             json={"expected_version": 1, "force": False},
+            headers=headers,
         )
         assert precheck.status_code == 200
         assert precheck.json()["requires_confirmation"] is True
         assert "src/cairnmind/legacy_verifier.py" in precheck.json()["precheck"]["missing_files"]
 
         forced = client.post(
-            "/api/plans/plan-draft-stale-paths/promote?mock=1",
+            "/api/ui/plans/plan-draft-stale-paths/promote?mock=1",
             json={"expected_version": 1, "force": True},
+            headers=headers,
         )
         assert forced.status_code == 200
         assert forced.json()["ok"] is True
@@ -628,30 +743,33 @@ def test_cockpit_phases_1_to_4_mock_and_project_prefix():
 
         # Quick Task + Add Fact
         qt = client.post(
-            "/api/tasks?mock=1",
+            "/api/ui/tasks?mock=1",
             json={"title": "Add jitter test", "scope": ["src/cairnmind/plans.py"], "expected_version": 0},
+            headers=headers,
         )
         assert qt.status_code == 200
         assert qt.json()["task"]["state"] == "draft"
 
         fact = client.post(
-            "/api/facts?mock=1",
+            "/api/ui/facts?mock=1",
             json={
                 "kind": "decision",
                 "key": "ui.adapter.project_prefix",
                 "title": "Keep UI API behind thin adapter",
-                "content": "Allows switching to a Rust multi-project manager cleanly.",
+                "content": "Allows switching cleanly behind /api/ui.",
                 "source_path": "src/cairnmind/plans.py",
                 "expected_version": 0,
             },
+            headers=headers,
         )
         assert fact.status_code == 200
         assert fact.json()["claim"]["origin"]["category"] == "HUMAN_REPO"
 
         # 5. Phase 4: Version Switcher, Diff, Clone Version as Draft, Reindex, Doctor & Safe Export
         vers = client.get(
-            "/api/versions/plan/plan-release-012",
+            "/api/ui/versions/plan/plan-release-012",
             params={"mock": 1, "from_version": 1, "to_version": 3},
+            headers=headers,
         )
         assert vers.status_code == 200
         vers_body = vers.json()
@@ -660,22 +778,23 @@ def test_cockpit_phases_1_to_4_mock_and_project_prefix():
         assert len(vers_body["diff"]) >= 1
 
         cloned = client.post(
-            "/api/versions/plan/plan-release-012/clone-draft?mock=1",
+            "/api/ui/versions/plan/plan-release-012/clone-draft?mock=1",
             json={"source_version": 1},
+            headers=headers,
         )
         assert cloned.status_code == 200
         assert cloned.json()["draft_plan"]["status"] == "draft"
 
-        reidx = client.post("/api/actions/reindex?mock=1")
+        reidx = client.post("/api/ui/actions/reindex?mock=1", headers=headers)
         assert reidx.status_code == 200
         assert reidx.json()["ok"] is True
 
-        doc = client.get("/api/doctor?mock=1")
+        doc = client.get("/api/ui/doctor?mock=1", headers=headers)
         assert doc.status_code == 200
         assert doc.json()["backend_mode"] == "mock"
         assert len(doc.json()["scaling_thresholds"]) >= 3
 
-        exp = client.post("/api/actions/export-snapshot?mock=1", json={"mode": "team", "preview": True})
+        exp = client.post("/api/ui/actions/export-snapshot?mock=1", json={"mode": "team", "preview": True}, headers=headers)
         assert exp.status_code == 200
         assert exp.json()["redaction_gate"]["status"] in {"PASS", "REDACTED"}
         assert exp.json()["summary"]["held_degraded"] >= 1
@@ -697,20 +816,21 @@ def test_cockpit_read_only_mode_and_redaction_gate(monkeypatch):
     assert redacted["safe"] == "normal text"
 
     ro_app = create_ui_app(default_mock=True, read_only=True)
-    with TestClient(ro_app) as client:
-        snap = client.get("/api/ui/snapshot?mock=1").json()
+    client, headers = _auth_client(ro_app)
+    with client:
+        snap = client.get("/api/ui/snapshot?mock=1", headers=headers).json()
         assert snap["capabilities"]["writable"] is False
         assert snap["capabilities"]["read_only_reason"]
 
-        assert client.post("/api/plans?mock=1", json={"title": "Blocked", "goal": ""}).status_code == 403
-        assert client.post("/api/tasks?mock=1", json={"title": "Blocked", "expected_version": 0}).status_code == 403
-        assert client.post("/api/facts?mock=1", json={"key": "k", "title": "t", "content": "c", "expected_version": 0}).status_code == 403
-        assert client.post("/api/actions/reindex?mock=1").status_code == 403
-        assert client.post("/api/ui/actions/reverify?mock=1").status_code == 403
+        assert client.post("/api/ui/plans?mock=1", json={"title": "Blocked", "goal": ""}, headers=headers).status_code == 403
+        assert client.post("/api/ui/tasks?mock=1", json={"title": "Blocked", "expected_version": 0}, headers=headers).status_code == 403
+        assert client.post("/api/ui/facts?mock=1", json={"key": "k", "title": "t", "content": "c", "expected_version": 0}, headers=headers).status_code == 403
+        assert client.post("/api/ui/actions/reindex?mock=1", headers=headers).status_code == 403
+        assert client.post("/api/ui/actions/reverify?mock=1", headers=headers).status_code == 403
         # Read-only preview export and doctor still work cleanly
-        assert client.get("/api/doctor?mock=1").status_code == 200
-        assert client.post("/api/actions/export-snapshot?mock=1", json={"mode": "team", "preview": True}).status_code == 200
-        assert client.post("/api/actions/export-snapshot?mock=1", json={"mode": "team", "preview": False}).status_code == 403
+        assert client.get("/api/ui/doctor?mock=1", headers=headers).status_code == 200
+        assert client.post("/api/ui/actions/export-snapshot?mock=1", json={"mode": "team", "preview": True}, headers=headers).status_code == 200
+        assert client.post("/api/ui/actions/export-snapshot?mock=1", json={"mode": "team", "preview": False}, headers=headers).status_code == 403
 
     # CLI --read-only flag integration
     runner = CliRunner()
@@ -730,8 +850,9 @@ def test_cockpit_read_only_mode_and_redaction_gate(monkeypatch):
     assert started["ran"] is True
 
 
-def test_live_adapter_cockpit_endpoints(tmp_path, monkeypatch):
-    """Exercise LiveUiAdapter cockpit methods (Ask, Drift, Drafts + 409, Versions, Reindex, Doctor, Export)."""
+@pytest.mark.unproven
+def test_live_adapter_cockpit_endpoints_respect_person_proof(tmp_path, monkeypatch):
+    """Exercise LiveUiAdapter cockpit endpoints and verify person_proof cannot be bypassed."""
     repo = tmp_path / "live_proj"
     repo.mkdir()
     mod = repo / "engine.py"
@@ -764,7 +885,19 @@ def test_live_adapter_cockpit_endpoints(tmp_path, monkeypatch):
             "source_ids": ["s-1"],
             "metadata": {"evidence": "return 'ok'", "origin": "adr"},
             "updated_at": "2026-11-26T10:00:00Z",
-        }
+        },
+        {
+            "id": "r-confirmed",
+            "project_id": "proj1",
+            "kind": "decision",
+            "key": "adr:locked",
+            "content": "person confirmed record",
+            "status": "confirmed",
+            "version": 2,
+            "source_ids": ["s-1"],
+            "metadata": {"evidence": "return 'ok'", "origin": "adr"},
+            "updated_at": "2026-11-26T10:00:00Z",
+        },
     ]
     plan_revs: list[dict] = []
 
@@ -832,36 +965,53 @@ def test_live_adapter_cockpit_endpoints(tmp_path, monkeypatch):
     monkeypatch.setattr("cairnmind.sql.update_document", fake_update)
 
     app = create_ui_app(store=LiveFakeStore(), settings=SimpleNamespace(knowledge_agent="disabled"), default_project="proj1")
-    with TestClient(app) as client:
+    client, headers = _auth_client(app)
+    with client:
         # Offline Tier 0 FTS Ask
-        ask_res = client.post("/api/ask", json={"query": "run_engine deterministic"})
+        ask_res = client.post("/api/ui/ask", json={"query": "run_engine deterministic"}, headers=headers)
         assert ask_res.status_code == 200
         assert ask_res.json()["fallback_mode"] is True
         assert len(ask_res.json()["citations"]) == 1
 
-        # Drift Monitor & Accept detected decision
-        drift_res = client.get("/api/drift")
+        # Drift Monitor & Accept detected decision stays `proposed` without person_proof
+        drift_res = client.get("/api/ui/drift", headers=headers)
         assert drift_res.status_code == 200
-        assert drift_res.json()["detected_decisions"]["total"] == 1
-        assert client.post("/api/detected-decisions/r-1/decide", json={"action": "accept"}).status_code == 200
+        assert drift_res.json()["detected_decisions"]["total"] == 2
+        dec_res = client.post("/api/ui/detected-decisions/r-1/decide", json={"action": "accept"}, headers=headers)
+        assert dec_res.status_code == 200
+        assert dec_res.json()["decision"]["record_status"] == "proposed"
+        assert dec_res.json()["decision"]["requires_person_confirmation"] is True
+        assert records_tbl[0]["status"] == "proposed"
+
+        # Mutating an already person-confirmed record without person_proof is refused (403)
+        locked_res = client.post("/api/ui/detected-decisions/r-confirmed/decide", json={"action": "ignore"}, headers=headers)
+        assert locked_res.status_code == 403
+        assert records_tbl[1]["status"] == "confirmed"
 
         # Plan Update CAS 409 & success + Promote + Clone Version
-        assert client.patch("/api/plans/p-live-1", json={"expected_version": 99, "goal": "stale"}).status_code == 409
-        upd = client.patch("/api/plans/p-live-1", json={"expected_version": 1, "goal": "updated"})
+        assert client.patch("/api/ui/plans/p-live-1", json={"expected_version": 99, "goal": "stale"}, headers=headers).status_code == 409
+        upd = client.patch("/api/ui/plans/p-live-1", json={"expected_version": 1, "goal": "updated"}, headers=headers)
         assert upd.status_code == 200 and upd.json()["plan"]["version"] == 2
-        prom = client.post("/api/plans/p-live-1/promote", json={"expected_version": 2, "force": False})
+        prom = client.post("/api/ui/plans/p-live-1/promote", json={"expected_version": 2, "force": False}, headers=headers)
         assert prom.status_code == 200 and prom.json()["ok"] is True
 
-        vers = client.get("/api/versions/plan/p-live-1")
+        vers = client.get("/api/ui/versions/plan/p-live-1", headers=headers)
         assert vers.status_code == 200 and len(vers.json()["versions"]) >= 1
-        assert client.post("/api/versions/plan/p-live-1/clone-draft", json={"source_version": 2}).status_code == 200
+        assert client.post("/api/ui/versions/plan/p-live-1/clone-draft", json={"source_version": 2}, headers=headers).status_code == 200
 
-        # Create Task, Fact, Reindex, Doctor, Export
-        assert client.post("/api/tasks", json={"title": "Live quick task", "expected_version": 0}).status_code == 200
-        assert client.post("/api/facts", json={"kind": "fact", "key": "k.live", "title": "t", "content": "c", "source_path": "engine.py", "expected_version": 0}).status_code == 200
-        assert client.post("/api/actions/reindex").status_code == 200
-        assert client.get("/api/doctor").status_code == 200
-        assert client.post("/api/actions/export-snapshot", json={"mode": "team", "preview": True}).status_code == 200
+        # Create Task, Fact (stored as proposed without person_proof), Reindex, Doctor, Export
+        assert client.post("/api/ui/tasks", json={"title": "Live quick task", "expected_version": 0}, headers=headers).status_code == 200
+        fact_res = client.post(
+            "/api/ui/facts",
+            json={"kind": "fact", "key": "k.live", "title": "t", "content": "c", "source_path": "engine.py", "expected_version": 0},
+            headers=headers,
+        )
+        assert fact_res.status_code == 200
+        assert fact_res.json()["claim"]["status"] == "proposed"
+        assert records_tbl[-1]["status"] == "proposed"
+        assert client.post("/api/ui/actions/reindex", headers=headers).status_code == 200
+        assert client.get("/api/ui/doctor", headers=headers).status_code == 200
+        assert client.post("/api/ui/actions/export-snapshot", json={"mode": "team", "preview": True}, headers=headers).status_code == 200
 
 
 def test_cockpit_edge_branches_and_coverage(tmp_path, monkeypatch):
@@ -890,40 +1040,43 @@ def test_cockpit_edge_branches_and_coverage(tmp_path, monkeypatch):
 
     # Mock cockpit additional branches
     app = create_ui_app(default_mock=True)
-    with TestClient(app) as client:
+    client, headers = _auth_client(app)
+    with client:
         # Ask: Polish and English prompts, general lexical match, general lexical unknown (#60)
-        pl_dec = client.post("/api/ask?mock=1", json={"query": "Jakie decyzje wykryto?"}).json()
+        pl_dec = client.post("/api/ui/ask?mock=1", json={"query": "Jakie decyzje wykryto?"}, headers=headers).json()
         assert pl_dec["status"] == "VERIFIED" and "Zatwierdzone decyzje" in pl_dec["answer"]
-        en_arch = client.post("/api/ask?mock=1", json={"query": "What are the main architecture components?"}).json()
+        en_arch = client.post("/api/ui/ask?mock=1", json={"query": "What are the main architecture components?"}, headers=headers).json()
         assert en_arch["status"] == "VERIFIED" and "four-stage verification pipeline" in en_arch["answer"]
-        en_dec = client.post("/api/ask?mock=1", json={"query": "Which recent decisions were detected?"}).json()
+        en_dec = client.post("/api/ui/ask?mock=1", json={"query": "Which recent decisions were detected?"}, headers=headers).json()
         assert en_dec["status"] == "VERIFIED" and "Confirmed decisions" in en_dec["answer"]
         en_stale = client.post(
-            "/api/ask?mock=1",
+            "/api/ui/ask?mock=1",
             json={"query": "Which tasks or claims are stale?", "verifier_mode": "fts_fallback"},
+            headers=headers,
         ).json()
         assert en_stale["status"] == "PARTIAL"
         assert "No LLM configured" in en_stale["answer"] and "Detected" in en_stale["answer"]
-        en_lex = client.post("/api/ask?mock=1", json={"query": "SessionManager require_ack"}).json()
+        en_lex = client.post("/api/ui/ask?mock=1", json={"query": "SessionManager require_ack"}, headers=headers).json()
         assert en_lex["status"] == "VERIFIED" and "Found" in en_lex["answer"]
-        en_unk = client.post("/api/ask?mock=1", json={"query": "zzz_completely_absent_token_999"}).json()
+        en_unk = client.post("/api/ui/ask?mock=1", json={"query": "zzz_completely_absent_token_999"}, headers=headers).json()
         assert en_unk["status"] == "UNKNOWN" and "No evidence found" in en_unk["answer"]
 
         # Drift filters & decision ignore + 404
-        assert client.get("/api/drift", params={"mock": 1, "directory": "docs/adr/", "source": "local_file"}).status_code == 200
-        assert client.post("/api/detected-decisions/det-adr-001/decide?mock=1", json={"action": "ignore"}).status_code == 200
-        assert client.post("/api/detected-decisions/missing-id/decide?mock=1", json={"action": "ignore"}).status_code == 404
+        assert client.get("/api/ui/drift", params={"mock": 1, "directory": "docs/adr/", "source": "local_file"}, headers=headers).status_code == 200
+        assert client.post("/api/ui/detected-decisions/det-adr-001/decide?mock=1", json={"action": "ignore"}, headers=headers).status_code == 200
+        assert client.post("/api/ui/detected-decisions/missing-id/decide?mock=1", json={"action": "ignore"}, headers=headers).status_code == 404
 
         # Active plan creation, full patch fields, 404s, task on plan (404 + 409 + ok)
         created_active = client.post(
-            "/api/plans?mock=1",
+            "/api/ui/plans?mock=1",
             json={"title": "Direct Active", "goal": "g", "status": "active", "linked_files": ["src/cairnmind/plans.py"], "steps": [{"key": "s1", "title": "t1"}]},
+            headers=headers,
         )
         assert created_active.status_code == 200
         pid = created_active.json()["plan"]["id"]
-        assert client.patch("/api/plans/missing-plan?mock=1", json={"expected_version": 1, "title": "x"}).status_code == 404
+        assert client.patch("/api/ui/plans/missing-plan?mock=1", json={"expected_version": 1, "title": "x"}, headers=headers).status_code == 404
         assert client.patch(
-            f"/api/plans/{pid}?mock=1",
+            f"/api/ui/plans/{pid}?mock=1",
             json={
                 "expected_version": 1,
                 "title": "Renamed",
@@ -934,27 +1087,28 @@ def test_cockpit_edge_branches_and_coverage(tmp_path, monkeypatch):
                 "steps": [{"key": "s2", "title": "t2"}],
                 "status": "draft",
             },
+            headers=headers,
         ).status_code == 200
-        assert client.post("/api/plans/missing-plan/promote?mock=1", json={"expected_version": 1}).status_code == 404
-        assert client.post(f"/api/plans/{pid}/promote?mock=1", json={"expected_version": 99}).status_code == 409
+        assert client.post("/api/ui/plans/missing-plan/promote?mock=1", json={"expected_version": 1}, headers=headers).status_code == 404
+        assert client.post(f"/api/ui/plans/{pid}/promote?mock=1", json={"expected_version": 99}, headers=headers).status_code == 409
 
         # Task attached to plan: 404, 409, and valid v2
-        assert client.post("/api/tasks?mock=1", json={"title": "t", "plan_id": "nope", "expected_version": 1}).status_code == 404
-        assert client.post("/api/tasks?mock=1", json={"title": "t", "plan_id": pid, "expected_version": 99}).status_code == 409
-        assert client.post("/api/tasks?mock=1", json={"title": "t", "plan_id": pid, "expected_version": 2}).status_code == 200
+        assert client.post("/api/ui/tasks?mock=1", json={"title": "t", "plan_id": "nope", "expected_version": 1}, headers=headers).status_code == 404
+        assert client.post("/api/ui/tasks?mock=1", json={"title": "t", "plan_id": pid, "expected_version": 99}, headers=headers).status_code == 409
+        assert client.post("/api/ui/tasks?mock=1", json={"title": "t", "plan_id": pid, "expected_version": 2}, headers=headers).status_code == 200
 
         # Versions fallback for task/claim/404 + clone claim & task & missing version
-        assert client.get("/api/versions/task/TSK-103?mock=1").status_code == 200
-        assert client.get("/api/versions/claim/clm-plan-cas?mock=1").status_code == 200
-        assert client.get("/api/versions/plan/nope?mock=1").status_code == 404
-        assert client.post("/api/versions/plan/plan-release-012/clone-draft?mock=1", json={"source_version": 99}).status_code == 404
-        assert client.post("/api/versions/claim/clm-occ-gate/clone-draft?mock=1", json={"source_version": 1}).status_code == 200
-        assert client.post("/api/versions/task/TSK-103/clone-draft?mock=1", json={"source_version": 3}).status_code == 200
+        assert client.get("/api/ui/versions/task/TSK-103?mock=1", headers=headers).status_code == 200
+        assert client.get("/api/ui/versions/claim/clm-plan-cas?mock=1", headers=headers).status_code == 200
+        assert client.get("/api/ui/versions/plan/nope?mock=1", headers=headers).status_code == 404
+        assert client.post("/api/ui/versions/plan/plan-release-012/clone-draft?mock=1", json={"source_version": 99}, headers=headers).status_code == 404
+        assert client.post("/api/ui/versions/claim/clm-occ-gate/clone-draft?mock=1", json={"source_version": 1}, headers=headers).status_code == 200
+        assert client.post("/api/ui/versions/task/TSK-103/clone-draft?mock=1", json={"source_version": 3}, headers=headers).status_code == 200
 
         # Mock simulation 404s & external client conflict
-        assert client.post("/api/ui/mock/simulate-conflict?mock=1", json={"plan_id": "nope"}).status_code == 404
-        assert client.post("/api/ui/mock/simulate-conflict?mock=1", json={"plan_id": pid, "client": "external"}).status_code == 200
-        assert client.post("/api/ui/mock/simulate-file-edit?mock=1", json={"file_path": "missing.py"}).status_code == 404
+        assert client.post("/api/ui/mock/simulate-conflict?mock=1", json={"plan_id": "nope"}, headers=headers).status_code == 404
+        assert client.post("/api/ui/mock/simulate-conflict?mock=1", json={"plan_id": pid, "client": "external"}, headers=headers).status_code == 200
+        assert client.post("/api/ui/mock/simulate-file-edit?mock=1", json={"file_path": "missing.py"}, headers=headers).status_code == 404
 
     # Live adapter error, read-only store, and fallback branches
     class ReadOnlyStore:
@@ -1012,9 +1166,28 @@ def test_cockpit_edge_branches_and_coverage(tmp_path, monkeypatch):
     assert nw_adapter.capabilities()["llm_configured"] is True
 
     live_app = create_ui_app(store=NotWriterStore(), settings=SimpleNamespace(knowledge_agent="enabled"), default_project="p1")
-    with TestClient(live_app) as client:
-        assert client.post("/api/ui/mock/simulate-conflict", json={"plan_id": "p-ro"}).status_code == 400
-        assert client.post("/api/ui/mock/simulate-file-edit", json={"file_path": "ok.py"}).status_code == 400
-        assert client.post("/api/plans", json={"title": "Blocked", "goal": ""}).status_code == 403
+    client, headers = _auth_client(live_app)
+    with client:
+        assert client.post("/api/ui/mock/simulate-conflict", json={"plan_id": "p-ro"}, headers=headers).status_code == 400
+        assert client.post("/api/ui/mock/simulate-file-edit", json={"file_path": "ok.py"}, headers=headers).status_code == 400
+        assert client.post("/api/ui/plans", json={"title": "Blocked", "goal": ""}, headers=headers).status_code == 403
 
+
+def test_main_service_mounts_ui_routes_strictly_read_only(tmp_path):
+    """Service-token callers on the main service must never write or bypass person_proof via /api/ui/*."""
+    from cairnmind.config import Settings
+    from cairnmind.service import create_app
+    from cairnmind.store import Store
+
+    settings = Settings.load(tmp_path / "svc-data", create=True)
+    store = Store.open_memory(tmp_path / "svc-data")
+    try:
+        svc_app = create_app(settings, start_worker=False, store=store)
+        headers = {"Authorization": f"Bearer {settings.token}"}
+        with TestClient(svc_app) as client:
+            assert client.post("/api/ui/facts", json={"key": "k", "title": "t", "content": "c"}, headers=headers).status_code == 403
+            assert client.post("/api/ui/plans", json={"title": "p", "goal": ""}, headers=headers).status_code == 403
+            assert client.post("/api/ui/detected-decisions/any/decide", json={"action": "accept"}, headers=headers).status_code == 403
+    finally:
+        store.close()
 

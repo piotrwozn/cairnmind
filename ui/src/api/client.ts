@@ -27,7 +27,7 @@ import type {
   VersionHistoryResponse,
 } from '@/types/contracts';
 
-export { ApiConflictError, ApiReadOnlyError } from '@/api/adapter';
+export { ApiAuthError, ApiConflictError, ApiReadOnlyError } from '@/api/adapter';
 
 export interface QueryContext {
   project: string | null;
@@ -36,13 +36,22 @@ export interface QueryContext {
   projectPrefix: boolean;
 }
 
+function sanitizeApiBase(raw: string | null): string {
+  if (!raw) return '/api/ui';
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('/') || trimmed.startsWith('//')) {
+    return '/api/ui';
+  }
+  return trimmed;
+}
+
 export function readQueryContext(): QueryContext {
   const params = new URLSearchParams(window.location.search);
   const mockParam = params.get('mock');
   return {
     project: params.get('project') || params.get('project_id'),
     mock: mockParam === '1' || mockParam === 'true',
-    apiBase: params.get('apiBase') || '/api/ui',
+    apiBase: sanitizeApiBase(params.get('apiBase')),
     projectPrefix: params.get('projectPrefix') === '1',
   };
 }
