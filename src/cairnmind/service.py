@@ -638,6 +638,27 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     app.state.inference = inference
     app.state.memory = memory
 
+    @app.middleware("http")
+    async def migration_quiesce_middleware(request: Request, call_next):
+        from fastapi.responses import JSONResponse
+        from cairnmind.migration import is_migration_in_progress
+
+        if request.url.path not in {"/health", "/shutdown", "/internal/reload-store"} and is_migration_in_progress(
+            settings.data_dir
+        ):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": "Storage migration is currently in progress; retry after cutover.",
+                    "error_code": "migration_in_progress",
+                },
+            )
+        return await call_next(request)
+
+    def _active_backend_label() -> str:
+        kind = getattr(getattr(store, "backend", None), "backend_kind", "arcade")
+        return "sqlite" if kind == "sqlite" else "arcadedb"
+
     async def authorize(authorization: str | None = Header(default=None)) -> None:
         expected = f"Bearer {settings.token}"
         if not authorization or not hmac.compare_digest(authorization, expected):
@@ -730,7 +751,35 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     @app.get("/health")
     async def health():
         return {"service": SERVICE_NAMES[0], "version": __version__, "instance": instance_id(settings),
-                "backend": "arcadedb"}
+                "backend": _active_backend_label()}
+
+    @app.post("/internal/reload-store", dependencies=auth)
+    async def reload_store():
+        nonlocal settings, store
+        reloaded_settings = Settings.load(settings.data_dir, create=False)
+        new_store = await asyncio.to_thread(Store, reloaded_settings.data_dir, settings=reloaded_settings)
+        new_store.relative_paths = False
+        if new_store.not_writer:
+            new_store.close()
+            raise StoreNotWriter(new_store.not_writer)
+        old_store = store
+        settings = reloaded_settings
+        store = new_store
+        retriever.store = new_store
+        retriever.settings = reloaded_settings
+        agent.store = new_store
+        agent.settings = reloaded_settings
+        plans.store = new_store
+        sessions.store = new_store
+        sessions.settings = reloaded_settings
+        memory.store = new_store
+        app.state.store = new_store
+        cache.clear()
+        try:
+            await asyncio.to_thread(old_store.close)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"reloaded": True, "backend": _active_backend_label()}
 
     @app.get("/projects", dependencies=auth)
     async def projects():

@@ -54,7 +54,7 @@ cairnmind brief my-app                         # 4. where work stands: your find
 cairnmind ask my-app "When do accounts lock?"  # 5. finds it again; passages of your files that use the question's words are searched too
 ```
 
-**Need large-repo / multi-agent concurrency?** Scale losslessly to ArcadeDB (Java 21 or Docker) at any time with `cairnmind migrate --to server` (or install with the full ArcadeDB script `bash scripts/install-wsl.sh`). Nothing else is required upfront: Ollama, `tmux`, NLI (`cairnmind[nli]`), and GitHub Copilot (`cairnmind[copilot]`) are all optional and covered under [Optional integrations](#optional-integrations).
+**Need large-repo / multi-agent concurrency?** Scale losslessly to ArcadeDB (**Java 21** is the simplest choice, or Docker) at any time with `cairnmind migrate --to server` (or install with the full ArcadeDB script `bash scripts/install-wsl.sh`). Nothing else is required upfront: Ollama, `tmux`, NLI (`cairnmind[nli]`), and GitHub Copilot (`cairnmind[copilot]`) are all optional and covered under [Optional integrations](#optional-integrations).
 
 In a terminal, commands explain what happened and how to fix blocks in plain language; with `--json` (or in a pipe/script), `stdout` emits pure JSON while hints and warnings go strictly to `stderr` (`NO_COLOR=1` disables ANSI styling). `cairnmind doctor` repeats the installer's check at any time and exits 1 when something required is missing.
 
@@ -76,7 +76,7 @@ cairnmind run my-app claude       # or codex: starts the client bound to this pr
 
 Cursor, Cline, Zed and other MCP clients connect via `cairnmind mcp --client external` in an evidence-degraded session: see [docs/EXTERNAL_CLIENTS.md](docs/EXTERNAL_CLIENTS.md).
 
-**[Step-by-step installation guide](docs/INSTALL.md)**: preparing Windows and WSL2, installing from a release, native or Docker engine, connecting assistants, upgrading, uninstalling and troubleshooting.
+**[Step-by-step installation guide](docs/INSTALL.md)**: preparing Windows and WSL2 (Ubuntu 24.04 is the tested platform for the full ArcadeDB + tmux setup; macOS and native Windows lightweight mode are also supported), installing from a release, native or Docker engine, connecting assistants, upgrading, uninstalling and troubleshooting. The bundled sample project lives in `examples/sample-project`.
 
 ## Optional integrations
 

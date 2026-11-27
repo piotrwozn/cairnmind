@@ -203,22 +203,34 @@ def contract_text(probes: dict[str, dict[str, Any]]) -> str:
 def doctor(settings: Settings) -> dict[str, Any]:
     """Read-only diagnostics. No login, downloads, model sessions or secrets."""
     from .arcade import ArcadeError
+    from .config import resolved_backend
     from .database_credentials import doctor_block
     from .engine import managed_java_executable, resolve_java
     from .client_runtime import NativeRuntime
     import ssl
     from . import platform_hints
     on_a_mac = platform_hints.host_system() == "darwin"
+    active_backend = resolved_backend(settings)
     result: dict[str, Any] = {
         "python": platform.python_version(), "python_executable": str(Path(sys.executable).resolve()),
         "openssl": ssl.OPENSSL_VERSION, "platform": platform.system(),
         "wsl": platform_hints.is_wsl(),
         "data_dir": str(settings.data_dir),
+        "storage_backend": active_backend,
         "clients": {name: _probe_cli(name) for name in CLIENTS},
         "ollama": {"available": False}, "service": {"available": False},
         # The database block is read through ArcadeClient, so its rules (#72) apply to doctor too.
-        "arcadedb": doctor_block(settings),
+        "arcadedb": (
+            {"needed": False, "available": None, "reason": "Embedded SQLite backend is active."}
+            if active_backend == "sqlite"
+            else doctor_block(settings)
+        ),
     }
+    if active_backend == "sqlite":
+        from .sqlite_telemetry import evaluate_sqlite_health, maybe_emit_scale_hint
+
+        result["sqlite"] = evaluate_sqlite_health(settings)
+        maybe_emit_scale_hint(settings, result["sqlite"])
     if on_a_mac:
         del result["wsl"]  # a flag that can only be False here, and the word the report should not carry
     result["java"] = {"on_path": bool(shutil.which("java")), "minimum_major": 21}
@@ -228,17 +240,19 @@ def doctor(settings: Settings) -> dict[str, Any]:
         result["cockpit"] = cockpit  # only the workspace needs tmux (#273): a warning, never a failure
     from .database_mode import connect_only, engine_mode
     try:
-        in_docker = not connect_only(settings) and engine_mode(settings) == "docker"
+        in_docker = active_backend == "arcade" and not connect_only(settings) and engine_mode(settings) == "docker"
     except ValueError:
         in_docker = False  # arcadedb.engine_problem names the wrong value
     try:
-        # Connect-only (#68) or the engine in Docker (#272): no Java engine runs here, so Java is neither needed
+        # SQLite, connect-only (#68) or the engine in Docker (#272): no Java engine runs here, so Java is neither needed
         # nor run to ask its version.
-        java = None if connect_only(settings) or in_docker else resolve_java(settings)
+        java = None if active_backend == "sqlite" or connect_only(settings) or in_docker else resolve_java(settings)
     except ArcadeError as exc:
         java = None
         result["java"].update(compatible=False, error=str(exc))
-    if connect_only(settings):
+    if active_backend == "sqlite":
+        result["java"] = {"needed": False, "reason": "Embedded SQLite backend is active; Java is not needed."}
+    elif connect_only(settings):
         result["java"] = {"needed": False, "reason": "This installation only connects to its database; no engine "
                                                      "runs on this machine."}
     elif in_docker:

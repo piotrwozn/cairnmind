@@ -93,19 +93,20 @@ class ReadOnlyClient:
 def check_ready(client: ArcadeClient, settings: Settings) -> None:
     """Refuse, without changing anything, a store that only ``Store(path)`` could make readable."""
     from .store import SCHEMA_VERSION
-    try:
-        info = client.server_info()
-    except ArcadeError as exc:
-        if exc.status_code is not None:
-            raise  # the engine answered: its own error says more than "not running"
-        if connect_only(settings):
-            # Connect-only (#68): there is no engine to start here; the client's message says where it looked.
-            raise StoreNotReady(str(exc)) from None
-        raise StoreNotReady("The database engine is not running; start it with `cairnmind engine start` "
-                            "(this command does not start it).") from None
-    refused = version_problem(settings, info)
-    if refused:
-        raise ArcadeError(refused)
+    if hasattr(client, "server_info"):
+        try:
+            info = client.server_info()
+        except ArcadeError as exc:
+            if exc.status_code is not None:
+                raise  # the engine answered: its own error says more than "not running"
+            if connect_only(settings):
+                # Connect-only (#68): there is no engine to start here; the client's message says where it looked.
+                raise StoreNotReady(str(exc)) from None
+            raise StoreNotReady("The database engine is not running; start it with `cairnmind engine start` "
+                                "(this command does not start it).") from None
+        refused = version_problem(settings, info)
+        if refused:
+            raise ArcadeError(refused)
     if not client.database_exists():
         if connect_only(settings):
             raise StoreNotReady(missing_database(settings))

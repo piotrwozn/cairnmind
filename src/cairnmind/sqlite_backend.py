@@ -444,6 +444,7 @@ def _translate_expr(table: str, expr: str, params: dict[str, Any]) -> tuple[str,
 
     # Token-by-token rewrite of identifiers, booleans, and dotted paths outside string literals.
     result = []
+    prev_word = ""
     i = 0
     n = len(text)
     while i < n:
@@ -464,6 +465,7 @@ def _translate_expr(table: str, expr: str, params: dict[str, Any]) -> tuple[str,
                     break
                 i += 1
             result.append(text[start:i])
+            prev_word = ""
             continue
         if ch == "(" and re.match(r"\(\s*SELECT\b", text[i:], re.I):
             depth = 0
@@ -531,7 +533,9 @@ def _translate_expr(table: str, expr: str, params: dict[str, Any]) -> tuple[str,
             after_pos = i + len(word)
             next_ch = text[after_pos] if after_pos < n else ""
             upper = word.upper()
-            if upper == "TRUE":
+            if prev_word == "AS":
+                result.append(f'"{word}"')
+            elif upper == "TRUE":
                 result.append("1")
             elif upper == "FALSE":
                 result.append("0")
@@ -539,8 +543,11 @@ def _translate_expr(table: str, expr: str, params: dict[str, Any]) -> tuple[str,
                 result.append(word)
             else:
                 result.append(_field_expr(table, word))
+            prev_word = upper
             i = after_pos
             continue
+        if not ch.isspace():
+            prev_word = ""
         result.append(ch)
         i += 1
 
@@ -785,6 +792,30 @@ class SQLiteBackend:
         self._busy_timestamps: deque[float] = deque(maxlen=1000)
         self._fts_latencies_ms: deque[float] = deque(maxlen=500)
         self._graph_latencies_ms: deque[float] = deque(maxlen=500)
+        self._last_metrics_persisted: float = 0.0
+
+    def _metrics_data_dir(self) -> Path | None:
+        if self._is_memory or self._read_only:
+            return None
+        if self._store is not None and getattr(self._store, "data_dir", None):
+            return Path(self._store.data_dir)
+        return self.db_path.parent
+
+    def persist_metrics(self, *, force: bool = False) -> None:
+        """Persist rolling latency and busy-retry counters to ``data_dir/runtime/sqlite-metrics.json``."""
+        data_dir = self._metrics_data_dir()
+        if data_dir is None:
+            return
+        now = time.monotonic()
+        if not force and (now - self._last_metrics_persisted) < 30.0:
+            return
+        self._last_metrics_persisted = now
+        try:
+            from .sqlite_telemetry import record_sqlite_metrics
+
+            record_sqlite_metrics(data_dir, self.metrics_snapshot())
+        except Exception:  # noqa: BLE001
+            pass
 
     @property
     def backend_kind(self) -> str:
@@ -874,6 +905,10 @@ class SQLiteBackend:
         return conn
 
     def close(self) -> None:
+        if not self._read_only and not self._is_memory and (
+            self.busy_retries or self._fts_latencies_ms or self._graph_latencies_ms
+        ):
+            self.persist_metrics(force=True)
         with self._all_conns_lock:
             conns = list(self._all_conns)
             self._all_conns.clear()
@@ -1910,6 +1945,14 @@ class _SQLiteClientProxy:
     def __init__(self, backend: SQLiteBackend):
         self._backend = backend
 
+    @property
+    def settings(self) -> Any:
+        return getattr(self._backend._store, "settings", None)
+
+    @property
+    def database(self) -> str:
+        return str(self._backend.db_path)
+
     def ensure_database(self) -> None:
         self._backend.ensure_database()
 
@@ -1922,7 +1965,7 @@ class _SQLiteClientProxy:
     def command(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         return self._backend.command(sql, params)
 
-    def transaction(self, commit_timeout: float = 30.0):
+    def transaction(self, commit_timeout: float = 30.0, *, commit: bool = True):
         return self._backend.raw_transaction(commit_timeout=commit_timeout)
 
     def close(self) -> None:

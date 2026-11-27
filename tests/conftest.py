@@ -89,7 +89,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_server_mode", "test_restore_messages", "test_command_start",
     "test_model_client_kept", "test_no_process_wide_time_patch",
     "test_phase1_cli_demo", "test_phase2_snapshot_privacy", "test_phase3a_cache_vcr", "test_phase3b_nli_cascade",
-    "test_phase5_windows_foundation", "test_phase4b_sqlite_try",
+    "test_phase5_windows_foundation", "test_phase4b_sqlite_try", "test_phase5_scale_telemetry",
 })
 
 TMUX_MODULES = frozenset({

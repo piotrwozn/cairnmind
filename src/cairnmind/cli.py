@@ -1131,6 +1131,72 @@ def setup(ctx: typer.Context,
         raise typer.Exit(1)
 
 
+@app.command("migrate")
+@initialized
+def migrate_command(
+    ctx: typer.Context,
+    to: Annotated[str | None, typer.Option("--to", help="Target backend: server (ArcadeDB) or sqlite.")] = None,
+    resume: Annotated[bool, typer.Option("--resume", help="Resume an interrupted migration from its last checkpoint.")] = False,
+    abort: Annotated[bool, typer.Option("--abort", help="Abort an interrupted migration and clean partial target data.")] = False,
+    overwrite: Annotated[bool, typer.Option("--overwrite", help="Replace existing data in a non-empty target database.")] = False,
+    target_namespace: Annotated[str | None, typer.Option("--target-namespace", help="ArcadeDB database name to create or migrate into.")] = None,
+    include_cache: Annotated[bool, typer.Option("--include-cache", help="Verify and report verdict cache continuity alongside the migration.")] = False,
+    force: Annotated[bool, typer.Option("--force", help="Allow reverse migration to SQLite even when size thresholds are exceeded.")] = False,
+    batch_size: Annotated[int, typer.Option("--batch-size", help="Number of rows transferred per checkpointed batch.")] = 1000,
+    as_json: JSON_FLAG = False,
+):
+    """Migrate all Cairnmind data losslessly between embedded SQLite and ArcadeDB server.
+
+    Verifies exact per-collection counts and canonical SHA-256 parity before atomically switching config.json. Refused inside coding sessions."""
+    from cairnmind.migration import MigrationError, abort_migration, migrate as run_migration
+
+    if abort and (resume or to is not None):
+        raise typer.BadParameter("Use --abort by itself, without --to or --resume.")
+    if resume and to is not None:
+        raise typer.BadParameter("Use --resume without --to; the direction is read from the saved checkpoint.")
+    if not abort and not resume and to not in {"server", "sqlite"}:
+        raise typer.BadParameter("Specify --to server, --to sqlite, --resume, or --abort.")
+
+    try:
+        if abort:
+            result = abort_migration(ctx.obj)
+
+            def sentences():
+                return [f"Aborted migration {result.get('migration_id') or ''}; source store and config.json were left untouched."]
+
+            _human_or_json(result, as_json, sentences)
+            return
+
+        result = run_migration(
+            ctx.obj,
+            to=to,
+            resume=resume,
+            overwrite=overwrite,
+            target_namespace=target_namespace,
+            include_cache=include_cache,
+            force=force,
+            batch_size=batch_size,
+        )
+    except MigrationError as exc:
+        refuse(str(exc))
+
+    def sentences():
+        lines = [
+            f"Migrated {result['total_rows']} rows across {result['collections']} collections "
+            f"({result['source_backend']} -> {result['target_backend']}), SHA-256 {result['sha256'][:16]}."
+        ]
+        if result.get("archived_sqlite"):
+            lines.append(f"Archived previous SQLite database to {result['archived_sqlite']}.")
+        if result.get("person_confirmations") != "kept":
+            lines.append(
+                f"Source role was reader: {result.get('confirmations_turned_into_claims', 0)} confirmation(s) "
+                "were downgraded to migration claims."
+            )
+        return lines
+
+    _human_or_json(result, as_json, sentences)
+
+
 @app.command()
 @initialized
 def serve(ctx: typer.Context, defer_background_inference: bool = False):
