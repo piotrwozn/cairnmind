@@ -1,0 +1,421 @@
+---
+---
+
+<!--
+  Full-width 4-Tab Interactive Product Showcase (zero React!)
+  Tab 1: Real 20-second animated terminal GIF recorded from live `uvx cairnmind try` output.
+         Shows crisp static climax poster immediately, starts animation when scrolled into viewport
+         (respecting prefers-reduced-motion: reduce), with Pause/Play toggle & Before/After lightbox.
+  Tab 2: Real 63-second cold hand-off & 1-line edit stale invalidation recording (mounted on demand).
+  Tab 3: Real Textual TUI workspace capture exported via StandaloneWorkspaceApp.export_screenshot (mounted on demand).
+  Tab 4: Local Web Engineer Cockpit rendered from real ui/src/mocks/fixtures.ts data.
+-->
+<div class="glass-elevated p-4 sm:p-6" data-showcase>
+  <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-4 border-b border-[var(--glass-border)]">
+    <div>
+      <p class="eyebrow">See Cairnmind Live</p>
+      <h2 class="mt-1 text-xl sm:text-2xl font-semibold">
+        Watch it catch a fake “Done”
+      </h2>
+    </div>
+    <div role="tablist" aria-label="Product interface captures" class="flex flex-wrap gap-1.5">
+      <button
+        type="button"
+        role="tab"
+        data-sc-tab="live-demo"
+        aria-selected="true"
+        aria-controls="sc-panel-live-demo"
+        class="min-h-[44px] px-3.5 py-2 rounded-lg text-xs font-mono cursor-pointer transition-colors border bg-[var(--accent-surface)] text-[var(--text-strong)] border-[var(--accent-border)] font-semibold"
+      >
+        Live Demo (20s)
+      </button>
+      <button
+        type="button"
+        role="tab"
+        data-sc-tab="handoff"
+        aria-selected="false"
+        aria-controls="sc-panel-handoff"
+        class="min-h-[44px] px-3.5 py-2 rounded-lg text-xs font-mono cursor-pointer transition-colors border bg-[var(--glass-bg-subtle)] text-[var(--text-muted)] border-[var(--glass-border)] hover:text-[var(--text-strong)]"
+      >
+        Agent Handoff
+      </button>
+      <button
+        type="button"
+        role="tab"
+        data-sc-tab="tui"
+        aria-selected="false"
+        aria-controls="sc-panel-tui"
+        class="min-h-[44px] px-3.5 py-2 rounded-lg text-xs font-mono cursor-pointer transition-colors border bg-[var(--glass-bg-subtle)] text-[var(--text-muted)] border-[var(--glass-border)] hover:text-[var(--text-strong)]"
+      >
+        Terminal UI
+      </button>
+      <button
+        type="button"
+        role="tab"
+        data-sc-tab="web-ui"
+        aria-selected="false"
+        aria-controls="sc-panel-web-ui"
+        class="min-h-[44px] px-3.5 py-2 rounded-lg text-xs font-mono cursor-pointer transition-colors border bg-[var(--glass-bg-subtle)] text-[var(--text-muted)] border-[var(--glass-border)] hover:text-[var(--text-strong)]"
+      >
+        Web Cockpit
+      </button>
+    </div>
+  </div>
+
+  <!-- TAB 1: Real 20-second animated terminal GIF recorded from live `uvx cairnmind try` -->
+  <figure id="sc-panel-live-demo" role="tabpanel" data-sc-panel="live-demo" class="mt-5 m-0" data-live-gif-player>
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <div class="flex items-center gap-2">
+        <span class="h-2.5 w-2.5 rounded-full bg-[var(--danger)] opacity-80" aria-hidden="true"></span>
+        <span class="h-2.5 w-2.5 rounded-full bg-[var(--warn)] opacity-80" aria-hidden="true"></span>
+        <span class="h-2.5 w-2.5 rounded-full bg-[var(--ok)] opacity-80" aria-hidden="true"></span>
+        <span class="ml-1 font-mono text-xs text-[var(--text-muted)]">$ uvx cairnmind try · Real 20-second terminal recording</span>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          data-live-gif-toggle
+          data-gif-src="/media/try-demo.gif"
+          data-poster-src="/media/try-demo-poster.webp"
+          aria-pressed="false"
+          class="inline-flex items-center min-h-[44px] px-3.5 rounded-lg font-mono text-xs border border-[var(--glass-border-hi)] bg-[var(--glass-bg-subtle)] text-[var(--text-strong)] hover:border-[var(--accent)] cursor-pointer transition-colors"
+        >
+          ▶ Play 20s Demo
+        </button>
+        <button
+          type="button"
+          data-zoom-open
+          class="inline-flex items-center min-h-[44px] px-3.5 rounded-lg font-mono text-xs border border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--text-strong)] hover:border-[var(--accent)] cursor-pointer transition-colors"
+        >
+          ⤢ Before/After diagram
+        </button>
+      </div>
+    </div>
+    <div class="rounded-xl overflow-hidden border border-[var(--glass-border)] bg-[#0b0e14]">
+      <img
+        data-live-gif-img
+        src="/media/try-demo-poster.webp"
+        alt="Animated 20-second real terminal recording of uvx cairnmind try: refusing a nonexistent flag with unknown, blocking done after editing trail_notes/store.py with fingerprint_mismatch, and unlocking verified done after a fresh check run."
+        width="960"
+        height="540"
+        style="aspect-ratio: 16 / 9;"
+        decoding="async"
+        class="w-full h-auto block"
+      />
+    </div>
+    <figcaption class="mt-3.5 text-xs sm:text-sm text-[var(--text-muted)] leading-relaxed">
+      <strong class="text-[var(--text-strong)]">0:00–0:06</strong> nonexistent <code class="code-inline">--turbo-cache-flag</code> → <code class="code-inline">unknown</code> + verbatim quote ·
+      <strong class="text-[var(--text-strong)]">0:06–0:13</strong> edit <code class="code-inline">store.py</code> → <code class="code-inline">BLOCKED (fingerprint_mismatch)</code> ·
+      <strong class="text-[var(--text-strong)]">0:13–0:20</strong> fresh check run unlocks verified <code class="code-inline">done</code>
+    </figcaption>
+  </figure>
+
+  <!-- TAB 2: Native HTML5 video (WebM + MP4, preload=none, crisp frame-153 WebP poster, zero hidden img tags) -->
+  <figure id="sc-panel-handoff" role="tabpanel" data-sc-panel="handoff" hidden class="mt-5 m-0" data-video-player>
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <div class="flex items-center gap-2">
+        <span class="h-2.5 w-2.5 rounded-full bg-[var(--danger)] opacity-80" aria-hidden="true"></span>
+        <span class="h-2.5 w-2.5 rounded-full bg-[var(--warn)] opacity-80" aria-hidden="true"></span>
+        <span class="h-2.5 w-2.5 rounded-full bg-[var(--ok)] opacity-80" aria-hidden="true"></span>
+        <span class="ml-1 font-mono text-xs text-[var(--text-muted)]">Real cold hand-off &amp; 1-line edit stale invalidation (63s video)</span>
+      </div>
+      <button
+        type="button"
+        data-video-toggle
+        aria-pressed="false"
+        class="inline-flex items-center min-h-[44px] px-3.5 rounded-lg font-mono text-xs border border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--text-strong)] cursor-pointer hover:border-[var(--accent)]"
+      >
+        ▶ Play Full Recording
+      </button>
+    </div>
+    <div class="relative rounded-xl overflow-hidden border border-[var(--glass-border)] bg-[#0b0d11]" style="aspect-ratio: 936 / 612;">
+      <video
+        data-handoff-video
+        controls
+        muted
+        loop
+        playsinline
+        preload="none"
+        poster="/media/handoff-poster.webp"
+        width="936"
+        height="612"
+        aria-label="Real Cairnmind terminal recording showing a cold hand-off between sessions and immediate stale-check invalidation after editing checkout.py"
+        class="w-full h-full object-contain block bg-[#0b0d11]"
+      >
+        <source src="/media/handoff-demo.mp4" type="video/mp4" />
+      </video>
+    </div>
+    <figcaption class="mt-3.5 text-xs sm:text-sm text-[var(--text-muted)] leading-relaxed">
+      <strong class="text-[var(--text-strong)]">A decision survives a cold hand-off. A passing test does not survive a one-line edit.</strong> Frame above shows live <code class="code-inline">cairnmind brief shop</code> flagging <code class="code-inline">[machine] Checks stale</code> right after editing <code class="code-inline">checkout.py</code>.
+    </figcaption>
+  </figure>
+
+  <!-- TAB 3: 100% REAL Textual TUI Workspace Capture (mounted lazily from <template> when tab opens) -->
+  <figure id="sc-panel-tui" role="tabpanel" data-sc-panel="tui" hidden class="mt-5 m-0">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <div class="flex items-center gap-2">
+        <span class="h-2.5 w-2.5 rounded-full bg-[var(--danger)] opacity-80" aria-hidden="true"></span>
+        <span class="h-2.5 w-2.5 rounded-full bg-[var(--warn)] opacity-80" aria-hidden="true"></span>
+        <span class="h-2.5 w-2.5 rounded-full bg-[var(--ok)] opacity-80" aria-hidden="true"></span>
+        <span class="ml-1 font-mono text-xs text-[var(--text-muted)]">$ cairnmind · Real terminal workspace capture</span>
+      </div>
+      <span class="glass-pill glass-pill-ok text-[11px]">Linux · macOS · Native Windows</span>
+    </div>
+    <div class="rounded-xl overflow-hidden border border-[var(--glass-border)] bg-[#121418]" style="aspect-ratio: 1400 / 760;">
+      <div data-media-slot class="w-full h-full"></div>
+      <template data-lazy-media>
+        <img
+          src="/media/tui-workspace.svg"
+          alt="Real Textual terminal workspace capture of Cairnmind showing the Memory Inspector tab with confirmed decisions, proposed rules waiting for human review, and keyboard navigation."
+          width="1400"
+          height="760"
+          decoding="async"
+          class="w-full h-auto block"
+        />
+      </template>
+    </div>
+    <figcaption class="mt-3.5 text-xs sm:text-sm text-[var(--text-muted)] leading-relaxed">
+      <strong class="text-[var(--text-strong)]">Exported directly from Cairnmind’s real Textual engine</strong> using <code class="code-inline">terminal_theme.py</code>. On Linux/WSL2/macOS, <code class="code-inline">tmux</code> runs Codex CLI &amp; Claude Code beside this inspector. On native Windows, it launches standalone with zero tmux.
+    </figcaption>
+  </figure>
+
+  <!-- TAB 4: Local Web Engineer Cockpit (cairnmind ui --port 4310) rendered from real ui/src/mocks/fixtures.ts data -->
+  <figure id="sc-panel-web-ui" role="tabpanel" data-sc-panel="web-ui" hidden class="mt-5 m-0">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <div class="flex items-center gap-2">
+        <span class="h-2.5 w-2.5 rounded-full bg-[var(--danger)] opacity-80" aria-hidden="true"></span>
+        <span class="h-2.5 w-2.5 rounded-full bg-[var(--warn)] opacity-80" aria-hidden="true"></span>
+        <span class="h-2.5 w-2.5 rounded-full bg-[var(--ok)] opacity-80" aria-hidden="true"></span>
+        <span class="ml-1 font-mono text-xs text-[var(--text-muted)]">http://127.0.0.1:4310 · cairnmind ui --mock (Loopback only)</span>
+      </div>
+      <span class="glass-pill glass-pill-accent text-[11px]">Live Updates · Ctrl+K · Local Only</span>
+    </div>
+
+    <!-- Authentic Engineer Cockpit layout powered by real ui/src/mocks/fixtures.ts contracts -->
+    <div class="rounded-xl border border-[var(--glass-border-hi)] bg-[#060709] text-[#dadee3] overflow-hidden font-mono text-xs">
+      <!-- Top Status Bar -->
+      <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b border-white/10 bg-[#0d1016]">
+        <div class="flex items-center gap-3">
+          <span class="font-semibold text-[#f1f5f9]">Cairnmind Engineer Cockpit</span>
+          <span class="px-2 py-0.5 rounded bg-[#1e4a78]/40 border border-[#87afd7]/40 text-[#a9cbe9] text-[10.5px]">project: cairnmind</span>
+          <span class="px-2 py-0.5 rounded bg-[#8fd08a]/15 border border-[#8fd08a]/35 text-[#8fd08a] text-[10.5px]">Live · rev 42</span>
+        </div>
+        <span class="text-[10.5px] text-[#8b97a6]">127.0.0.1:4310 · j/k navigate · Ctrl+K search</span>
+      </div>
+
+      <!-- 2-Panel Cockpit Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-white/10">
+        <!-- Col 1: Session Strip & Task Gates -->
+        <div class="lg:col-span-5 p-4 space-y-3 bg-[#0b0e14]">
+          <p class="text-[10.5px] uppercase tracking-wider text-[#87afd7] font-semibold">Sessions &amp; test gates</p>
+          <div class="rounded-lg border border-white/10 bg-[#12161f] p-3 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-[#f1f5f9] font-semibold">claude-code · sess_8a2f</span>
+              <span class="text-[#8fd08a] text-[10.5px]">SYNCED (rev 42)</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-[#f1f5f9] font-semibold">codex-cli · sess_4d91</span>
+              <span class="text-[#f0cf87] text-[10.5px]">NEEDS SYNC (rev 41)</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-[#f1f5f9] font-semibold">cursor-mcp · direct</span>
+              <span class="text-[#87afd7] text-[10.5px]">origin: direct-mcp</span>
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-white/10 bg-[#12161f] p-3 space-y-2">
+            <p class="text-[10px] uppercase text-[#8b97a6]">Active Plan v4 · Test Gates</p>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-[#dadee3] truncate">require_ack handoff gate</span>
+              <span class="px-1.5 py-0.5 rounded bg-[#8fd08a]/15 text-[#8fd08a] text-[10px] shrink-0">PASS · 7c16bf5</span>
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-[#dadee3] truncate">evaluate_test_gate fingerprint</span>
+              <span class="px-1.5 py-0.5 rounded bg-[#f47067]/15 text-[#f47067] text-[10px] shrink-0">STALE_CODE</span>
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-[#dadee3] truncate">verify_verbatim_quote diff</span>
+              <span class="px-1.5 py-0.5 rounded bg-[#f0cf87]/15 text-[#f0cf87] text-[10px] shrink-0">NEEDS_REVIEW</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Col 2: Verbatim Quote Provenance & SHA-256 Diff -->
+        <div class="lg:col-span-7 p-4 space-y-3 bg-[#090b10]">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <p class="text-[10.5px] uppercase tracking-wider text-[#8fd08a] font-semibold">Verbatim Quote Provenance · SHA-256</p>
+            <span class="text-[10.5px] text-[#8fd08a]">MATCH · src/cairnmind/verification.py</span>
+          </div>
+
+          <div class="rounded-lg border border-white/10 bg-[#0d1118] p-3 text-[11px] leading-relaxed overflow-x-auto">
+            <div class="text-[#8b97a6]">def evaluate_test_gate(profile_name, expected_fingerprint, current_fingerprint):</div>
+            <div class="text-[#8fd08a] bg-[#8fd08a]/10 px-1.5 rounded">    if expected_fingerprint != current_fingerprint:</div>
+            <div class="text-[#8fd08a] bg-[#8fd08a]/10 px-1.5 rounded">        return &#123;"status": "STALE_CODE", "reason": "FILE_FINGERPRINT_MISMATCH"&#125;</div>
+            <div class="text-[#dadee3]">    return &#123;"status": "PASS", "sha256_short": current_fingerprint[:7]&#125;</div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-[10.5px]">
+            <div class="rounded-lg border border-[#8fd08a]/30 bg-[#8fd08a]/10 p-2.5">
+              <span class="text-[#8b97a6] block">Recorded SHA-256</span>
+              <span class="text-[#8fd08a] font-semibold">e4c49d5b1f08…91a2</span>
+            </div>
+            <div class="rounded-lg border border-[#f47067]/30 bg-[#f47067]/10 p-2.5">
+              <span class="text-[#8b97a6] block">Guardrail Audit Log</span>
+              <span class="text-[#f47067] font-semibold">BLOCKED: TEST_GATE_UNVERIFIED</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <figcaption class="mt-3.5 text-xs sm:text-sm text-[var(--text-muted)] leading-relaxed">
+      <strong class="text-[var(--text-strong)]">Built from the real deterministic mock fixtures in <code class="code-inline">ui/src/mocks/fixtures.ts</code>.</strong> Preview the live interactive browser cockpit locally with <code class="code-inline">cairnmind ui --port 4310 --mock</code> (loopback-only, never phones home).
+    </figcaption>
+  </figure>
+
+  <!-- Fullscreen Lightbox for Before/After comparison SVG (mounted lazily when opened) -->
+  <dialog
+    data-zoom-dialog
+    class="m-auto p-3 sm:p-5 max-w-[96vw] w-[1240px] rounded-2xl border border-[var(--glass-border-hi)] bg-[#0b0d11] text-[var(--text-strong)] backdrop:bg-black/80"
+    aria-label="Expanded before and after diagram"
+  >
+    <div class="flex items-center justify-between gap-2 pb-3 mb-3 border-b border-white/10">
+      <span class="font-mono text-xs text-[var(--text-muted)]">Cairnmind 60-second before &amp; after comparison</span>
+      <button
+        type="button"
+        data-zoom-close
+        class="min-h-[44px] px-3.5 py-1 rounded-lg font-mono text-xs border border-white/15 bg-white/5 text-white cursor-pointer hover:border-[var(--accent)]"
+      >
+        Close (Esc)
+      </button>
+    </div>
+    <div data-media-slot></div>
+    <template data-lazy-media>
+      <img
+        src="/media/demo-60s.svg"
+        alt="Expanded 60-second Cairnmind demo comparing hallucination versus unknown and stale test blocking"
+        width="960"
+        height="540"
+        class="w-full h-auto block rounded-lg"
+      />
+    </template>
+  </dialog>
+
+  <noscript>
+    <style>{`[data-sc-panel] { display: block !important; margin-top: 1.5rem; }`}</style>
+  </noscript>
+</div>
+
+<script>
+  function hydrateLazyMedia(container: Element | null) {
+    if (!container) return;
+    const tpl = container.querySelector<HTMLTemplateElement>('template[data-lazy-media]');
+    const slot = container.querySelector<HTMLElement>('[data-media-slot]');
+    if (!tpl || !slot || slot.childElementCount > 0) return;
+    slot.appendChild(tpl.content.cloneNode(true));
+  }
+
+  document.querySelectorAll('[data-showcase]').forEach((root) => {
+    const tabs = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-sc-tab]'));
+    const panels = Array.from(root.querySelectorAll<HTMLElement>('[data-sc-panel]'));
+
+    const selectTab = (id: string) => {
+      for (const tab of tabs) {
+        const active = tab.dataset.scTab === id;
+        tab.setAttribute('aria-selected', active ? 'true' : 'false');
+        tab.className = active
+          ? 'min-h-[44px] px-3.5 py-2 rounded-lg text-xs font-mono cursor-pointer transition-colors border bg-[var(--accent-surface)] text-[var(--text-strong)] border-[var(--accent-border)] font-semibold'
+          : 'min-h-[44px] px-3.5 py-2 rounded-lg text-xs font-mono cursor-pointer transition-colors border bg-[var(--glass-bg-subtle)] text-[var(--text-muted)] border-[var(--glass-border)] hover:text-[var(--text-strong)]';
+      }
+      for (const panel of panels) {
+        const active = panel.dataset.scPanel === id;
+        panel.hidden = !active;
+        if (active) hydrateLazyMedia(panel);
+      }
+    };
+
+    tabs.forEach((t) => {
+      t.addEventListener('click', () => {
+        if (t.dataset.scTab) selectTab(t.dataset.scTab);
+      });
+    });
+
+    // Tab 1: Start on crisp static climax poster; auto-play 20s GIF when scrolled into viewport
+    const liveWrap = root.querySelector('[data-live-gif-player]');
+    if (liveWrap) {
+      const btn = liveWrap.querySelector<HTMLButtonElement>('[data-live-gif-toggle]');
+      const img = liveWrap.querySelector<HTMLImageElement>('[data-live-gif-img]');
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      let playing = false;
+      let userToggled = false;
+
+      const setPlaying = (next: boolean) => {
+        if (!btn || !img) return;
+        playing = next;
+        const target = playing ? btn.dataset.gifSrc : btn.dataset.posterSrc;
+        if (target && img.getAttribute('src') !== target) img.src = target;
+        btn.setAttribute('aria-pressed', playing ? 'true' : 'false');
+        btn.textContent = playing ? '❚❚ Pause' : '▶ Play 20s Demo';
+      };
+
+      btn?.addEventListener('click', () => {
+        userToggled = true;
+        setPlaying(!playing);
+      });
+
+      if (!reduced && 'IntersectionObserver' in window) {
+        const observer = new IntersectionObserver(
+          (entries) => {
+            const visible = entries.some((entry) => entry.isIntersecting);
+            if (visible && !userToggled && !playing) {
+              setPlaying(true);
+              observer.disconnect();
+            }
+          },
+          { threshold: 0.25 }
+        );
+        observer.observe(liveWrap);
+      }
+    }
+
+    // Tab 2: Native HTML5 video Play/Pause toggle
+    const videoWrap = root.querySelector('[data-video-player]');
+    if (videoWrap) {
+      const btn = videoWrap.querySelector<HTMLButtonElement>('[data-video-toggle]');
+      const video = videoWrap.querySelector<HTMLVideoElement>('[data-handoff-video]');
+
+      const syncBtn = () => {
+        if (!btn || !video) return;
+        const playing = !video.paused && !video.ended;
+        btn.setAttribute('aria-pressed', playing ? 'true' : 'false');
+        btn.textContent = playing ? '❚❚ Pause Recording' : '▶ Play Full Recording';
+      };
+
+      btn?.addEventListener('click', () => {
+        if (!video) return;
+        if (video.paused || video.ended) {
+          void video.play().catch(() => {});
+        } else {
+          video.pause();
+        }
+      });
+      video?.addEventListener('play', syncBtn);
+      video?.addEventListener('pause', syncBtn);
+      video?.addEventListener('ended', syncBtn);
+    }
+
+    // Lightbox zoom for Before/After comparison diagram (mounts SVG on first open)
+    const dialog = root.querySelector<HTMLDialogElement>('[data-zoom-dialog]');
+    const closeBtn = root.querySelector<HTMLButtonElement>('[data-zoom-close]');
+    root.querySelectorAll('[data-zoom-open]').forEach((el) => {
+      el.addEventListener('click', () => {
+        hydrateLazyMedia(dialog);
+        dialog?.showModal();
+      });
+    });
+    closeBtn?.addEventListener('click', () => dialog?.close());
+    dialog?.addEventListener('click', (e) => {
+      if (e.target === dialog) dialog.close();
+    });
+  });
+</script>

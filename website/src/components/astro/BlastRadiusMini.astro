@@ -1,0 +1,60 @@
+---
+---
+
+<div class="obsidian-well p-3.5 overflow-x-auto">
+  <svg
+    viewBox="0 0 540 128"
+    class="w-full min-w-[440px] h-auto block"
+    role="img"
+    aria-label="Blast-radius code graph: editing src/checkout.py traces calls to src/tax.py, flags ADR Rounding Rule for review, and marks test_checkout.py Checks stale."
+  >
+    <defs>
+      <marker id="br-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--accent)" />
+      </marker>
+      <marker id="br-arrow-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--warn)" />
+      </marker>
+      <marker id="br-arrow-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--danger)" />
+      </marker>
+    </defs>
+
+    <!-- Node 1: Edited Source File -->
+    <rect x="6" y="38" width="142" height="52" rx="9" fill="var(--warn-surface)" stroke="var(--warn-border)" stroke-width="1.2" />
+    <text x="18" y="58" fill="var(--warn)" font-family="var(--font-mono)" font-size="9.5" font-weight="600">EDITED · SHA CHANGED</text>
+    <text x="18" y="76" fill="var(--text-strong)" font-family="var(--font-mono)" font-size="11.5" font-weight="600">src/checkout.py</text>
+
+    <!-- Edges -->
+    <path d="M 148 56 C 174 56, 174 26, 200 26" fill="none" stroke="var(--accent)" stroke-width="1.3" marker-end="url(#br-arrow)" />
+    <path d="M 148 64 L 200 64" fill="none" stroke="var(--warn)" stroke-width="1.3" marker-end="url(#br-arrow-warn)" />
+    <path d="M 148 72 C 174 72, 174 102, 200 102" fill="none" stroke="var(--danger)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#br-arrow-danger)" />
+
+    <!-- Edge labels -->
+    <text x="155" y="21" fill="var(--accent)" font-family="var(--font-mono)" font-size="8.5">calls</text>
+    <text x="155" y="117" fill="var(--danger)" font-family="var(--font-mono)" font-size="8.5">test_imports</text>
+
+    <!-- Node 2: Dependent module -->
+    <rect x="204" y="8" width="150" height="34" rx="8" fill="var(--glass-bg-subtle)" stroke="var(--accent-border)" stroke-width="1.1" />
+    <text x="215" y="29" fill="var(--text-strong)" font-family="var(--font-mono)" font-size="11">src/tax.py · caller</text>
+
+    <!-- Node 3: Linked ADR decision -->
+    <rect x="204" y="48" width="150" height="34" rx="8" fill="var(--glass-bg-subtle)" stroke="var(--warn-border)" stroke-width="1.1" />
+    <text x="215" y="69" fill="var(--warn)" font-family="var(--font-mono)" font-size="10.5">ADR: Rounding Rule</text>
+
+    <!-- Node 4: Test gate invalidated -->
+    <rect x="204" y="88" width="150" height="34" rx="8" fill="var(--danger-surface)" stroke="var(--danger-border)" stroke-width="1.1" />
+    <text x="215" y="109" fill="var(--danger)" font-family="var(--font-mono)" font-size="10.5">test_checkout · STALE</text>
+
+    <!-- Converging arrows to Impact Output -->
+    <path d="M 354 25 C 374 25, 374 58, 392 58" fill="none" stroke="var(--glass-border-hi)" stroke-width="1.2" />
+    <path d="M 354 65 L 392 65" fill="none" stroke="var(--glass-border-hi)" stroke-width="1.2" />
+    <path d="M 354 105 C 374 105, 374 72, 392 72" fill="none" stroke="var(--glass-border-hi)" stroke-width="1.2" />
+
+    <!-- Right summary pill -->
+    <rect x="394" y="34" width="140" height="60" rx="10" fill="var(--accent-surface)" stroke="var(--accent-border)" stroke-width="1.2" />
+    <text x="406" y="54" fill="var(--accent)" font-family="var(--font-mono)" font-size="9.5" font-weight="600">CAIRNMIND IMPACT</text>
+    <text x="406" y="70" fill="var(--text-strong)" font-family="var(--font-mono)" font-size="10.5">1 ADR · 1 caller</text>
+    <text x="406" y="85" fill="var(--danger)" font-family="var(--font-mono)" font-size="10.5">done blocked ✕</text>
+  </svg>
+</div>

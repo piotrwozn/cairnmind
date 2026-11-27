@@ -1,4 +1,4 @@
-# ArcadeDB migration contract — source of truth
+# ArcadeDB migration contract: source of truth
 
 Backend contracts below remain in force. DevBrain 0.3 adds the workflow contracts in
 [V03_CONTRACTS.md](V03_CONTRACTS.md): schema 2, portable payload 3 and unchanged

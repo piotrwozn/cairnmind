@@ -1,0 +1,54 @@
+---
+import { SUPPORTED_MATRIX, WHAT_IT_DOES_NOT_DO } from '@/data/features';
+---
+
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+  <div class="lg:col-span-5 glass-surface p-6">
+    <p class="eyebrow">Explicit Boundaries</p>
+    <h3 class="mt-2 text-xl font-semibold">What Cairnmind does not do</h3>
+    <ul class="mt-5 space-y-4 list-none p-0 m-0">
+      {WHAT_IT_DOES_NOT_DO.map((item) => (
+        <li class="border-l-2 border-[var(--warn-border)] pl-3.5">
+          <p class="text-sm font-semibold text-[var(--text-strong)]">{item.claim}</p>
+          <p class="mt-1 text-xs text-[var(--text-muted)] leading-relaxed">{item.detail}</p>
+        </li>
+      ))}
+    </ul>
+    <p class="mt-5 text-xs font-mono text-[var(--text-dim)]">
+      Full guarantees vs. non-guarantees: <a href="/docs/contracts/#what-it-guarantees-and-what-it-does-not">docs/CONTRACTS.md</a>
+    </p>
+  </div>
+
+  <div class="lg:col-span-7 glass-surface p-6">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+      <div>
+        <p class="eyebrow">CI-Tested Matrix</p>
+        <h3 class="mt-1 text-xl font-semibold">What Cairnmind supports</h3>
+      </div>
+      <a href="/docs/stable-contract/#what-supported-means" class="font-mono text-xs">
+        1.x Stable Contract →
+      </a>
+    </div>
+    <div class="table-wrap">
+      <table class="cm-table">
+        <thead>
+          <tr>
+            <th scope="col">Component</th>
+            <th scope="col">Supported</th>
+          </tr>
+        </thead>
+        <tbody>
+          {SUPPORTED_MATRIX.map((row) => (
+            <tr>
+              <td><strong>{row.component}</strong></td>
+              <td>
+                <div class="text-sm text-[var(--text-strong)]">{row.supported}</div>
+                <div class="mt-1 text-xs text-[var(--text-muted)]">{row.notes}</div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,128 @@
+{
+  "sourceDocs": ["README.md", "docs/INSTALL.md"],
+  "quickTry": {
+    "id": "try",
+    "label": "15-Second Try",
+    "badge": "Zero setup · Python + uv",
+    "summary": "Runs an ephemeral in-memory SQLite store over the bundled sample project. Writes nothing into your directory and requires no Java, Docker, or Ollama.",
+    "commands": [
+      "uvx cairnmind try",
+      "uv tool install cairnmind",
+      "cairnmind init --backend sqlite"
+    ],
+    "note": "Scale losslessly to the full ArcadeDB engine at any time with cairnmind migrate --to server.",
+    "sourceDoc": "README.md"
+  },
+  "platforms": [
+    {
+      "id": "linux-wsl",
+      "label": "Linux & WSL2",
+      "badge": "Ubuntu 24.04 tested",
+      "summary": "Full local stack with Java 21 (or Docker), pinned ArcadeDB 26.11.1, tmux 3.4+ terminal workspace, and optional local Ollama models.",
+      "prereqLabel": "1. System prerequisites (Ubuntu / WSL2)",
+      "prereqCommands": [
+        "sudo apt update",
+        "sudo apt install -y openjdk-21-jre-headless tmux git curl",
+        "curl -LsSf https://astral.sh/uv/install.sh | sh",
+        "curl -fsSL https://ollama.com/install.sh | sh"
+      ],
+      "installLabel": "2. Run installer from source or release archive",
+      "installCommands": [
+        "bash scripts/install-wsl.sh"
+      ],
+      "manualLabel": "Or install manually via uv",
+      "manualCommands": [
+        "uv tool install --python 3.12 .",
+        "cairnmind engine install",
+        "cairnmind init",
+        "cairnmind engine status"
+      ],
+      "sourceDoc": "docs/INSTALL.md"
+    },
+    {
+      "id": "macos",
+      "label": "macOS",
+      "badge": "Apple silicon",
+      "summary": "Tested on Apple silicon with Homebrew Java 21, tmux, uv, and Ollama. Uses the same POSIX installer script.",
+      "prereqLabel": "1. Install via Homebrew and link Java 21",
+      "prereqCommands": [
+        "brew install openjdk@21 tmux uv ollama",
+        "brew services start ollama",
+        "sudo ln -sfn \"$(brew --prefix openjdk@21)/libexec/openjdk.jdk\" /Library/Java/JavaVirtualMachines/openjdk-21.jdk"
+      ],
+      "installLabel": "2. Run the installer from the unpacked release or clone",
+      "installCommands": [
+        "bash scripts/install-wsl.sh"
+      ],
+      "manualLabel": "Check tool versions",
+      "manualCommands": [
+        "/usr/libexec/java_home -v 21+",
+        "java -version",
+        "tmux -V",
+        "uv --version",
+        "ollama --version"
+      ],
+      "sourceDoc": "docs/INSTALL.md"
+    },
+    {
+      "id": "windows",
+      "label": "Native Windows",
+      "badge": "Windows 10/11 · PowerShell",
+      "summary": "Runs natively without WSL2 or tmux. Launches the standalone Textual workspace backed by an owner-only Windows Named Pipe for person-confirmed actions.",
+      "prereqLabel": "1. Install Git, uv, and Java 21 (or Docker Desktop)",
+      "prereqCommands": [
+        "winget install Git.Git astral-sh.uv EclipseAdoptium.Temurin.21.JDK"
+      ],
+      "installLabel": "2. Run the native PowerShell installer",
+      "installCommands": [
+        "pwsh -File scripts/install-windows.ps1"
+      ],
+      "manualLabel": "Or with Windows PowerShell 5.1",
+      "manualCommands": [
+        "powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1"
+      ],
+      "sourceDoc": "docs/INSTALL.md"
+    },
+    {
+      "id": "docker",
+      "label": "Docker Engine",
+      "badge": "No local Java needed",
+      "summary": "Runs Cairnmind's digest-pinned ArcadeDB container (ghcr.io/piotrwozn/cairnmind-arcadedb) on 127.0.0.1:2480 with your local data directory mounted.",
+      "prereqLabel": "Switch engine mode to Docker (or connect to a remote database)",
+      "prereqCommands": [
+        "cairnmind engine start --docker"
+      ],
+      "installLabel": "Verify storage, pulse, and MCP presets",
+      "installCommands": [
+        "cairnmind doctor --check-mcp"
+      ],
+      "manualLabel": "Optional: download local Ollama models",
+      "manualCommands": [
+        "cairnmind models pull",
+        "cairnmind doctor"
+      ],
+      "sourceDoc": "docs/INSTALL.md"
+    }
+  ],
+  "firstProjectFlow": [
+    "cairnmind project add my-app ~/src/my-app",
+    "cairnmind remember my-app \"Accounts lock after five failed logins.\"",
+    "cairnmind brief my-app",
+    "cairnmind ask my-app \"When do accounts lock?\"",
+    "cairnmind install my-app",
+    "cairnmind run my-app claude"
+  ],
+  "mcpClients": [
+    "claude-code",
+    "claude-desktop",
+    "cursor",
+    "windsurf",
+    "vscode",
+    "cline",
+    "roo-code",
+    "codex",
+    "gemini-cli",
+    "zed",
+    "generic"
+  ]
+}

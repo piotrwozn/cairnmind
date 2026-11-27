@@ -240,8 +240,8 @@ When `PROJECT` is omitted, Cairnmind resolves the project from the current worki
 
 | Exit code | Meaning |
 | --- | --- |
-| `0` | Clean — no anchored symbol changed or was removed in the diff |
-| `1` | Drift detected — at least one anchored record has `symbol_changed` or `symbol_gone` |
+| `0` | Clean: no anchored symbol changed or was removed in the diff |
+| `1` | Drift detected: at least one anchored record has `symbol_changed` or `symbol_gone` |
 | `2` | Usage error, invalid Git revision/worktree, unknown project, or unready store |
 
 ### GitHub Actions example
