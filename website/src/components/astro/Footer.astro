@@ -1,0 +1,94 @@
+---
+import { FOOTER_COLUMNS, SITE } from '@/data/site';
+---
+
+<footer class="section-divider mt-14 bg-[var(--glass-bg-subtle)]">
+  <div class="container-shell py-14">
+    <div class="grid grid-cols-1 gap-10 md:grid-cols-2 lg:grid-cols-[1.35fr_repeat(4,minmax(0,1fr))]">
+      <div class="space-y-3.5">
+        <a href="/" class="inline-flex items-center gap-2.5 min-h-[44px] text-[var(--text-strong)] no-underline font-semibold">
+          <svg
+            width="22"
+            height="22"
+            viewBox="0 0 28 28"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden="true"
+          >
+            <rect x="4" y="19" width="20" height="5" rx="2.5" fill="currentColor" fill-opacity="0.92" />
+            <rect x="7" y="12.5" width="14" height="4.8" rx="2.4" fill="var(--accent)" />
+            <rect x="10.2" y="6" width="7.6" height="4.6" rx="2.3" fill="currentColor" fill-opacity="0.72" />
+          </svg>
+          <span>{SITE.name}</span>
+        </a>
+        <p class="text-sm text-[var(--text-muted)] leading-relaxed max-w-xs">
+          A cairn is a stack of stones hikers leave to mark a verified trail. Cairnmind does the same for your coding agents.
+        </p>
+        <p class="font-mono text-xs text-[var(--text-dim)]">
+          Static HTML · Zero tracking · Zero third-party scripts
+        </p>
+      </div>
+
+      {FOOTER_COLUMNS.map((col) => (
+        <div>
+          <p class="font-mono text-xs uppercase tracking-wider text-[var(--text-strong)] font-semibold mb-2">
+            {col.title}
+          </p>
+          <ul class="space-y-0 list-none p-0 m-0">
+            {col.links.map((link) => (
+              <li>
+                <a
+                  href={link.href}
+                  target={'external' in link && link.external ? '_blank' : undefined}
+                  rel={'external' in link && link.external ? 'noopener noreferrer' : undefined}
+                  class="inline-flex items-center min-h-[44px] min-w-[44px] py-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-strong)] no-underline"
+                >
+                  {link.label}{'external' in link && link.external ? ' ↗' : ''}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+
+    <!-- Subtle Easter Egg for the Hero Background Graph + Colophon -->
+    <div class="mt-10 pt-6 border-t border-[var(--glass-border)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4 text-xs font-mono">
+      <div class="flex flex-wrap items-center gap-x-2.5 gap-y-2 text-[var(--text-muted)]">
+        <span>And you wonder what was in the hero background?</span>
+        <strong class="text-[var(--text-strong)]">This is Cairnmind inside Cairnmind</strong>
+        <span class="text-[var(--text-dim)]">(this repo’s own live memory &amp; code graph).</span>
+        <button
+          type="button"
+          data-cm-graph-pause
+          aria-pressed="false"
+          class="inline-flex items-center min-h-[44px] px-3 rounded-md border border-[var(--glass-border-hi)] bg-[var(--glass-bg)] text-[var(--text-primary)] hover:border-[var(--accent)] cursor-pointer text-[11px]"
+        >
+          Pause hero graph
+        </button>
+      </div>
+      <p class="text-[var(--text-dim)] shrink-0">
+        {SITE.name} · Apache-2.0 · ArcadeDB Apache-2.0
+      </p>
+    </div>
+  </div>
+</footer>
+
+<script>
+  const btn = document.querySelector<HTMLButtonElement>('[data-cm-graph-pause]');
+  if (btn) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      btn.textContent = 'Hero graph static';
+      btn.disabled = true;
+    } else {
+      btn.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('cm-graph-toggle'));
+      });
+      window.addEventListener('cm-graph-state', (e) => {
+        const paused = Boolean((e as CustomEvent<{ paused: boolean }>).detail?.paused);
+        btn.setAttribute('aria-pressed', paused ? 'true' : 'false');
+        btn.textContent = paused ? 'Resume hero graph' : 'Pause hero graph';
+      });
+    }
+  }
+</script>

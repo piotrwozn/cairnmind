@@ -149,7 +149,8 @@ def _match(question: str, symbol: dict, path: str) -> tuple[int, int, int, int, 
     # A full match needs two question words: port, question, MAX_TIMEOUT or DEFAULT_PORT is a
     # plain word match, not a name the question spells out.
     full = int(len(matched) >= 2 and not unmatched)
-    context = {_stem(word) for word in _words(str(symbol.get("owner", ""))) | _words(PurePosixPath(path).stem)}
+    context = {_stem(word) for word in _words(str(symbol.get("owner", "")))
+               | _words(PurePosixPath(str(path).replace("\\", "/")).stem)}
     # A filler word counts beside a question word of the name (DEFAULT_PORT), never by itself: a
     # constant called DEFAULT or MAX is not what a question about "the default ..." asks for.
     shared = frozenset(word for word in own if is_asked(word)) if matched else frozenset()
@@ -265,39 +266,31 @@ def find_definitions(store, retriever, project_id: str, question: str, texts: li
     eligible = sorted(retriever._source_ids(project_id, root, roots))
     if not eligible:
         return []
-    select = ("SELECT id,label,source_id,metadata FROM nodes WHERE project_id=:project AND is_current=true "
-              "AND kind='symbol' AND source_id IN :eligible AND ")
-    order = "ORDER BY label, metadata.path, metadata.line_start, id"
-    rows = store.query(
-        select + f"(label IN :names OR metadata.member IN :names) {order} LIMIT {MAX_ROWS}",
-        {"project": project_id, "eligible": eligible, "names": code}) if code else []
+    from .arcade_backend import ArcadeBackend
+    backend = getattr(store, "backend", None) or ArcadeBackend(store)
+    rows = backend.search_definition_nodes(
+        project_id, eligible, mode="code", names=code, limit=MAX_ROWS
+    ) if code else []
     known = {row["id"] for row in rows}
     if plain:
         # Word names in their own bounded read, so that names made of question words below
         # cannot be crowded out by them, nor they by those.
-        rows += [row for row in store.query(
-            select + f"(label IN :names OR metadata.member IN :names) AND metadata.kind IN ['constant', 'field'] "
-            f"{order} LIMIT {MAX_ROWS}",
-            {"project": project_id, "eligible": eligible, "names": plain}) if row["id"] not in known]
+        rows += [row for row in backend.search_definition_nodes(
+            project_id, eligible, mode="plain", names=plain, limit=MAX_ROWS
+        ) if row["id"] not in known]
         known = {row["id"] for row in rows}
     pattern = name_word_pattern(question)
     if pattern:
-        rows += [row for row in store.query(
-            select + "((metadata.kind IN ['field', 'parameter'] AND metadata.member.toLowerCase() MATCHES :pattern) "
-            "OR (metadata.kind = 'constant' AND label.toLowerCase() MATCHES :pattern)) "
-            f"{order} LIMIT {MAX_ROWS}",
-            {"project": project_id, "eligible": eligible, "pattern": pattern}) if row["id"] not in known]
+        rows += [row for row in backend.search_definition_nodes(
+            project_id, eligible, mode="pattern", pattern=pattern, limit=MAX_ROWS
+        ) if row["id"] not in known]
         known = {row["id"] for row in rows}
     context = context_patterns(question)
     if context:
-        rows += [row for row in store.query(
-            select + "((metadata.kind = 'field' AND metadata.member.toLowerCase() MATCHES :name "
-            "AND (metadata.owner.toLowerCase() MATCHES :owner OR metadata.path.toLowerCase() MATCHES :file)) "
-            "OR (metadata.kind = 'constant' AND label.toLowerCase() MATCHES :name "
-            "AND metadata.path.toLowerCase() MATCHES :file)) "
-            f"{order} LIMIT {MAX_ROWS}",
-            {"project": project_id, "eligible": eligible, "name": context[0], "file": context[1],
-             "owner": context[2]}) if row["id"] not in known]
+        rows += [row for row in backend.search_definition_nodes(
+            project_id, eligible, mode="context", pattern=context[0], file_pattern=context[1],
+            owner=context[2], limit=MAX_ROWS
+        ) if row["id"] not in known]
     found = []
     for row in rows:
         symbol = json_value(row.get("metadata"), {})

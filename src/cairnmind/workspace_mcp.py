@@ -19,8 +19,8 @@ LOADER_NOTE = ("Not allowed as environment names, since they change which code a
                "LD_* and DYLD_*, PYTHONPATH, PYTHONSTARTUP, PYTHONHOME, PYTHONUSERBASE, PYTHONPLATLIBDIR, "
                "NODE_PATH, NODE_OPTIONS, PERL5LIB, PERL5OPT, PERLLIB, RUBYLIB, RUBYOPT, GEM_HOME, GEM_PATH, "
                "BASH_ENV, ENV, CLASSPATH, JAVA_TOOL_OPTIONS, _JAVA_OPTIONS, JDK_JAVA_OPTIONS, XDG_CONFIG_HOME, "
-               "XDG_DATA_HOME. A server whose program, an argument or a value names a path inside this project "
-               "folder is not started.")
+               "XDG_DATA_HOME, PATHEXT, COMSPEC, PSMODULEPATH. A server whose program, an argument or a value "
+               "names a path inside this project folder is not started.")
 SAVED = "MCP server saved. The built-in agent of this project uses it from its next run."
 REMOVED = "MCP server removed. The built-in agent of this project stops using it from its next run."
 SAVED_NOT_RUNNABLE = ("MCP server saved, but its program does not exist or cannot be run on this computer. Until it "

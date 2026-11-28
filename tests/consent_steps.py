@@ -5,6 +5,7 @@ Not collected (no test_ prefix). Never call settle() while a dialog is open: the
 from __future__ import annotations
 
 from textual import _time as textual_time, events
+from textual.css.query import NoMatches
 from textual.widgets import Button
 
 from cairnmind.terminal_panels import ConfirmModal
@@ -19,7 +20,10 @@ async def consent_drawn(app, pilot, seconds=6.0):
         screen = app.screen
         if (isinstance(screen, ConfirmModal) and screen.consent
                 and screen.drawn_at + screen.QUIET <= textual_time.get_time()):
-            button = screen.query_one("#confirm-yes", Button)
+            try:
+                button = screen.query_one("#confirm-yes", Button)
+            except NoMatches:
+                continue
             if button.region.area and button.region in screen.size.region:
                 return screen
     raise AssertionError("no consent dialog; the top screen is " + type(app.screen).__name__ + form_state(app.screen))
@@ -29,9 +33,12 @@ def form_state(screen):
     """What a form on top shows, so a timeout names its cause (#352): the error line, `saving`, the submit button."""
     if not isinstance(screen, FormModal):
         return ""
-    button = screen.query_one("#form-submit", Button)
-    return (f" (error line {str(screen.query_one('#form-error').render())!r}, saving={screen.saving}, "
-            f"submit region={button.region}, disabled={button.disabled})")
+    try:
+        button = screen.query_one("#form-submit", Button)
+        error = str(screen.query_one("#form-error").render())
+    except NoMatches:
+        return f" (not composed yet, saving={screen.saving})"
+    return f" (error line {error!r}, saving={screen.saving}, submit region={button.region}, disabled={button.disabled})"
 
 
 async def form_ready(app, pilot, seconds=6.0):
@@ -41,7 +48,10 @@ async def form_ready(app, pilot, seconds=6.0):
         await pilot.pause(.02)
         screen = app.screen
         if isinstance(screen, FormModal) and not screen.saving:
-            button = screen.query_one("#form-submit", Button)
+            try:
+                button = screen.query_one("#form-submit", Button)
+            except NoMatches:
+                continue
             if button.region.area and not button.disabled and button.region in screen.size.region:
                 return screen
     raise AssertionError("no laid-out form; the top screen is " + type(app.screen).__name__ + form_state(app.screen))

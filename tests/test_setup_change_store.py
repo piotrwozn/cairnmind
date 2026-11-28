@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 import uuid
 from contextlib import closing
@@ -49,7 +50,40 @@ def alive(settings) -> bool:
 
 
 def service_pids(settings) -> list[int]:
-    """The process ids of the knowledge service of this data directory (ps: the same on Linux and macOS)."""
+    """The process ids of the knowledge service of this data directory."""
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+        from cairnmind import process_identity
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        buf = (wintypes.DWORD * 4096)()
+        needed = wintypes.DWORD()
+        if not psapi.EnumProcesses(ctypes.byref(buf), ctypes.sizeof(buf), ctypes.byref(needed)):
+            return []
+        count = needed.value // ctypes.sizeof(wintypes.DWORD)
+        needle = f"--data-dir {settings.data_dir} serve"
+        quoted_needle = f'--data-dir "{settings.data_dir}" serve'
+        target_dir = str(settings.data_dir).lower()
+        found = []
+        for pid in buf[:count]:
+            if pid <= 4:
+                continue
+            argv = process_identity.command_line(int(pid))
+            if not argv:
+                continue
+            cmd = " ".join(argv)
+            if (needle in cmd or quoted_needle in cmd
+                    or ("--data-dir" in argv and "serve" in argv
+                        and any(arg.lower() == target_dir for arg in argv))):
+                found.append(int(pid))
+        if len(found) > 1 and getattr(sys, "_base_executable", None):
+            # Windows venv python.exe is a launcher shim that spawns the base interpreter with identical argv.
+            from pathlib import Path
+            base = str(Path(sys._base_executable).resolve()).lower()
+            real = [pid for pid in found if (process_identity.executable(pid) or "").lower() == base]
+            if real:
+                return real
+        return found
     listing = subprocess.run(["ps", "-axww", "-o", "pid=,command="], capture_output=True, text=True).stdout
     return [int(line.split(None, 1)[0]) for line in listing.splitlines()
             if f"--data-dir {settings.data_dir} serve" in line]

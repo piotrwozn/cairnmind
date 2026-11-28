@@ -1,0 +1,35 @@
+{
+  "blocked": [],
+  "omitted_blockers": 0,
+  "plan": {
+    "id": "<UUID_1>",
+    "source_ids": [
+      "<UUID_2>"
+    ],
+    "step_count": 1,
+    "title": "Contract stabilization",
+    "version": 1
+  },
+  "reason": "ready",
+  "task": {
+    "content": "Verify frozen CLI and MCP responses.",
+    "content_truncated": false,
+    "id": "<UUID_3>",
+    "metadata": {
+      "acceptance_criteria": [
+        "All frozen JSON fields match"
+      ],
+      "depends_on": [],
+      "plan_ref": "<UUID_1>",
+      "requires_review": false,
+      "requires_test": false,
+      "state": "todo",
+      "step_key": "step-one"
+    },
+    "metadata_truncated_fields": [],
+    "source_ids": [
+      "<UUID_2>"
+    ],
+    "version": 1
+  }
+}

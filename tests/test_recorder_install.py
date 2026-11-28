@@ -75,7 +75,7 @@ def test_a_second_install_changes_nothing_and_another_data_dir_rewrites_the_file
     settings.data_dir = tmp_path / "elsewhere"
     moved = integrations.install_integrations(settings, project)
     assert str(root / PATH) in moved["changed"]
-    assert str(settings.data_dir) in (root / PATH).read_text(encoding="utf-8")
+    assert json.dumps(str(settings.data_dir)) in (root / PATH).read_text(encoding="utf-8")
     assert len(list((root / ".claude" / "agents").glob("*.cairnmind-backup-*"))) == 1
 
 

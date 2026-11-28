@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 import pytest
 import typer
@@ -99,6 +100,7 @@ def test_the_image_runs_in_production_mode_without_the_mcp_plugin_and_the_local_
     assert not any("arcadedb.server.mode" in option for option in local_engine_command(tmp_path, monkeypatch))
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX sh entrypoint script for Linux container")
 def test_entrypoint_is_a_valid_shell_script_that_refuses_to_start_without_a_password(tmp_path):
     subprocess.run(["sh", "-n", str(ENTRYPOINT)], check=True)
     result = subprocess.run(["sh", str(ENTRYPOINT)], capture_output=True, text=True, env={
@@ -260,6 +262,7 @@ def test_the_volume_is_unpacked_without_setting_the_root_owned_top_folder():
     assert len(documented) == 1 and "--no-overwrite-dir" in documented[0]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Tests Kubernetes POSIX 0400 secret symlink mount")
 def test_the_mounted_password_mode_of_the_manifests_is_one_the_password_file_rule_accepts(tmp_path):
     from cairnmind.database_credentials import read_private_file
     from test_database_credentials import SECRET, mounted_secret
@@ -282,7 +285,8 @@ def test_ci_applies_the_manifests_in_a_job_of_its_own_that_no_required_check_wai
     assert re.search(r"^    needs: tests$", full_tests, re.M)
     script = (ROOT / "scripts" / "kubernetes_check.py").read_text()
     assert "--dry-run=server" in script and "--validate=strict" in script and "connection-check.yaml" in script
-    subprocess.run(["sh", "-n", str(KUBERNETES / "check" / "connection-check.sh")], check=True)
+    if sys.platform != "win32":
+        subprocess.run(["sh", "-n", str(KUBERNETES / "check" / "connection-check.sh")], check=True)
 
 
 def cli_commands() -> set[tuple[str, ...]]:
@@ -297,9 +301,24 @@ def cli_commands() -> set[tuple[str, ...]]:
     return found
 
 
+def _invocable_groups() -> set[tuple[str, ...]]:
+    found = set()
+
+    def walk(command, path):
+        subs = getattr(command, "commands", {})
+        if path and subs and getattr(command, "invoke_without_command", False):
+            found.add(path)
+        for name, sub in subs.items():
+            walk(sub, (*path, name))
+
+    walk(typer.main.get_command(app), ())
+    return found
+
+
 def unknown_commands(text: str, commands: set[tuple[str, ...]]) -> list[tuple[str, ...]]:
     """The `cairnmind ...` commands of a Markdown text, at the start of a line or in backticks, that do not exist."""
     groups = {path[:-1] for path in commands if path}
+    invocable = _invocable_groups()
     used = re.findall(r"^\s*(?:\$ )?cairnmind ([^`\n]+)", text, re.M) + re.findall(r"`cairnmind ([^`\n]+)`", text)
     unknown = []
     for arguments in used:
@@ -309,9 +328,11 @@ def unknown_commands(text: str, commands: set[tuple[str, ...]]) -> list[tuple[st
         for word in words:
             if path not in groups:
                 break
+            if path in invocable and (*path, word) not in commands:
+                break
             path = (*path, word)
-        # Each word must name a command until one without subcommands is reached.
-        if path not in commands or path in groups:
+        # Each word must name a command until one without subcommands (or an invocable group) is reached.
+        if path not in commands or (path in groups and path not in invocable):
             unknown.append(tuple(words[:3]))
     return unknown
 
@@ -345,4 +366,5 @@ def test_the_deployment_checks_accept_doctors_exit_code_for_something_missing():
     assert 'source.cli("doctor", codes=(0, 1))' in deployment and "result.returncode not in codes" in deployment
     assert 'cairnmind("doctor", codes=(0, 1))' in kubernetes and "result.returncode not in codes" in kubernetes
     assert 'cairnmind doctor > "$work/doctor.json" || [ $? -eq 1 ]' in connection.read_text()
-    assert subprocess.run(["sh", "-n", str(connection)], capture_output=True).returncode == 0
+    if sys.platform != "win32":
+        assert subprocess.run(["sh", "-n", str(connection)], capture_output=True).returncode == 0

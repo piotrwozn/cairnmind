@@ -369,7 +369,8 @@ def state_style(word: str) -> Style:
 
 
 _EVIDENCE = {"anchored": "value", "evidence_replaced": "warn", "unverified": "warn", "degraded": "warn",
-             "orphaned": "danger"}
+             "orphaned": "danger", "stale_ref": "danger", "validation_failed": "danger",
+             "ambiguous_context": "warn"}
 
 
 def evidence_style(state: str) -> Style:

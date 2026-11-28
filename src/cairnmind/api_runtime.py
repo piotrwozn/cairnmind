@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import stat
 import sys
 from uuid import uuid4
 
@@ -18,17 +17,18 @@ from .client_runtime import LIVE, NativeRuntime, _ID, _atomic
 from .config import ENV_PREFIXES, Settings, tls_verify
 from .mcp_servers import MAX_SERVERS
 from .path_spelling import lies_in
+from .private_files import ensure_private_dir, is_private_stat, open_no_follow
 
 AGENT_CLIENTS = {"api", "copilot"}
 NATIVE_CLIENTS = {"codex", "claude"}
 
 
 def _read_private(path):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    with os.fdopen(fd) as stream:
+    target = Path(path)
+    fd = open_no_follow(target, os.O_RDONLY, private_on_create=False)
+    with os.fdopen(fd, encoding="utf-8") as stream:
         info = os.fstat(stream.fileno())
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 256 * 1024):
+        if not is_private_stat(info, target, directory=False) or info.st_size > 256 * 1024:
             raise ValueError("agent_configuration_invalid")
         value = json.load(stream)
     if not isinstance(value, dict):
@@ -193,10 +193,7 @@ class RuntimeSupervisor(NativeRuntime):
                 configuration["mcp_servers"], configuration["mcp_problems"] = frozen_servers(
                     preferences, project["id"], root)
             configs = self.directory / "agent-configs"
-            configs.mkdir(mode=0o700, exist_ok=True)
-            info = configs.lstat()
-            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
-                raise ValueError("agent_configuration_invalid")
+            ensure_private_dir(configs, error="agent_configuration_invalid")
             _atomic(configs / (run_id + ".json"), configuration)
             launch = {"command": [sys.executable, "-I", "-m", "cairnmind.api_worker", "--data-dir",
                                   str(self.settings.data_dir), "--run-id", run_id, "--generation", str(generation)],

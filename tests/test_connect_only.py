@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import uuid
 
@@ -441,6 +442,7 @@ def test_a_refused_sign_in_names_the_step_that_creates_the_user(tmp_path, test_e
     assert "Some-password-1234" not in status["error"] + str(refused.exception)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX bash scripts/install-wsl.sh; Windows installer is tested in test_install_windows.py")
 def test_the_installer_asks_for_java_and_installs_an_engine_only_when_it_will_run_one(tmp_path):
     script = (ROOT / "scripts" / "install-wsl.sh").read_text()
     start = script.index("# Connect-only: the database runs elsewhere")

@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from conftest import assert_private, make_symlink_or_skip
 from cairnmind.config import Settings
 from cairnmind.workspace_state import WorkspaceState
 
@@ -15,8 +16,8 @@ def test_workspace_read_is_pure_and_updates_are_private_cas(tmp_path):
     assert not settings.data_dir.exists()
     saved = state.update({"focus": "graph"}, expected_revision=0)
     assert saved["revision"] == 1
-    assert state.directory.stat().st_mode & 0o777 == 0o700
-    assert state.path.stat().st_mode & 0o777 == 0o600
+    assert_private(state.directory, directory=True)
+    assert_private(state.path)
     with pytest.raises(ValueError, match="stale_workspace_revision"):
         state.update({"focus": "inspector"}, expected_revision=0)
     assert state.update({"focus": "graph"})["revision"] == 1
@@ -55,7 +56,7 @@ def test_concurrent_state_edits_never_lose_revision_and_reject_unsafe_paths(tmp_
             state.update(change)
     path = state.path
     path.unlink()
-    path.symlink_to(tmp_path / "outside")
+    make_symlink_or_skip(path, tmp_path / "outside")
     with pytest.raises(OSError):
         state.read()
 
@@ -77,7 +78,7 @@ def test_assistant_preferences_are_private_scoped_cas_without_start(tmp_path):
     assert after["intent"] == "inspect" and after["work_request"] is None
     assert after["requested_slot_ids"] == [] and after["focus"] == before["focus"]
     assert after["run_ids"] == [] and after["slots"] == []
-    assert state.path.stat().st_mode & 0o777 == 0o600
+    assert_private(state.path)
     # The field is optional in already-written version1 state files.
     import json
     old = json.loads(state.path.read_text())

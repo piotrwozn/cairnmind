@@ -1,0 +1,718 @@
+{
+  "backend": "arcadedb",
+  "check_runs": [],
+  "chunks": [
+    {
+      "id": "dc9b3460bfff9c2823800e2c94731cb9fdd7b3a95991510a600feaa1cabd09fb",
+      "is_current": true,
+      "line_end": 1,
+      "line_start": 1,
+      "metadata": {
+        "language": "text"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "f8e56792-9b08-46f5-b107-8896416589b8",
+      "text": "# Fixture App"
+    },
+    {
+      "id": "41b908f228ac066d04f1370400b586c6ba0bfa9d127b96c24666993771a7d938",
+      "is_current": true,
+      "line_end": 2,
+      "line_start": 1,
+      "metadata": {
+        "language": "python"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "1bd23700-52ce-4788-8d9b-249ffce472d0",
+      "text": "def add(a, b):\n    return a + b"
+    }
+  ],
+  "edges": [
+    {
+      "from_id": "source:f8e56792-9b08-46f5-b107-8896416589b8",
+      "id": "7b7654cb73036b2eb893345eedcd5c3455ef79f2981d02ad7eba4863291213f5",
+      "is_current": true,
+      "kind": "snapshot_of",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "f8e56792-9b08-46f5-b107-8896416589b8",
+      "status": "observed",
+      "to_id": "2762f15ec8502aa0dbb9602b8cf1634103275eaaa462e0f10f0caaf3abc8acee"
+    },
+    {
+      "from_id": "source:1bd23700-52ce-4788-8d9b-249ffce472d0",
+      "id": "838c18689a7ccb2ea95d688d5fdcfae0914363489310728b21994a87dada8d0d",
+      "is_current": true,
+      "kind": "snapshot_of",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "1bd23700-52ce-4788-8d9b-249ffce472d0",
+      "status": "observed",
+      "to_id": "e3ad801c1ac3de3564969556c25e328519f9580a5e2d596e6b4c43880a6f7b93"
+    },
+    {
+      "from_id": "e3ad801c1ac3de3564969556c25e328519f9580a5e2d596e6b4c43880a6f7b93",
+      "id": "b9b3540a61e93cdf79b96efd68f0ab0b30dbb5f889c03021e4814e8ea64686c8",
+      "is_current": true,
+      "kind": "defines",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "1bd23700-52ce-4788-8d9b-249ffce472d0",
+      "status": "observed",
+      "to_id": "4ed9faaa35b4642870d4ecada3c490be9a2e7d8ceb5d0362450d12f68c3d7e9c"
+    },
+    {
+      "from_id": "record:bd09c061-7957-462d-a356-f5cc22c3be3c",
+      "id": "e785e27bd29ae8a70612ac9e3e53cad6431dc7cbd75564060f8c4b91af63f4d0",
+      "is_current": true,
+      "kind": "supported_by",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "95eb3052-0635-4bf1-8d21-9ea68adda031",
+      "status": "observed",
+      "to_id": "source:95eb3052-0635-4bf1-8d21-9ea68adda031"
+    },
+    {
+      "from_id": "record:bd09c061-7957-462d-a356-f5cc22c3be3c",
+      "id": "3fbd0d3e32a181195278f737eba2a2fed13e9298dad0ed901c784b3782cbf007",
+      "is_current": true,
+      "kind": "supported_by",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "1bd23700-52ce-4788-8d9b-249ffce472d0",
+      "status": "observed",
+      "to_id": "source:1bd23700-52ce-4788-8d9b-249ffce472d0"
+    },
+    {
+      "from_id": "record:f8a056d4-e90a-4d6a-81ad-4eec2e69901e",
+      "id": "0aa9f1430e190a267a4394b0cb2ca49b149432e5c4fb2096c9c0936a4f6ef005",
+      "is_current": true,
+      "kind": "supported_by",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "1bd23700-52ce-4788-8d9b-249ffce472d0",
+      "status": "observed",
+      "to_id": "source:1bd23700-52ce-4788-8d9b-249ffce472d0"
+    }
+  ],
+  "embeddings": [],
+  "exported_at": "2026-11-26T20:26:42.544458+00:00",
+  "format_version": 5,
+  "import_cursors": [],
+  "ingestion_inbox": [],
+  "jobs": [
+    {
+      "attempts": 0,
+      "created_at": "2026-11-26T20:26:40.298947+00:00",
+      "dedupe_key": "embed:dc9b3460bfff9c2823800e2c94731cb9fdd7b3a95991510a600feaa1cabd09fb",
+      "error": null,
+      "id": "38ee2b1e-4d1c-4dc9-8c36-4c751e16315f",
+      "job_key": "[\"embed\",\"d973a6c0-7900-4047-a60c-d8c32a351478\",\"embed:dc9b3460bfff9c2823800e2c94731cb9fdd7b3a95991510a600feaa1cabd09fb\"]",
+      "kind": "embed",
+      "lease_until": null,
+      "payload": {
+        "chunk_id": "dc9b3460bfff9c2823800e2c94731cb9fdd7b3a95991510a600feaa1cabd09fb"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "state": "pending",
+      "updated_at": "2026-11-26T20:26:40.298947+00:00",
+      "worker": null
+    },
+    {
+      "attempts": 0,
+      "created_at": "2026-11-26T20:26:40.309243+00:00",
+      "dedupe_key": "extract:f8e56792-9b08-46f5-b107-8896416589b8",
+      "error": null,
+      "id": "f83cd55e-2edc-46c6-8dec-2da5d5b57396",
+      "job_key": "[\"extract\",\"d973a6c0-7900-4047-a60c-d8c32a351478\",\"extract:f8e56792-9b08-46f5-b107-8896416589b8\"]",
+      "kind": "extract",
+      "lease_until": null,
+      "payload": {
+        "source_id": "f8e56792-9b08-46f5-b107-8896416589b8"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "state": "pending",
+      "updated_at": "2026-11-26T20:26:40.309243+00:00",
+      "worker": null
+    },
+    {
+      "attempts": 0,
+      "created_at": "2026-11-26T20:26:40.330414+00:00",
+      "dedupe_key": "embed:41b908f228ac066d04f1370400b586c6ba0bfa9d127b96c24666993771a7d938",
+      "error": null,
+      "id": "baa25d64-5451-47dd-8232-c48564b2012d",
+      "job_key": "[\"embed\",\"d973a6c0-7900-4047-a60c-d8c32a351478\",\"embed:41b908f228ac066d04f1370400b586c6ba0bfa9d127b96c24666993771a7d938\"]",
+      "kind": "embed",
+      "lease_until": null,
+      "payload": {
+        "chunk_id": "41b908f228ac066d04f1370400b586c6ba0bfa9d127b96c24666993771a7d938"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "state": "pending",
+      "updated_at": "2026-11-26T20:26:40.330414+00:00",
+      "worker": null
+    }
+  ],
+  "journal_events": [
+    {
+      "at": "2026-11-26T20:26:40.182900+00:00",
+      "entity_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "entity_type": "project",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:1",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 1
+    },
+    {
+      "at": "2026-11-26T20:26:40.182900+00:00",
+      "entity_id": "5febbea9-7a8e-4180-b967-5f6bda0b13e1",
+      "entity_type": "scope",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:2",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 2
+    },
+    {
+      "at": "2026-11-26T20:26:40.339050+00:00",
+      "entity_id": "41b908f228ac066d04f1370400b586c6ba0bfa9d127b96c24666993771a7d938",
+      "entity_type": "chunk",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:3",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 3
+    },
+    {
+      "at": "2026-11-26T20:26:40.339050+00:00",
+      "entity_id": "dc9b3460bfff9c2823800e2c94731cb9fdd7b3a95991510a600feaa1cabd09fb",
+      "entity_type": "chunk",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:4",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 4
+    },
+    {
+      "at": "2026-11-26T20:26:40.339050+00:00",
+      "entity_id": "38ee2b1e-4d1c-4dc9-8c36-4c751e16315f",
+      "entity_type": "job",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:5",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 5
+    },
+    {
+      "at": "2026-11-26T20:26:40.339050+00:00",
+      "entity_id": "baa25d64-5451-47dd-8232-c48564b2012d",
+      "entity_type": "job",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:6",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 6
+    },
+    {
+      "at": "2026-11-26T20:26:40.339050+00:00",
+      "entity_id": "f83cd55e-2edc-46c6-8dec-2da5d5b57396",
+      "entity_type": "job",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:7",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 7
+    },
+    {
+      "at": "2026-11-26T20:26:40.339050+00:00",
+      "entity_id": "1bd23700-52ce-4788-8d9b-249ffce472d0",
+      "entity_type": "source",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:8",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 8
+    },
+    {
+      "at": "2026-11-26T20:26:40.339050+00:00",
+      "entity_id": "f8e56792-9b08-46f5-b107-8896416589b8",
+      "entity_type": "source",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:9",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 9
+    },
+    {
+      "at": "2026-11-26T20:26:40.500797+00:00",
+      "entity_id": null,
+      "entity_type": "graph",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:10",
+      "op": "reset",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 10
+    },
+    {
+      "at": "2026-11-26T20:26:40.500797+00:00",
+      "entity_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "entity_type": "project",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:11",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 11
+    },
+    {
+      "at": "2026-11-26T20:26:40.557692+00:00",
+      "entity_id": "95eb3052-0635-4bf1-8d21-9ea68adda031",
+      "entity_type": "source",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:12",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 12
+    },
+    {
+      "at": "2026-11-26T20:26:40.712867+00:00",
+      "entity_id": "3fbd0d3e32a181195278f737eba2a2fed13e9298dad0ed901c784b3782cbf007",
+      "entity_type": "edge",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:13",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 13
+    },
+    {
+      "at": "2026-11-26T20:26:40.712867+00:00",
+      "entity_id": "e785e27bd29ae8a70612ac9e3e53cad6431dc7cbd75564060f8c4b91af63f4d0",
+      "entity_type": "edge",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:14",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 14
+    },
+    {
+      "at": "2026-11-26T20:26:40.712867+00:00",
+      "entity_id": "record:bd09c061-7957-462d-a356-f5cc22c3be3c",
+      "entity_type": "node",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:15",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 15
+    },
+    {
+      "at": "2026-11-26T20:26:40.712867+00:00",
+      "entity_id": "source:95eb3052-0635-4bf1-8d21-9ea68adda031",
+      "entity_type": "node",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:16",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 16
+    },
+    {
+      "at": "2026-11-26T20:26:40.712867+00:00",
+      "entity_id": "bd09c061-7957-462d-a356-f5cc22c3be3c",
+      "entity_type": "record",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:17",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 17
+    },
+    {
+      "at": "2026-11-26T20:26:40.821644+00:00",
+      "entity_id": "0aa9f1430e190a267a4394b0cb2ca49b149432e5c4fb2096c9c0936a4f6ef005",
+      "entity_type": "edge",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:18",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 18
+    },
+    {
+      "at": "2026-11-26T20:26:40.821644+00:00",
+      "entity_id": "record:f8a056d4-e90a-4d6a-81ad-4eec2e69901e",
+      "entity_type": "node",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:19",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 19
+    },
+    {
+      "at": "2026-11-26T20:26:40.821644+00:00",
+      "entity_id": "f8a056d4-e90a-4d6a-81ad-4eec2e69901e",
+      "entity_type": "record",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:20",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 20
+    },
+    {
+      "at": "2026-11-26T20:26:41.008237+00:00",
+      "entity_id": null,
+      "entity_type": "memory",
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "id": "b3a76817-f177-460e-a875-55e56f2c1149:21",
+      "op": "upsert",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "seq": 21
+    }
+  ],
+  "journal_state": [
+    {
+      "epoch": "b3a76817-f177-460e-a875-55e56f2c1149",
+      "first_seq": 1,
+      "id": "current",
+      "seq": 21
+    }
+  ],
+  "memory_bindings": [],
+  "memory_imports": [],
+  "memory_settings": [],
+  "memory_snapshots": [
+    {
+      "active_plan_id": null,
+      "ancestors": [],
+      "created_at": "2026-11-26T20:26:40.997429+00:00",
+      "id": "1d93299c2fb438c7c8615387193101a4d0bec9ed799b1702212c115d577ad6a9",
+      "manifest_sha": "c7da4ac81406179409db692d103cf81a491a9c09c47b552304b4c3040180cc82",
+      "origin": "local",
+      "parent_id": null,
+      "path": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo/.memory/cairnmind/manifest.json",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "snapshot_id": "427048a06ddd1dd1eab15752581e64c2e1e58061d43ba3c45910a5238d0fb5ad",
+      "state_hash": "1ab0c040d90808ad066c451d8d47a1b8d0c31a84d3ed87a534eb82483746a3af",
+      "worktree": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "2762f15ec8502aa0dbb9602b8cf1634103275eaaa462e0f10f0caaf3abc8acee",
+      "is_current": true,
+      "kind": "file",
+      "label": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo/README.md",
+      "metadata": {
+        "path": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo/README.md"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "f8e56792-9b08-46f5-b107-8896416589b8"
+    },
+    {
+      "id": "source:f8e56792-9b08-46f5-b107-8896416589b8",
+      "is_current": true,
+      "kind": "source",
+      "label": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo/README.md",
+      "metadata": {
+        "source_id": "f8e56792-9b08-46f5-b107-8896416589b8",
+        "source_kind": "document"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "f8e56792-9b08-46f5-b107-8896416589b8"
+    },
+    {
+      "id": "e3ad801c1ac3de3564969556c25e328519f9580a5e2d596e6b4c43880a6f7b93",
+      "is_current": true,
+      "kind": "file",
+      "label": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo/src/app.py",
+      "metadata": {
+        "path": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo/src/app.py"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "1bd23700-52ce-4788-8d9b-249ffce472d0"
+    },
+    {
+      "id": "source:1bd23700-52ce-4788-8d9b-249ffce472d0",
+      "is_current": true,
+      "kind": "source",
+      "label": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo/src/app.py",
+      "metadata": {
+        "source_id": "1bd23700-52ce-4788-8d9b-249ffce472d0",
+        "source_kind": "code"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "1bd23700-52ce-4788-8d9b-249ffce472d0"
+    },
+    {
+      "id": "4ed9faaa35b4642870d4ecada3c490be9a2e7d8ceb5d0362450d12f68c3d7e9c",
+      "is_current": true,
+      "kind": "symbol",
+      "label": "add",
+      "metadata": {
+        "kind": "function",
+        "line_end": 2,
+        "line_start": 1,
+        "name": "add",
+        "path": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo/src/app.py"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "1bd23700-52ce-4788-8d9b-249ffce472d0"
+    },
+    {
+      "id": "record:bd09c061-7957-462d-a356-f5cc22c3be3c",
+      "is_current": true,
+      "kind": "decision",
+      "label": "Keep portable snapshots backwards compatible across releases.",
+      "metadata": {
+        "evidence": "Keep portable snapshots backwards compatible",
+        "evidence_basis": "observed",
+        "evidence_earliest": "2026-11-26T20:26:40.318692+00:00",
+        "evidence_latest": "2026-11-26T20:26:40.549531+00:00",
+        "record_id": "bd09c061-7957-462d-a356-f5cc22c3be3c",
+        "root": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo",
+        "status": "confirmed"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "95eb3052-0635-4bf1-8d21-9ea68adda031"
+    },
+    {
+      "id": "source:95eb3052-0635-4bf1-8d21-9ea68adda031",
+      "is_current": true,
+      "kind": "source",
+      "label": "workspace://finding/release-0.10.0",
+      "metadata": {
+        "source_id": "95eb3052-0635-4bf1-8d21-9ea68adda031",
+        "source_kind": "manual"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "95eb3052-0635-4bf1-8d21-9ea68adda031"
+    },
+    {
+      "id": "record:f8a056d4-e90a-4d6a-81ad-4eec2e69901e",
+      "is_current": true,
+      "kind": "fact",
+      "label": "src/app.py defines add(a, b).",
+      "metadata": {
+        "evidence": "def add(a, b):",
+        "evidence_basis": "observed",
+        "evidence_earliest": "2026-11-26T20:26:40.318692+00:00",
+        "evidence_latest": "2026-11-26T20:26:40.318692+00:00",
+        "record_id": "f8a056d4-e90a-4d6a-81ad-4eec2e69901e",
+        "root": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo",
+        "status": "proposed"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_id": "1bd23700-52ce-4788-8d9b-249ffce472d0"
+    }
+  ],
+  "plan_requests": [],
+  "plan_revisions": [],
+  "plans": [],
+  "project_roots": [
+    {
+      "id": "5febbea9-7a8e-4180-b967-5f6bda0b13e1",
+      "path": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478"
+    }
+  ],
+  "projects": [
+    {
+      "created_at": "2026-11-26T20:26:40.169612+00:00",
+      "graph_edges": 3,
+      "graph_fingerprint": "6e993b99b48707ce681467821c2e6477a02e053e266eba52f261bab078dec0ab",
+      "graph_nodes": 5,
+      "id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "name": "fixture-app",
+      "root": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo"
+    }
+  ],
+  "record_revisions": [
+    {
+      "id": "bd09c061-7957-462d-a356-f5cc22c3be3c:1",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "record_id": "bd09c061-7957-462d-a356-f5cc22c3be3c",
+      "recorded_at": "2026-11-26T20:26:40.605599+00:00",
+      "snapshot": {
+        "active_key": "[\"d973a6c0-7900-4047-a60c-d8c32a351478\",\"decision\",\"keep-contract\"]",
+        "content": "Keep portable snapshots backwards compatible across releases.",
+        "created_at": "2026-11-26T20:26:40.598906+00:00",
+        "id": "bd09c061-7957-462d-a356-f5cc22c3be3c",
+        "key": "keep-contract",
+        "kind": "decision",
+        "metadata": {
+          "evidence": "Keep portable snapshots backwards compatible",
+          "evidence_basis": "observed",
+          "evidence_earliest": "2026-11-26T20:26:40.318692+00:00",
+          "evidence_latest": "2026-11-26T20:26:40.549531+00:00",
+          "root": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo"
+        },
+        "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+        "source_ids": [
+          "95eb3052-0635-4bf1-8d21-9ea68adda031",
+          "1bd23700-52ce-4788-8d9b-249ffce472d0"
+        ],
+        "status": "confirmed",
+        "supersedes": null,
+        "updated_at": "2026-11-26T20:26:40.598906+00:00",
+        "version": 1
+      },
+      "version": 1
+    },
+    {
+      "id": "f8a056d4-e90a-4d6a-81ad-4eec2e69901e:1",
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "record_id": "f8a056d4-e90a-4d6a-81ad-4eec2e69901e",
+      "recorded_at": "2026-11-26T20:26:40.758238+00:00",
+      "snapshot": {
+        "active_key": "[\"d973a6c0-7900-4047-a60c-d8c32a351478\",\"fact\",\"adder-exists\"]",
+        "content": "src/app.py defines add(a, b).",
+        "created_at": "2026-11-26T20:26:40.754181+00:00",
+        "id": "f8a056d4-e90a-4d6a-81ad-4eec2e69901e",
+        "key": "adder-exists",
+        "kind": "fact",
+        "metadata": {
+          "evidence": "def add(a, b):",
+          "evidence_basis": "observed",
+          "evidence_earliest": "2026-11-26T20:26:40.318692+00:00",
+          "evidence_latest": "2026-11-26T20:26:40.318692+00:00",
+          "root": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo"
+        },
+        "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+        "source_ids": [
+          "1bd23700-52ce-4788-8d9b-249ffce472d0"
+        ],
+        "status": "proposed",
+        "supersedes": null,
+        "updated_at": "2026-11-26T20:26:40.754181+00:00",
+        "version": 1
+      },
+      "version": 1
+    }
+  ],
+  "records": [
+    {
+      "active_key": "[\"d973a6c0-7900-4047-a60c-d8c32a351478\",\"decision\",\"keep-contract\"]",
+      "content": "Keep portable snapshots backwards compatible across releases.",
+      "created_at": "2026-11-26T20:26:40.598906+00:00",
+      "id": "bd09c061-7957-462d-a356-f5cc22c3be3c",
+      "key": "keep-contract",
+      "kind": "decision",
+      "metadata": {
+        "evidence": "Keep portable snapshots backwards compatible",
+        "evidence_basis": "observed",
+        "evidence_earliest": "2026-11-26T20:26:40.318692+00:00",
+        "evidence_latest": "2026-11-26T20:26:40.549531+00:00",
+        "root": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_ids": [
+        "95eb3052-0635-4bf1-8d21-9ea68adda031",
+        "1bd23700-52ce-4788-8d9b-249ffce472d0"
+      ],
+      "status": "confirmed",
+      "supersedes": null,
+      "updated_at": "2026-11-26T20:26:40.598906+00:00",
+      "version": 1
+    },
+    {
+      "active_key": "[\"d973a6c0-7900-4047-a60c-d8c32a351478\",\"fact\",\"adder-exists\"]",
+      "content": "src/app.py defines add(a, b).",
+      "created_at": "2026-11-26T20:26:40.754181+00:00",
+      "id": "f8a056d4-e90a-4d6a-81ad-4eec2e69901e",
+      "key": "adder-exists",
+      "kind": "fact",
+      "metadata": {
+        "evidence": "def add(a, b):",
+        "evidence_basis": "observed",
+        "evidence_earliest": "2026-11-26T20:26:40.318692+00:00",
+        "evidence_latest": "2026-11-26T20:26:40.318692+00:00",
+        "root": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "source_ids": [
+        "1bd23700-52ce-4788-8d9b-249ffce472d0"
+      ],
+      "status": "proposed",
+      "supersedes": null,
+      "updated_at": "2026-11-26T20:26:40.754181+00:00",
+      "version": 1
+    }
+  ],
+  "resume_acks": [],
+  "resume_packets": [],
+  "session_events": [],
+  "sessions": [],
+  "sources": [
+    {
+      "content": "# Fixture App\n",
+      "created_at": "2026-11-26T20:26:40.270201+00:00",
+      "current_key": "[\"d973a6c0-7900-4047-a60c-d8c32a351478\",\"/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo/README.md\"]",
+      "id": "f8e56792-9b08-46f5-b107-8896416589b8",
+      "is_current": true,
+      "kind": "document",
+      "metadata": {
+        "analysis": {
+          "calls": [],
+          "errors": [],
+          "imports": [],
+          "language": "text",
+          "symbols": []
+        },
+        "analysis_version": "syntax-v2:tree-sitter=0.25.2:tree-sitter-python=0.25.0:tree-sitter-javascript=0.25.0:tree-sitter-typescript=0.23.2",
+        "content_hash": "0d871cf0980505077788f103814580ed4318d0ed0d56669a9fc27f7ab858aee1",
+        "git_commit": "a06c87ced5c1fbbdae1118dd706d7488ef4c5e76",
+        "language": "text",
+        "path": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo/README.md",
+        "relative_path": "README.md",
+        "root": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo",
+        "snapshot": "working_tree"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "sha256": "0d871cf0980505077788f103814580ed4318d0ed0d56669a9fc27f7ab858aee1",
+      "uri": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo/README.md"
+    },
+    {
+      "content": "def add(a, b):\n    return a + b\n",
+      "created_at": "2026-11-26T20:26:40.318692+00:00",
+      "current_key": "[\"d973a6c0-7900-4047-a60c-d8c32a351478\",\"/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo/src/app.py\"]",
+      "id": "1bd23700-52ce-4788-8d9b-249ffce472d0",
+      "is_current": true,
+      "kind": "code",
+      "metadata": {
+        "analysis": {
+          "calls": [],
+          "errors": [],
+          "imports": [],
+          "language": "python",
+          "symbols": [
+            {
+              "kind": "function",
+              "line_end": 2,
+              "line_start": 1,
+              "name": "add"
+            }
+          ]
+        },
+        "analysis_version": "syntax-v2:tree-sitter=0.25.2:tree-sitter-python=0.25.0:tree-sitter-javascript=0.25.0:tree-sitter-typescript=0.23.2",
+        "content_hash": "ba1a531f581d2e6094e978ed6f7aca7a8d92eeb62c6e7ad73ee692f7f18bc772",
+        "git_commit": "a06c87ced5c1fbbdae1118dd706d7488ef4c5e76",
+        "language": "python",
+        "path": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo/src/app.py",
+        "relative_path": "src/app.py",
+        "root": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo",
+        "snapshot": "working_tree"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "sha256": "ba1a531f581d2e6094e978ed6f7aca7a8d92eeb62c6e7ad73ee692f7f18bc772",
+      "uri": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo/src/app.py"
+    },
+    {
+      "content": "Keep portable snapshots backwards compatible across releases.",
+      "created_at": "2026-11-26T20:26:40.549531+00:00",
+      "current_key": "[\"d973a6c0-7900-4047-a60c-d8c32a351478\",\"workspace://finding/release-0.10.0\"]",
+      "id": "95eb3052-0635-4bf1-8d21-9ea68adda031",
+      "is_current": true,
+      "kind": "manual",
+      "metadata": {
+        "origin": "workspace_finding",
+        "root": "/tmp/cm-fixture-0.10.0-p6tdxcuy/work/repo"
+      },
+      "project_id": "d973a6c0-7900-4047-a60c-d8c32a351478",
+      "sha256": "25de9c97a62affbaa95a821b34b15c2404146f940f338ac5592841d6c7c9420b",
+      "uri": "workspace://finding/release-0.10.0"
+    }
+  ],
+  "vector_data": {},
+  "vector_indexes": [],
+  "worktree_states": []
+}

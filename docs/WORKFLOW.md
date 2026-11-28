@@ -202,3 +202,67 @@ It compares the worktree with that commit, including uncommitted edits and files
 You can give each listed record a verdict: still valid, needs update (with a note on what to update) or not related. In the workspace, the **Impact** view of the memory inspector (`Ctrl+B i`) shows the list for the open project, compared with `HEAD` or a commit you type, with a filter for entries without a verdict, and **Verdict** saves one (see [TERMINAL.md](TERMINAL.md)); the memory service takes it at `POST /inspector/impact/verdict` only with the key of the open workspace, and `cairnmind impact-verdict` is refused since 0.13.0; the view reads the list from `GET /inspector/impact`, which takes the parameters of `impact` and answers what `--json` prints. A verdict is a person's note: only the person at the workspace gives one, and it never changes the record, its status, its revisions or a task's state. It is stored as an audit note (`review://impact/…`) that never counts as evidence and is never searched or quoted in answers. A later `impact` shows `checked: still valid (date)` under the entry instead of asking again, and `--pending` lists only the entries without a verdict. A verdict holds for the entry as it was listed: the record's text, its links to the changed code and the current content of that code. Editing the linked definition (or file) again, or the record's content, makes the entry unreviewed; so does a comparison with another commit that links the record to other changes, because that list asks a different question. Saving the same verdict again stores nothing; a different one replaces it and the earlier one is kept as history. A verdict is saved with the project memory, like a review note: it is a local change of the memory, so the next `memory snapshot` (or auto-save) writes a new package with it, and a newer package from another machine can be imported only after that.
 
 The report also lists documentation pages that mention a changed definition, even when no record points at them: for `refresh_token()` changed, a page `docs/login.md` that says "renewed by refresh_token" is named, with the line. Documentation files are those ending in `.md`, `.mdx`, `.rst` or `.txt` that Git tracks or that are untracked and not ignored; `.memory/`, `.cairnmind/`, `.devbrain/`, `.git/` and the directories the indexer skips (`node_modules/`, `vendor/`, `.claude/`, ...) are never read, and neither are secret-looking files, links, files outside the worktree, files over 1 MB or files that are not UTF-8; the report counts the files it did not read. The names come from the parser, so only a definition the parser knows (in Python, JavaScript and TypeScript files: functions, classes and methods; in Python also module constants and class fields, an assignment to one name directly in a module or a class body, and parameters with a default other than None, named `function.parameter`; in JavaScript and TypeScript also interfaces, type aliases, enums and variables holding a function; in TOML files other than lock files every key, named `table.key` when it is in a table) whose text changed or that was removed is looked up; a class field, a parameter and a key in a table are named with a dot and are therefore not looked up in pages: added and moved definitions are not, and a changed file that cannot be compared contributes no names. A name must stand alone as an identifier (`refresh_token_v2` is not a mention of `refresh_token`). To keep the list worth reading, a name must be at least 4 characters long, even when written as code (dunder names such as `__init__`, `constructor` and `#private` members are skipped), and it must either contain an underscore or a capital letter after the first (`refresh_token`, `SessionStore`) or be written as code: after an odd number of backtick runs on the same line (a code span that continues over several lines is not recognised), in a fenced block of a Markdown file (the fence must start a line after at most three spaces; a fence indented further or inside a quote counts as text), or directly followed by `(`. So `login` in a sentence is not listed, while `` `login` `` and `login()` are. At most 50 pages are shown and at most 3 line numbers per page and name, and a run reads at most 2,000 files, stops reading once 20 MB have been read, and looks up at most 500 names; the report says how much was left out. A page that was itself changed in the same range is listed too and marked. As with records, a mention means "worth checking", not that the page is wrong. In the JSON, `documentation` is an object: `documents` holds the pages, and counters (`omitted_documents`, `omitted_lines`, `skipped_documents`, `not_scanned`, `names_not_searched`, `unavailable`) say what was left out or could not be done.
+
+## Symbol-anchored evidence
+
+When a record cites a code file and names a function, class or method (through `metadata.symbol` or a quote that sits inside one), Cairnmind stores a cross-OS SHA-256 of the symbol's **normalised body** (`metadata.symbol_anchor`): comments, whitespace, indentation width, blank lines, line wrapping, trailing commas, simple quote style differences and CRLF/LF differences are normalised out, and file paths are stored in POSIX form so Windows, macOS and Linux compute the same hash.
+
+Reading the record derives one of three symbol states without ever mutating `record.status` (confirming and withdrawing remain human actions):
+
+- **`unchanged`**: the symbol exists and its normalised body hash matches. Edits elsewhere in the file or running `ruff format` / `prettier` do not mark the record.
+- **`symbol_changed`**: the symbol's normalised body changed; the inspector and `cairnmind memory orphans` mark it for review together with the commit or timestamp of the change.
+- **`symbol_gone`**: the symbol or its file no longer exists at that path.
+
+## Opt-in decisions from code (`comments`, `adr`, `trailers`)
+
+Each project may enable **at most one** source of proposed decisions from the repository; the default is `off`:
+
+```bash
+cairnmind memory decisions my-app              # show current setting (default: off)
+cairnmind memory decisions my-app comments     # DECISION:, INVARIANT:, WHY: code comments
+cairnmind memory decisions my-app adr          # docs/adr/*.md files (optional YAML front matter)
+cairnmind memory decisions my-app trailers     # Git commit trailers (Decision:, Invariant:, Why:, Refs: ADR-...)
+cairnmind memory decisions my-app off          # disable
+```
+
+During indexing, the chosen source creates **only `proposed` records** (never `confirmed`), goes through every store write guard (single-writer lock, read-only/reader refusal, unfinished restore, upgrade mark and setup mark), is idempotent (re-reading the same text produces one record and never changes a confirmed or disputed record), and never deletes records when a tag, file or symbol disappears (`tag_removed` / `symbol_gone` is reported instead).
+
+## Serverless CI check (`cairnmind scan`)
+
+`cairnmind scan` checks anchored records against a Git diff in one read-only command without a running Cairnmind service or model:
+
+```bash
+cairnmind scan --diff origin/main
+cairnmind scan my-app --diff origin/main...HEAD --json
+```
+
+When `PROJECT` is omitted, Cairnmind resolves the project from the current working directory. The command opens the store read-only (`Store.open_readonly`), writes nothing, and prints only records whose anchored symbol changed (`symbol_changed`) or is gone (`symbol_gone`) in files touched by the diff:
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Clean: no anchored symbol changed or was removed in the diff |
+| `1` | Drift detected: at least one anchored record has `symbol_changed` or `symbol_gone` |
+| `2` | Usage error, invalid Git revision/worktree, unknown project, or unready store |
+
+### GitHub Actions example
+
+```yaml
+name: Cairnmind symbol drift check
+
+on:
+  pull_request:
+
+jobs:
+  cairnmind-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Start ArcadeDB for read-only scan
+        run: cairnmind engine start
+
+      - name: Scan anchored decisions against base branch
+        run: cairnmind scan --diff "origin/${{ github.base_ref }}...HEAD"
+```

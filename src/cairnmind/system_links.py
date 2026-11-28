@@ -34,6 +34,8 @@ SYSTEM_LINKS: dict[str, tuple[tuple[str, str], ...]] = {
 
 def owned_by_system(link: Path) -> bool:
     """Whether `link` is a symbolic link owned by root in a root-owned directory only root can write."""
+    if sys.platform == "win32":
+        return False
     try:
         info, parent = os.lstat(link), os.stat(link.parent)
     except OSError:
@@ -80,5 +82,6 @@ def system_spelling(path: str | os.PathLike, links: Links | None = None) -> Path
 
 def passes_planted_link(path: str | os.PathLike, links: Links | None = None) -> bool:
     """Whether `path` or a directory above it is a symbolic link other than a system link."""
+    from .private_files import is_reparse_point
     path = system_spelling(path, links)
-    return any(part.is_symlink() for part in (path, *path.parents))
+    return any(is_reparse_point(part) for part in (path, *path.parents))

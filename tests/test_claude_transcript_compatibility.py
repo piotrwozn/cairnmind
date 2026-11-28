@@ -81,7 +81,7 @@ def seed_legacy(workspace, tmp_path, monkeypatch, suffix=""):
     store, project, root, manager = workspace
     path = tmp_path / "claude-session.jsonl"
     path.write_text("".join(json.dumps(technical(kind, root), ensure_ascii=False) + "\n"
-                            for kind in CLAUDE_TYPES) + suffix)
+                            for kind in CLAUDE_TYPES) + suffix, encoding="utf-8", newline="\n")
     actual = ingest._event_text
 
     def previous_parser(event, client):

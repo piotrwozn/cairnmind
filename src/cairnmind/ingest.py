@@ -6,7 +6,6 @@ syntax, never from filename resemblance or generated answers.
 from __future__ import annotations
 
 import hashlib
-import fcntl
 import json
 import math
 import os
@@ -21,11 +20,14 @@ from uuid import UUID
 
 import pathspec
 
+from cairnmind.file_locks import lock_exclusive, unlock
+
 from cairnmind.parsing import analyze_code, parser_identity
 from cairnmind.arcade import ArcadeError
 from cairnmind.embed_jobs import queue_embed_jobs
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
+from cairnmind.quote_healing import is_healing_audit_source
 from cairnmind import graph_duplicates, graph_transactions
 from cairnmind.code_graph import code_graph_pending
 from cairnmind.graph_transactions import GraphTransactions, await_vertices
@@ -124,23 +126,23 @@ def _ingestion_lock(store, category: str, identity: str, *, deadline: float | No
     try:
         if deadline is None:
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_exclusive(descriptor, blocking=False)
             except BlockingIOError:
                 if waited is not None:
                     waited.append(True)  # whoever held it may have changed what was read before
-                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                lock_exclusive(descriptor, blocking=True)
         else:
             while True:
                 if time.monotonic() >= deadline:
                     raise TimeoutError("Transcript reparse deadline exceeded")
                 try:
-                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_exclusive(descriptor, blocking=False)
                     break
                 except BlockingIOError:
                     time.sleep(min(0.01, max(0, deadline - time.monotonic())))
         yield
     finally:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        unlock(descriptor)
         os.close(descriptor)
 
 
@@ -161,6 +163,29 @@ def _is_secret(path: Path) -> bool:
         lower in SECRET_NAMES or lower.startswith(".env.") or lower.endswith(".credentials.json")
         or path.suffix.lower() in SECRET_SUFFIXES
     )
+
+
+_MANAGED_MCP_FILES = frozenset({
+    ".mcp.json",
+    ".cursor/mcp.json",
+    ".vscode/mcp.json",
+    ".roo/mcp.json",
+    ".codex/config.toml",
+    ".gemini/settings.json",
+    ".zed/settings.json",
+})
+_BACKUP_MARKERS = (".cairnmind.bak", ".cairnmind-backup-", ".devbrain-backup-")
+
+
+def _is_managed_mcp_config(path: Path, root: Path) -> bool:
+    """Skip generated MCP preset files and Cairnmind backups so adding a preset never creates false drift."""
+    if any(marker in path.name for marker in _BACKUP_MARKERS):
+        return True
+    try:
+        rel = path.relative_to(root).as_posix().casefold()
+    except ValueError:
+        return False
+    return rel in _MANAGED_MCP_FILES
 
 
 def _roots(store, project: dict) -> list[Path]:
@@ -198,7 +223,10 @@ def _walk_args(store, root: Path, errors: list[OSError], links: list | None = No
 
 def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | None = None,
            nested: _NestedMemory | None = None, links: list | None = None):
-    """Walk with nested gitignore rules. Symlinks are deliberately not followed.
+    """Walk with nested `.gitignore` and `.cairnmindignore` rules. Symlinks are deliberately not followed.
+
+    Inside a Git worktree, candidate files are verified in one batched `git check-ignore --stdin -z --no-index`
+    call so Git negations (e.g. `!important.env`) and `.git/info/exclude` are honoured canonically.
 
     A directory that cannot be listed is appended to `errors`: the walk is then incomplete,
     and its caller must not treat the files it did not see as deleted. `nested`: the memory
@@ -206,7 +234,10 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
     (path, what it says) of every symlink in the directories the walk lists and leaves out: resolving an import follows
     them, so a link that is moved, added or removed moves an import (#451).
     """
-    rules: dict[Path, pathspec.GitIgnoreSpec] = {}
+    from cairnmind.ignore_rules import CAIRNMINDIGNORE, git_check_ignore, is_git_worktree
+
+    git_rules: dict[Path, pathspec.GitIgnoreSpec] = {}
+    cm_rules: dict[Path, pathspec.GitIgnoreSpec] = {}
     # Also by identity: on a file system that ignores case the root may be registered with other letter
     # case than the data directory is spelled with, and no text comparison sees that one lies in the other (#230).
     excluded_ids = {path_identity(base) for base in excluded} - {None}
@@ -222,11 +253,26 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
             # What the link says, one call: a chain, a loop and a broken link need no more, as every link inside the
             # root is noted too. (A link outside the root that leads back in is not: it is treated as today.)
             try:
-                links.append((str(item), os.readlink(item)))
+                target = os.readlink(item)
+                if os.name == "nt" and target.startswith("\\\\?\\") and not target.startswith("\\\\?\\UNC\\"):
+                    target = target[4:]
+                links.append((str(item), target))
             except OSError:  # replaced under the walk: noted as gone, the signature differs and a pass resolves again
                 links.append((str(item), None))
         return True
 
+    def matches(rules_map: dict[Path, pathspec.GitIgnoreSpec], item: Path, is_dir: bool = False) -> bool:
+        answer = False
+        for base, spec in sorted(rules_map.items(), key=lambda row: len(row[0].parts)):
+            if item.is_relative_to(base):
+                relative = item.relative_to(base).as_posix() + ("/" if is_dir else "")
+                checked = spec.check_file(relative)
+                if checked.include is not None:
+                    answer = checked.include
+        return answer
+
+    use_git = is_git_worktree(root)
+    candidates: list[Path] = []
     for directory, dirs, names in os.walk(root, followlinks=False,
                                           onerror=errors.append if errors is not None else None):
         folder = Path(directory)
@@ -236,19 +282,15 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
         ignore = folder / ".gitignore"
         if ignore.is_file() and not ignore.is_symlink():
             try:
-                rules[folder] = pathspec.GitIgnoreSpec.from_lines(ignore.read_text(errors="replace").splitlines())
+                git_rules[folder] = pathspec.GitIgnoreSpec.from_lines(ignore.read_text(encoding="utf-8", errors="replace").splitlines())
             except OSError:
                 pass
-
-        def ignored(item: Path, is_dir: bool = False) -> bool:
-            answer = False
-            for base, spec in sorted(rules.items(), key=lambda row: len(row[0].parts)):
-                if item.is_relative_to(base):
-                    relative = item.relative_to(base).as_posix() + ("/" if is_dir else "")
-                    checked = spec.check_file(relative)
-                    if checked.include is not None:
-                        answer = checked.include
-            return answer
+        cm_ignore = folder / CAIRNMINDIGNORE
+        if cm_ignore.is_file() and not cm_ignore.is_symlink():
+            try:
+                cm_rules[folder] = pathspec.GitIgnoreSpec.from_lines(cm_ignore.read_text(encoding="utf-8", errors="replace").splitlines())
+            except OSError:
+                pass
 
         dirs[:] = sorted(
             name for name in sorted(dirs)  # sorted before the links are noted: the same order every round
@@ -257,13 +299,27 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
             # and not text of this project: its rows are not indexed as sources.
             and not (folder.name.casefold() == ".memory" and name.casefold() in ("cairnmind", "devbrain"))
             and not left_out(folder / name)
-            and not ignored(folder / name, True)
+            and not matches(cm_rules, folder / name, True)
+            and not matches(git_rules, folder / name, True)
         )
         for name in sorted(names):
             path = folder / name
-            if link(path) or _is_secret(path) or ignored(path):
+            if link(path) or _is_secret(path) or _is_managed_mcp_config(path, root) or matches(cm_rules, path):
                 continue
-            yield path
+            if use_git:
+                candidates.append(path)
+            elif not matches(git_rules, path):
+                yield path
+
+    if use_git and candidates:
+        rel_map = [(path, path.relative_to(root).as_posix()) for path in candidates]
+        git_ignored = git_check_ignore(root, [rel for _, rel in rel_map], no_index=True)
+        for path, rel in rel_map:
+            if git_ignored is not None:
+                if rel not in git_ignored:
+                    yield path
+            elif not matches(git_rules, path):
+                yield path
 
 
 MANAGED_FILES = frozenset({"AGENTS.md", "CLAUDE.md", "cairnmind-recorder.md"})  # where `cairnmind install` writes its block; the recorder subagent's body (#376)
@@ -272,7 +328,7 @@ MANAGED_FILES = frozenset({"AGENTS.md", "CLAUDE.md", "cairnmind-recorder.md"})  
 def _indexed_spans(lines: list[str], uri: str) -> list[tuple[int, int]]:
     """The [first, end) line ranges that are indexed: all of a file, except, in the managed files (AGENTS.md, CLAUDE.md and the recorder subagent's file), the lines of
     Cairnmind's own block (#313), found as extraction finds it. An unclosed block is indexed as it is."""
-    if PurePosixPath(uri).name not in MANAGED_FILES:
+    if PurePosixPath(uri.replace("\\", "/")).name not in MANAGED_FILES:
         return [(0, len(lines))]
     from cairnmind.extraction_input import OWN_BLOCK
     text, spans, start = "\n".join(lines), [], 0
@@ -317,13 +373,13 @@ def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: d
                                {"source": source_id})
             if not sources or sources[0]["project_id"] != project_id:
                 raise ValueError("Chunk source does not belong to the requested project")
-            if is_verdict_source(sources[0]) or is_mcp_source(sources[0]):
-                return 0  # a person's verdict on an impact list is never searchable text
+            if is_verdict_source(sources[0]) or is_mcp_source(sources[0]) or is_healing_audit_source(sources[0]):
+                return 0  # a person's verdict or healing audit note is never searchable text
             if sources[0].get("is_current") is False:
                 return 0  # replaced meanwhile: its chunks were deleted with it and are not written again (#186)
             existing = tx.query("SELECT id,line_start,line_end FROM chunks WHERE source_id=:source", {"source": source_id})
             uri = sources[0]["uri"]
-            if existing and PurePosixPath(uri).name in MANAGED_FILES and (
+            if existing and PurePosixPath(uri.replace("\\", "/")).name in MANAGED_FILES and (
                     {(row["line_start"], row["line_end"]) for row in existing}
                     != {(first, last) for _, first, last in _chunks(text, uri)}):
                 # A block indexed before #313 leaves the index here, the next time the project is indexed.
@@ -483,7 +539,7 @@ def _write_files_once(store, project_id: str, batch: list[dict], limit: int = EV
             else:
                 source = store.snapshot_new(tx, project_id, item["uri"], item["content"], item["kind"], item["metadata"])
             sources.append(source)
-            if source is None or is_verdict_source(source) or is_mcp_source(source):
+            if source is None or is_verdict_source(source) or is_mcp_source(source) or is_healing_audit_source(source):
                 continue
             for number, (content, first, last) in enumerate(item["chunks"]):
                 chunk_id = _identifier(project_id, source["id"], number, first, last, content)
@@ -545,8 +601,8 @@ def index_pending_sources(store, limit: int = 100) -> dict:
     )
     counts = {"sources": 0, "chunks": 0, "errors": []}
     for row in rows:
-        if is_verdict_source(row) or is_mcp_source(row):
-            continue  # an audit note on an impact list: kept and exported, never chunked
+        if is_verdict_source(row) or is_mcp_source(row) or is_healing_audit_source(row):
+            continue  # an audit note on an impact list or quote healing: kept and exported, never chunked
         metadata = _metadata(row["metadata"])
         normalized = metadata.get("normalized_text")
         text = normalized if isinstance(normalized, str) and normalized.strip() else row["content"]
@@ -587,14 +643,16 @@ RACY_WINDOW_NS = 2_000_000_000
 _REMEMBERED: dict[tuple[str, str], dict] = {}
 
 
-def _file_identity(status: os.stat_result) -> tuple:
-    return (status.st_dev, status.st_ino, status.st_mode, status.st_size, status.st_mtime_ns, status.st_ctime_ns)
+def _file_identity(status: os.stat_result, ctime_ns: int | None = None) -> tuple:
+    return (status.st_dev, status.st_ino, status.st_mode, status.st_size,
+            status.st_mtime_ns, status.st_ctime_ns if ctime_ns is None else ctime_ns)
 
 
 def _tree_state(store, project_id: str, listing: dict | None = None) -> tuple[str, int, bool, list[dict]]:
     """The signature, the newest file time seen, whether every directory could be listed, and the folders
     that are not available on this machine (#371): those are named in the signature and never walked.
     `listing` receives what the walk found, so that the indexing that follows does not walk again (#409)."""
+    from .private_files import change_time_ns
     project = store.resolve_project(project_id)
     entries: list[Any] = [parser_identity()]
     newest, errors, away = 0, [], []
@@ -615,8 +673,9 @@ def _tree_state(store, project_id: str, listing: dict | None = None) -> tuple[st
             except OSError:
                 entries.append([str(path), None])
                 continue
-            entries.append([str(path), status.st_size, status.st_mtime_ns, status.st_ctime_ns])
-            newest = max(newest, status.st_mtime_ns, status.st_ctime_ns)
+            ctime_ns = change_time_ns(path, status)
+            entries.append([str(path), status.st_size, status.st_mtime_ns, ctime_ns])
+            newest = max(newest, status.st_mtime_ns, ctime_ns)
     entries.extend(links)  # a link moved, added or removed alone changes the signature, so a pass runs (#451)
     return hashlib.sha256(_json(entries).encode()).hexdigest(), newest, not errors, away
 
@@ -812,8 +871,8 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
         if lies_in(root, store.data_dir):
             # Registered by 0.12.0, before #295 refused it: the walk leaves the data directory out, so it
             # would report 0 files. Named, not removed.
-            import shlex
-            quoted = shlex.quote(safe_text(project["name"]))
+            from .process_control import quote_arg
+            quoted = quote_arg(safe_text(project["name"]))
             head = (f"Project {project['name']!r} has a folder inside the data directory, which Cairnmind never "
                     f"indexes: {root}; this registration is left as it is. Move the files to a folder outside it, ")
             counts["errors"].append(head + (
@@ -821,7 +880,7 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                 f"`cairnmind project add {quoted} NEWFOLDER` registers the new folder as a new project"
                 if root == registered_roots[0] else
                 f"add that with `cairnmind project root {quoted} NEWFOLDER`, and remove this one with "
-                f"`cairnmind project remove {quoted} --root {shlex.quote(safe_text(str(root)))} --yes`"))
+                f"`cairnmind project remove {quoted} --root {quote_arg(safe_text(str(root)))} --yes`"))
             continue
         commit = _git(root, "rev-parse", "HEAD") or None
         if folder["adopt"]:
@@ -835,9 +894,11 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
             except OSError as exc:
                 counts["errors"].append(f"{path}: {exc}")
                 continue
-            identity = _file_identity(status)
+            from .private_files import change_time_ns
+            ctime_ns = change_time_ns(path, status)
+            identity = _file_identity(status, ctime_ns)
             # A file touched this recently can change again without its times moving (see RACY_WINDOW_NS).
-            settled = max(status.st_mtime_ns, status.st_ctime_ns) < started - RACY_WINDOW_NS
+            settled = max(status.st_mtime_ns, ctime_ns) < started - RACY_WINDOW_NS
             remembered = known.get(name)
             if remembered and remembered["identity"] == identity and remembered["root"] == root:
                 entry = remembered["entry"]
@@ -882,7 +943,11 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
             if before and before["sha256"] == digest:
                 source = before
                 metadata = _metadata(source["metadata"])
-                analysis = metadata.get("analysis") if metadata.get("analysis_version") == parser_identity() else None
+                stored_version = metadata.get("analysis_version")
+                analysis = metadata.get("analysis") if (
+                    stored_version == parser_identity()
+                    or (isinstance(stored_version, str) and stored_version.startswith("scip-v1:"))
+                ) else None
                 if not analysis:
                     analysis = analyze_code(path, content)
                     store.command(
@@ -983,6 +1048,11 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                                  if folder["root"] in away]
     if not walk_errors and not away:
         project_folders.adopt(store, walked)
+    from .code_decisions import ingest_project_decisions
+    available_roots = [Path(folder["root"]) for folder in folders if folder["state"] == "available"]
+    decisions_result = ingest_project_decisions(store, project_id, indexed, roots=available_roots)
+    if decisions_result.get("source") != "off":
+        counts["code_decisions"] = decisions_result
     if state is not None:
         state.update(parser=parser_identity(), files=files, graph=graph)
     return counts
@@ -995,7 +1065,9 @@ def _stored_analyses(store, source_ids: list[str]) -> dict[str, dict | None]:
         for row in store.query(
                 "SELECT id,metadata.analysis AS analysis,metadata.analysis_version AS version FROM sources "
                 "WHERE id IN :ids", {"ids": source_ids[offset:offset + 500]}):
-            if row.get("version") == parser_identity() and isinstance(row.get("analysis"), dict):
+            version = row.get("version")
+            if ((version == parser_identity() or (isinstance(version, str) and version.startswith("scip-v1:")))
+                    and isinstance(row.get("analysis"), dict)):
                 found[row["id"]] = row["analysis"]
     return found
 
@@ -1144,7 +1216,21 @@ def _graph_parts(project_id: str, indexed: dict[Path, dict], reuse: dict) -> tup
 
     def leads_to(path: Path) -> tuple:
         entry = indexed[path]
+        if entry["analysis"].get("source") == "scip":
+            return tuple(
+                Path(item["target_path"]) for item in entry["analysis"].get("resolved_imports", ())
+                if Path(item["target_path"]) in indexed
+            )
         return tuple(lead(path, entry["root"], item["module"]) for item in entry["analysis"]["imports"])
+
+    def _scip_symbol_id(target_path: Path, name: str, line_start: int) -> str | None:
+        if target_path not in indexed:
+            return None
+        first(target_path)
+        for cand in tables[target_path].get(name, ()):
+            if cand.get("line_start") == line_start:
+                return cand["id"]
+        return None
 
     def second(path: Path) -> tuple[dict, dict, set[Path]]:
         entry = indexed[path]
@@ -1155,7 +1241,39 @@ def _graph_parts(project_id: str, indexed: dict[Path, dict], reuse: dict) -> tup
         symbols = tables[path]
         imported: dict[str, tuple[Path, str]] = {}
         namespace: dict[str, Path] = {}
-        is_test = path.name.startswith("test_") or bool(re.search(r"[._](test|spec)\.", path.name))
+        is_test = (
+            path.name.startswith("test_")
+            or bool(re.search(r"[._](test|spec)\.", path.name))
+            or bool(re.search(r"(Tests?|Spec)\.(java|kt|kts|cs|php)$", path.name))
+        )
+        if entry["analysis"].get("source") == "scip":
+            for item in entry["analysis"].get("resolved_imports", ()):
+                target = Path(item["target_path"])
+                if target not in indexed:
+                    continue
+                targets.add(target)
+                target_id = file_node(target)
+                edge(file_node(path), target_id, "imports", source_id, item["line"])
+                if is_test:
+                    edge(file_node(path), target_id, "test_imports", source_id, item["line"])
+            for item in entry["analysis"].get("external_imports", ()):
+                target_id = node("external_module", item["module"], None, {"unresolved": False, "source": "scip"})
+                edge(file_node(path), target_id, "imports", source_id, item["line"])
+            for edge_kind, key_name in (("calls", "resolved_calls"), ("references", "resolved_references")):
+                for item in entry["analysis"].get(key_name, ()):
+                    target_path = Path(item["target_path"])
+                    target_sym = _scip_symbol_id(target_path, item["target_name"], item["target_line"])
+                    if target_sym is None:
+                        continue
+                    if target_path != path:
+                        targets.add(target_path)
+                    owner_id = file_node(path)
+                    if item.get("owner_name") and item.get("owner_line"):
+                        resolved_owner = _scip_symbol_id(path, item["owner_name"], item["owner_line"])
+                        if resolved_owner is not None:
+                            owner_id = resolved_owner
+                    edge(owner_id, target_sym, edge_kind, source_id, item["line"])
+            return nodes, edges, targets
         for item in entry["analysis"]["imports"]:
             module = item["module"]
             target = lead(path, entry["root"], module)
@@ -1208,8 +1326,16 @@ def _graph_parts(project_id: str, indexed: dict[Path, dict], reuse: dict) -> tup
     parts: dict[Path, dict] = dict(reuse)
     nodes: dict[str, dict] = {}
     edges: dict[str, dict] = {}
-    keys = {path: (entry["source"]["id"], entry["source"]["uri"], entry["source"]["kind"], str(entry["root"]))
-            for path, entry in indexed.items()}
+    keys = {
+        path: (
+            entry["source"]["id"],
+            entry["source"]["uri"],
+            entry["source"]["kind"],
+            str(entry["root"]),
+            entry["analysis"].get("scip_version", ""),
+        )
+        for path, entry in indexed.items()
+    }
     changed = [path for path in indexed if path not in reuse or reuse[path]["key"] != keys[path]]
     moved: set[Path] = set()
     for path in changed:
@@ -1269,7 +1395,9 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
     lead: resolving an import follows them, and the fingerprint, which holds only files, does not (#451).
     """
     fingerprint = _identifier(parser_identity(), *[
-        f"{path}:{indexed[path]['source']['id']}" for path in sorted(indexed)
+        f"{path}:{indexed[path]['source']['id']}"
+        + (f":{indexed[path]['analysis']['scip_version']}" if indexed[path]["analysis"].get("scip_version") else "")
+        for path in sorted(indexed)
     ])
     markers = store.query(
         "SELECT graph_fingerprint,graph_nodes,graph_edges FROM projects WHERE id=:project",
@@ -1428,14 +1556,17 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
 
 
 def _save_cursor(store, path: Path, project_id: str | None, client: str, offset: int) -> None:
+    from .arcade_backend import ArcadeBackend
+    backend = getattr(store, "backend", None) or ArcadeBackend(store)
     with store.transaction() as tx:
         if project_id and not tx.query("SELECT id FROM projects WHERE id=:project", {"project": project_id}):
             raise ValueError("Project no longer exists; history cursor was not recreated")
-        tx.command(
-            "UPDATE import_cursors SET id=:id,path=:path,project_id=:project,client=:client,`offset`=:offset,"
-            "fingerprint=:fingerprint,updated_at=:updated UPSERT WHERE path=:path",
-            {"id": _identifier(path), "path": str(path), "project": project_id, "client": client,
-             "offset": offset, "fingerprint": _fingerprint(path, offset), "updated": _now()},
+        backend.upsert_document(
+            tx,
+            "import_cursors",
+            {"id": _identifier(path), "path": str(path), "project_id": project_id, "client": client,
+             "offset": offset, "fingerprint": _fingerprint(path, offset), "updated_at": _now()},
+            key_field="path",
         )
 
 
@@ -1812,14 +1943,17 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
                 counts["unknown"] += 1
                 reason = reason or UNKNOWN_TRANSCRIPT_WARNING
             if not resolved:
-                store.command(
-                    "UPDATE ingestion_inbox SET id=:id,path=:path,source_offset=:offset,sha256=:sha256,"
-                    "raw=:raw,client=:client,cwd=:cwd,reason=:reason,created_at=:created "
-                    "UPSERT WHERE id=:id",
-                    {"id": _identifier(path, event_offset, text), "path": str(path), "offset": event_offset,
-                     "sha256": hashlib.sha256(raw).hexdigest(), "raw": text, "client": detected, "cwd": cwd,
-                     "reason": reason or "No registered project matches working directory", "created": _now()},
-                )
+                from .arcade_backend import ArcadeBackend
+                backend = getattr(store, "backend", None) or ArcadeBackend(store)
+                with store.transaction() as inbox_tx:
+                    backend.upsert_document(
+                        inbox_tx,
+                        "ingestion_inbox",
+                        {"id": _identifier(path, event_offset, text), "path": str(path), "source_offset": event_offset,
+                         "sha256": hashlib.sha256(raw).hexdigest(), "raw": text, "client": detected, "cwd": cwd,
+                         "reason": reason or "No registered project matches working directory", "created_at": _now()},
+                        key_field="id",
+                    )
                 counts["inbox"] += 1
             else:
                 # Every complete source event is archived, including unrecognized records.
@@ -1929,9 +2063,13 @@ def register_default_histories(store, project_id: str, root: Path) -> dict:
     locations = [(codex_home / "sessions", "codex"), (codex_home / "archived_sessions", "codex"), (claude_home / "projects", "claude")]
     result = {"discovered": 0, "registered": 0, "archived": 0, "errors": []}
     for base, client in locations:
-        if not base.is_dir():
+        try:
+            if not base.is_dir():
+                continue
+            candidates = sorted(base.rglob("*.jsonl"))
+        except OSError:
             continue
-        for path in sorted(base.rglob("*.jsonl")):
+        for path in candidates:
             if path.is_symlink():
                 continue
             result["discovered"] += 1

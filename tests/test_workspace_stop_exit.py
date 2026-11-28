@@ -1,19 +1,23 @@
 """The attached workspace process ends with code 0 when the person stops the workspace (#269)."""
 from __future__ import annotations
 
-import fcntl
 import os
 import struct
 import subprocess
 import sys
-import termios
 import time
+
+if sys.platform != "win32":
+    import fcntl
+    import termios
 
 import pytest
 
 from pty_drain import drain_pty
 from test_workspace import manager as manager  # noqa: F401 (fixture)
 import cairnmind.workspace as module
+
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX tmux/PTY workspace stop exit")
 
 SCRIPT = """import fcntl, sys, termios
 from pathlib import Path

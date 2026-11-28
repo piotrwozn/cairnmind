@@ -169,6 +169,8 @@ def tmux_socket(args, cwd) -> tuple[str, str] | None:
 
 def default_tmux_socket(path: str) -> bool:
     """tmux's own socket directory (tmux-UID under TMUX_TMPDIR or /tmp): never the test's."""
+    if sys.platform == "win32":
+        return False
     return Path(path).parent.name == f"tmux-{os.getuid()}"
 
 
@@ -239,6 +241,8 @@ def child_state(process: subprocess.Popen) -> str:
     here; "gone" when it was reaped before, by anyone, and its pid may now belong to someone else."""
     if process.returncode is not None:
         return "gone"
+    if sys.platform == "win32":
+        return "alive" if process.poll() is None else "exited"
     try:
         pid, status = os.waitpid(process.pid, os.WNOHANG)
     except ChildProcessError:
@@ -251,6 +255,13 @@ def child_state(process: subprocess.Popen) -> str:
 
 def signal_child(process: subprocess.Popen, own_group: bool, number: int) -> None:
     """Signal a child (and its own group) that child_state has just found unreaped."""
+    if sys.platform == "win32":
+        with contextlib.suppress(OSError):
+            if number == getattr(signal, "SIGKILL", 9):
+                process.kill()
+            else:
+                process.terminate()
+        return
     with contextlib.suppress(ProcessLookupError, PermissionError):
         if own_group:
             os.killpg(process.pid, number)
@@ -260,6 +271,8 @@ def signal_child(process: subprocess.Popen, own_group: bool, number: int) -> Non
 
 def kill_group_of_exited(process: subprocess.Popen, own_group: bool) -> None:
     # Reaped by child_state an instant ago: what is left of its group is the test's too.
+    if sys.platform == "win32":
+        return
     if own_group:
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(process.pid, signal.SIGKILL)
@@ -292,7 +305,7 @@ def stop_processes(processes) -> list[str]:
         time.sleep(.05)
     for process, own_group in running:
         if child_state(process) == "alive":
-            signal_child(process, own_group, signal.SIGKILL)
+            signal_child(process, own_group, getattr(signal, "SIGKILL", 9))
         else:
             kill_group_of_exited(process, own_group)
     deadline = time.monotonic() + 5
@@ -338,7 +351,9 @@ def stop_engines(funcargs) -> list[str]:
             # A record a test wrote by hand may name any process, this one too: never stopped here.
             if pid <= 0 or pid == os.getpid() or not data_dir.resolve().is_relative_to(root.resolve()):
                 continue
-            os.kill(pid, 0)
+            from cairnmind import process_identity
+            if not process_identity.alive(pid):
+                continue
         except (OSError, ValueError, KeyError, TypeError):
             continue  # no such process (or not ours): nothing is left running
         from cairnmind.config import Settings
@@ -376,6 +391,8 @@ def remove_socket_directories(before: set[str]) -> list[str]:
     that another run on this machine has just made and whose server does not listen yet. shortcut: such a
     directory older than that, or one this run left in its last seconds, is still misjudged; a per-run socket
     base in the product would end that."""
+    if sys.platform == "win32":
+        return []
     removed = []
     for path in sorted(socket_directories() - before):
         with contextlib.suppress(OSError):

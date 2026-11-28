@@ -1,0 +1,98 @@
+{
+  "backend": "arcadedb",
+  "check_runs": [],
+  "chunks": [],
+  "edges": [],
+  "embeddings": [],
+  "exported_at": "2026-11-10T00:00:00+00:00",
+  "format_version": 5,
+  "import_cursors": [],
+  "ingestion_inbox": [],
+  "jobs": [],
+  "journal_events": [],
+  "journal_state": [],
+  "memory_bindings": [],
+  "memory_imports": [],
+  "memory_settings": [],
+  "memory_snapshots": [],
+  "nodes": [],
+  "plan_requests": [],
+  "plan_revisions": [],
+  "plans": [],
+  "project_roots": [
+    {
+      "id": "48cf40b4-1f99-46ab-afc4-568024b146c3",
+      "path": "/tmp/v3-app",
+      "project_id": "92e5080b-5be6-4046-8f40-5adfcbe8b285"
+    }
+  ],
+  "projects": [
+    {
+      "created_at": "2026-11-10T00:00:00+00:00",
+      "id": "92e5080b-5be6-4046-8f40-5adfcbe8b285",
+      "name": "v3-app",
+      "root": "/tmp/v3-app"
+    }
+  ],
+  "record_revisions": [
+    {
+      "created_at": "2026-11-10T00:00:00+00:00",
+      "id": "3e93dcaa-f6ca-489b-ae2d-d3f8aef017a4:1",
+      "project_id": "92e5080b-5be6-4046-8f40-5adfcbe8b285",
+      "record_id": "3e93dcaa-f6ca-489b-ae2d-d3f8aef017a4",
+      "snapshot": {
+        "content": "Preserve v3 data during migration.",
+        "id": "3e93dcaa-f6ca-489b-ae2d-d3f8aef017a4",
+        "key": "v3-rule",
+        "kind": "decision",
+        "metadata": {},
+        "project_id": "92e5080b-5be6-4046-8f40-5adfcbe8b285",
+        "source_ids": [
+          "be70c185-e014-4b81-ae1f-731f464e544e"
+        ],
+        "status": "confirmed",
+        "version": 1
+      },
+      "version": 1
+    }
+  ],
+  "records": [
+    {
+      "active_key": "[\"92e5080b-5be6-4046-8f40-5adfcbe8b285\", \"decision\", \"v3-rule\"]",
+      "content": "Preserve v3 data during migration.",
+      "created_at": "2026-11-10T00:00:00+00:00",
+      "id": "3e93dcaa-f6ca-489b-ae2d-d3f8aef017a4",
+      "key": "v3-rule",
+      "kind": "decision",
+      "metadata": {},
+      "project_id": "92e5080b-5be6-4046-8f40-5adfcbe8b285",
+      "source_ids": [
+        "be70c185-e014-4b81-ae1f-731f464e544e"
+      ],
+      "status": "confirmed",
+      "updated_at": "2026-11-10T00:00:00+00:00",
+      "version": 1
+    }
+  ],
+  "resume_acks": [],
+  "resume_packets": [],
+  "session_events": [],
+  "sessions": [],
+  "sources": [
+    {
+      "content": "Legacy v3 evidence.",
+      "created_at": "2026-11-10T00:00:00+00:00",
+      "current_key": "[\"92e5080b-5be6-4046-8f40-5adfcbe8b285\", \"manual://v3\"]",
+      "id": "be70c185-e014-4b81-ae1f-731f464e544e",
+      "is_current": true,
+      "kind": "manual",
+      "metadata": {},
+      "project_id": "92e5080b-5be6-4046-8f40-5adfcbe8b285",
+      "sha256": "9b261b9765bbc5a460b010039f8129336ac85b97de9473916c44fdadd65a7b2f",
+      "uri": "manual://v3"
+    }
+  ],
+  "vector_data": {},
+  "vector_indexes": [],
+  "worktree_states": []
+}

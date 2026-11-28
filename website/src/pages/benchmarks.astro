@@ -1,0 +1,115 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import Breadcrumbs from '@/components/astro/Breadcrumbs.astro';
+import MetricStrip from '@/components/astro/MetricStrip.astro';
+import benchmarks from '@/data/benchmarks.json';
+import { renderInlineCode } from '@/data/faq';
+import { breadcrumbListJsonLd, techArticleJsonLd } from '@/lib/seo';
+
+const pathname = '/benchmarks/';
+const crumbs = [
+  { label: 'Home', href: '/' },
+  { label: 'Benchmarks', href: pathname },
+];
+const jsonLd = [
+  techArticleJsonLd({
+    headline: 'Cairnmind Measured Evaluations & Real-Model Benchmarks',
+    description:
+      'Transparent release-gate measurements for Cairnmind: golden recall, portable memory transfer, extraction precision, real-repository Q&A, absent-feature refusal, and prompt-injection resistance.',
+    pathname,
+  }),
+  breadcrumbListJsonLd(crumbs),
+];
+---
+
+<BaseLayout
+  title="Cairnmind Benchmarks: Recall, Refusal & Injection Evals"
+  description="Measured Cairnmind evals: 100% golden recall, 19/20 repo Q&A with 0 wrong, 20/21 (24/24 on main) absent-feature refusals, and injection tests."
+  pathname={pathname}
+  ogType="article"
+  jsonLd={jsonLd}
+>
+  <article class="container-shell section-band">
+    <Breadcrumbs items={crumbs} />
+
+    <header class="mt-5 max-w-3xl">
+      <p class="eyebrow">Reproducible Evaluations</p>
+      <h1 class="mt-2 text-3xl sm:text-5xl font-semibold">
+        Measured figures, with hardware, digests, and honest failures
+      </h1>
+      <p class="mt-4 text-lg text-[var(--text-muted)] leading-relaxed">
+        Cairnmind ships six explicit evaluation commands that run against real local models in isolated throwaway databases. Every number below comes directly from <a href="/docs/evaluation/">docs/EVALUATION.md</a> and <a href="/docs/evaluation/results/">docs/evaluation/RESULTS.md</a>.
+      </p>
+    </header>
+
+    <section class="mt-8" aria-label="Headline measured metrics">
+      <MetricStrip />
+    </section>
+
+    <section class="mt-10 glass-surface p-6" aria-labelledby="env-heading">
+      <h2 id="env-heading" class="text-xl font-semibold">Measurement environment</h2>
+      <dl class="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs font-mono">
+        <div class="rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg-subtle)] p-3.5">
+          <dt class="text-[var(--text-dim)]">Hardware &amp; OS</dt>
+          <dd class="mt-1 text-[var(--text-strong)]">{benchmarks.environment.hardware}</dd>
+        </div>
+        <div class="rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg-subtle)] p-3.5">
+          <dt class="text-[var(--text-dim)]">Storage engine</dt>
+          <dd class="mt-1 text-[var(--text-strong)]">{benchmarks.environment.engine}</dd>
+        </div>
+        <div class="rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg-subtle)] p-3.5">
+          <dt class="text-[var(--text-dim)]">Chat model</dt>
+          <dd class="mt-1 text-[var(--text-strong)]">{benchmarks.environment.chatModel}</dd>
+        </div>
+        <div class="rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg-subtle)] p-3.5">
+          <dt class="text-[var(--text-dim)]">Embedding model</dt>
+          <dd class="mt-1 text-[var(--text-strong)]">{benchmarks.environment.embeddingModel}</dd>
+        </div>
+      </dl>
+    </section>
+
+    <section class="mt-10" aria-labelledby="suite-table-heading">
+      <h2 id="suite-table-heading" class="text-2xl font-semibold mb-4">
+        All six evaluation harnesses
+      </h2>
+      <div class="table-wrap">
+        <table class="cm-table">
+          <thead>
+            <tr>
+              <th scope="col">Command</th>
+              <th scope="col">What it measures</th>
+              <th scope="col">Measured result</th>
+              <th scope="col">Time (0.12.0 / 0.11.0)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {benchmarks.releaseGateTable.map((row) => (
+              <tr>
+                <td><code class="code-inline text-xs">{row.command}</code></td>
+                <td>{row.what}</td>
+                <td><strong class="text-[var(--text-strong)]">{row.result012}</strong></td>
+                <td class="font-mono text-xs tabular whitespace-nowrap">{row.time012} / {row.time011}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="mt-10 glass-surface p-6 sm:p-8" aria-labelledby="caveats-heading">
+      <p class="eyebrow">Transparency &amp; Limits</p>
+      <h2 id="caveats-heading" class="mt-2 text-2xl font-semibold">
+        What these measurements prove, and what they do not
+      </h2>
+      <ul class="mt-4 space-y-3 text-sm text-[var(--text-primary)] pl-5">
+        {benchmarks.honestCaveats.map((c) => (
+          <li set:html={renderInlineCode(c)} />
+        ))}
+      </ul>
+      <div class="mt-6 flex flex-wrap gap-3">
+        <a href="/docs/evaluation/" class="btn-primary">Read docs/EVALUATION.md</a>
+        <a href="/docs/evaluation/results/" class="btn-secondary">Read raw RESULTS.md logs</a>
+      </div>
+    </section>
+  </article>
+</BaseLayout>

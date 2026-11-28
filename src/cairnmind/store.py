@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
 import gzip
 import hashlib
 import json
@@ -16,12 +15,13 @@ import time
 from uuid import uuid4
 
 from . import graph_transactions
+from .file_locks import lock_exclusive, unlock
 from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
 from .first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN, UNKNOWN_PROJECT_NEXT
 from .terminal_safe import safe_text
 # The sensitivity class of a source and a record (#180): derived on every read, stored nowhere.
 from .sensitivity import record_sensitivity, source_sensitivity  # noqa: F401
-from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
+from .sql import (PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
                   quote_name, update_document, utc_now)
 from .arcade import REQUEST_TIMEOUT
 from .backup_reader import opened_backup
@@ -238,7 +238,8 @@ _PROMPT_SHA = re.compile(r"[0-9a-f]{16}")
 # person's act it checked itself, an importer sets it for what a package brings, and no client can.
 DERIVED_RECORD_METADATA = ("evidence_earliest", "evidence_latest", "evidence_basis",
                            "supersede_warning", "supersede_replaced_evidence_latest", EXTRACTION_MARK,
-                           EXTRACTOR_STAMP, *ORIGIN_METADATA, "publication", "confirmation")
+                           EXTRACTOR_STAMP, *ORIGIN_METADATA, "publication", "confirmation", "quote_ref",
+                           "symbol_anchor", "comment_anchor", "adr_anchor", "trailer_anchor")
 
 
 def validate_extractor_stamp(value) -> dict:
@@ -308,6 +309,18 @@ class Store:
     # What the one-time step that marks records confirmed before 0.11.0 did when it ran on this open or the
     # last restore ({"marked", "before_rule", "at"}, confirmation_upgrade, #215); None when it did not run.
     confirmations_before_rule = None
+    _backend = None
+
+    @property
+    def backend(self):
+        if self._backend is None:
+            from .arcade_backend import ArcadeBackend
+            self._backend = ArcadeBackend(self)
+        return self._backend
+
+    @backend.setter
+    def backend(self, value) -> None:
+        self._backend = value
     # After a restore: how many completed embed jobs it set back to pending because the backup brought no vectors
     # (#187); None when the backup brought them or nothing was restored.
     embed_jobs_requeued = None
@@ -331,10 +344,22 @@ class Store:
         from .store_readonly import read_consistently
         return read_consistently(self, read, kinds)
 
+    @classmethod
+    def open_memory(cls, data_dir: Path | None = None) -> Store:
+        """Open a fast ephemeral in-memory SQLite store (zero Java/Docker; used by ``cairnmind try``)."""
+        import tempfile
+        root = Path(data_dir).expanduser().resolve() if data_dir is not None else Path(tempfile.gettempdir()) / "cairnmind-memory"
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        settings = Settings(data_dir=root, storage_backend="sqlite", db_path=":memory:")
+        return cls(root, settings=settings, backend="sqlite", db_path=":memory:")
+
+    def close(self) -> None:
+        if hasattr(self, "backend") and self.backend is not None:
+            self.backend.close()
+
     def __init__(self, data_dir: Path, *, settings: Settings | None = None, for_takeover: bool = False,
-                 for_restore: bool = False):
-        from .arcade import ArcadeClient
-        from .engine import ensure_engine
+                 for_restore: bool = False, backend: str | None = None, db_path: Path | str | None = None):
+        from .config import resolved_backend, sqlite_db_path
         self._for_takeover = bool(for_takeover)
         self._for_restore = bool(for_restore)
         self.data_dir = Path(data_dir).expanduser().resolve()
@@ -344,9 +369,23 @@ class Store:
         self.settings = settings if settings is not None else Settings.load(self.data_dir, create=True)
         from .store_writer import installation
         self.installation = installation(self.data_dir)
-        ensure_engine(self.settings)
-        self.client = ArcadeClient(self.settings)
-        self.client.ensure_database()
+        chosen = (backend or "").strip().lower() or resolved_backend(self.settings)
+        if chosen == "sqlite":
+            from .sqlite_backend import SQLiteBackend
+            target_db = db_path if db_path is not None else sqlite_db_path(self.settings)
+            self.backend = SQLiteBackend(target_db, store=self)
+            self.client = self.backend.as_client_proxy()
+            self.backend.ensure_database()
+        elif chosen == "arcade":
+            from .arcade import ArcadeClient
+            from .arcade_backend import ArcadeBackend
+            from .engine import ensure_engine
+            ensure_engine(self.settings)
+            self.client = ArcadeClient(self.settings)
+            self.backend = ArcadeBackend(self)
+            self.client.ensure_database()
+        else:
+            raise ValueError(f"Unsupported storage backend: {chosen!r}")
         self._local = threading.local()
         self._stamp_lock = threading.Lock()
         self._stamp_cursor, self._stamp_base, self._stamp_global, self._stamp_seq = None, 0, 0, {}
@@ -368,12 +407,12 @@ class Store:
         if getattr(self._local, "lock_held", False):
             yield  # this thread holds it already; a second flock on a new handle would wait for itself
             return
-        with (self.data_dir / "database-writer.lock").open("a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+        with (self.data_dir / "database-writer.lock").open("a", encoding="utf-8") as handle:
+            lock_exclusive(handle)
             try:
                 yield
             finally:
-                fcntl.flock(handle, fcntl.LOCK_UN)
+                unlock(handle)
 
     def query(self, sql, params=None):
         return (getattr(self._local, "transaction", None) or self.client).query(sql, params)
@@ -562,7 +601,7 @@ class Store:
         from .arcade import ArcadeError
         from .store_writer import claimed_meanwhile, mixed_reason, read_fence, read_writer, settle
         with self._lock():
-            types = {row.get("name") for row in self.client.query("SELECT name FROM schema:types")}
+            types = self.backend.list_collections(self.client)
             writer, named = read_writer(self.client) if "devbrain_meta" in types else None, None
             if writer and "journal_state" in types:
                 writer, named = read_fence(self.client)
@@ -630,6 +669,9 @@ class Store:
 
     def _prepare_schema(self):
         """Create or upgrade the schema; called by init, with the writer lock held, when no other installation writes."""
+        if getattr(self.backend, "backend_kind", "arcade") == "sqlite":
+            self.backend.init_schema()
+            return
         self.client.command("CREATE DOCUMENT TYPE devbrain_meta IF NOT EXISTS")
         meta = {row.get("name"): row.get("value") for row in self.client.query(
             "SELECT FROM devbrain_meta WHERE name IN ['schema_version','lookup_indexes']")}
@@ -652,31 +694,35 @@ class Store:
                        else (*V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 2
                        else V05_DOCUMENT_TYPES if version == 3 else DOCUMENT_TYPES)
         exports = collections if version is not None else EXPORT_TYPES
+        statements = []
+        run_ddl = statements.append if version is None else self.client.command
         for collection in collections:
-            self.client.command(f"CREATE DOCUMENT TYPE {collection} IF NOT EXISTS")
+            run_ddl(f"CREATE DOCUMENT TYPE {collection} IF NOT EXISTS")
         if version is None:
-            self.client.command("CREATE VERTEX TYPE nodes IF NOT EXISTS")
-            self.client.command("CREATE EDGE TYPE edges IF NOT EXISTS")
+            run_ddl("CREATE VERTEX TYPE nodes IF NOT EXISTS")
+            run_ddl("CREATE EDGE TYPE edges IF NOT EXISTS")
         for collection in exports:
-            self.client.command(f"CREATE PROPERTY {collection}.id IF NOT EXISTS STRING")
-            self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}(id) UNIQUE NULL_STRATEGY SKIP")
+            run_ddl(f"CREATE PROPERTY {collection}.id IF NOT EXISTS STRING")
+            run_ddl(f"CREATE INDEX IF NOT EXISTS ON {collection}(id) UNIQUE NULL_STRATEGY SKIP")
             if collection != "projects":
-                self.client.command(f"CREATE PROPERTY {collection}.project_id IF NOT EXISTS STRING")
-                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}(project_id) NOTUNIQUE NULL_STRATEGY SKIP")
+                run_ddl(f"CREATE PROPERTY {collection}.project_id IF NOT EXISTS STRING")
+                run_ddl(f"CREATE INDEX IF NOT EXISTS ON {collection}(project_id) NOTUNIQUE NULL_STRATEGY SKIP")
         if version is None:
             for collection, field in (("projects", "name"), ("projects", "root"), ("project_roots", "path"),
                                       ("sources", "current_key"), ("records", "active_key"), ("jobs", "job_key"),
                                       ("import_cursors", "path")):
-                self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
-                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) UNIQUE NULL_STRATEGY SKIP")
+                run_ddl(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
+                run_ddl(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) UNIQUE NULL_STRATEGY SKIP")
             for collection in ("sources", "chunks", "nodes", "edges"):
-                self.client.command(f"CREATE PROPERTY {collection}.is_current IF NOT EXISTS BOOLEAN")
+                run_ddl(f"CREATE PROPERTY {collection}.is_current IF NOT EXISTS BOOLEAN")
             for collection, field in (("chunks", "text"), ("records", "content")):
-                self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
-                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) FULL_TEXT METADATA {{similarity:'BM25'}}")
-        self.client.command("CREATE PROPERTY journal_events.epoch IF NOT EXISTS STRING")
-        self.client.command("CREATE PROPERTY journal_events.seq IF NOT EXISTS LONG")
-        self.client.command("CREATE INDEX IF NOT EXISTS ON journal_events(epoch,seq) UNIQUE")
+                run_ddl(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
+                run_ddl(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) FULL_TEXT METADATA {{similarity:'BM25'}}")
+        run_ddl("CREATE PROPERTY journal_events.epoch IF NOT EXISTS STRING")
+        run_ddl("CREATE PROPERTY journal_events.seq IF NOT EXISTS LONG")
+        run_ddl("CREATE INDEX IF NOT EXISTS ON journal_events(epoch,seq) UNIQUE")
+        if statements:
+            self.client.script(";\n".join(statements))
         with self.client.transaction() as tx:
             if not tx.query("SELECT id FROM journal_state WHERE id='current'"):
                 insert_document(tx, "journal_state", {"id": "current", "epoch": str(uuid4()), "seq": 0, "first_seq": 1})
@@ -866,13 +912,7 @@ class Store:
         raise ValueError(f"Unknown project: {value}. {UNKNOWN_PROJECT_NEXT}")
 
     def _delete_old_vectors(self, tx, source_ids):
-        if not source_ids:
-            return
-        tx.command("DELETE FROM embeddings WHERE source_id IN :ids", {"ids": source_ids})
-        for row in tx.query("SELECT FROM vector_indexes"):
-            name = row.get("type_name")
-            if name and IDENTIFIER.fullmatch(name) and name.startswith("vector_"):
-                tx.command(f"DELETE FROM {quote_name(name)} WHERE source_id IN :ids", {"ids": source_ids})
+        self.backend.delete_vectors_for_sources(tx, source_ids)
 
     @staticmethod
     def drop_chunks(tx, source_ids):
@@ -1021,12 +1061,7 @@ class Store:
                 return self.upsert_node(node, native)
         node, existing = self._checked_node(tx, node)
         with self._keeping(tx) as known:
-            if existing:
-                # The project, checked above, lets a transaction that resets the project's graph skip reading
-                # the row before and after: the journal names no single node of a graph it reports as reset.
-                update_document(tx, "nodes", node, "id=:id", {"id": node["id"], "project_id": node["project_id"]})
-            else:
-                tx.command(f"CREATE VERTEX nodes CONTENT {json_text(node)}")
+            self.backend.upsert_vertex(tx, node, existing=bool(existing))
             if known is not None:
                 known["nodes"][node["id"]] = {"id": node["id"], "project_id": node["project_id"]}
         return node
@@ -1060,17 +1095,7 @@ class Store:
         with self._keeping(tx) as known:
             if known is not None:
                 known["edges"][edge["id"]] = {key: edge[key] for key in ("id", "project_id", "from_id", "to_id")}
-            if existing:
-                # The project is the checked one, as in upsert_node.
-                mine = {"id": edge["id"], "project_id": edge["project_id"]}
-                if any(existing.get(k) != edge[k] for k in ("project_id", "from_id", "to_id")):
-                    tx.command("DELETE FROM edges WHERE id=:id", mine)
-                else:
-                    update_document(tx, "edges", edge, "id=:id", mine)
-                    return edge
-            tx.command("CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:from_id) "
-                       f"TO (SELECT FROM nodes WHERE id=:to_id) CONTENT {json_text(edge)}",
-                       {"from_id": edge["from_id"], "to_id": edge["to_id"]})
+            self.backend.upsert_edge(tx, edge, existing=existing)
         return edge
 
     def _checked_edge(self, tx, edge):
@@ -1117,49 +1142,25 @@ class Store:
                 raise ValueError(f"Every graph {kind} of a grouped write belongs to its project")
             if len({item.get("id") for item in rows}) != len(rows):
                 raise ValueError(f"A grouped graph write names a {kind} twice")
-        created, updated = [], []
+        created_nodes, updated_nodes = [], []
         for item in nodes:
             node, existing = self._checked_node(tx, item)
-            (updated if existing else created).append(node)
+            (updated_nodes if existing else created_nodes).append(node)
             if tx.known is not None:
                 tx.known["nodes"][node["id"]] = {"id": node["id"], "project_id": node["project_id"]}
         with self._keeping(tx):
-            for offset in range(0, len(created), GRAPH_ROWS_PER_REQUEST):
-                part = created[offset:offset + GRAPH_ROWS_PER_REQUEST]
-                # The project names the reset graph, so the journal reads nothing for this statement.
-                stored = tx.command("CREATE VERTEX nodes CONTENT :rows", {"rows": part, "project_id": project_id})
-                if len(stored) != len(part):
-                    raise RuntimeError("The database did not create every graph vertex of a group")
-            for offset in range(0, len(updated), GRAPH_ROWS_PER_REQUEST):
-                statements, params = [], {}
-                for index, node in enumerate(updated[offset:offset + GRAPH_ROWS_PER_REQUEST]):
-                    statements.append(f"UPDATE nodes SET {','.join(f'{quote_name(key)}=:u{index}_{key}' for key in node)} "
-                                      f"WHERE id=:w{index}")
-                    params.update({f"u{index}_{key}": value for key, value in node.items()})
-                    params[f"w{index}"] = node["id"]
-                tx.script(statements, params, project_id)
-        created, existing_edges = [], []
+            self.backend.write_graph_batch(tx, project_id, created_nodes, updated_nodes, [])
+        created_edges, existing_edges = [], []
         for item in edges:
             edge, existing = self._checked_edge(tx, item)
             if existing:
                 existing_edges.append(item)
             else:
-                created.append(edge)
+                created_edges.append(edge)
                 if tx.known is not None:
                     tx.known["edges"][edge["id"]] = {key: edge[key] for key in ("id", "project_id", "from_id", "to_id")}
         with self._keeping(tx):
-            for offset in range(0, len(created), GRAPH_ROWS_PER_REQUEST):
-                part = created[offset:offset + GRAPH_ROWS_PER_REQUEST]
-                statements, params = [], {"ids": [edge["id"] for edge in part]}
-                for index, edge in enumerate(part):
-                    statements.append(f"CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:f{index}) "
-                                      f"TO (SELECT FROM nodes WHERE id=:t{index}) CONTENT :e{index}")
-                    params.update({f"f{index}": edge["from_id"], f"t{index}": edge["to_id"], f"e{index}": edge})
-                # CREATE EDGE writes nothing, without an error, when an endpoint is not found: count what it wrote.
-                statements.append("SELECT count(*) AS n FROM edges WHERE id IN :ids")
-                found = tx.script(statements, params, project_id)
-                if not found or found[0].get("n") != len(part):
-                    raise RuntimeError("The database did not create every graph edge of a group")
+            self.backend.write_graph_batch(tx, project_id, [], [], created_edges)
         for item in existing_edges:  # rare here: an edge that is kept is not written again
             self.upsert_edge(item, tx)
 
@@ -1208,43 +1209,173 @@ class Store:
                 raise RuntimeError("The database did not delete every graph vertex of a group")
         return kept
 
-    def _record_graph(self, tx, record):
+    @staticmethod
+    def _load_checked_sources(tx, project_id, sources):
+        if not isinstance(sources, list) or not sources or not all(isinstance(item, str) for item in sources):
+            raise ValueError("A memory record requires at least one source ID: cite a source you read, "
+                             "or the source_ids a checkpoint returns")
+        unique_ids = list(dict.fromkeys(sources))
+        loaded = {}
+        for start in range(0, len(unique_ids), 500):
+            for row in tx.query("SELECT FROM sources WHERE id IN :ids", {"ids": unique_ids[start:start + 500]}):
+                cleaned = clean_row(row)
+                loaded[cleaned["id"]] = cleaned
+        if len(loaded) != len(unique_ids) or any(row.get("project_id") != project_id for row in loaded.values()):
+            raise ValueError("Sources must exist and belong to the same project")
+        return loaded
+
+    def _record_graph(self, tx, record, *, source_rows=None):
+        resolved_sources = {}
+        missing_source_ids = []
+        for source_id in dict.fromkeys(record["source_ids"]):
+            if source_rows is not None and source_id in source_rows:
+                resolved_sources[source_id] = source_rows[source_id]
+            else:
+                missing_source_ids.append(source_id)
+        for start in range(0, len(missing_source_ids), 500):
+            for row in tx.query("SELECT FROM sources WHERE id IN :ids", {"ids": missing_source_ids[start:start + 500]}):
+                cleaned = clean_row(row)
+                resolved_sources[cleaned["id"]] = cleaned
+        for source_id in missing_source_ids:
+            if source_id not in resolved_sources:
+                resolved_sources[source_id] = one_row(tx, "SELECT FROM sources WHERE id=:id", {"id": source_id})
+
         node_id = f"record:{record['id']}"
-        self.upsert_node({"id": node_id, "project_id": record["project_id"], "kind": record["kind"],
-                          "label": record["content"][:1000], "source_id": record["source_ids"][0],
-                          "is_current": record["status"] != "superseded",
-                          "metadata": {**record["metadata"], "record_id": record["id"], "status": record["status"]}}, tx)
-        tx.command("DELETE FROM edges WHERE from_id=:id AND kind IN ['supported_by','depends_on','supersedes']", {"id": node_id})
+        dep_ids = [f"record:{dependency}" for dependency in (record["metadata"].get("depends_on") or [])]
+        sup_ids = [f"record:{record['supersedes']}"] if record.get("supersedes") else []
+        source_node_ids = [f"source:{source_id}" for source_id in resolved_sources]
+        candidate_ids = list(dict.fromkeys([node_id, *source_node_ids, *dep_ids, *sup_ids]))
+        existing_nodes = {}
+        for start in range(0, len(candidate_ids), 500):
+            for row in tx.query("SELECT FROM nodes WHERE id IN :ids", {"ids": candidate_ids[start:start + 500]}):
+                cleaned = clean_row(row)
+                existing_nodes[cleaned["id"]] = cleaned
 
-        def edge(target, kind, source_id):
-            eid = hashlib.sha256(f"{node_id}\0{kind}\0{target}".encode()).hexdigest()
-            self.upsert_edge({"id": eid, "project_id": record["project_id"], "from_id": node_id, "to_id": target,
-                              "kind": kind, "source_id": source_id, "is_current": record["status"] != "superseded"}, tx)
+        has_known = hasattr(tx, "known")
+        prior_known = tx.known if has_known else None
+        try:
+            if has_known:
+                if tx.known is None:
+                    tx.known = {"projects": set(), "sources": {}, "nodes": {}, "edges": {}}
+                tx.known["projects"].add(record["project_id"])
+                for sid, src in resolved_sources.items():
+                    tx.known["sources"][sid] = {"id": sid, "project_id": src.get("project_id"), "is_current": src.get("is_current")}
+                for nid in candidate_ids:
+                    tx.known["nodes"][nid] = existing_nodes.get(nid)
 
-        for source_id in record["source_ids"]:
-            source = one_row(tx, "SELECT FROM sources WHERE id=:id", {"id": source_id})
-            target = f"source:{source_id}"
-            self.upsert_node({"id": target, "project_id": record["project_id"], "kind": "source", "label": source["uri"],
-                              "source_id": source_id, "metadata": {"source_id": source_id, "source_kind": source["kind"]}}, tx)
-            edge(target, "supported_by", source_id)
-        for dependency in record["metadata"].get("depends_on") or []:
-            target = f"record:{dependency}"
-            if tx.query("SELECT id FROM nodes WHERE id=:id", {"id": target}):
-                edge(target, "depends_on", record["source_ids"][0])
-        # As for a dependency: a replacement written before the record it replaces (an import in ID order)
-        # gets its edge when its graph is written again after that record's (#239).
-        if record.get("supersedes") and tx.query("SELECT id FROM nodes WHERE id=:id",
-                                                 {"id": f"record:{record['supersedes']}"}):
-            edge(f"record:{record['supersedes']}", "supersedes", record["source_ids"][0])
+            had_record_node = node_id in existing_nodes
+            self.upsert_node({"id": node_id, "project_id": record["project_id"], "kind": record["kind"],
+                              "label": record["content"][:1000], "source_id": record["source_ids"][0],
+                              "is_current": record["status"] != "superseded",
+                              "metadata": {**record["metadata"], "record_id": record["id"], "status": record["status"]}}, tx)
+            if had_record_node:
+                with self._keeping(tx):
+                    tx.command("DELETE FROM edges WHERE from_id=:id AND kind IN ['supported_by','depends_on','supersedes']",
+                               {"id": node_id})
 
-    def _revision(self, tx, record):
+            def edge(target, kind, source_id):
+                eid = hashlib.sha256(f"{node_id}\0{kind}\0{target}".encode()).hexdigest()
+                if has_known and tx.known is not None:
+                    tx.known["edges"][eid] = None
+                self.upsert_edge({"id": eid, "project_id": record["project_id"], "from_id": node_id, "to_id": target,
+                                  "kind": kind, "source_id": source_id, "is_current": record["status"] != "superseded"}, tx)
+
+            for source_id in record["source_ids"]:
+                source = resolved_sources[source_id]
+                target = f"source:{source_id}"
+                desired = {"id": target, "project_id": record["project_id"], "kind": "source", "label": source["uri"],
+                           "source_id": source_id, "is_current": True,
+                           "metadata": {"source_id": source_id, "source_kind": source["kind"]}}
+                existing_src = existing_nodes.get(target)
+                if not (existing_src is not None
+                        and existing_src.get("project_id") == desired["project_id"]
+                        and existing_src.get("kind") == "source"
+                        and existing_src.get("label") == desired["label"]
+                        and existing_src.get("source_id") == source_id
+                        and existing_src.get("is_current") is True
+                        and existing_src.get("metadata") == desired["metadata"]):
+                    self.upsert_node(desired, tx)
+                    existing_nodes[target] = desired
+                edge(target, "supported_by", source_id)
+            for dependency in record["metadata"].get("depends_on") or []:
+                target = f"record:{dependency}"
+                if target in existing_nodes:
+                    edge(target, "depends_on", record["source_ids"][0])
+            # As for a dependency: a replacement written before the record it replaces (an import in ID order)
+            # gets its edge when its graph is written again after that record's (#239).
+            if record.get("supersedes"):
+                sup_target = f"record:{record['supersedes']}"
+                if sup_target in existing_nodes:
+                    edge(sup_target, "supersedes", record["source_ids"][0])
+        finally:
+            if has_known and prior_known is None:
+                tx.known = None
+
+    def _revision(self, tx, record, *, source_rows=None):
         insert_document(tx, "record_revisions", {"id": f"{record['id']}:{record['version']}", "project_id": record["project_id"],
                                         "record_id": record["id"], "version": record["version"], "snapshot": record, "recorded_at": utc_now()})
-        self._record_graph(tx, record)
+        self._record_graph(tx, record, source_rows=source_rows)
+
+    def _derive_symbol_anchor(self, tx, project_id, sources, metadata, *, source_rows=None):
+        """Derive a cross-OS symbol anchor from cited code sources when metadata names a symbol or quote."""
+        from .parsing import analyze_code
+        from .symbol_anchor import posix_path, resolve_symbol_anchor
+        symbol_name = metadata.get("symbol") if isinstance(metadata.get("symbol"), str) else None
+        quote = metadata.get("evidence") if isinstance(metadata.get("evidence"), str) else None
+        if not (symbol_name and symbol_name.strip()) and not (quote and quote.strip()):
+            return None
+        if source_rows is not None:
+            code_sources = [source_rows[sid] for sid in dict.fromkeys(sources)
+                            if sid in source_rows and source_rows[sid].get("kind") == "code"]
+        else:
+            code_sources = tx.query(
+                "SELECT id,uri,kind,content,metadata FROM sources WHERE project_id=:project AND id IN :ids AND kind='code'",
+                {"project": project_id, "ids": list(dict.fromkeys(sources))},
+            )
+        if not code_sources:
+            return None
+        by_id = {row["id"]: row for row in code_sources}
+        for source_id in sources:
+            src = by_id.get(source_id)
+            if not src:
+                continue
+            src_meta = src.get("metadata") if isinstance(src.get("metadata"), dict) else {}
+            rel = src_meta.get("relative_path")
+            if not isinstance(rel, str) or not rel.strip():
+                raw_path = src_meta.get("path") or src.get("uri") or ""
+                raw_root = src_meta.get("root")
+                if isinstance(raw_path, str) and isinstance(raw_root, str) and raw_path and raw_root:
+                    try:
+                        rel = Path(raw_path).relative_to(Path(raw_root)).as_posix()
+                    except ValueError:
+                        rel = Path(raw_path).name
+                else:
+                    rel = Path(str(raw_path)).name
+            rel = posix_path(rel)
+            if not rel:
+                continue
+            analysis = src_meta.get("analysis") if isinstance(src_meta.get("analysis"), dict) else None
+            has_hashes = bool(
+                analysis
+                and any(isinstance(sym.get("body_hash"), str) for sym in (analysis.get("symbols") or []))
+            )
+            if not has_hashes:
+                analysis = analyze_code(Path(rel), str(src.get("content") or ""))
+            resolved = resolve_symbol_anchor(
+                rel,
+                str(src.get("content") or ""),
+                analysis,
+                quote=quote,
+                symbol_name=symbol_name,
+            )
+            if resolved is not None:
+                return resolved
+        return None
 
     def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False,
                   replace_origin=False, replace_metadata=False, mark_only_changes=False, extracted_from=None,
-                  extractor=None, slot=False, new_id=None):
+                  extractor=None, slot=False, new_id=None, symbol_anchor=None, comment_anchor=None,
+                  adr_anchor=None, trailer_anchor=None, quote_ref=None):
         """Write one record version.
 
         new_id: the ID of a new record, chosen by a person's act whose audit names it before the write (#222).
@@ -1261,7 +1392,7 @@ class Store:
         extractor: that record's extractor stamp (EXTRACTOR_STAMP), only together with extracted_from.
         """
         self._require_project(tx, project_id)
-        self._validate_sources(tx, project_id, sources)
+        source_rows = self._load_checked_sources(tx, project_id, sources)
         if not isinstance(record, dict):
             raise RecordRefused("record must be an object")
         old = None
@@ -1284,6 +1415,11 @@ class Store:
         if kept:
             held = old.get("source_ids") or []
             sources = list(dict.fromkeys([*(json.loads(held) if isinstance(held, str) else held), *sources]))
+            extra_sources = [sid for sid in sources if sid not in source_rows]
+            for start in range(0, len(extra_sources), 500):
+                for row in tx.query("SELECT FROM sources WHERE id IN :ids", {"ids": extra_sources[start:start + 500]}):
+                    cleaned = clean_row(row)
+                    source_rows[cleaned["id"]] = cleaned
         kind, status = record.get("kind", old["kind"] if old else None), record.get("status", old["status"] if old else "proposed")
         content = record.get("content", old["content"] if old else None)
         if not isinstance(kind, str) or not isinstance(status, str) or kind not in KINDS or status not in STATUSES:
@@ -1306,6 +1442,10 @@ class Store:
             updates = {key: value for key, value in updates.items() if key not in CONFLICT_REVIEW_METADATA
                        and not (old and key == "possible_conflicts")}
         metadata.update({key: value for key, value in updates.items() if key not in DERIVED_RECORD_METADATA})
+        if quote_ref is not None:
+            metadata["quote_ref"] = quote_ref
+        elif old and "evidence" in updates and updates["evidence"] != (old.get("metadata") or {}).get("evidence"):
+            metadata.pop("quote_ref", None)
         if "depends_on" in metadata and metadata["depends_on"] is None:
             # A model's metadata may say depends_on: null; that is no dependencies, not a failed write (#238).
             del metadata["depends_on"]
@@ -1321,9 +1461,31 @@ class Store:
             # something else under this name stays writable, and is simply never compared.
             if "scope" in updates and updates["scope"] != (old or {}).get("metadata", {}).get("scope"):
                 validate_scope(updates["scope"])
-        evidence = evidence_time(tx, sources)
+        evidence = evidence_time(tx, sources, source_rows=source_rows)
         metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
                         evidence_basis=evidence["basis"])
+        if symbol_anchor is not None:
+            from .symbol_anchor import validate_symbol_anchor
+            validated_anchor = validate_symbol_anchor(symbol_anchor)
+            if validated_anchor is None:
+                raise ValueError("Invalid symbol_anchor")
+            metadata["symbol_anchor"] = validated_anchor
+        elif "symbol_anchor" not in metadata or any(field in updates for field in ("symbol", "evidence")):
+            derived_anchor = self._derive_symbol_anchor(tx, project_id, sources, metadata, source_rows=source_rows)
+            if derived_anchor is not None:
+                metadata["symbol_anchor"] = derived_anchor
+        if comment_anchor is not None:
+            if not isinstance(comment_anchor, dict) or not comment_anchor.get("tag") or not comment_anchor.get("text_sha256"):
+                raise ValueError("Invalid comment_anchor")
+            metadata["comment_anchor"] = dict(comment_anchor)
+        if adr_anchor is not None:
+            if not isinstance(adr_anchor, dict) or not adr_anchor.get("path") or not adr_anchor.get("text_sha256"):
+                raise ValueError("Invalid adr_anchor")
+            metadata["adr_anchor"] = dict(adr_anchor)
+        if trailer_anchor is not None:
+            if not isinstance(trailer_anchor, dict) or not trailer_anchor.get("commit") or not trailer_anchor.get("text_sha256"):
+                raise ValueError("Invalid trailer_anchor")
+            metadata["trailer_anchor"] = dict(trailer_anchor)
         # Set after the client's metadata, which can neither forge nor clear it; kept from the old version,
         # except when a checkpoint replaces the checkpoint record: it replaces its content and its only source,
         # so there the mark follows the writer of the current checkpoint.
@@ -1450,10 +1612,14 @@ class Store:
             from .verification import validate_completion
             validate_completion(self, tx, project_id, {**result, "_completion_worktree": record.get("worktree")})
         if old:
-            update_document(tx, "records", result, "id=:id AND version=:version", {"id": record_id, "version": old["version"]})
+            updated = update_document(tx, "records", result, "id=:id AND version=:version",
+                                      {"id": record_id, "version": old["version"]})
+            if (isinstance(updated, list) and updated and isinstance(updated[0], dict)
+                    and type(updated[0].get("count")) is int and updated[0]["count"] != 1):
+                raise ValueError("Record version conflict; read the current version and retry")
         else:
             insert_document(tx, "records", result)
-        self._revision(tx, result)
+        self._revision(tx, result, source_rows=source_rows)
         if managed and not managed_batch:
             from .plans import note_task_mutation
             note_task_mutation(self, tx, result, record["expected_plan_version"])
@@ -1478,10 +1644,13 @@ class Store:
         if pending is not None:
             pending.append(call)
 
-    def remember(self, project_id, record, sources, *, conflict_review=False, extracted_from=None, extractor=None):
+    def remember(self, project_id, record, sources, *, conflict_review=False, extracted_from=None, extractor=None,
+                 symbol_anchor=None, comment_anchor=None, adr_anchor=None, trailer_anchor=None):
         with self.transaction() as tx:
             return self._remember(tx, project_id, record, sources, conflict_review=conflict_review,
-                                  extracted_from=extracted_from, extractor=extractor)
+                                  extracted_from=extracted_from, extractor=extractor,
+                                  symbol_anchor=symbol_anchor, comment_anchor=comment_anchor,
+                                  adr_anchor=adr_anchor, trailer_anchor=trailer_anchor)
 
     def checkpoint(self, project_id, state):
         if not isinstance(state, dict):
@@ -1645,10 +1814,12 @@ class Store:
             return {**unknown, "reason": "legacy_missing_capture"}
         capture, event_id = payload.get("requested_watermark"), payload.get("origin_event_id")
         path, client = payload.get("path"), payload.get("client")
+        from .private_files import decode_file_id
         if (not isinstance(capture, dict) or not isinstance(event_id, str)
                 or not isinstance(path, str) or client not in {"codex", "claude"}
                 or type(capture.get("size")) is not int or capture["size"] < 0
-                or any(type(capture.get(key)) is not int for key in ("device", "inode", "head_bytes"))
+                or decode_file_id(capture.get("device")) is None or decode_file_id(capture.get("inode")) is None
+                or type(capture.get("head_bytes")) is not int
                 or not isinstance(capture.get("head_sha256"), str)):
             return {**unknown, "reason": "legacy_missing_capture"}
         event = one_row(self, "SELECT FROM session_events WHERE id=:id AND project_id=:project",
@@ -1659,7 +1830,9 @@ class Store:
         for packet in packets:
             for row in (packet.get("payload") or {}).get("archive_watermarks", []):
                 if (row.get("path") != path or row.get("client") != client
-                        or any(row.get(key) != capture[key] for key in ("device", "inode", "head_bytes", "head_sha256"))):
+                        or decode_file_id(row.get("device")) != decode_file_id(capture["device"])
+                        or decode_file_id(row.get("inode")) != decode_file_id(capture["inode"])
+                        or any(row.get(key) != capture[key] for key in ("head_bytes", "head_sha256"))):
                     continue
                 if type(row.get("size")) is not int or row["size"] < capture["size"]:
                     continue
@@ -1701,7 +1874,7 @@ class Store:
                                           for event in history[-20:] if isinstance(event, dict)]
             result["attempt_history_omitted"] = max(0, len(history) - 20) + pruned
         payload = job.get("payload") or {}
-        result["target"] = ({key: payload[key][:1024] for key in ("path", "client", "source_id", "chunk_id", "origin_event_id")
+        result["target"] = ({key: payload[key][:1024] for key in ("path", "root", "client", "source_id", "chunk_id", "origin_event_id")
                              if isinstance(payload.get(key), str)} if isinstance(payload, dict) else {})
         if job["kind"] == "import":
             result["coverage"] = self._import_job_coverage(job, packets)
@@ -1883,8 +2056,7 @@ class Store:
 
     def delete_embeddings(self, project_id):
         with self.transaction() as tx:
-            self._delete_old_vectors(tx, [r["id"] for r in tx.query("SELECT id FROM sources WHERE project_id=:project", {"project": project_id})])
-            tx.command("DELETE FROM embeddings WHERE project_id=:project", {"project": project_id})
+            self.backend.delete_vectors_for_project(tx, project_id)
 
     def export(self, project_id=None):
         from .restore_staged import refuse_if_unfinished

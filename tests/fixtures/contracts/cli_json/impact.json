@@ -1,0 +1,21 @@
+{
+  "changed_files": [],
+  "commit": "<GIT_SHA_SHORT>828475baa1899a45ef503e5c6fa1",
+  "documentation": {
+    "documents": [],
+    "names_not_searched": 0,
+    "not_scanned": 0,
+    "omitted_documents": 0,
+    "omitted_lines": 0,
+    "skipped_documents": 0,
+    "unavailable": false
+  },
+  "project": {
+    "id": "<UUID_1>",
+    "name": "contract-app"
+  },
+  "records": [],
+  "since": "HEAD",
+  "text": "Records worth re-checking in contract-app (<WORKTREE>) after the changes since HEAD (<GIT_SHA_SHORT>)\nA link means \"worth checking\", not that the record is wrong. Nothing was written. Links are as fresh as the last indexing.\nNothing in this worktree differs from that commit.",
+  "worktree": "<WORKTREE>"
+}

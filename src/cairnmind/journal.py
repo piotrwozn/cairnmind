@@ -11,6 +11,8 @@ import json
 import re
 from uuid import UUID, uuid4
 
+from .sql import json_text, quote_name
+
 
 JOURNAL_TYPES = ("journal_state", "journal_events")
 MAX_EVENTS = 50_000
@@ -120,7 +122,13 @@ def _event_key(table, row):
 
 
 class JournalTransaction:
-    """A Store transaction proxy; SQL and the final outbox share one commit."""
+    """A Store transaction proxy; structured mutations and the final outbox share one commit.
+
+    Structured methods (``insert_document``, ``insert_documents``, ``update_document``,
+    ``upsert_document``, ``delete_documents``, ``create_vertex``, ``create_edge``) record
+    journal diffs directly from explicit collection/row metadata without regex SQL parsing.
+    ``command(sql, params)`` remains supported for backward compatibility.
+    """
 
     def __init__(self, native, *, writer=None, check=None):
         self.native = native
@@ -143,6 +151,26 @@ class JournalTransaction:
     def query(self, sql, params=None):
         return self.native.query(sql, params)
 
+    def server_time_ms(self) -> int:
+        if hasattr(self.native, "server_time_ms"):
+            return int(self.native.server_time_ms())
+        rows = self.native.query("SELECT sysdate().asLong() AS milliseconds")
+        milliseconds = rows[0]["milliseconds"] if rows else None
+        if not isinstance(milliseconds, int) or isinstance(milliseconds, bool):
+            raise ValueError("The database server gave no time; the writer row was not changed.")
+        return milliseconds
+
+    @staticmethod
+    def _is_tracked(table: str) -> bool:
+        return table in TABLE_TYPES or table.startswith("vector_")
+
+    def _invalidate_known(self, table: str) -> None:
+        if self.known is not None and not self.keeps_known and table in {"projects", "sources", "nodes", "edges"}:
+            self.known = None
+
+    def _skip_graph_row_tracking(self, table: str, project) -> bool:
+        return table in {"nodes", "edges"} and project in self.graph_resets
+
     def _record(self, table, before, after):
         first = {row["id"]: _clean(row) for row in before if isinstance(row.get("id"), str)}
         last = {row["id"]: _clean(row) for row in after if isinstance(row.get("id"), str)}
@@ -151,6 +179,169 @@ class JournalTransaction:
             if key not in self.changes:
                 self.changes[key] = [deepcopy(first.get(identifier)), None]
             self.changes[key][1] = deepcopy(last.get(identifier))
+
+    def record_mutation(self, table: str, before: list[dict], after: list[dict], *, project=None) -> None:
+        """Explicitly record a structured mutation without regex SQL parsing."""
+        self._invalidate_known(table)
+        if not self._is_tracked(table) or self.reset_reason is not None:
+            return
+        if self._skip_graph_row_tracking(table, project):
+            return
+        self._record(table, before, after)
+
+    def insert_document(self, collection: str, data: dict) -> dict:
+        self._invalidate_known(collection)
+        if hasattr(self.native, "insert_document"):
+            self.native.insert_document(collection, data)
+        else:
+            self.native.command(f"INSERT INTO {quote_name(collection)} CONTENT {json_text(data)}")
+        if self._is_tracked(collection) and self.reset_reason is None:
+            project = data.get("id") if collection == "projects" else data.get("project_id")
+            if not self._skip_graph_row_tracking(collection, project):
+                if isinstance(data.get("id"), str):
+                    self._record(collection, [], [_clean(data)])
+                else:
+                    self.touch(project, TABLE_TYPES.get(collection, "embedding"), op="reset")
+        return data
+
+    def insert_documents(self, collection: str, rows: list[dict]) -> list[dict]:
+        self._invalidate_known(collection)
+        if hasattr(self.native, "insert_documents"):
+            stored = self.native.insert_documents(collection, rows)
+            if not isinstance(stored, list) or len(stored) != len(rows):
+                raise RuntimeError(f"The database did not store every row of a group in {collection}")
+            if self._is_tracked(collection) and self.reset_reason is None and rows:
+                cleaned = [_clean(row) for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)]
+                if cleaned:
+                    first_project = cleaned[0].get("id") if collection == "projects" else cleaned[0].get("project_id")
+                    if not self._skip_graph_row_tracking(collection, first_project):
+                        self._record(collection, [], cleaned)
+            return stored
+        stored = self.command(f"INSERT INTO {quote_name(collection)} CONTENT :rows", {"rows": rows})
+        if not isinstance(stored, list) or len(stored) != len(rows):
+            raise RuntimeError(f"The database did not store every row of a group in {collection}")
+        return stored
+
+    def update_document(self, collection: str, data: dict, where: str, params: dict) -> list[dict]:
+        self._invalidate_known(collection)
+        params = params or {}
+        project = params.get("project_id", params.get("project"))
+        tracked = (
+            self._is_tracked(collection)
+            and self.reset_reason is None
+            and not self._skip_graph_row_tracking(collection, project)
+        )
+        selection = f"SELECT FROM {quote_name(collection)}" + (f" WHERE {where}" if where else "")
+        before = self.native.query(selection, params) if tracked else []
+        if hasattr(self.native, "update_document"):
+            result = self.native.update_document(collection, data, where, params)
+        else:
+            assignments = ",".join(f"{quote_name(key)}=:value_{key}" for key in data)
+            result = self.native.command(
+                f"UPDATE {quote_name(collection)} SET {assignments} WHERE {where}",
+                {**params, **{f"value_{key}": value for key, value in data.items()}},
+            )
+        if tracked:
+            identifiers = {row["id"] for row in before if isinstance(row.get("id"), str)}
+            identifiers.update(row["id"] for row in result if isinstance(row, dict) and isinstance(row.get("id"), str))
+            if isinstance(data.get("id"), str):
+                identifiers.add(data["id"])
+            after = (
+                self.native.query(
+                    f"SELECT FROM {quote_name(collection)} WHERE id IN :journal_ids",
+                    {"journal_ids": list(identifiers)},
+                )
+                if identifiers
+                else self.native.query(selection, params)
+            )
+            self._record(collection, before, after)
+        return result
+
+    def upsert_document(self, collection: str, data: dict, key_field: str = "id") -> dict:
+        self._invalidate_known(collection)
+        key_val = data[key_field]
+        project = data.get("id") if collection == "projects" else data.get("project_id")
+        tracked = (
+            self._is_tracked(collection)
+            and self.reset_reason is None
+            and not self._skip_graph_row_tracking(collection, project)
+        )
+        before = (
+            self.native.query(
+                f"SELECT FROM {quote_name(collection)} WHERE {quote_name(key_field)}=:upsert_key",
+                {"upsert_key": key_val},
+            )
+            if tracked
+            else []
+        )
+        if hasattr(self.native, "upsert_document"):
+            self.native.upsert_document(collection, data, key_field=key_field)
+        else:
+            setters = ",".join(f"{quote_name(key)}=:value_{key}" for key in data)
+            params = {f"value_{key}": value for key, value in data.items()}
+            params["upsert_key"] = key_val
+            self.native.command(
+                f"UPDATE {quote_name(collection)} SET {setters} UPSERT WHERE {quote_name(key_field)}=:upsert_key",
+                params,
+            )
+        if tracked:
+            after = self.native.query(
+                f"SELECT FROM {quote_name(collection)} WHERE {quote_name(key_field)}=:upsert_key",
+                {"upsert_key": key_val},
+            )
+            self._record(collection, before, after or [_clean(data)])
+        return data
+
+    def delete_documents(self, collection: str, where: str = "", params: dict | None = None) -> list[dict]:
+        self._invalidate_known(collection)
+        params = params or {}
+        project = params.get("project_id", params.get("project"))
+        tracked = (
+            self._is_tracked(collection)
+            and self.reset_reason is None
+            and not self._skip_graph_row_tracking(collection, project)
+        )
+        selection = f"SELECT FROM {quote_name(collection)}" + (f" WHERE {where}" if where else "")
+        before = self.native.query(selection, params) if tracked else []
+        if hasattr(self.native, "delete_documents"):
+            result = self.native.delete_documents(collection, where, params)
+        else:
+            clause = f" WHERE {where}" if where else ""
+            result = self.native.command(f"DELETE FROM {quote_name(collection)}{clause}", params)
+        if tracked:
+            if collection == "nodes":
+                for row in before:
+                    self.touch(row.get("project_id"), "graph", op="reset")
+            self._record(collection, before, [])
+        return result
+
+    def create_vertex(self, collection: str, node: dict) -> dict:
+        self._invalidate_known(collection)
+        if hasattr(self.native, "create_vertex"):
+            self.native.create_vertex(collection, node)
+        else:
+            self.native.command(f"CREATE VERTEX {quote_name(collection)} CONTENT {json_text(node)}")
+        if self._is_tracked(collection) and self.reset_reason is None:
+            project = node.get("project_id")
+            if not self._skip_graph_row_tracking(collection, project) and isinstance(node.get("id"), str):
+                self._record(collection, [], [_clean(node)])
+        return node
+
+    def create_edge(self, collection: str, edge: dict) -> dict:
+        self._invalidate_known(collection)
+        if hasattr(self.native, "create_edge"):
+            self.native.create_edge(collection, edge)
+        else:
+            self.native.command(
+                f"CREATE EDGE {quote_name(collection)} FROM (SELECT FROM nodes WHERE id=:from_id) "
+                f"TO (SELECT FROM nodes WHERE id=:to_id) CONTENT {json_text(edge)}",
+                {"from_id": edge["from_id"], "to_id": edge["to_id"]},
+            )
+        if self._is_tracked(collection) and self.reset_reason is None:
+            project = edge.get("project_id")
+            if not self._skip_graph_row_tracking(collection, project) and isinstance(edge.get("id"), str):
+                self._record(collection, [], [_clean(edge)])
+        return edge
 
     def command(self, sql, params=None):
         params = params or {}

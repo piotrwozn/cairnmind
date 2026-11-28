@@ -1,0 +1,11 @@
+{
+  "allowed_sources": [
+    "off",
+    "comments",
+    "adr",
+    "trailers"
+  ],
+  "decision_source": "off",
+  "project": "contract-app",
+  "project_id": "<UUID_1>"
+}

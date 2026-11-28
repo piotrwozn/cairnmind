@@ -1,0 +1,138 @@
+---
+---
+
+<!--
+  Single focused auto-playing Hero Terminal Gate (no 4-tab cognitive clutter!).
+  Plays through the real Stale "Done" -> BLOCKED -> Fresh Check -> Verified Done loop automatically,
+  with Pause toggle and static full view under prefers-reduced-motion: reduce and <noscript>.
+-->
+<div class="glass-elevated p-4 sm:p-5 space-y-3.5" data-auto-demo>
+  <div class="flex items-center justify-between gap-2 pb-3 border-b border-[var(--glass-border)]">
+    <div class="flex items-center gap-2">
+      <span class="h-2.5 w-2.5 rounded-full bg-[var(--danger)] opacity-85" aria-hidden="true"></span>
+      <span class="h-2.5 w-2.5 rounded-full bg-[var(--warn)] opacity-85" aria-hidden="true"></span>
+      <span class="h-2.5 w-2.5 rounded-full bg-[var(--ok)] opacity-85" aria-hidden="true"></span>
+      <span class="ml-1 font-mono text-[11px] uppercase tracking-wider text-[var(--accent)] font-semibold">
+        Live MCP Gate · Claude Code
+      </span>
+    </div>
+    <button
+      type="button"
+      data-demo-pause
+      aria-pressed="false"
+      class="min-h-[44px] px-3 rounded-lg font-mono text-[11px] border border-[var(--glass-border)] bg-[var(--glass-bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-strong)] hover:border-[var(--accent-border)] cursor-pointer transition-colors"
+    >
+      Pause
+    </button>
+  </div>
+
+  <!-- Step indicator pills -->
+  <div class="grid grid-cols-4 gap-1.5 font-mono text-[10.5px]" aria-hidden="true">
+    <span data-demo-pill="0" class="text-center py-1 rounded-md border border-[var(--warn-border)] bg-[var(--warn-surface)] text-[var(--warn)] font-semibold">1. Edit</span>
+    <span data-demo-pill="1" class="text-center py-1 rounded-md border border-[var(--glass-border)] bg-[var(--glass-bg-subtle)] text-[var(--text-dim)]">2. Claim</span>
+    <span data-demo-pill="2" class="text-center py-1 rounded-md border border-[var(--glass-border)] bg-[var(--glass-bg-subtle)] text-[var(--text-dim)]">3. Blocked</span>
+    <span data-demo-pill="3" class="text-center py-1 rounded-md border border-[var(--glass-border)] bg-[var(--glass-bg-subtle)] text-[var(--text-dim)]">4. Verified</span>
+  </div>
+
+  <!-- Live terminal stream -->
+  <div class="obsidian-well p-4 font-mono text-xs leading-relaxed space-y-2.5 min-h-[228px]">
+    <div data-demo-step="0" class="transition-opacity duration-300">
+      <span class="text-[var(--text-dim)]">14:12 ·</span>
+      <span class="text-[var(--text-primary)]"> Agent edits </span>
+      <code class="text-[var(--warn)]">src/checkout.py</code>
+      <span class="text-[var(--text-dim)]"> (12m after last test run)</span>
+    </div>
+
+    <div data-demo-step="1" class="transition-opacity duration-300">
+      <span class="text-[var(--accent)]">Agent calls →</span>
+      <code class="text-[var(--text-strong)]"> mcp.next_task("checkout-tax", state="done")</code>
+    </div>
+
+    <div data-demo-step="2" class="rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] p-3 space-y-1 transition-opacity duration-300">
+      <p class="text-[var(--danger)] font-bold">✕ BLOCKED BY CAIRNMIND</p>
+      <p class="text-[var(--text-primary)] text-[11.5px]">
+        <code class="text-[var(--warn)]">src/checkout.py</code> changed after the last passing test run.
+      </p>
+      <p class="text-[var(--text-muted)] text-[11px]">
+        Checks stale · Run <code class="text-[var(--text-strong)]">cairnmind check run unit</code> to attach fresh proof.
+      </p>
+    </div>
+
+    <div data-demo-step="3" class="rounded-lg border border-[var(--ok-border)] bg-[var(--ok-surface)] p-3 space-y-1 transition-opacity duration-300">
+      <p class="text-[var(--text-strong)] text-[11.5px]">
+        <span class="text-[var(--text-dim)]">$</span> cairnmind check run my-app unit --task checkout-tax
+      </p>
+      <p class="text-[var(--ok)] font-bold">✓ PASS (sha256 pinned) · Task marked done</p>
+    </div>
+  </div>
+
+  <p class="text-xs text-[var(--text-muted)] leading-snug">
+    <strong class="text-[var(--text-strong)]">Works automatically.</strong> Your agent hits the gate on its own, with nothing to watch in another terminal.
+  </p>
+</div>
+
+<script>
+  document.querySelectorAll<HTMLElement>('[data-auto-demo]').forEach((card) => {
+    const steps = Array.from(card.querySelectorAll<HTMLElement>('[data-demo-step]'));
+    const pills = Array.from(card.querySelectorAll<HTMLElement>('[data-demo-pill]'));
+    const pauseBtn = card.querySelector<HTMLButtonElement>('[data-demo-pause]');
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    let stage = 3; // start complete for reduced motion / instant clarity, then cycle gently
+    let paused = reduced;
+    let timer: number | null = null;
+
+    const pillStyles = [
+      'border-[var(--warn-border)] bg-[var(--warn-surface)] text-[var(--warn)] font-semibold',
+      'border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--accent)] font-semibold',
+      'border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger)] font-semibold',
+      'border-[var(--ok-border)] bg-[var(--ok-surface)] text-[var(--ok)] font-semibold',
+    ];
+    const idlePill = 'border-[var(--glass-border)] bg-[var(--glass-bg-subtle)] text-[var(--text-dim)]';
+
+    const render = (activeStage: number) => {
+      steps.forEach((el, idx) => {
+        el.style.opacity = idx <= activeStage ? '1' : '0.18';
+      });
+      pills.forEach((pill, idx) => {
+        pill.className = `text-center py-1 rounded-md border transition-colors ${
+          idx === activeStage ? pillStyles[idx] : idlePill
+        }`;
+      });
+    };
+
+    const schedule = () => {
+      if (timer) window.clearTimeout(timer);
+      if (paused) return;
+      const delay = stage === 2 ? 2600 : stage === 3 ? 2800 : 1400;
+      timer = window.setTimeout(() => {
+        stage = (stage + 1) % 4;
+        render(stage);
+        schedule();
+      }, delay);
+    };
+
+    if (reduced && pauseBtn) {
+      pauseBtn.textContent = 'Static';
+      pauseBtn.disabled = true;
+    }
+
+    render(reduced ? 3 : 2); // Start immediately on the dramatic BLOCKED moment!
+    stage = reduced ? 3 : 2;
+    schedule();
+
+    pauseBtn?.addEventListener('click', () => {
+      paused = !paused;
+      pauseBtn.setAttribute('aria-pressed', paused ? 'true' : 'false');
+      pauseBtn.textContent = paused ? 'Play' : 'Pause';
+      if (paused) {
+        if (timer) window.clearTimeout(timer);
+        render(3);
+      } else {
+        stage = 0;
+        render(0);
+        schedule();
+      }
+    });
+  });
+</script>

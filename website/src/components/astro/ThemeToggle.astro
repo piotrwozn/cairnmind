@@ -1,0 +1,70 @@
+---
+---
+
+<button
+  type="button"
+  data-cm-theme-toggle
+  aria-label="Auto theme. Switch between Obsidian dark and Light"
+  title="Auto theme (click to switch)"
+  class="inline-flex items-center justify-center gap-1.5 min-h-[44px] min-w-[44px] px-2.5 rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg-subtle)] text-[var(--text-primary)] hover:border-[var(--accent-border)] hover:text-[var(--text-strong)] text-xs font-mono cursor-pointer transition-colors"
+>
+  <span data-cm-theme-icon aria-hidden="true">◐</span>
+  <span data-cm-theme-label class="hidden md:inline">Auto</span>
+</button>
+
+<script>
+  const ORDER = ['obsidian', 'mineral', 'system'] as const;
+  type Mode = (typeof ORDER)[number];
+
+  function readMode(): Mode {
+    try {
+      const saved = localStorage.getItem('cm-theme');
+      if (saved === 'obsidian' || saved === 'mineral') return saved;
+    } catch {}
+    return 'system';
+  }
+
+  function applyMode(mode: Mode) {
+    const root = document.documentElement;
+    if (mode === 'system') {
+      root.removeAttribute('data-theme');
+      try {
+        localStorage.removeItem('cm-theme');
+      } catch {}
+    } else {
+      root.setAttribute('data-theme', mode);
+      try {
+        localStorage.setItem('cm-theme', mode);
+      } catch {}
+    }
+    syncButtons(mode);
+  }
+
+  function syncButtons(mode: Mode) {
+    const icon = mode === 'obsidian' ? '☾' : mode === 'mineral' ? '☀' : '◐';
+    const text = mode === 'obsidian' ? 'Obsidian' : mode === 'mineral' ? 'Light' : 'Auto';
+    const label =
+      mode === 'obsidian'
+        ? 'Obsidian theme (click to switch to Light)'
+        : mode === 'mineral'
+          ? 'Light theme (click to switch to Auto)'
+          : 'Auto theme (click to switch to Obsidian dark)';
+    document.querySelectorAll<HTMLButtonElement>('[data-cm-theme-toggle]').forEach((btn) => {
+      btn.setAttribute('aria-label', label);
+      btn.setAttribute('title', label);
+      const ic = btn.querySelector('[data-cm-theme-icon]');
+      const lb = btn.querySelector('[data-cm-theme-label]');
+      if (ic) ic.textContent = icon;
+      if (lb) lb.textContent = text;
+    });
+  }
+
+  syncButtons(readMode());
+  document.querySelectorAll<HTMLButtonElement>('[data-cm-theme-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const current = readMode();
+      const next = ORDER[(ORDER.indexOf(current) + 1) % ORDER.length];
+      applyMode(next);
+    });
+  });
+</script>
