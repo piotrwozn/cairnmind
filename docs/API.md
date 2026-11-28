@@ -45,7 +45,7 @@ Full conversations and command output may contain private data. Before conversat
 
 ### Ollama
 
-Choose **Ollama — local models** and enter the address of a running local service. The key field can stay empty. The model list comes from that Ollama instance. Cairnmind does not download a missing model automatically.
+Choose **Ollama (local models)** and enter the address of a running local service. The key field can stay empty. The model list comes from that Ollama instance. Cairnmind does not download a missing model automatically.
 
 An Ollama profile has an explicit **Ollama context tokens** field in its advanced settings: **32768 tokens** by default, range **4096–262144**. The value is sent to Ollama; Cairnmind does not guess the model's actual context window. A larger value increases RAM/VRAM usage. A context that is too large is rejected before generation instead of truncating the memory package; adjust the profile or reduce the scope of the work. The check before generation estimates tokens as half the UTF-8 bytes of the request, which stays above the real count on ordinary text, and Ollama itself is asked to refuse rather than truncate.
 

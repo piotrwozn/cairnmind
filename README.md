@@ -3,16 +3,16 @@
 [![CI](https://github.com/piotrwozn/cairnmind/actions/workflows/ci.yml/badge.svg)](https://github.com/piotrwozn/cairnmind/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpiotrwozn%2Fcairnmind%2Fbadges%2Fcoverage.json)](https://github.com/piotrwozn/cairnmind/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush)
 
-**Memory as evidence, not notes — verified project memory for coding agents.**
+**Memory as evidence, not notes. Verified project memory for coding agents.**
 
-1. **Your agent does not guess:** `ask` returns a verbatim quote verified against the current code — or `unknown`.
+1. **Your agent does not guess:** `ask` returns a verbatim quote verified against the current code, or `unknown`.
 2. **Your agent does not lie that it finished:** marking a task `done` is blocked if the code changed after the last passing test run.
 
 ![Cairnmind 60-second demo: without Cairnmind vs. with Cairnmind](docs/assets/demo-60s.svg)
 
-*60-second before & after on [`examples/sample-project`](examples/sample-project/README.md): **0:00–0:20** hallucinated flag vs. `unknown`; **0:20–0:45** stale `done` blocked after a code edit; **0:45–1:00** fresh check run pins the code fingerprint and unlocks verified `done`.*
+*60-second before & after on [`examples/sample-project`](examples/sample-project/README.md): **0:00–0:20** hallucinated flag vs. `unknown` · **0:20–0:45** stale `done` blocked after a code edit · **0:45–1:00** fresh check run pins the code fingerprint and unlocks verified `done`.*
 
-**Try Cairnmind in 15 seconds (Python + `uv` only — zero external services, zero files written in your directory):**
+**Try Cairnmind in 15 seconds (Python + `uv` only, zero external services, zero files written in your directory):**
 
 ```bash
 uvx cairnmind try
@@ -20,28 +20,28 @@ uvx cairnmind try
 
 Works on Linux, macOS, and native Windows using an ephemeral in-memory SQLite store over the bundled [`examples/sample-project`](examples/sample-project/README.md). You can also inspect the snapshot directly with `cairnmind memory show examples/sample-project/.memory/cairnmind`.
 
-*A cairn is the pile of stones a walker leaves to mark the trail for the next one. Cairnmind is the durable, versioned memory one coding agent leaves for the next — across Codex CLI, Claude Code, GitHub Copilot, API agents and MCP clients. Formerly DevBrain.*
+*A cairn is the pile of stones a walker leaves to mark the trail for the next one. Cairnmind is the durable, versioned memory one coding agent leaves for the next across Codex CLI, Claude Code, GitHub Copilot, API agents and MCP clients. Formerly DevBrain.*
 
 ## How it works
 
 Cairnmind runs as a separate local service that coding assistants connect to. It never treats a model's claim as evidence:
 
-- **Verbatim source quotes or `unknown`.** Every `ask` answer must quote the source text verbatim; the service re-checks the quote against the current file and runs a support check before accepting the answer.
+- **Verbatim source quotes or `unknown`.** Every `ask` answer must quote the source text verbatim. The service re-checks the quote against the current file and runs a support check before accepting the answer.
 - **Read-before-write resume.** A coding session cannot write to memory until it acknowledges the exact plan and task versions it read.
-- **Fresh machine proof for `done`.** Test-gated tasks require a passing local check run bound to the current code fingerprint; editing code invalidates earlier runs.
+- **Fresh machine proof for `done`.** Test-gated tasks require a passing local check run bound to the current code fingerprint. Editing code invalidates earlier runs.
 - **Portable memory.** Snapshots and published team memory travel with the repository through Git without credentials.
 
 The full architecture taxonomy (`origin_evidence`, resume packets, plan versions, check profiles, guarantees and limits) lives in [docs/CONTRACTS.md](docs/CONTRACTS.md#architecture-taxonomy).
 
 ![Cairnmind demo: a proposed decision and task survive a cold hand-off, then a one-line edit turns fresh test evidence stale.](docs/assets/handoff-demo.gif)
 
-**A decision survives a cold hand-off; a passing test does not survive a code change.** One session reads `DESIGN.md` and saves a proposed decision and a verification task; a fresh session starts cold and recovers the decision, the task and its source quote; `cairnmind check run` records `Checks fresh`, and a one-line edit in `checkout.py` turns that evidence `Checks stale` without running the test again.
+**A decision survives a cold hand-off. A passing test does not survive a code change.** One session reads `DESIGN.md` and saves a proposed decision and a verification task. A fresh session starts cold and recovers the decision, the task and its source quote. Then `cairnmind check run` records `Checks fresh`, and a one-line edit in `checkout.py` turns that evidence `Checks stale` without running the test again.
 
 ## Quick start
 
-Cairnmind runs on Linux, on Windows (natively on Windows 10/11 or inside WSL2 Ubuntu via `wsl --install -d Ubuntu`; Ubuntu 24.04 is the tested platform) and on macOS with Apple silicon.
+Cairnmind runs on Linux, on Windows (natively on Windows 10/11 or inside WSL2 Ubuntu via `wsl --install -d Ubuntu`, where Ubuntu 24.04 is the tested platform) and on macOS with Apple silicon.
 
-**Lightweight local start (embedded SQLite — Python + `uv` only, zero external services):**
+**Lightweight local start (embedded SQLite, Python + `uv` only, zero external services):**
 
 ```sh
 uvx cairnmind try                                 # 15-second zero-setup sandbox over examples/sample-project
@@ -51,7 +51,7 @@ cairnmind init --backend sqlite                   # initializes local SQLite WAL
 
 Scale losslessly to ArcadeDB at any time with `cairnmind migrate --to server`, or install the full ArcadeDB stack directly below.
 
-**What you need** (full ArcadeDB stack): `uv` (`curl -LsSf https://astral.sh/uv/install.sh | sh`) and one way to run the database — **Java 21** is the simplest (`sudo apt install -y openjdk-21-jre-headless` on Ubuntu/WSL2) or Docker. Nothing else is required upfront: no Ollama, no models, no GPU, no tmux and no coding assistant are needed.
+**What you need** (full ArcadeDB stack): `uv` (`curl -LsSf https://astral.sh/uv/install.sh | sh`) and one way to run the database. **Java 21** is the simplest (`sudo apt install -y openjdk-21-jre-headless` on Ubuntu/WSL2), or Docker. Nothing else is required upfront: no Ollama, no models, no GPU, no tmux and no coding assistant are needed.
 
 **What gets installed:** the `cairnmind` CLI via `uv`, the local ArcadeDB engine (or SQLite store with `--backend sqlite`), and the read-only health check at the end of installation.
 
@@ -63,11 +63,11 @@ cairnmind brief my-app                         # 4. where work stands: your find
 cairnmind ask my-app "When do accounts lock?"  # 5. finds it again; passages of your files that use the question's words are searched too
 ```
 
-In a terminal, commands explain what happened and how to fix blocks in plain language; with `--json` (or in a pipe/script), `stdout` emits pure JSON while hints and warnings go strictly to `stderr` (`NO_COLOR=1` disables ANSI styling). `cairnmind doctor` repeats the installer's check at any time and exits 1 when something required is missing. Optional integrations — Ollama, `tmux`, NLI (`cairnmind[nli]`), and GitHub Copilot (`cairnmind[copilot]`) — are covered under [Optional integrations](#optional-integrations).
+In a terminal, commands explain what happened and how to fix blocks in plain language. With `--json` (or in a pipe/script), `stdout` emits pure JSON while hints and warnings go strictly to `stderr` (`NO_COLOR=1` disables ANSI styling). `cairnmind doctor` repeats the installer's check at any time and exits 1 when something required is missing. Optional integrations (Ollama, `tmux`, NLI via `cairnmind[nli]`, and GitHub Copilot via `cairnmind[copilot]`) are covered under [Optional integrations](#optional-integrations).
 
 - If the installer prints `Add this directory to PATH`, do what that line says and open a new terminal.
-- `my-app` is any name you choose; `~/src/my-app` stands for a project folder (a Git repo with at least one commit unlocks `impact`, coding sessions and commit history in `brief`). To clone and register a repository in one step, use `cairnmind add --clone owner/repo` (or `cairnmind project add [NAME] [FOLDER] --clone REPO`, or an HTTPS/SSH URL directly).
-- Findings stored via CLI or assistants start as *proposed* and are immediately usable in `brief` and `ask`; you can confirm or dispute them later in the memory inspector (see [Optional integrations](#optional-integrations)).
+- `my-app` is any name you choose, and `~/src/my-app` stands for a project folder (a Git repo with at least one commit unlocks `impact`, coding sessions and commit history in `brief`). To clone and register a repository in one step, use `cairnmind add --clone owner/repo` (or `cairnmind project add [NAME] [FOLDER] --clone REPO`, or an HTTPS/SSH URL directly).
+- Findings stored via CLI or assistants start as *proposed* and are immediately usable in `brief` and `ask`. You can confirm or dispute them later in the memory inspector (see [Optional integrations](#optional-integrations)).
 - Without local models, `ask` searches passages deterministically without fabricating an answer (`status: unavailable` in `--json`). Enable local models below to turn on cited answers.
 
 ### Connect Codex or Claude Code
@@ -79,7 +79,7 @@ cairnmind install my-app          # connects the installed clients to this proje
 cairnmind run my-app claude       # or codex: starts the client bound to this project's memory
 ```
 
-`cairnmind install` writes only for installed clients: a marked Cairnmind block (`AGENTS.md` for Codex, `CLAUDE.md` for Claude Code), its MCP entry and its hooks (`.mcp.json` and `.claude/settings.local.json`; `.codex/config.toml` and `.codex/hooks.json`). Cairnmind leaves its own block out of the project's index. Review the files before committing.
+`cairnmind install` writes only for installed clients: a marked Cairnmind block (`AGENTS.md` for Codex, `CLAUDE.md` for Claude Code), its MCP entry and its hooks (`.mcp.json` and `.claude/settings.local.json` for Claude Code, `.codex/config.toml` and `.codex/hooks.json` for Codex). Cairnmind leaves its own block out of the project's index. Review the files before committing.
 
 Cursor, Cline, Zed and other MCP clients connect via `cairnmind mcp --client external` in an evidence-degraded session: see [docs/EXTERNAL_CLIENTS.md](docs/EXTERNAL_CLIENTS.md).
 
@@ -90,7 +90,7 @@ Cursor, Cline, Zed and other MCP clients connect via `cairnmind mcp --client ext
 - **`cairnmind mcp test-connection`**: verifies a live stdio JSON-RPC `initialize` + `tools/list` handshake and fails hard on any non-JSON-RPC output on `stdout`.
 - **`cairnmind doctor --check-mcp`**: combines storage, Memory Pulse, detected MCP presets, a bounded 5-second stdio handshake check, and Docker/WSL/permissions pre-flight diagnostics in one report.
 
-**[Step-by-step installation guide](docs/INSTALL.md)**: preparing Windows and WSL2 (Ubuntu 24.04 is the tested platform for the full ArcadeDB + tmux setup; macOS and native Windows lightweight mode are also supported), installing from a release, native or Docker engine, connecting assistants, upgrading, uninstalling and troubleshooting. To see what Cairnmind keeps before you install anything, read the [sample project memory](examples/sample-project/README.md) (`examples/sample-project`).
+**[Step-by-step installation guide](docs/INSTALL.md)**: preparing Windows and WSL2 (Ubuntu 24.04 is the tested platform for the full ArcadeDB + tmux setup, while macOS and native Windows lightweight mode are also supported), installing from a release, native or Docker engine, connecting assistants, upgrading, uninstalling and troubleshooting. To see what Cairnmind keeps before you install anything, read the [sample project memory](examples/sample-project/README.md) (`examples/sample-project`).
 
 ## Optional integrations
 
@@ -107,7 +107,7 @@ cairnmind stop                   # the service reads the choice on next start
 
 ### Terminal workspace (tmux 3.4+ / Windows standalone)
 
-On Linux, WSL2 and macOS, with tmux 3.4+ (`sudo apt install tmux`, or `brew install tmux` on macOS), `cairnmind` opens the multi-pane workspace: Codex and Claude Code run in panes beside the projects, the memory inspector and the graph ([docs/TERMINAL.md](docs/TERMINAL.md)). On native Windows, `cairnmind` opens the standalone Textual workspace directly in Windows Terminal or PowerShell without requiring tmux, backed by an owner-only Windows Named Pipe for person-confirmed actions. In the POSIX workspace, `Ctrl+B then i` opens the memory inspector; in the native Windows standalone workspace, press `2` for Memory. Every other CLI command works without `tmux`.
+On Linux, WSL2 and macOS, with tmux 3.4+ (`sudo apt install tmux`, or `brew install tmux` on macOS), `cairnmind` opens the multi-pane workspace: Codex and Claude Code run in panes beside the projects, the memory inspector and the graph ([docs/TERMINAL.md](docs/TERMINAL.md)). On native Windows, `cairnmind` opens the standalone Textual workspace directly in Windows Terminal or PowerShell without requiring tmux, backed by an owner-only Windows Named Pipe for person-confirmed actions. In the POSIX workspace, `Ctrl+B then i` opens the memory inspector. In the native Windows standalone workspace, press `2` for Memory. Every other CLI command works without `tmux`.
 
 ### Local web UI inspector (`cairnmind ui`)
 
@@ -134,7 +134,7 @@ Pass `--no-open` to skip opening a browser tab automatically. Each launch genera
 |---|---|---|---|---|
 | Who writes it | You, by hand | The model | The model | The model and you, each record tied to a source |
 | Checked against the source | No | Usually no | Usually no | Every cited quote must occur literally in a current source |
-| Works across assistants | Each assistant reads its own file | No | Depends on the plugin | Codex CLI, Claude Code, Copilot, API agents; external MCP clients |
+| Works across assistants | Each assistant reads its own file | No | Depends on the plugin | Codex CLI, Claude Code, Copilot, API agents and external MCP clients |
 | "Done" needs proof | No | No | Usually no | Fresh local check run bound to the current code fingerprint |
 | Setup | None | None | Usually one command | `uv` + embedded SQLite (or Java 21 / Docker for ArcadeDB); Ollama and `tmux` are optional |
 
@@ -142,15 +142,15 @@ For the complete guarantees-vs-non-guarantees table and known limits, see [docs/
 
 ## Measured results
 
-Measured with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an RTX 4080 Super in isolated databases (0.11.0 / 0.12.0 release gate; see [docs/EVALUATION.md](docs/EVALUATION.md) and [docs/evaluation/RESULTS.md](docs/evaluation/RESULTS.md)):
+Measured with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an RTX 4080 Super in isolated databases (0.11.0 / 0.12.0 release gate, see [docs/EVALUATION.md](docs/EVALUATION.md) and [docs/evaluation/RESULTS.md](docs/evaluation/RESULTS.md)):
 
 | Evaluation | Result |
 |---|---|
-| Recall: 20 golden questions (threshold 0.9) | 1.0 on 0.11.0 and 0.12.0; 1.0 in 6 of 6 runs on 0.8.0 |
-| Portable memory: extraction, transfer, cited recall, project isolation | passed on 0.11.0 and 0.12.0; 3 of 3 runs on 0.8.0 |
+| Recall: 20 golden questions (threshold 0.9) | 1.0 on 0.11.0 and 0.12.0 · 1.0 in 6 of 6 runs on 0.8.0 |
+| Portable memory: extraction, transfer, cited recall, project isolation | passed on 0.11.0 and 0.12.0 · 3 of 3 runs on 0.8.0 |
 | Extraction from conversations (rejected share) | 29% of 28 proposals (down from 65% on 0.10.0), every kept record found |
-| Questions about Cairnmind's own repository (complete and right) | 19–20 of 20; none complete and wrong |
-| Questions about absent features, refused | 20 of 21 (24 of 24 after subject/names checks; see [RESULTS.md](docs/evaluation/RESULTS.md)) |
+| Questions about Cairnmind's own repository (complete and right) | 19–20 of 20 · none complete and wrong |
+| Questions about absent features, refused | 20 of 21 (24 of 24 after subject/names checks, see [RESULTS.md](docs/evaluation/RESULTS.md)) |
 
 ## Documentation
 
@@ -177,4 +177,4 @@ Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first, and re
 
 ## License
 
-Cairnmind is licensed under the [Apache License 2.0](LICENSE). ArcadeDB is licensed separately under the same license; see [NOTICE](NOTICE).
+Cairnmind is licensed under the [Apache License 2.0](LICENSE). ArcadeDB is licensed separately under the same license. See [NOTICE](NOTICE).

@@ -27,6 +27,10 @@ release-tools/
 
 # Build outputs and local project state
 dist/
+website/.astro/
+website/dist/
+website/public/media/demo-60s.svg
+website/public/media/handoff-demo.gif
 *.egg-info/
 .coverage
 .coverage.*

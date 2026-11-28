@@ -132,7 +132,7 @@ def run_try_sandbox(
         retriever = Retriever(store, store.settings)
 
         say("")
-        say("Cairnmind Try Sandbox (ephemeral SQLite :memory: — zero files touched in your cwd)")
+        say("Cairnmind Try Sandbox (ephemeral SQLite :memory:, zero files touched in your cwd)")
         say("================================================================================")
         say(f"Indexed {indexed.get('files', 0)} sample files in an isolated temporary directory.")
         say("")
@@ -161,7 +161,7 @@ def run_try_sandbox(
         }
         say("[1/3] Guarantee 1: Your agent does not guess")
         say("  Q: Does trail_notes support --turbo-cache-flag?")
-        say(f"  A: {missing_status} — no verbatim confirmation in the current project files.")
+        say(f"  A: {missing_status} (no verbatim confirmation in the current project files)")
         say("  Q: How does read_note handle notes written before tags existed?")
         say(f"  A: Verified verbatim quote -> `{verbatim_quote}` (trail_notes/store.py)")
         say("")

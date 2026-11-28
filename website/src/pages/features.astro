@@ -1,0 +1,114 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import Breadcrumbs from '@/components/astro/Breadcrumbs.astro';
+import ArchitectureDiagram from '@/components/astro/ArchitectureDiagram.astro';
+import BlastRadiusMini from '@/components/astro/BlastRadiusMini.astro';
+import ProductInspector from '@/components/islands/ProductInspector';
+import { FEATURE_PILLARS } from '@/data/features';
+import { SITE } from '@/data/site';
+import { loadContractSamples } from '@/lib/contracts';
+import { REPO_META } from '@/lib/repoMeta';
+import { breadcrumbListJsonLd, techArticleJsonLd } from '@/lib/seo';
+
+const pathname = '/features/';
+const crumbs = [
+  { label: 'Home', href: '/' },
+  { label: 'Features', href: pathname },
+];
+const samples = loadContractSamples();
+const jsonLd = [
+  techArticleJsonLd({
+    headline: 'Cairnmind Features: Full Local Workbench for Coding Agents',
+    description:
+      'Complete breakdown of all six Cairnmind subsystems: verbatim quote verification, cold cross-assistant handoffs and OCC, fingerprint-bound test gates and CI pulse, Tree-sitter + SCIP code graph, human-confirmed security, and cross-platform workspaces.',
+    pathname,
+  }),
+  breadcrumbListJsonLd(crumbs),
+];
+---
+
+<BaseLayout
+  title="Cairnmind Capabilities: Code Graph, Test Gates & MCP"
+  description="Explore all six Cairnmind subsystems: verbatim citations, OCC handoffs, fingerprint test gates, Tree-sitter + SCIP code graph, and human keys."
+  pathname={pathname}
+  jsonLd={jsonLd}
+>
+  <div class="container-shell section-band">
+    <Breadcrumbs items={crumbs} />
+
+    <header class="mt-5 max-w-3xl">
+      <p class="eyebrow">Full Platform Inventory</p>
+      <h1 class="mt-2 text-3xl sm:text-5xl font-semibold">
+        Everything implemented in Cairnmind
+      </h1>
+      <p class="mt-4 text-lg text-[var(--text-muted)] leading-relaxed">
+        Cairnmind is more than a memory store for coding assistants. It combines verified citation Q&amp;A, optimistic concurrency for plans and handoffs, machine-verified test gates, a 12-language local code graph, human-only confirmation security, and terminal/browser workspaces in one local service.
+      </p>
+      <nav aria-label="Jump to subsystem" class="mt-6 flex flex-wrap gap-2">
+        {FEATURE_PILLARS.map((p) => (
+          <a href={`#${p.id}`} class="glass-pill no-underline hover:border-[var(--accent-border)]">
+            {p.eyebrow.split('·')[1]?.trim() || p.title}
+          </a>
+        ))}
+      </nav>
+    </header>
+
+    <div class="mt-12 space-y-8">
+      {FEATURE_PILLARS.map((pillar) => (
+        <section id={pillar.id} class="glass-surface p-6 sm:p-8" aria-labelledby={`heading-${pillar.id}`}>
+          <div class="flex flex-wrap items-start justify-between gap-3 pb-5 border-b border-[var(--glass-border)]">
+            <div class="max-w-3xl">
+              <p class="eyebrow">{pillar.eyebrow}</p>
+              <h2 id={`heading-${pillar.id}`} class="mt-2 text-2xl sm:text-3xl font-semibold">
+                {pillar.title}
+              </h2>
+              <p class="mt-3 text-sm sm:text-base text-[var(--text-muted)] leading-relaxed">
+                {pillar.summary}
+              </p>
+            </div>
+            <span class="glass-pill glass-pill-accent">{pillar.stability}</span>
+          </div>
+
+          {pillar.id === 'code-graph-and-storage' && (
+            <div class="mt-6">
+              <BlastRadiusMini />
+            </div>
+          )}
+
+          <div class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+            {pillar.capabilities.map((cap) => (
+              <div class="rounded-xl border border-[var(--glass-border)] bg-[var(--glass-bg-subtle)] p-5 flex flex-col justify-between gap-3">
+                <div>
+                  <h3 class="text-base font-semibold text-[var(--text-strong)]">{cap.name}</h3>
+                  <p class="mt-2 text-sm text-[var(--text-muted)] leading-relaxed">{cap.detail}</p>
+                </div>
+                {cap.command && (
+                  <pre class="code-block text-xs py-2.5 px-3"><code>$ {cap.command}</code></pre>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div class="mt-5 pt-4 border-t border-[var(--glass-border)] flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+            <a href={pillar.docHref}>{pillar.docLabel} →</a>
+            <a href="/docs/stable-contract/">Check frozen 1.0 contract →</a>
+          </div>
+        </section>
+      ))}
+    </div>
+
+    <section id="architecture" class="mt-14" aria-labelledby="features-arch-heading">
+      <h2 id="features-arch-heading" class="text-2xl sm:text-3xl font-semibold mb-4">
+        System architecture &amp; security boundaries
+      </h2>
+      <ArchitectureDiagram />
+    </section>
+
+    <section id="contracts" class="mt-14" aria-labelledby="features-contracts-heading">
+      <h2 id="features-contracts-heading" class="text-2xl sm:text-3xl font-semibold mb-4">
+        Live CI-frozen contract outputs ({REPO_META.cliContractFixtures} CLI + {REPO_META.mcpContractFixtures} MCP captures)
+      </h2>
+      <ProductInspector client:visible samples={samples} repoUrl={SITE.repoUrl} />
+    </section>
+  </div>
+</BaseLayout>

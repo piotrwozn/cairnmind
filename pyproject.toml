@@ -63,7 +63,7 @@ packages = ["src/cairnmind"]
 path = "hatch_build.py"
 
 [tool.hatch.build]
-exclude = ["node_modules", "ui/node_modules", ".pytest_cache", ".ruff_cache", "__pycache__"]
+exclude = ["node_modules", "ui/node_modules", "website", "website/**", ".pytest_cache", ".ruff_cache", "__pycache__"]
 
 [tool.pytest.ini_options]
 junit_family = "xunit1"
