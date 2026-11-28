@@ -507,29 +507,6 @@ The per-call figures (22 to 52 s at an input of 6,000 to 8,500 tokens, median ou
 
 Not measured: a run with the new budget on the Mac, on this or another repository. The tests with a fake clock show that a cut answer and a repair of 60 s each complete within 180 s and did not within 120 s, and that a job past 180 s still fails with the budget named in its diagnostics; the same two calls of 63 s complete with `ask_timeout` 60 (they failed as `model_unavailable` before the call took its limit from the budget).
 
-# Memory snapshot at size (#169, #161)
-
-**Measured on 23 November 2026** with `python scripts/measure_snapshot.py N`, main at 05a247a plus the commit that makes the script print the package's size (7b5e7d9), ArcadeDB 26.11.1, on one machine (WSL 2 on a Windows PC, 32 logical CPUs, the temporary folder on WSL's own virtual disk). The script starts its own engine on a free loopback port in a temporary data directory and removes it afterwards; no model was called. Three runs of each size, one after the other. The machine was shared with other work (tests, other measurements, a model server on the graphics card), so the load average was recorded at the start of each run: 9.5, 7.3 and 9.9 for N = 1,000, and 3.7, 17.7 and 19.2 for N = 10,000 (at their ends it was 7.0, 9.9 and 3.9 for N = 1,000 and 17.5, 19.2 and 23.3 for N = 10,000). Read the seconds as measured under a loaded machine.
-
-**What it measures.** `memory snapshot` of a synthetic project: one `note` source and N records (`fact`, made with `remember`), which make N record revisions, N + 1 nodes and N edges, and no plan or check run. It times the first snapshot (capture, hash, write of every object and the manifest, receipt in the store), a repeat with nothing changed (reads the previous package and compares), and a repeat after one added record (a new, complete package: the unchanged objects already exist and are compared, not rewritten). The code graph is not part of a snapshot since #261.
-
-| | N = 1,000 | N = 10,000 |
-| --- | --- | --- |
-| Store | 1 source, 1,000 records, 0 chunks | 1 source, 10,000 records, 0 chunks |
-| Package | 4,004 files, 3,989,131 bytes | 40,004 files, 39,996,428 bytes |
-| Making the records (not a snapshot) | 48.4, 50.2, 50.7 s | 510.7, 528.9, 574.3 s |
-| First snapshot (minimum, median, maximum) | 10.31, 10.47, 10.63 s | 154.73, 160.32, 170.71 s |
-| Repeat, nothing changed | 1.31, 1.36, 1.45 s | 12.23, 12.33, 14.16 s |
-| Repeat after one added record | 1.83, 1.84, 1.93 s | 17.63, 17.94, 18.34 s |
-
-Ten times the records took about 15 times as long for the first snapshot and about 9 to 10 times as long for the two repeats. The package is one file per object, so 10,000 records are about 40,000 files of about 1 KB each; the cost is mostly files, not bytes.
-
-**What it does not show.**
-
-- The records are 60-byte facts with one source. Real records are larger, have several sources and revisions, and the package of a real project holds plans, plan revisions and check runs; 0 chunks means the synthetic source is not indexed (a snapshot does not carry chunks). The bytes above are for this shape only.
-- The disk is WSL 2's virtual disk (the project folder is in the Linux file system, not under `/mnt/c`); a slower disk, a network folder, a synced folder (OneDrive, Dropbox) or an antivirus scanner multiplies the work of 40,000 small files, and was not tried. macOS was not measured.
-- Three runs on a loaded machine give a spread, not a distribution: the first snapshot of 10,000 records varied by 10 percent. No size above 10,000 records was run (the records alone take about 9 minutes).
-- The command line waits at most 30 minutes (#158); all figures here are far below that, but a project of a few hundred thousand records is not shown to be.
 # Memory snapshot at size (#169)
 
 **Measured on 26 November 2026**, three runs at `N = 1,000` records and three runs at `N = 10,000` records on WSL 2 (`Linux 6.18.58.1-microsoft-standard-WSL2`, Ubuntu, Intel Core i9-14900K, 31 GiB RAM, OpenJDK `21.0.13.1`, CPython `3.12.3`), ArcadeDB `26.11.1`. Each run executed `scripts/measure_snapshot.py N` against an isolated temporary data directory and temporary ArcadeDB engine with no Ollama or external model server.
