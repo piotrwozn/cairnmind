@@ -1,9 +1,10 @@
 """Two vertices or two edges of one id (#456): noticed after a graph write, removed with their edges put back, and said.
 
 The engine's unique indexes of ``nodes.id`` and ``edges.id`` are what keep an id once, and what the graph write asks to
-know whether a row exists (``Store._checked_node``). On one long-used database in production mode a pass stored a
-``source:`` vertex twice, with no refusal: the index that lags behind (#377, #433) can let a second row of an id through
-as well as refuse one. So the unique index is not trusted for it: after a pass that wrote rows, the project's rows and
+know whether a row exists (``Store._checked_node``). On the pinned image in production mode a pass stored a
+``source:`` vertex twice, with no refusal; the index that lags behind (#377, #433) is the suspected cause (replaying the
+recorded requests showed it, no reduced reproduction was made) and can let a second row of an id through as well as
+refuse one. So the unique index is not trusted for it: after a pass that wrote rows, the project's rows and
 its distinct ids are counted by the project's own index, which does not lag with it, and a difference is repaired.
 
 Repair keeps the first stored copy of an id (the lowest record id) and deletes the others (the engine takes the edges of
@@ -88,8 +89,11 @@ def repair(store, project_id: str, written=()) -> tuple[int, int]:
     from .graph_transactions import GraphTransactions
     if not stored_twice(store, project_id):
         return 0, 0
+    marked = store.query("SELECT graph_fingerprint FROM projects WHERE id=:project", {"project": project_id})[0].get("graph_fingerprint")
     batches = GraphTransactions(store, project_id)
     try:
+        # Not built until the last commit: a repair of several transactions must not read as built part-way through.
+        batches.tx.command("UPDATE projects SET graph_fingerprint=null WHERE id=:project", {"project": project_id})
         twice = _copies(batches.tx, "nodes", project_id)
         survivor = {rid: rids[0] for rids in twice.values() for rid in rids}  # each copy: the one that stays
         extra = [rid for rids in twice.values() for rid in rids[1:]]
@@ -117,6 +121,8 @@ def repair(store, project_id: str, written=()) -> tuple[int, int]:
         batches.commit()
         if left := surplus(store, project_id) + surplus(store, project_id, "edges"):
             raise RuntimeError(f"{left} graph rows of the project are still stored twice after they were removed")
+        with store.transaction() as tx:  # whole again: the mark of the pass that wrote the graph is put back
+            tx.command("UPDATE projects SET graph_fingerprint=:fingerprint WHERE id=:project", {"project": project_id, "fingerprint": marked})
     except BaseException:
         batches.abandon()
         with store.transaction() as tx:

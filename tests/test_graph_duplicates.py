@@ -8,7 +8,7 @@ import pytest
 from test_graph_transactions import counted_requests, graph, synthetic
 from test_index_batching import code_tree, dump
 
-from cairnmind import graph_duplicates, ingest
+from cairnmind import graph_duplicates, graph_transactions, ingest
 from cairnmind.code_graph import code_graph_pending
 from cairnmind.sql import clean_row
 from cairnmind.store import Store
@@ -63,6 +63,19 @@ def test_a_vertex_stored_twice_behind_the_product_is_removed_with_its_edge_put_b
     # And the engine itself agrees that no id is held twice: the unique index can be made again.
     stored.client.command("CREATE INDEX ON nodes(id) UNIQUE NULL_STRATEGY SKIP")
 
+
+def store_twice_holding_its_edges(store, project):
+    """A vertex with edges, stored twice, with every edge it holds (out and in) moved to the second copy, the one the repair removes."""
+    identifier = store.query("SELECT from_id FROM edges WHERE project_id=:p AND kind='calls' LIMIT 1", {"p": project})[0]["from_id"]
+    first, second = store_twice(store, identifier)
+    for edge in map(clean_row, store.query("SELECT FROM edges WHERE from_id=:id OR to_id=:id", {"id": identifier})):
+        store.client.command("DELETE FROM edges WHERE id=:id", {"id": edge["id"]})
+        ends = (second, "(SELECT FROM nodes WHERE id=:to)") if edge["from_id"] == identifier else ("(SELECT FROM nodes WHERE id=:from)", second)
+        store.client.command(f"CREATE EDGE edges FROM {ends[0]} TO {ends[1]} CONTENT :edge", {"to": edge["to_id"], "from": edge["from_id"], "edge": edge})
+    assert store.query("SELECT count(*) AS n FROM edges WHERE out=:rid OR in=:rid", {"rid": second})[0]["n"] > 0
+    return identifier, first, second
+
+
 def test_the_copy_that_stays_gets_what_the_pass_computed_where_the_two_copies_differ(tmp_path):
     store = Store(tmp_path / "memory")
     project, indexed = synthetic(store, tmp_path)
@@ -106,18 +119,40 @@ def test_the_repair_writes_by_the_record_id_it_holds_and_cannot_make_a_third_cop
     store = Store(tmp_path / "memory")
     project, indexed = synthetic(store, tmp_path)
     ingest._build_graph(store, project, indexed)
-    identifier = store.query("SELECT id FROM nodes WHERE project_id=:p AND kind!='source' AND label LIKE '%f7' LIMIT 1", {"p": project})[0]["id"]
-    first, second = store_twice(store, identifier)
+    identifier, first, second = store_twice_holding_its_edges(store, project)  # the edges the repair puts back sit on the copy it deletes
     before = store.query("SELECT count(*) AS n FROM edges WHERE project_id=:p", {"p": project})[0]["n"]
+    held = store.query("SELECT count(*) AS n FROM edges WHERE out=:rid OR in=:rid", {"rid": second})[0]["n"]
     current = clean_row(store.query("SELECT FROM nodes WHERE @rid=:rid", {"rid": second})[0])
     asked = hiding_the_lookups_by_id(monkeypatch)
     assert graph_duplicates.repair(store, project, [{**current, "label": "computed"}]) == (1, 0)
     monkeypatch.undo()
+    assert store.query("SELECT count(*) AS n FROM edges WHERE out=:rid OR in=:rid", {"rid": first})[0]["n"] == held  # they end on the copy that stays
     assert not [sql for sql in asked if "CREATE" in sql or "UPDATE" in sql or "DELETE" in sql]  # no write rests on a lookup by id
     rows = store.query("SELECT @rid AS rid,label FROM nodes WHERE id=:id", {"id": identifier})
     assert [(row["rid"], row["label"]) for row in rows] == [(first, "computed")]  # one row: the repair made no third
     assert graph_duplicates.surplus(store, project) == 0
     assert store.query("SELECT count(*) AS n FROM edges WHERE project_id=:p", {"p": project})[0]["n"] == before  # every edge is back, once
+
+
+def test_a_repair_of_several_transactions_leaves_the_graph_marked_not_built_until_its_last_commit(tmp_path, monkeypatch):
+    store = Store(tmp_path / "memory")
+    project, indexed = synthetic(store, tmp_path)
+    ingest._build_graph(store, project, indexed)
+    mark = store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0]
+    assert not code_graph_pending(mark)
+    identifier, first, second = store_twice_holding_its_edges(store, project)
+    current = clean_row(store.query("SELECT FROM nodes WHERE @rid=:rid", {"rid": second})[0])
+    monkeypatch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 1)  # a commit after every row the repair writes
+    seen, real = [], graph_transactions.BoundedTransactions.commit
+
+    def commit(self):
+        real(self)
+        seen.append(code_graph_pending(store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0]))
+
+    monkeypatch.setattr(graph_transactions.BoundedTransactions, "commit", commit)
+    assert graph_duplicates.repair(store, project, [current]) == (1, 0)
+    assert len(seen) > 2 and all(seen)  # what a reader sees between the commits is a graph not built
+    assert store.query("SELECT graph_fingerprint FROM projects WHERE id=:p", {"p": project})[0] == mark  # and whole again at the end
 
 
 def store_edge_twice(store, project):
@@ -182,6 +217,8 @@ def test_a_duplicate_that_the_pass_did_not_make_of_a_vertex_whose_id_goes_away_i
     (root / "module_05.py").write_text("\n" + text)  # every line moves: the symbol's id, which holds its line, is another
     result = ingest.index_project(store, project)
     assert not any("did not delete" in str(error) for error in result["errors"])
+    assert result["graph_duplicates_removed"] == 1  # the copy that went with the vertex is said, as the repair's are
+    assert graph_duplicates.REPAIRED.format(count=1, project="p") in result["errors"]
     assert store.query("SELECT count(*) AS n FROM nodes WHERE id=:id", {"id": symbol})[0]["n"] == 0
     assert graph_duplicates.surplus(store, project) == 0
 

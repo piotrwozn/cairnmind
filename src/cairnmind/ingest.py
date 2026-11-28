@@ -1514,9 +1514,10 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             doomed = [row["id"] for row in previous_nodes if row["id"] not in digests]
         # Knowledge-record relationships referencing a removed code node must not silently
         # become dangling: such a node is retained. The rest go in groups (issue #167).
-        kept_nodes = set(carried)
+        kept_nodes, extra_copies = set(carried), 0
         for offset in range(0, len(doomed), graph_transactions.ROWS_PER_TRANSACTION):
             kept_nodes.update(store.remove_graph_nodes(batches.tx, project_id, doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION]) or ())
+            extra_copies += getattr(batches.tx, "extra_copies", 0)  # copies of a doomed id that went with it (#456)
             batches.wrote(len(doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION]))
         # What the store holds is what was computed and what an edge keeps: the next pass counts exactly that.
         written.update(kept=frozenset(kept_nodes), code_nodes=_code_nodes(digests) + len(kept_nodes))
@@ -1551,7 +1552,7 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         state.update(written)
     return {"nodes": len(digests), "edges": len(edge_ids), "graph_unchanged": False,
             "graph_written": {"nodes": len(changed_nodes), "edges": len(new_edges)},
-            **({"graph_duplicates_removed": vertices} if vertices else {}),
+            **({"graph_duplicates_removed": vertices + extra_copies} if vertices + extra_copies else {}),
             **({"graph_duplicate_edges_removed": edges_removed} if edges_removed else {})}
 
 
