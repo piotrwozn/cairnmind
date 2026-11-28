@@ -5,17 +5,25 @@ and cut the page out of it), kept here as the reference the paged reads are comp
 """
 from __future__ import annotations
 
-from collections import Counter
 import hashlib
 import json
+from collections import Counter
 
 import pytest
 
-from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
-from cairnmind.terminal.inspector import (EDGE_LIMIT, NODE_LIMIT, Inspector, InspectorNotFound, _cursor, _decode_cursor,
-                                 _encode_cursor, _limit)
 from cairnmind.memory.plans import PlanManager
+from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
 from cairnmind.storage.sql import json_text
+from cairnmind.terminal.inspector import (
+    EDGE_LIMIT,
+    NODE_LIMIT,
+    Inspector,
+    InspectorNotFound,
+    _cursor,
+    _decode_cursor,
+    _encode_cursor,
+    _limit,
+)
 
 
 class WholeRead(Inspector):
@@ -262,7 +270,7 @@ def compare_graph(store, pid, worktree, limits=(1, 3, 2000)):
             pages_new = every_page(read(new))
             pages_old = every_page(read(old))
             assert len(pages_new) == len(pages_old), (limit, group)
-            for number, (a, b) in enumerate(zip(pages_new, pages_old)):
+            for number, (a, b) in enumerate(zip(pages_new, pages_old, strict=True)):
                 same(a, b, (limit, group, number))
                 checked += 1
     return checked
@@ -419,7 +427,7 @@ def compare_groups_and_neighbors(store, pid, worktree):
         pages_new = every_page(lambda cursor: new.groups(pid, worktree=worktree, cursor=cursor, limit=limit))
         pages_old = every_page(lambda cursor: old.groups(pid, worktree=worktree, cursor=cursor, limit=limit))
         assert len(pages_new) == len(pages_old)
-        for number, (a, b) in enumerate(zip(pages_new, pages_old)):
+        for number, (a, b) in enumerate(zip(pages_new, pages_old, strict=True)):
             same(a, b, ("groups", limit, number))
     projection = old.graph(pid, worktree=worktree, _full=True)
     identifiers = [row["id"] for row in projection["nodes"]]
@@ -429,7 +437,7 @@ def compare_groups_and_neighbors(store, pid, worktree):
             pages_new = every_page(lambda cursor: new.neighbors(pid, identifier, worktree=worktree, cursor=cursor, limit=limit))
             pages_old = every_page(lambda cursor: old.neighbors(pid, identifier, worktree=worktree, cursor=cursor, limit=limit))
             assert len(pages_new) == len(pages_old), (identifier, limit)
-            for number, (a, b) in enumerate(zip(pages_new, pages_old)):
+            for number, (a, b) in enumerate(zip(pages_new, pages_old, strict=True)):
                 same(a, b, ("neighbors", identifier, limit, number))
     for read in (new, old):
         with pytest.raises(InspectorNotFound):
@@ -512,8 +520,8 @@ def test_the_project_row_counts_the_code_graph_only_so_the_counts_come_from_the_
     """graph_nodes and graph_edges are what the indexer wrote (its vertices, its six kinds of edge): a record, a plan and
     the vertices kept for them are in the tables and not in the row, so the totals of the whole graph cannot come from it."""
     from cairnmind.scip import ingest
-    from cairnmind.terminal import inspector_graph
     from cairnmind.store import Store
+    from cairnmind.terminal import inspector_graph
     root = tmp_path / "project"
     root.mkdir()
     (root / "a.py").write_text("def a():\n    return 1\n")
@@ -541,8 +549,8 @@ def test_the_project_row_counts_the_code_graph_only_so_the_counts_come_from_the_
 def test_no_path_leaves_a_vertex_of_a_record_plan_or_source_without_its_row(stores, tmp_path):
     """The writers of such a vertex (a record's graph, a plan's, the indexer's source nodes, a restore) write the row in the
     same transaction, no path deletes a source, record or plan while its vertex stays, and a package that carries one is refused."""
-    from cairnmind.scip import ingest
     from cairnmind.memory.memory import TABLES, _validate
+    from cairnmind.scip import ingest
     store, project, root, other = stores
     add_roots(stores, tmp_path)
     pid = project["id"]
@@ -559,3 +567,26 @@ def test_no_path_leaves_a_vertex_of_a_record_plan_or_source_without_its_row(stor
     for prefix in owners:
         with pytest.raises(ValueError, match="without its record, plan or source"):
             _validate({**payload, "nodes": [{"id": prefix + "ghost", "project_id": pid, "kind": "plan", "label": "x", "metadata": {}}]}, pid)
+
+
+def test_a_store_that_runs_no_raw_sql_is_read_whole(tmp_path):
+    """The page reads are ArcadeDB queries. On the SQLite backend the three routes answer from the whole read."""
+    from cairnmind.config import Settings
+    from cairnmind.store import Store
+    from cairnmind.terminal import inspector_graph
+    settings = Settings.load(tmp_path / "data", create=True)
+    settings.storage_backend = "sqlite"
+    settings.save()
+    store = Store(tmp_path / "data", settings=settings, backend="sqlite")
+    try:
+        (tmp_path / "repo").mkdir()
+        project = store.add_project("demo", tmp_path / "repo")
+        source = store.snapshot(project["id"], "note://one", "A note.", "manual", {})
+        inspector = Inspector(store)
+        assert inspector_graph.held(inspector, inspector._scope(project["id"], None)) is None
+        graph = inspector.graph(project["id"])
+        assert "source:" + source["id"] in {row["id"] for row in graph["nodes"]}
+        groups = inspector.groups(project["id"])["items"]
+        assert groups and inspector.neighbors(project["id"], groups[0]["id"])["nodes"]
+    finally:
+        store.close()

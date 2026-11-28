@@ -167,6 +167,8 @@ def held(inspector, scope, watermark=None):
     keeps the old verdict until the next write; the roots of the request are re-resolved every time (they are in the key).
     """
     store, root = inspector.store, scope[1]
+    if getattr(getattr(store, "backend", None), "backend_kind", None) == "sqlite":
+        return None  # the queries here are ArcadeDB's and SQLite runs no raw SQL: read whole (Inspector._graph_rows)
     result = Held()
     if root is None:
         return result
