@@ -188,8 +188,8 @@ def _failing_at(monkeypatch, number, test):
     return left
 
 
-@pytest.mark.parametrize("statement", ["INSERT INTO `chunks` CONTENT :rows", "CREATE VERTEX nodes CONTENT :rows",
-                                       "CREATE EDGE edges", "INSERT INTO `vector_"])
+@pytest.mark.parametrize("statement", ["INSERT INTO chunks CONTENT :rows", "CREATE VERTEX nodes CONTENT :rows",
+                                       "CREATE EDGE edges", "INSERT INTO vector_"])
 def test_a_restore_that_fails_in_the_middle_of_a_group_changes_nothing(store, tmp_path, monkeypatch, statement):
     path = _large(store, tmp_path)
     store.add_project("after the backup", tmp_path / "after")
@@ -210,7 +210,7 @@ def test_a_group_the_database_did_not_store_in_full_fails_the_restore(store, tmp
 
     def short(self, sql, params=None):
         result = command(self, sql, params)
-        if sql.startswith("INSERT INTO `chunks` CONTENT :rows") and not short_once:
+        if sql.startswith("INSERT INTO chunks CONTENT :rows") and not short_once:
             short_once.append(sql)  # once: the undo writes its chunks in full, as an engine that recovered would
             return result[:-1]
         return result
