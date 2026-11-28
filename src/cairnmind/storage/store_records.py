@@ -154,6 +154,12 @@ class _StoreRecordsMixin:
             raise ConfirmationRefused()
         return "proposed", None if act else lowered(old, "proposed", version)
 
+    def _uuid4_fn(self) -> Any:
+        return uuid4
+
+    def _insert_doc(self, tx: Any, collection: str, data: dict[str, Any]) -> dict[str, Any]:
+        return db_insert_document(tx, collection, data)
+
     @staticmethod
     def drop_chunks(tx: Any, source_ids: Iterable[str]) -> None:
         """Delete the chunks of sources that stop being current, in the transaction that replaces them (#186).
@@ -209,7 +215,7 @@ class _StoreRecordsMixin:
                 )
                 self._delete_old_vectors(tx, [existing["id"]])
             source: SourceRecord = {
-                "id": str(uuid4()),
+                "id": str(self._uuid4_fn()()),
                 "project_id": project_id,
                 "uri": uri,
                 "kind": kind,
@@ -220,7 +226,7 @@ class _StoreRecordsMixin:
                 "current_key": key,
                 "created_at": utc_now(),
             }
-            db_insert_document(tx, "sources", cast(dict[str, Any], source))
+            self._insert_doc(tx, "sources", cast(dict[str, Any], source))
             return source
 
     def snapshot_new(
@@ -261,7 +267,7 @@ class _StoreRecordsMixin:
         if not isinstance(content, str) or not isinstance(uri, str) or not uri:
             raise ValueError("Source requires a URI and text content")
         source: SourceRecord = {
-            "id": str(uuid4()),
+            "id": str(self._uuid4_fn()()),
             "project_id": project_id,
             "uri": uri,
             "kind": kind,
@@ -272,7 +278,7 @@ class _StoreRecordsMixin:
             "current_key": json_text([project_id, uri]),
             "created_at": utc_now(),
         }
-        db_insert_document(tx, "sources", cast(dict[str, Any], source))
+        self._insert_doc(tx, "sources", cast(dict[str, Any], source))
         return source
 
     def get_source(self, source_id: str) -> dict[str, Any]:
@@ -517,7 +523,7 @@ class _StoreRecordsMixin:
             raise RecordRefused("Record kind cannot change")
         if not isinstance(content, str) or not content.strip():
             raise RecordRefused("Record content must be nonempty text")
-        record_id = old["id"] if old else new_id or record.get("id") or str(uuid4())
+        record_id = old["id"] if old else new_id or record.get("id") or str(self._uuid4_fn()())
         key = record.get("key", old["key"] if old else None)
         key = record_id if key is None else key
         if not isinstance(key, str) or not key.strip():
@@ -750,7 +756,7 @@ class _StoreRecordsMixin:
             ):
                 raise ValueError("Record version conflict; read the current version and retry")
         else:
-            db_insert_document(tx, "records", result)
+            self._insert_doc(tx, "records", result)
         self._revision(tx, result, source_rows=source_rows)
         if managed and not managed_batch:
             from cairnmind.memory.plans import note_task_mutation
@@ -819,7 +825,7 @@ class _StoreRecordsMixin:
         )
         source = self.snapshot(
             project_id,
-            f"checkpoint://{uuid4()}",
+            f"checkpoint://{self._uuid4_fn()()}",
             content,
             "checkpoint",
             note_metadata(self.settings, content, {"origin": "client"}),

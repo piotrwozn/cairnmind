@@ -817,5 +817,7 @@ class GraphApp(BasePanel):
     def on_unmount(self):
         self._active = False
         super().on_unmount()
-        with suppress(BrokerError, OSError, RuntimeError, ValueError):
-            self.broker.close()
+        close = getattr(self.broker, "close", None)
+        if callable(close):
+            with suppress(BrokerError, OSError, RuntimeError, ValueError):
+                close()

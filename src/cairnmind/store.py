@@ -122,6 +122,12 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
     confirmations_before_rule: dict[str, Any] | None = None
     _backend: Any = None
 
+    def _uuid4_fn(self) -> Any:
+        return uuid4
+
+    def _insert_doc(self, tx: Any, collection: str, data: dict[str, Any]) -> dict[str, Any]:
+        return db_insert_document(tx, collection, data)
+
     @property
     def backend(self) -> Any:
         if self._backend is None:
