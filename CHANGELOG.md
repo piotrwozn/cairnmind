@@ -315,6 +315,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - `scripts/measure_service_memory.py` repeats the memory measurement of the service and of the cockpit broker: any block size, allocation sites at chosen requests, groups and neighbors requests, a second registered root (#410, #450).
 - The release gate and the pull request guide say that a branch touching the store, the engine's errors or the graph write gets `server-tests` and `restore-size` started on it by hand by a maintainer, and green, before its pull request is merged (#455).
 - The process identity test waits for the exec of its child by what procfs shows, and a child held before its exec tests that moment every time (#460).
+- After each test the guard lists the user's processes and fails the test, by name, if a process whose command line names the test's folder is still running, whatever its parent or session (folders made with `tempfile` or kept by a session fixture included); it stops that process, never signals a wrapper above the run, and ends the run once with the reason when it cannot list processes. The workspace end-to-end tests no longer leave a `cockpit serve` broker behind, and their broker restart no longer lets a panel start a second broker (#457).
+- The test of the Settings screen counts every read its opening causes and no longer fails when the panel's own 3 s refresh falls inside a slow run (#459).
 
 ## 0.12.0
 
