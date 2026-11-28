@@ -4,8 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from cairnmind.ingest import (
-    current_source, import_history, index_pending_sources, index_project, poll_imports, register_default_histories,
+from cairnmind.scip.ingest import (
+    current_source,
+    import_history,
+    index_pending_sources,
+    index_project,
+    poll_imports,
+    register_default_histories,
 )
 from cairnmind.store import Store
 
@@ -350,7 +355,7 @@ def test_pending_custom_normalized_source_indexes_readable_text_without_extracti
 def test_concurrent_pending_source_indexing_creates_one_chunk_set(workspace, monkeypatch):
     from threading import Barrier
 
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
 
     store, project, _ = workspace
     source = store.snapshot(project["id"], "manual://concurrent", "Shared archived decision", "manual")
@@ -395,7 +400,7 @@ def test_native_graph_marker_commits_only_with_complete_graph(workspace, monkeyp
     index_project(store, project["id"])
     previous = store.query("SELECT graph_fingerprint FROM projects WHERE id=:id", {"id": project["id"]})[0]
     code.write_text("def app():\n    return False\n")
-    from cairnmind.journal import JournalTransaction
+    from cairnmind.storage.journal import JournalTransaction
     real = JournalTransaction.script
 
     def fail_graph_write(self, statements, *args):
@@ -433,7 +438,7 @@ def test_restored_file_reactivates_new_snapshot_and_chunks(workspace):
 
 
 def test_parser_identity_change_rebuilds_derived_native_graph(workspace, monkeypatch):
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
 
     store, project, root = workspace
     code = root / "app.py"
@@ -451,7 +456,7 @@ def test_parser_identity_change_rebuilds_derived_native_graph(workspace, monkeyp
 
 
 def test_project_deletion_during_index_cannot_recreate_orphan_vertices(workspace, monkeypatch):
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
 
     store, project, root = workspace
     (root / "app.py").write_text("def app():\n    return True\n")
@@ -470,7 +475,7 @@ def test_project_deletion_during_index_cannot_recreate_orphan_vertices(workspace
 
 
 def test_project_deletion_during_import_cannot_recreate_orphan_cursor(workspace, tmp_path, monkeypatch):
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
 
     store, project, _ = workspace
     path = tmp_path / "forget-import.jsonl"
@@ -510,8 +515,8 @@ def test_a_deeply_nested_toml_file_does_not_stop_indexing(workspace):
 
 def test_an_indexed_managed_block_leaves_the_index_on_the_next_index(workspace, monkeypatch):
     """A block indexed before #313 is cut from the chunks when the project is indexed again, source unchanged."""
-    from cairnmind import ingest
-    from cairnmind.integrations import BEGIN, END
+    from cairnmind.memory.integrations import BEGIN, END
+    from cairnmind.scip import ingest
 
     store, project, root = workspace
     guide = root / "AGENTS.md"

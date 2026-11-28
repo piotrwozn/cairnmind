@@ -6,14 +6,17 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from conftest import plain_words
 from typer.testing import CliRunner
 
-from conftest import plain_words
-
-from cairnmind import cli, client_runtime, first_start, ingest, store_writer
-from cairnmind import project_removal as removal
-from cairnmind.client_runtime import NativeRuntime
-from cairnmind.terminal_i18n import tr
+from cairnmind import cli
+from cairnmind.agents import client_runtime
+from cairnmind.agents.client_runtime import NativeRuntime
+from cairnmind.cli_cmds import first_start
+from cairnmind.memory import project_removal as removal
+from cairnmind.scip import ingest
+from cairnmind.storage import store_writer
+from cairnmind.terminal.terminal_i18n import tr
 
 PROJECT = {"id": "p1", "name": "demo", "root": "/src/demo"}
 REMOVED_AT = "2026-11-22T10:30:00+00:00"
@@ -109,8 +112,10 @@ def test_yes_applies_and_the_json_in_a_pipe_is_the_result(remove_world, run):
 def registry(tmp_path, rows, mode=0o600):
     """A real run registry of the workspace in a temporary data directory, and the settings that name it."""
     import sys
-    from cairnmind import private_files
+
     from conftest import make_world_readable
+
+    from cairnmind.pal import private_files
     directory = private_files.ensure_private_dir(tmp_path / "runtime")
     path = directory / "runs.json"
     path.write_text(json.dumps({"version": 1, "runs": rows}), encoding="utf-8")
@@ -357,8 +362,8 @@ def test_the_workspace_names_the_folders_left_out_and_a_removed_project_it_did_n
 
 def test_a_refusal_about_a_removed_project_reaches_a_polish_workspace_in_polish():
     """The service sends the English sentence; the panel puts it back together from the Polish template."""
-    from cairnmind.terminal_client import BrokerError
-    from cairnmind.terminal_i18n_messages import broker_error_text
+    from cairnmind.terminal.terminal_client import BrokerError
+    from cairnmind.terminal.terminal_i18n_messages import broker_error_text
 
     def polish(text):
         return tr(text, "pl")

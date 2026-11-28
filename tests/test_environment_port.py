@@ -85,7 +85,7 @@ def test_the_spelling_that_is_set_is_the_one_read_and_named(monkeypatch, tmp_pat
 
 
 def test_doctor_names_a_port_and_a_model_server_taken_from_the_environment(monkeypatch, tmp_path):
-    from cairnmind import integrations
+    from cairnmind.memory import integrations
     Settings.load(tmp_path / "data", create=True)
     monkeypatch.setattr(integrations, "doctor", lambda settings: {})
     monkeypatch.setenv("CAIRNMIND_PORT", "9101")
@@ -100,7 +100,7 @@ def test_doctor_names_a_port_and_a_model_server_taken_from_the_environment(monke
 
 def test_doctor_names_the_java_version_it_read_in_the_storage_line(monkeypatch, tmp_path):
     """#368: JDK 22 runs the engine: the topology lines say Java 22, not Java 21; no major read says the minimum."""
-    from cairnmind import integrations
+    from cairnmind.memory import integrations
     Settings.load(tmp_path / "data", create=True)
     for java, said in (({"major": 22, "compatible": True}, "(native engine, Java 22)"),
                        ({"major": 21, "compatible": True}, "(native engine, Java 21)"),
@@ -112,7 +112,7 @@ def test_doctor_names_the_java_version_it_read_in_the_storage_line(monkeypatch, 
 
 
 async def test_back_to_ollama_says_when_the_address_checked_came_from_the_environment(monkeypatch, tmp_path):
-    from cairnmind import memory_models
+    from cairnmind.memory import memory_models
 
     async def check(settings, role):
         return {"structured_output": True}, "c@1"

@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from cairnmind.api_agent import AgentEngine, TOOL_CONTEXT_CHARS
-from cairnmind.api_providers import ProviderError
+from cairnmind.agents.api_agent import TOOL_CONTEXT_CHARS, AgentEngine
+from cairnmind.agents.api_providers import ProviderError
 from cairnmind.config import Settings
 
 

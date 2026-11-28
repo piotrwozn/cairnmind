@@ -6,6 +6,7 @@ procfs but through process_identity, and no tmux is started.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import string
@@ -16,16 +17,29 @@ import types
 
 import httpx
 import pytest
-
 from conftest import assert_private
-from cairnmind import (cli, process_control, project_removal, service_version, setup_change, setup_mark, setup_profiles,
-                       store_writer, upgrade_mark)
+from test_setup_profiles import (
+    DB,
+    MODELS,
+    World,
+    config,
+    config_bytes,
+    config_without_password,
+    connect_only_installation,
+    make,
+    private,
+)
+
+from cairnmind import cli
+from cairnmind.cli_cmds import service_version, upgrade_mark
 from cairnmind.config import Settings, is_own_variable
-from cairnmind.setup_profiles import Request, render_one, run
+from cairnmind.memory import project_removal
+from cairnmind.pal import process_control
+from cairnmind.storage import store_writer
 from cairnmind.store import Store
-from cairnmind.terminal_i18n import CATALOG, tr
-from test_setup_profiles import (DB, MODELS, World, config, config_bytes, config_without_password,
-                                 connect_only_installation, make, private)
+from cairnmind.terminal import setup_change, setup_mark, setup_profiles
+from cairnmind.terminal.setup_profiles import Request, render_one, run
+from cairnmind.terminal.terminal_i18n import CATALOG, tr
 
 PASSWORD = "PRIVATE_DB_MARKER"
 
@@ -149,7 +163,7 @@ def row(client, lifecycle, project="p1"):
 # What refuses the change, by name ---------------------------------------------------------------------------------------
 
 def test_a_live_session_refuses_the_change_by_name_and_nothing_stops(rig, monkeypatch):
-    from cairnmind import client_runtime
+    from cairnmind.agents import client_runtime
     make(rig.tmp)
     before = config_bytes(rig.tmp)
     registry(rig.data, [row("claude", "running"), row("codex", "exited")])
@@ -163,7 +177,7 @@ def test_a_live_session_refuses_the_change_by_name_and_nothing_stops(rig, monkey
 
 
 def test_a_live_row_without_tmux_refuses(rig, monkeypatch):
-    from cairnmind import client_runtime
+    from cairnmind.agents import client_runtime
     make(rig.tmp)
     registry(rig.data, [row("claude", "running")])
     monkeypatch.setattr(client_runtime, "resolve_tmux", lambda *a, **k: None)
@@ -318,7 +332,7 @@ def test_each_final_state_is_written_in_both_languages_with_no_english_inside_po
     _, shown, other = reports[-1]
     english, polish = (shown, other) if language == "en" else (other, shown)
     assert len(english) == len(polish) and any(line.strip() for line in english)
-    for en, pl in zip(english, polish):
+    for en, pl in zip(english, polish, strict=False):
         assert not en.strip() or en != pl, en  # a Polish line that is the English one is an English sentence in Polish
     assert "knowledge service" not in " ".join(polish).lower()
 
@@ -600,7 +614,7 @@ def test_an_error_after_the_apply_is_put_back_and_said_as_what_it_is(rig, monkey
 def test_the_service_lock_is_waited_for_and_held(rig, monkeypatch):
     """_stop does not call the service gone while its lock is held; _apply never changes anything under a service
     that started again (a `cairnmind serve` in a terminal does not read the mark, so the lock is the only guard)."""
-    from cairnmind import file_locks
+    from cairnmind.pal import file_locks
     make(rig.tmp)
     settings = Settings.load(rig.data)
     rig.alive = False
@@ -613,10 +627,8 @@ def test_the_service_lock_is_waited_for_and_held(rig, monkeypatch):
             "refused", (setup_change.SERVICE_BACK, {}))
         assert config_bytes(rig.tmp) == before
     finally:
-        try:
+        with contextlib.suppress(OSError):
             file_locks.unlock(other)
-        except OSError:
-            pass
         other.close()
     assert setup_change._stop(settings) is None
 
@@ -812,7 +824,7 @@ def test_begin_starts_a_detached_helper_with_a_clean_environment(rig, monkeypatc
                         lambda command, **kwargs: seen.update(command=command, kwargs=kwargs) or Process())
     request = rig.request()
     setup_change.begin(Settings.load(rig.data), request, {"plan": ["a"], "writer": []}, "pl")
-    assert seen["command"] == [sys.executable, "-I", "-m", "cairnmind.setup_change", "--data-dir", str(rig.data)]
+    assert seen["command"] == [sys.executable, "-I", "-m", "cairnmind.terminal.setup_change", "--data-dir", str(rig.data)]
     kwargs = seen["kwargs"]
     expected_detached = process_control.detached_popen_kwargs()
     assert all(kwargs.get(k) == v for k, v in expected_detached.items())
@@ -829,7 +841,7 @@ def test_the_helper_reports_a_refusal_through_its_progress_file(tmp_path):
     data = tmp_path / "data"
     Settings.load(data, create=True)
     environment = {key: value for key, value in os.environ.items() if not is_own_variable(key)}
-    done = subprocess.run([sys.executable, "-I", "-m", "cairnmind.setup_change", "--data-dir", str(data)],
+    done = subprocess.run([sys.executable, "-I", "-m", "cairnmind.terminal.setup_change", "--data-dir", str(data)],
                           input=payload(request={"profile": "elsewhere"}), capture_output=True, timeout=60,
                           env=environment, cwd=tmp_path)
     assert done.returncode == 2, done.stderr
@@ -837,7 +849,7 @@ def test_the_helper_reports_a_refusal_through_its_progress_file(tmp_path):
     assert found["state"] == "refused" and found["pid"] > 0
     assert found["lines"] == [setup_change.REQUEST_INVALID.format(reason="request")]
     assert not (data / setup_mark.MARK).exists() and not (data / "service.log").exists()
-    missing = subprocess.run([sys.executable, "-I", "-m", "cairnmind.setup_change", "--data-dir", str(tmp_path / "none")],
+    missing = subprocess.run([sys.executable, "-I", "-m", "cairnmind.terminal.setup_change", "--data-dir", str(tmp_path / "none")],
                              input=b"", capture_output=True, timeout=60, env=environment, cwd=tmp_path)
     assert missing.returncode == 2 and b"no Cairnmind configuration" in missing.stderr
 
@@ -853,7 +865,7 @@ def test_a_signal_sent_to_a_real_helper_ends_it_through_the_handlers_with_status
     Settings.load(data, create=True)
     before = (data / "config.json").read_bytes()
     code = ("import sys, time\n"
-            "from cairnmind import setup_change, setup_profiles\n"
+            "from cairnmind.terminal import setup_change, setup_profiles\n"
             "setup_change.refusal = lambda settings: None\n"
             "setup_change._stop = lambda settings: None\n"
             "setup_change._runs = lambda settings: None\n"
@@ -886,7 +898,7 @@ def test_a_signal_sent_to_a_real_helper_ends_it_through_the_handlers_with_status
 # Sentences ----------------------------------------------------------------------------------------------------------------
 
 def test_progress_sentences_are_said_in_polish():
-    from cairnmind import engine_docker
+    from cairnmind.storage import engine_docker
     samples = {setup_profiles.BACKING_UP: {"url": "https://db.example", "path": "/b.json.gz"},
                setup_profiles.ENGINE_STARTING: {}, setup_profiles.RESTORING: {"path": "/b.json.gz"},
                engine_docker.CHOSE_DOCKER: {"config": "/d/config.json"},

@@ -1,14 +1,13 @@
 """Additional fast-tier route coverage for cockpit.py (_control, profiles, credentials, models)."""
 from __future__ import annotations
 
-
 import httpx
-
-from cairnmind import cockpit
-from cairnmind.api_providers import ProviderError
-from cairnmind.cockpit_state import CockpitState
-from cairnmind.config import Settings
 from test_cockpit_edges import _FakeRuntime, _make_auth_client
+
+from cairnmind.agents.api_providers import ProviderError
+from cairnmind.config import Settings
+from cairnmind.terminal import cockpit
+from cairnmind.terminal.cockpit_state import CockpitState
 
 
 def _authed_client(tmp_path, monkeypatch, *, runtime=None, service_handler=None):
@@ -86,9 +85,9 @@ def test_cockpit_control_profiles_credentials_and_models_edges(tmp_path, monkeyp
 
     # /api/profiles/{id}/status: unknown (404), codex (probe_client), copilot (runtime_status)
     assert client.get("/api/profiles/does-not-exist/status").status_code == 404
-    monkeypatch.setattr("cairnmind.client_auth.probe_client", lambda c: {"client": c, "auth": "signed_in"})
+    monkeypatch.setattr("cairnmind.agents.client_auth.probe_client", lambda c: {"client": c, "auth": "signed_in"})
     assert client.get("/api/profiles/codex/status").status_code == 200
-    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda s: {"available": False})
+    monkeypatch.setattr("cairnmind.agents.copilot_adapter.runtime_status", lambda s: {"available": False})
     assert client.get("/api/profiles/copilot/status").json()["runtime"] == {"available": False}
 
     # DELETE credential on native client (422)
@@ -108,13 +107,13 @@ def test_cockpit_control_profiles_credentials_and_models_edges(tmp_path, monkeyp
             pass
 
     monkeypatch.setattr(
-        "cairnmind.api_providers.make_provider",
+        "cairnmind.agents.api_providers.make_provider",
         lambda p, k: _ErrProvider(ProviderError("context_limit", context_details={"configured_context_window": 4096})),
     )
     res_err = client.get("/api/profiles/openai/models").json()
     assert res_err["status"] == "failed" and res_err["code"] == "context_limit"
 
-    monkeypatch.setattr("cairnmind.api_providers.make_provider", lambda p, k: _ErrProvider(httpx.ConnectError("down")))
+    monkeypatch.setattr("cairnmind.agents.api_providers.make_provider", lambda p, k: _ErrProvider(httpx.ConnectError("down")))
     assert client.get("/api/profiles/openai/models").json()["code"] == "provider_unavailable"
 
     class _OkCopilot:
@@ -127,5 +126,5 @@ def test_cockpit_control_profiles_credentials_and_models_edges(tmp_path, monkeyp
         def close(self):
             pass
 
-    monkeypatch.setattr("cairnmind.copilot_adapter.CopilotAdapter", _OkCopilot)
+    monkeypatch.setattr("cairnmind.agents.copilot_adapter.CopilotAdapter", _OkCopilot)
     assert client.get("/api/profiles/copilot/models").json()["models"][0]["id"] == "gpt-4o"

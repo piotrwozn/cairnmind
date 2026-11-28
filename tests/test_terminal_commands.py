@@ -3,8 +3,12 @@ from types import SimpleNamespace
 import pytest
 
 from cairnmind.config import Settings
-from cairnmind.terminal_commands import COMMANDS, CommandPaletteApp, dispatch_command
-from cairnmind.terminal_commands import JoinWorkspaceApp
+from cairnmind.terminal.terminal_commands import (
+    COMMANDS,
+    CommandPaletteApp,
+    JoinWorkspaceApp,
+    dispatch_command,
+)
 
 
 @pytest.mark.asyncio
@@ -77,7 +81,7 @@ def test_palette_offers_brief_and_routes_it_by_name():
 
 
 def test_ask_summary_shows_answer_quotes_missing_evidence_and_coverage():
-    from cairnmind.terminal_commands import ask_summary
+    from cairnmind.terminal.terminal_commands import ask_summary
     text = ask_summary({
         "status": "partial", "answer": "Sessions last one hour.",
         "sources": [{"uri": "file://src/auth.py", "line_start": 3, "line_end": 4,

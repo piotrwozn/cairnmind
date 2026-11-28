@@ -1,16 +1,16 @@
-"""Fast-tier coverage tests for cairnmind.cockpit routes, WebSocket terminal, and lifecycle helpers."""
+"""Fast-tier coverage tests for cairnmind.terminal.cockpit routes, WebSocket terminal, and lifecycle helpers."""
 from __future__ import annotations
 
 import asyncio
 import base64
 import json
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from cairnmind import cockpit
 from cairnmind.config import Settings
+from cairnmind.terminal import cockpit
 
 
 class _FakeAttachment:
@@ -109,7 +109,7 @@ def test_cockpit_routes_discovery_plans_events_and_control(tmp_path, monkeypatch
     assert client.delete("/api/discovery", headers=headers).status_code == 200
 
     # Auth probe & unsupported login client
-    monkeypatch.setattr("cairnmind.client_auth.probe_client", lambda c, force=False: {"client": c, "ok": True})
+    monkeypatch.setattr("cairnmind.agents.client_auth.probe_client", lambda c, force=False: {"client": c, "ok": True})
     assert client.get("/api/auth", params={"client": "codex"}).json()["ok"] is True
     assert client.post("/api/auth/login", json={"client": "bad"}, headers=headers).status_code == 422
     assert client.post("/api/auth/login", json={"client": "codex"}, headers=headers).status_code == 200
@@ -147,14 +147,18 @@ def test_cockpit_terminal_websocket_protocol_paths(tmp_path):
 
     base_ws = "ws://127.0.0.1:8766/api/client-runs/run1/terminal"
     # Missing generation -> close 1008
-    with pytest.raises(Exception):
-        with client.websocket_connect(f"{base_ws}?csrf={csrf}", headers={"origin": "http://127.0.0.1:8766"}):
-            pass
+    with (
+        pytest.raises(Exception),
+        client.websocket_connect(f"{base_ws}?csrf={csrf}", headers={"origin": "http://127.0.0.1:8766"}),
+    ):
+        pass
 
     # Mismatched generation -> close 1008
-    with pytest.raises(Exception):
-        with client.websocket_connect(f"{base_ws}?csrf={csrf}&generation=99", headers={"origin": "http://127.0.0.1:8766"}):
-            pass
+    with (
+        pytest.raises(Exception),
+        client.websocket_connect(f"{base_ws}?csrf={csrf}&generation=99", headers={"origin": "http://127.0.0.1:8766"}),
+    ):
+        pass
 
     # Happy path: output + control + takeover + text/base64 input + resize + unsupported frame -> error
     with client.websocket_connect(
@@ -195,7 +199,7 @@ def test_cockpit_status_stop_and_serve_locked_helpers(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)
 
     # Bad URL in server.json refused safely
-    from cairnmind.private_files import ensure_private_dir, make_private
+    from cairnmind.pal.private_files import ensure_private_dir, make_private
 
     runtime_file = cockpit._runtime_file(settings)
     ensure_private_dir(runtime_file.parent)

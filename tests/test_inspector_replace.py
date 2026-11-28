@@ -9,19 +9,21 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-from textual.widgets import Button, Select, Static, TextArea
-
-from cairnmind import agent_memory, record_replace, terminal_replace
-from cairnmind.terminal_client import BrokerError, BrokerUnreachable
-from cairnmind.terminal_detail import joined, record_parts
-from cairnmind.terminal_i18n import CATALOG, tr
-from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
-from cairnmind.terminal_inspector import InspectorApp
-from cairnmind.terminal_ui import FormModal
 from conftest import plain_words
 from consent_steps import consent_drawn, form_ready
-from test_terminal_panels import FakeBroker, setup, settle
+from test_terminal_panels import FakeBroker, settle, setup
 from test_terminal_ux080 import screen_text
+from textual.widgets import Button, Select, Static, TextArea
+
+from cairnmind.agents import agent_memory
+from cairnmind.memory import record_replace
+from cairnmind.terminal import terminal_replace
+from cairnmind.terminal.terminal_client import BrokerError, BrokerUnreachable
+from cairnmind.terminal.terminal_detail import joined, record_parts
+from cairnmind.terminal.terminal_i18n import CATALOG, tr
+from cairnmind.terminal.terminal_i18n_messages import BROKER_MESSAGES
+from cairnmind.terminal.terminal_inspector import InspectorApp
+from cairnmind.terminal.terminal_ui import FormModal
 
 REPLACE = "/api/inspector/records/record-a/replace"
 NEW = "Validate tokens with the shared helper."
@@ -50,7 +52,7 @@ class ReplaceBroker(FakeBroker):
 
 def replace_app(tmp_path, monkeypatch, language="pl"):
     settings, _, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     broker = ReplaceBroker({"id": "project-a", "name": "Project A", "root": str(tmp_path / "project")})
     return InspectorApp(settings, broker=broker, workspace=workspace), broker, workspace
 
@@ -313,13 +315,13 @@ def test_every_replace_sentence_has_polish():
 
 
 def test_no_mcp_tool_or_agent_tool_reaches_the_replace_route():
-    package = Path(agent_memory.__file__).parent
-    for name in ("mcp_server.py", "mcp_schema.py", "agent_memory.py", "agent_tools.py"):
+    package = Path(agent_memory.__file__).parents[1]
+    for name in ("mcp/mcp_server.py", "mcp/mcp_schema.py", "agents/agent_memory.py", "agents/agent_tools.py"):
         assert "/replace" not in (package / name).read_text(encoding="utf-8"), name
     names = {tool["name"] for tool in agent_memory.MEMORY_TOOLS}
     assert not [name for name in names if "replace" in name or "supersede" in name]
     # The only POST routes of the built-in agent's memory client: a new one has to be added here on purpose.
-    source = (package / "agent_memory.py").read_text(encoding="utf-8")
+    source = (package / "agents" / "agent_memory.py").read_text(encoding="utf-8")
     assert set(re.findall(r'_request\("POST", ([^,]+),', source)) == {
         '"/sessions/prepare"', '"/sessions/agent/archive"', '"/sessions/context"', '"/sessions/ack"', '"/ask"',
         '"/plans/next"', "endpoints[name]"}

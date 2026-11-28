@@ -10,11 +10,10 @@ import time
 from uuid import uuid4
 
 import pytest
-
 from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401  (workspace is a fixture)
 
-from cairnmind.agent import CITATIONS_LEFT_OUT, MIN_QUOTE_CHARS, KnowledgeAgent
-from cairnmind.citation_match import locate_quote
+from cairnmind.agents.agent import CITATIONS_LEFT_OUT, MIN_QUOTE_CHARS, KnowledgeAgent
+from cairnmind.agents.citation_match import locate_quote
 
 MARKDOWN = ("# Shipping\n\nZone codes are 0 for local, 1 for national and 7 when a parcel or pallet is\n"
             "oversized (`bulky`). A label is printed in every case.\n")
@@ -226,7 +225,7 @@ async def test_after_the_repair_the_answer_rests_on_its_verified_citations_and_i
 def test_a_whole_shown_passage_can_be_quoted_with_the_value_at_its_end(workspace):  # noqa: F811
     # Issue #241: a passage is shown at up to EXCERPT_CHARS characters, so a quote of all of it must
     # survive the schema, the prompt and validation; the value of a setting is often its last line.
-    from cairnmind.agent import EXCERPT_CHARS, SYSTEM
+    from cairnmind.agents.agent import EXCERPT_CHARS, SYSTEM
     lines = [f"    # Depot rule {index}: crates are stacked by weight and labelled on two sides." for index in range(10)]
     passage = "\n".join([*lines, "    crate_limit: int = 431"])
     assert 750 < len(passage) <= EXCERPT_CHARS

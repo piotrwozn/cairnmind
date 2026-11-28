@@ -4,26 +4,25 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import tomllib
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from cairnmind.agents import evaluation
 from cairnmind.config import Settings
-from cairnmind import evaluation
-
 
 FIXTURE_TOOLS = {"memory", "read_source", "resume_context", "ack_resume"}
 
 
 def fixture_server():
     return {"command": '/tmp/Python "fixture"/bin/python',
-            "args": ["-m", "cairnmind.evaluation", "mcp", "--data-dir", '/tmp/path "with" spaces\\fixture',
+            "args": ["-m", "cairnmind.agents.evaluation", "mcp", "--data-dir", '/tmp/path "with" spaces\\fixture',
                      "--session-id", "logical-fixture-session"],
             "env": {"DEVBRAIN_ARCADE_DATABASE": "cairnmind_eval_fixture"}}
 

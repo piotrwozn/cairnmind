@@ -4,14 +4,14 @@ from __future__ import annotations
 import json
 from uuid import uuid4
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
 
-from cairnmind.inspector import Inspector, InspectorNotFound
-from cairnmind.inspector_api import attach_inspector_routes
-from cairnmind.plans import PlanManager
+from cairnmind.memory.plans import PlanManager
 from cairnmind.store import Store
+from cairnmind.terminal.inspector import Inspector, InspectorNotFound
+from cairnmind.terminal.inspector_api import attach_inspector_routes
 
 
 @pytest.fixture
@@ -42,9 +42,9 @@ def normalized_export(store):
 
 def test_read_only_paging_details_and_literal_source_slices_do_not_change_memory(workspace, monkeypatch):
     store, project, root, private, private_record, source, record, client, headers = workspace
-    from cairnmind.agent import KnowledgeAgent
-    import cairnmind.ingest as ingest
-    import cairnmind.verification as verification
+    import cairnmind.memory.verification as verification
+    import cairnmind.scip.ingest as ingest
+    from cairnmind.agents.agent import KnowledgeAgent
 
     def forbidden(*args, **kwargs):
         raise AssertionError("Inspector reads must not run models, indexers or recovery")
@@ -274,7 +274,7 @@ def test_unassigned_inbox_is_visible_only_in_global_views_without_assignment(wor
 
 def test_a_read_of_the_whole_graph_gives_its_freed_memory_back_and_a_light_read_does_not(workspace, monkeypatch):
     store, project, root, private, private_record, source, record, client, headers = workspace
-    from cairnmind import memory_release
+    from cairnmind.pal import memory_release
     released = []
     monkeypatch.setattr(memory_release, "release_freed", lambda: released.append(1))
     assert client.get("/inspector/graph", params={"project": project["id"]}, headers=headers).status_code == 200
@@ -292,7 +292,7 @@ def test_a_read_of_the_whole_graph_gives_its_freed_memory_back_and_a_light_read_
 
 
 def test_graph_watermark_is_read_in_the_same_database_transaction(workspace, monkeypatch):
-    from cairnmind.journal import Journal
+    from cairnmind.storage.journal import Journal
 
     store, project, root, private, private_record, source, record, client, headers = workspace
     original = Journal.cursor

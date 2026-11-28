@@ -12,21 +12,21 @@ import json
 
 import httpx
 import pytest
-
-from cairnmind.agent_memory import AgentMemoryClient
-from cairnmind.api_agent import AgentEngine
-from cairnmind.api_credentials import CredentialStore
-from cairnmind.api_profiles import normalize_profile
-from cairnmind.api_runtime import RuntimeSupervisor, stage_readiness
-from cairnmind.cockpit_state import CockpitState
-from cairnmind.plans import PlanManager
-from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
-from cairnmind.stages import project_routing, resolve_stage
-from cairnmind.store import Store
 from test_api_agent import ScriptedProvider, call, reply
 from test_brief import repository
 from test_stage_router import move
+
+from cairnmind.agents.agent_memory import AgentMemoryClient
+from cairnmind.agents.api_agent import AgentEngine
+from cairnmind.agents.api_credentials import CredentialStore
+from cairnmind.agents.api_profiles import normalize_profile
+from cairnmind.agents.api_runtime import RuntimeSupervisor, stage_readiness
+from cairnmind.memory.plans import PlanManager
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.service import create_app
+from cairnmind.store import Store
+from cairnmind.terminal.cockpit_state import CockpitState
+from cairnmind.terminal.stages import project_routing, resolve_stage
 
 PROFILES = [{"id": "codex", "client": "codex", "label": "Codex"},
             {"id": "claude", "client": "claude", "label": "Claude"},
@@ -40,7 +40,7 @@ SLOTS = [{"id": "codex", "profile_id": "codex"}, {"id": "claude", "profile_id": 
 
 def chosen(slot):
     """The stage as Plan stages saves it: the slot and what it names (profiles are stored normalised)."""
-    from cairnmind.stages import confirmed_choice
+    from cairnmind.terminal.stages import confirmed_choice
     row = next(s for s in SLOTS if s["id"] == slot)
     return confirmed_choice(row, normalize_profile(next(p for p in PROFILES if p["id"] == row["profile_id"])))
 
@@ -76,7 +76,7 @@ def stack(tmp_path, monkeypatch):
     service = create_app(settings, start_worker=False)
     environment = {"FIXTURE_STAGE_KEY": "fixture-not-a-real-key"}
     credentials = CredentialStore(settings, environ=environment)
-    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
+    monkeypatch.setattr("cairnmind.agents.copilot_adapter.runtime_status", lambda settings=None: {
         "available": True, "code": "ready"})
     runner = RuntimeSupervisor(settings, "/nonexistent/tmux", credentials=credentials,
                                session_transport=ServiceTransport(service))

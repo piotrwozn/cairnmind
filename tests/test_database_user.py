@@ -1,8 +1,6 @@
 """A dedicated database user on the real engine: created once as root, then used for everything (#72)."""
 from __future__ import annotations
 
-from contextlib import closing, contextmanager, suppress
-from dataclasses import replace
 import json
 import os
 import secrets
@@ -11,16 +9,18 @@ import socket
 import ssl
 import threading
 import uuid
+from contextlib import closing, contextmanager, suppress
+from dataclasses import replace
 
 import pytest
+from test_database_credentials import certificate_authority
 from typer.testing import CliRunner
 
-from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.cli import app
 from cairnmind.config import Settings
-from cairnmind.ingest import index_project
+from cairnmind.scip.ingest import index_project
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.store import Store
-from test_database_credentials import certificate_authority
 
 
 def private(path, text):
@@ -130,7 +130,7 @@ def test_an_existing_user_gets_no_second_database_and_nothing_is_left_behind(ded
     with closing(ArcadeClient(replace(arcade_test_engine[0], arcade_database=second))) as root:
         assert root.database_exists() is False
     # The installation's own check says the same thing instead of "does not exist, run create-user".
-    from cairnmind.database_mode import missing_database
+    from cairnmind.storage.database_mode import missing_database
     said = " ".join(missing_database(Settings.load(data)).split())
     assert f"or the user {name} has no rights on it" in said and "each database gets its own user" in said
 
@@ -225,7 +225,7 @@ def tls_proxy(address: str, upstream_port: int, folder):
         while not stop.is_set():
             try:
                 raw, _ = listener.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 return
@@ -280,6 +280,8 @@ def test_a_remote_url_a_dedicated_user_and_a_password_file_index_and_read(dedica
         with pytest.raises(ValueError, match="root is refused"):
             Store(data, settings=replace(settings, arcade_user="root"))
         # Without the private authority, the certificate is not trusted.
-        with pytest.raises(ArcadeError, match="certificate"):
-            with closing(ArcadeClient(replace(settings, arcade_ca_file=""))) as client:
-                client.query("SELECT 1 AS ok")
+        with (
+            pytest.raises(ArcadeError, match="certificate"),
+            closing(ArcadeClient(replace(settings, arcade_ca_file=""))) as client,
+        ):
+            client.query("SELECT 1 AS ok")

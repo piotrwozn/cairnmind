@@ -11,10 +11,11 @@ import sys
 
 import httpx
 import pytest
-
 from conftest import own_time
-from cairnmind import cli, mcp_server
+
+from cairnmind import cli
 from cairnmind.config import Settings
+from cairnmind.mcp import mcp_server
 
 UNAVAILABLE = "Cairnmind service is unavailable (ConnectError); start `cairnmind serve` or use the launcher."
 
@@ -70,7 +71,7 @@ def test_an_external_bridge_starts_the_service_when_nothing_listens(monkeypatch,
 
 def test_a_service_that_cannot_start_is_named_with_the_command(monkeypatch, settings, tmp_path, data):
     Network(monkeypatch)
-    from cairnmind.process_control import format_command
+    from cairnmind.pal.process_control import format_command
     command = format_command(["cairnmind", "--data-dir", str(data), "serve"])
     for failure, reason in ((cli.ServiceDidNotStart("The service stopped at start: port 1 is in use"),
                              "The service stopped at start: port 1 is in use."),
@@ -139,7 +140,7 @@ def test_the_service_is_started_as_ask_starts_it(monkeypatch, settings, data):
     mcp_server.start_service(settings)
     (command, kwargs), = spawned
     assert command == [sys.executable, "-m", "cairnmind", "--data-dir", str(settings.data_dir), "serve"]
-    from cairnmind.process_control import detached_popen_kwargs
+    from cairnmind.pal.process_control import detached_popen_kwargs
     for key, expected in detached_popen_kwargs().items():
         assert kwargs[key] == expected
     assert kwargs["stdin"] == subprocess.DEVNULL
@@ -149,7 +150,7 @@ def test_the_service_is_started_as_ask_starts_it(monkeypatch, settings, data):
 
 @pytest.mark.parametrize("role", ["reader", "lost"])
 def test_a_reader_is_not_asked_to_start_the_service_and_nothing_is_spawned(monkeypatch, settings, tmp_path, role):
-    from cairnmind import store_writer
+    from cairnmind.storage import store_writer
     Network(monkeypatch)
     monkeypatch.setattr(store_writer, "inspect", lambda s: {"role": role, "reason": "This installation only reads."})
 
@@ -164,7 +165,7 @@ def test_a_reader_is_not_asked_to_start_the_service_and_nothing_is_spawned(monke
 
 
 def test_during_an_upgrade_the_bridge_starts_nothing_and_says_why(monkeypatch, settings, tmp_path):
-    from cairnmind import upgrade_mark
+    from cairnmind.cli_cmds import upgrade_mark
     network = Network(monkeypatch)
     monkeypatch.setattr(cli, "service_alive", lambda s: False)
     monkeypatch.setattr(upgrade_mark, "state", lambda: ("running", 4242))
@@ -180,7 +181,7 @@ def test_during_an_upgrade_the_bridge_starts_nothing_and_says_why(monkeypatch, s
 
 
 def test_once_the_mark_is_gone_the_same_bridge_starts_the_service_again(monkeypatch, settings, tmp_path):
-    from cairnmind import upgrade_mark
+    from cairnmind.cli_cmds import upgrade_mark
     network, marks = Network(monkeypatch), [("running", 4242), ("none", None)]
     monkeypatch.setattr(cli, "service_alive", lambda s: False)
     monkeypatch.setattr(upgrade_mark, "state", lambda: marks[0])
@@ -197,7 +198,7 @@ def test_once_the_mark_is_gone_the_same_bridge_starts_the_service_again(monkeypa
 @pytest.mark.parametrize("loaded", ["other", None])
 def test_a_bridge_whose_installed_code_changed_refuses_every_call(monkeypatch, settings, tmp_path, native, loaded):
     from cairnmind import __version__
-    from cairnmind.upgrade_mark import CODE_REPLACED, CODE_UNREADABLE
+    from cairnmind.cli_cmds.upgrade_mark import CODE_REPLACED, CODE_UNREADABLE
     network = Network(monkeypatch)
     network.up = True
     if loaded is None:
@@ -214,7 +215,7 @@ def test_a_bridge_whose_installed_code_changed_refuses_every_call(monkeypatch, s
 
 
 def test_a_native_bridge_during_an_upgrade_does_not_advise_serve(monkeypatch, settings):
-    from cairnmind import upgrade_mark
+    from cairnmind.cli_cmds import upgrade_mark
     Network(monkeypatch)  # nothing listens
     monkeypatch.setattr(upgrade_mark, "state", lambda: ("running", 4242))
     with pytest.raises(RuntimeError) as caught:
@@ -224,7 +225,7 @@ def test_a_native_bridge_during_an_upgrade_does_not_advise_serve(monkeypatch, se
 
 
 def test_a_native_bridge_during_a_change_of_setup_names_it_and_does_not_advise_serve(monkeypatch, settings):
-    from cairnmind import setup_mark
+    from cairnmind.terminal import setup_mark
     Network(monkeypatch)  # nothing listens
     monkeypatch.setattr(setup_mark, "state", lambda data_dir: ("running", 4242))
     with pytest.raises(RuntimeError) as caught:
@@ -236,15 +237,15 @@ def test_a_native_bridge_during_a_change_of_setup_names_it_and_does_not_advise_s
 
 def test_ask_with_a_schema_imports_nothing_of_the_new_version_in_a_replaced_bridge(monkeypatch, settings):
     from cairnmind import __version__
-    from cairnmind.upgrade_mark import CODE_REPLACED
+    from cairnmind.cli_cmds.upgrade_mark import CODE_REPLACED
     monkeypatch.setattr(mcp_server, "code_identity", lambda: (1, 2, 3, 4))
-    monkeypatch.delitem(sys.modules, "cairnmind.answer_contract", raising=False)
+    monkeypatch.delitem(sys.modules, "cairnmind.agents.answer_contract", raising=False)
     server = mcp_server.create_server(settings, mcp_server.ServiceClient(settings))
     arguments = {"project": "p", "question": "q", "answer_schema": {"type": "object"}}
     with pytest.raises(Exception, match="changed after this MCP server started") as caught:
         asyncio.run(server.call_tool("ask", arguments))
     assert CODE_REPLACED.format(version=__version__) in str(caught.value)
-    assert "cairnmind.answer_contract" not in sys.modules
+    assert "cairnmind.agents.answer_contract" not in sys.modules
 
 
 def test_parallel_calls_wait_for_one_start(monkeypatch, settings, tmp_path):

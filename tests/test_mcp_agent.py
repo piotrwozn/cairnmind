@@ -5,19 +5,20 @@ import asyncio
 import json
 import sys
 
-import pytest
-
 import conftest
-
-from cairnmind import agent_tools, process_identity
-from cairnmind.agent_memory import MEMORY_TOOLS
-from cairnmind.api_agent import AgentEngine
-from cairnmind.api_worker import AgentApp
-from cairnmind.cockpit_state import CockpitState
-from cairnmind.config import Settings
-from cairnmind.mcp_servers import frozen_servers
-from test_api_agent import Memory, ScriptedProvider, call, reply, setup as setup
+import pytest
+from test_api_agent import Memory, ScriptedProvider, call, reply
+from test_api_agent import setup as setup
 from test_api_worker import Engine as FakeEngine
+
+from cairnmind.agents import agent_tools
+from cairnmind.agents.agent_memory import MEMORY_TOOLS
+from cairnmind.agents.api_agent import AgentEngine
+from cairnmind.agents.api_worker import AgentApp
+from cairnmind.config import Settings
+from cairnmind.mcp.mcp_servers import frozen_servers
+from cairnmind.pal import process_identity
+from cairnmind.terminal.cockpit_state import CockpitState
 
 FIXTURE = conftest.MCP_FIXTURE  # this pytest process's own copy (see conftest)
 
@@ -139,8 +140,8 @@ async def test_refused_third_party_arguments_say_which_argument_without_its_valu
 @pytest.mark.asyncio
 async def test_a_third_party_expected_sha256_gets_no_advice_about_the_built_in_file_tools():
     # Review of #240: the write_file hint was added for any argument of that name, third-party tools included.
-    from cairnmind.agent_arguments import argument_problem as built_in
-    from cairnmind.mcp_schema import argument_problem
+    from cairnmind.agents.agent_arguments import argument_problem as built_in
+    from cairnmind.mcp.mcp_schema import argument_problem
     schema = {"type": "object", "properties": {"expected_sha256": {"type": "integer"}},
               "additionalProperties": False}
     problem = await argument_problem(schema, {"expected_sha256": "x"})

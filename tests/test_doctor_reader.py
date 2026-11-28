@@ -6,14 +6,17 @@ not a missing requirement. The exit code, the summary and the JSON say the same 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import socket
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, doctor_attention, first_start, integrations, store_writer
+from cairnmind import cli
+from cairnmind.cli_cmds import doctor_attention, first_start
 from cairnmind.config import Settings
+from cairnmind.memory import integrations
+from cairnmind.storage import store_writer
 from cairnmind.store import Store
 
 runner = CliRunner()
@@ -62,7 +65,7 @@ def test_a_healthy_reader_exits_0_and_says_it_only_reads_and_who_writes(two):
     assert result.exit_code == 0, result.output
     lines = doctor_attention.summary(report)
     assert first_start.NOTHING_MISSING in lines and lines[-1] != first_start.NEXT_FIX
-    assert ["  - " + first_start.READER_ROLE] == [line for line in lines if line.startswith("  - Store: this installation")]
+    assert [line for line in lines if line.startswith("  - Store: this installation")] == ["  - " + first_start.READER_ROLE]
     assert report["store_writer"]["writer"]["installation"] == writer.installation.id
     assert not any(line.startswith("  - Local service") for line in lines)  # no service runs on a reader, by design
     assert doctor(writer.data_dir, "--json").exit_code == 0

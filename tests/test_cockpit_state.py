@@ -4,10 +4,10 @@ import sys
 import time
 
 import pytest
-
 from conftest import assert_private, make_symlink_or_skip, make_world_readable
-from cairnmind.cockpit_state import CockpitState, ProjectDiscovery, normalize_path
+
 from cairnmind.config import Settings
+from cairnmind.terminal.cockpit_state import CockpitState, ProjectDiscovery, normalize_path
 
 
 def test_preferences_are_local_private_and_validate_native_profiles(tmp_path):
@@ -77,7 +77,7 @@ def test_explicit_windows_path_conversion_uses_no_shell(monkeypatch):
         assert args[0] == ["wslpath", "-u", r"C:\Users\piotr\My Projects"]
         assert "shell" not in kwargs
         raise FileNotFoundError
-    monkeypatch.setattr("cairnmind.cockpit_state.subprocess.run", missing)
+    monkeypatch.setattr("cairnmind.terminal.cockpit_state.subprocess.run", missing)
     assert str(normalize_path(r"C:\Users\piotr\My Projects")) == "/mnt/c/Users/piotr/My Projects"
 
 
@@ -105,7 +105,7 @@ def test_plan_stage_map_is_a_validated_owner_preference(tmp_path):
     settings = Settings.load(tmp_path / "data")
     state = CockpitState(settings)
     assert state.load()["project_stages"] == {}
-    from cairnmind import private_files
+    from cairnmind.pal import private_files
     private_files.ensure_private_dir(state.path.parent)
     # A preferences file written before stages existed still loads and keeps working.
     state.path.write_text('{"version": 2, "language": "pl"}', encoding="utf-8")

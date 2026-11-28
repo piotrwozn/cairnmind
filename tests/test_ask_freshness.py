@@ -5,23 +5,28 @@ import builtins
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
-from fastapi.testclient import TestClient
 import pytest
-
 from conftest import own_time
-from cairnmind import ingest
+from fastapi.testclient import TestClient
+
+from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 from cairnmind.config import Settings
-from cairnmind.ingest import forget_index_signature, index_project, index_project_if_changed, tree_signature
-from cairnmind.journal import Journal
-from cairnmind.plans import PlanManager
+from cairnmind.memory.plans import PlanManager
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.scip import ingest
+from cairnmind.scip.ingest import (
+    forget_index_signature,
+    index_project,
+    index_project_if_changed,
+    tree_signature,
+)
 from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
-from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
-from cairnmind.inspector import Inspector
+from cairnmind.storage.journal import Journal
 from cairnmind.store import Store
+from cairnmind.terminal.inspector import Inspector
 
 
 class LocalModel:
@@ -224,7 +229,7 @@ def test_cache_stamp_reads_only_new_journal_events(workspace, monkeypatch):
     original = store.query
     monkeypatch.setattr(store, "query", lambda *a, **k: queries.append(a[0]) or original(*a, **k))
     store.cache_stamp(pid)
-    assert queries == ["SELECT epoch,seq,first_seq FROM journal_state WHERE id='current'"]
+    assert queries == ["SELECT epoch, seq, first_seq FROM journal_state WHERE id=:w0 LIMIT 1"]
     monkeypatch.undo()
     for index in range(1203):
         store.remember(pid, {"kind": "fact", "content": f"Fact {index}"}, [source["id"]])
@@ -363,7 +368,7 @@ def test_a_directory_that_cannot_be_listed_is_an_error_and_deactivates_nothing(w
 
 def test_memory_import_makes_the_next_question_index_again(workspace, monkeypatch):
     settings, store, project, root = workspace
-    from cairnmind.memory import MemoryManager
+    from cairnmind.memory.memory import MemoryManager
     # The import itself is covered elsewhere; here only what the route does after it matters.
     monkeypatch.setattr(MemoryManager, "import_snapshot",
                         lambda self, *args, **kwargs: {"status": "imported", "project": {"id": project["id"]}})

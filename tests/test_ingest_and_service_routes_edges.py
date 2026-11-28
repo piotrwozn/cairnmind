@@ -2,18 +2,19 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
 import hashlib
 import json
+from contextlib import contextmanager
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
-from cairnmind import ingest, service
+from cairnmind import service
 from cairnmind.config import Settings
+from cairnmind.scip import ingest
+from cairnmind.storage.store_writer import StoreNotWriter
 from cairnmind.store import JobNotFoundError
-from cairnmind.store_writer import StoreNotWriter
 
 
 def test_ingest_helpers_reparse_and_import_edges(tmp_path, monkeypatch):
@@ -33,9 +34,11 @@ def test_ingest_helpers_reparse_and_import_edges(tmp_path, monkeypatch):
     # _ingestion_lock deadline expired and BlockingIOError retry
     fake_store = SimpleNamespace(data_dir=tmp_path / "data")
     fake_store.data_dir.mkdir()
-    with pytest.raises(TimeoutError, match="deadline exceeded"):
-        with ingest._ingestion_lock(fake_store, "history", "x", deadline=0.0):
-            pass
+    with (
+        pytest.raises(TimeoutError, match="deadline exceeded"),
+        ingest._ingestion_lock(fake_store, "history", "x", deadline=0.0),
+    ):
+        pass
 
     attempts = {"n": 0}
     orig_lock = ingest.lock_exclusive
@@ -239,13 +242,13 @@ def test_service_routes_and_background_loops_edges(tmp_path, monkeypatch):
         aclose=lambda: asyncio.sleep(0),
     )
 
-    monkeypatch.setattr("cairnmind.retrieval.Retriever", lambda *a, **k: SimpleNamespace(context=lambda pid, sc: {"ok": True}))
+    monkeypatch.setattr("cairnmind.agents.retrieval.Retriever", lambda *a, **k: SimpleNamespace(context=lambda pid, sc: {"ok": True}))
     monkeypatch.setattr(
-        "cairnmind.agent.KnowledgeAgent",
+        "cairnmind.agents.agent.KnowledgeAgent",
         lambda *a, **k: SimpleNamespace(ask=lambda *aa, **kk: asyncio.sleep(0, result={"status": "complete", "answer": "yes", "sources": []})),
     )
     monkeypatch.setattr(
-        "cairnmind.plans.PlanManager",
+        "cairnmind.memory.plans.PlanManager",
         lambda s: SimpleNamespace(
             list=lambda pid: [],
             get=lambda pid, plid: {"id": plid},
@@ -254,7 +257,7 @@ def test_service_routes_and_background_loops_edges(tmp_path, monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "cairnmind.sessions.SessionManager",
+        "cairnmind.memory.sessions.SessionManager",
         lambda *a, **k: SimpleNamespace(
             require_scope=lambda sid, pid: str(proj_dir),
             status=lambda sid: {"session_id": sid, "project_id": "p1", "worktree": str(proj_dir), "acknowledged": True},
@@ -262,25 +265,25 @@ def test_service_routes_and_background_loops_edges(tmp_path, monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "cairnmind.memory.MemoryManager",
+        "cairnmind.memory.memory.MemoryManager",
         lambda *a, **k: SimpleNamespace(tick=lambda: (_ for _ in ()).throw(RuntimeError("mem tick err"))),
     )
     monkeypatch.setattr("cairnmind.service.WRITER_LOST_RETRY_SECONDS", 0.01)
-    monkeypatch.setattr("cairnmind.ingest.index_project", lambda s, pid: {"files": 1})
-    monkeypatch.setattr("cairnmind.ingest.import_history", lambda s, p, pid, c: {"errors": []})
-    monkeypatch.setattr("cairnmind.ingest.poll_imports", lambda s: {"errors": []})
-    monkeypatch.setattr("cairnmind.ingest.forget_missing_projects", lambda s, pids: None)
-    monkeypatch.setattr("cairnmind.ingest.index_project_if_changed", lambda s, pid: {"changed": 1, "errors": ["idx warn"]})
-    monkeypatch.setattr("cairnmind.ingest.index_pending_sources", lambda s: {"errors": []})
-    monkeypatch.setattr("cairnmind.ingest.tree_signature", lambda s, pid: "abcd" * 8)
-    monkeypatch.setattr("cairnmind.integrations.drain_hook_spool", lambda st, s: {"errors": []})
-    monkeypatch.setattr("cairnmind.verification.recover_interrupted_runs", lambda s, st: None)
-    monkeypatch.setattr("cairnmind.verification.load_profiles", lambda s, pid, sc: {})
+    monkeypatch.setattr("cairnmind.scip.ingest.index_project", lambda s, pid: {"files": 1})
+    monkeypatch.setattr("cairnmind.scip.ingest.import_history", lambda s, p, pid, c: {"errors": []})
+    monkeypatch.setattr("cairnmind.scip.ingest.poll_imports", lambda s: {"errors": []})
+    monkeypatch.setattr("cairnmind.scip.ingest.forget_missing_projects", lambda s, pids: None)
+    monkeypatch.setattr("cairnmind.scip.ingest.index_project_if_changed", lambda s, pid: {"changed": 1, "errors": ["idx warn"]})
+    monkeypatch.setattr("cairnmind.scip.ingest.index_pending_sources", lambda s: {"errors": []})
+    monkeypatch.setattr("cairnmind.scip.ingest.tree_signature", lambda s, pid: "abcd" * 8)
+    monkeypatch.setattr("cairnmind.memory.integrations.drain_hook_spool", lambda st, s: {"errors": []})
+    monkeypatch.setattr("cairnmind.memory.verification.recover_interrupted_runs", lambda s, st: None)
+    monkeypatch.setattr("cairnmind.memory.verification.load_profiles", lambda s, pid, sc: {})
     monkeypatch.setattr(
-        "cairnmind.verification.capture_code_state",
+        "cairnmind.memory.verification.capture_code_state",
         lambda s, pid, sc, inp: {"status": "fresh", "fingerprint": "fp1"},
     )
-    monkeypatch.setattr("cairnmind.scip_ingest.enqueue_project_scip", lambda *a, **k: None)
+    monkeypatch.setattr("cairnmind.scip.scip_ingest.enqueue_project_scip", lambda *a, **k: None)
 
     scip_calls = {"n": 0}
 
@@ -290,7 +293,7 @@ def test_service_routes_and_background_loops_edges(tmp_path, monkeypatch):
             raise RuntimeError("scip failed")
         return {"errors": []}
 
-    monkeypatch.setattr("cairnmind.scip_ingest.index_project_scip", fake_scip_index)
+    monkeypatch.setattr("cairnmind.scip.scip_ingest.index_project_scip", fake_scip_index)
 
     from dataclasses import replace
     fast_settings = replace(settings, poll_seconds=1, scip_mode="auto")
@@ -324,7 +327,7 @@ def test_service_routes_and_background_loops_edges(tmp_path, monkeypatch):
         assert res_ask.status_code == 200 and res_ask.json()["status"] == "partial"
 
         # /ask without index_errors caches response on second call
-        monkeypatch.setattr("cairnmind.ingest.index_project_if_changed", lambda s, pid: {"changed": 0, "errors": []})
+        monkeypatch.setattr("cairnmind.scip.ingest.index_project_if_changed", lambda s, pid: {"changed": 0, "errors": []})
         res1 = client.post("/ask", json={"project": "p1", "question": "Cached?", "log": True}, headers=headers)
         res2 = client.post("/ask", json={"project": "p1", "question": "Cached?", "log": True}, headers=headers)
         assert res1.json()["cached"] is False and res2.json()["cached"] is True

@@ -2,19 +2,25 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import shutil
 import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 
-from cairnmind import runtime_sockets
-from cairnmind.client_runtime import NativeRuntime
+from cairnmind.agents.client_runtime import NativeRuntime
 from cairnmind.config import Settings
-from cairnmind.runtime_sockets import (KINDS, MAX_SOCKET_PATH, SUN_PATH, prepare_socket_base, socket_base,
-                                       socket_directory)
-from cairnmind.workspace import WorkspaceManager
+from cairnmind.pal import runtime_sockets
+from cairnmind.pal.runtime_sockets import (
+    KINDS,
+    MAX_SOCKET_PATH,
+    SUN_PATH,
+    prepare_socket_base,
+    socket_base,
+    socket_directory,
+)
+from cairnmind.terminal.workspace import WorkspaceManager
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX Unix domain socket directories")
 
@@ -135,7 +141,7 @@ def test_a_native_runtime_on_macos_makes_its_socket_folder_in_the_base(tmp_path,
 
 
 def test_the_refusals_read_in_polish_too():
-    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal.terminal_i18n import tr
     for text in ("The system temporary folder is not safe for private sockets.",
                  "The socket folder must belong to the user, have permissions 0700 and not be a link."):
         assert tr(text, "en") == text and tr(text, "pl") != text

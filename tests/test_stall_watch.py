@@ -7,10 +7,10 @@ from pathlib import Path
 
 import httpx
 import pytest
-
 import stall_watch
-from cairnmind.arcade import ArcadeClient, ArcadeError
+
 from cairnmind.config import Settings
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 
 
 def make_client(tmp_path, port=2480, **options):
@@ -104,6 +104,7 @@ def test_one_thread_dump_for_requests_that_stall_together(tmp_path, monkeypatch)
 
 def test_late_answer_inside_clirunner_does_not_corrupt_json_output(tmp_path):
     import json
+
     import typer
     from typer.testing import CliRunner
 

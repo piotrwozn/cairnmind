@@ -12,10 +12,10 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import DataTable
 
-from cairnmind import workspace
 from cairnmind.config import Settings
-from cairnmind.terminal_commands import COMMANDS, CommandPaletteApp
-from cairnmind.terminal_i18n import tr
+from cairnmind.terminal import workspace
+from cairnmind.terminal.terminal_commands import COMMANDS, CommandPaletteApp
+from cairnmind.terminal.terminal_i18n import tr
 
 
 def test_the_popup_size_this_test_assumes_is_the_one_the_workspace_opens():
@@ -28,7 +28,7 @@ def test_the_popup_size_this_test_assumes_is_the_one_the_workspace_opens():
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_the_menu_scrolls_in_the_popup_and_the_chosen_command_shows_its_whole_description(
         tmp_path, monkeypatch, language):
-    monkeypatch.setattr("cairnmind.terminal_i18n.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_i18n.language_for", lambda settings: language)
     app = CommandPaletteApp(SimpleNamespace(settings=Settings(data_dir=tmp_path / "data")))
     async with app.run_test(size=(70, 18)) as pilot:
         for _ in range(4):

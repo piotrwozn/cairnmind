@@ -6,7 +6,10 @@ import subprocess
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, first_start, ingest, integrations
+from cairnmind import cli
+from cairnmind.cli_cmds import first_start
+from cairnmind.memory import integrations
+from cairnmind.scip import ingest
 
 
 @pytest.fixture
@@ -219,8 +222,8 @@ def test_the_service_is_announced_when_a_command_starts_it_and_not_when_it_alrea
 
 
 def test_the_engine_is_announced_before_a_command_starts_it_and_not_when_it_answers(tmp_path, monkeypatch, capsys):
-    from cairnmind import engine
     from cairnmind.config import Settings
+    from cairnmind.storage import engine
     settings = Settings.load(tmp_path / "data", create=True)
     started = []
     monkeypatch.setattr(engine, "engine_mode", lambda _: "native")
@@ -243,10 +246,10 @@ def test_the_engine_is_announced_before_a_command_starts_it_and_not_when_it_answ
 
 
 def test_the_service_started_for_an_external_client_is_said_on_standard_error(tmp_path, monkeypatch, capsys):
-    from cairnmind import mcp_server
     from cairnmind.config import Settings
+    from cairnmind.mcp import mcp_server
     settings = Settings.load(tmp_path / "data", create=True)
-    monkeypatch.setattr("cairnmind.store_writer.inspect", lambda _: {"role": "writer"})  # no engine is asked
+    monkeypatch.setattr("cairnmind.storage.store_writer.inspect", lambda _: {"role": "writer"})  # no engine is asked
     monkeypatch.setattr(cli, "ensure_service", lambda _: True)
     mcp_server.start_service(settings)
     captured = capsys.readouterr()

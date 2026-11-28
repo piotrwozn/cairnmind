@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import importlib.util
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 from conftest import own_time
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "measure_service_memory.py"

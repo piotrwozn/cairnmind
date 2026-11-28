@@ -11,8 +11,8 @@ import socket
 import pytest
 
 from cairnmind import cli
-from cairnmind.arcade import ArcadeError
 from cairnmind.config import Settings
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.store import Store
 
 READ_COMMANDS = [
@@ -69,8 +69,8 @@ def engine_down(tmp_path, monkeypatch):
 def forbid_preparing(monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("A command that only reads started something or prepared the store")
-    monkeypatch.setattr("cairnmind.engine.start_engine", forbidden)
-    monkeypatch.setattr("cairnmind.engine.ensure_engine", forbidden)
+    monkeypatch.setattr("cairnmind.storage.engine.start_engine", forbidden)
+    monkeypatch.setattr("cairnmind.storage.engine.ensure_engine", forbidden)
     monkeypatch.setattr("subprocess.Popen", forbidden)
     monkeypatch.setattr(cli, "ensure_service", forbidden)
     monkeypatch.setattr(Store, "__init__", forbidden)
@@ -124,11 +124,11 @@ def test_the_commands_left_on_the_full_store_still_start_the_engine(tmp_path, mo
         started.append(selected.data_dir)
         raise ArcadeError("the engine start was reached")
 
-    monkeypatch.setattr("cairnmind.engine.start_engine", start)
+    monkeypatch.setattr("cairnmind.storage.engine.start_engine", start)
     code, shown = run(monkeypatch, capsys, settings.data_dir, arguments)
     assert code == 1
     assert started == [settings.data_dir]
     # #287: a command that starts the engine says so before it does, then the refusal as before.
-    from cairnmind.first_start import ENGINE_STARTING
+    from cairnmind.cli_cmds.first_start import ENGINE_STARTING
     announced = "cairnmind: " + ENGINE_STARTING.format(mode="native", data_dir=settings.data_dir)
     assert words(shown.err) == words(announced + "\nCairnmind: the engine start was reached")

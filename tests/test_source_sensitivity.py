@@ -9,11 +9,11 @@ import json
 
 import pytest
 
-from cairnmind.inspector import Inspector
-from cairnmind.memory_view import render_snapshot
+from cairnmind.memory.memory_view import render_snapshot
 from cairnmind.store import Store, record_sensitivity, source_sensitivity
-from cairnmind.terminal_detail import joined, record_parts
-from cairnmind.terminal_i18n import tr
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.terminal.terminal_detail import joined, record_parts
+from cairnmind.terminal.terminal_i18n import tr
 
 PROJECT_KINDS = ["code", "document", "file", "check_output", "check_profile", "verification", "test_result", "plan"]
 CONVERSATION_KINDS = ["transcript", "transcript_unknown", "agent_transcript", "manual", "checkpoint", "findings"]

@@ -15,25 +15,24 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
-from cairnmind import project_folders
-from cairnmind.arcade import ArcadeError
-from cairnmind.config import Settings
-from cairnmind.evidence import evidence_states
-from cairnmind.ingest import GRAPH_EDGE_KINDS, GRAPH_NODE_KINDS, index_project, index_project_if_changed
-from cairnmind.retrieval import Retriever
-from cairnmind.service import create_app
-from cairnmind.store import Store
-from cairnmind.store_writer import take_over
-
 from test_service import LocalModelFixture
+
+from cairnmind.agents.retrieval import Retriever
+from cairnmind.config import Settings
+from cairnmind.memory import project_folders
+from cairnmind.memory.evidence import evidence_states
+from cairnmind.scip.ingest import GRAPH_EDGE_KINDS, GRAPH_NODE_KINDS, index_project, index_project_if_changed
+from cairnmind.service import create_app
+from cairnmind.storage.arcade import ArcadeError
+from cairnmind.storage.store_writer import take_over
+from cairnmind.store import Store
 
 
 @pytest.fixture(autouse=True)
 def identified_machine(monkeypatch):
     """Whatever the test machine is (a container without a machine id, a Mac whose ioreg failed), these tests run on
     one that can be told from another; the host-name case patches its own identity."""
-    from cairnmind import store_writer
+    from cairnmind.storage import store_writer
     monkeypatch.setattr(store_writer, "machine_identity", lambda: "machine-id:fixture")
 
 
@@ -227,7 +226,7 @@ def test_a_graph_with_files_of_an_older_parser_that_cannot_be_read_here_is_kept(
 @pytest.mark.parametrize("failure", [ValueError("the index of this project broke"),
                                      ArcadeError("ArcadeDB HTTP 500: the index of this project broke", status_code=500)])
 def test_one_project_that_fails_does_not_stop_the_round(tmp_path, monkeypatch, failure):
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
     store = Store(tmp_path / "data")
     for name in ("aaa-fails", "bbb-works"):
         make_repo(tmp_path / name)
@@ -255,7 +254,7 @@ def test_one_project_that_fails_does_not_stop_the_round(tmp_path, monkeypatch, f
 
 
 def test_a_store_that_does_not_answer_is_one_error_of_the_round(tmp_path, monkeypatch):
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
     store = Store(tmp_path / "data")
     for name in ("aaa-down", "bbb-after"):
         make_repo(tmp_path / name)
@@ -302,10 +301,14 @@ def lost_folder(tmp_path):
 
 
 def test_status_doctor_and_index_name_the_unavailable_folder(tmp_path, monkeypatch):
+    from test_first_start_round2 import healthy
     from typer.testing import CliRunner
 
-    from cairnmind import api_runtime, cli, doctor_attention, integrations, store_writer
-    from test_first_start_round2 import healthy
+    from cairnmind import cli
+    from cairnmind.agents import api_runtime
+    from cairnmind.cli_cmds import doctor_attention
+    from cairnmind.memory import integrations
+    from cairnmind.storage import store_writer
     store, pid, root = lost_folder(tmp_path)
     sentence = project_folders.message(store.resolve_project(pid), {"root": str(root), "state": "missing"})
     entries = project_folders.unavailable(store)
@@ -382,8 +385,8 @@ def stamped(store, pid):
 
 
 def test_a_folder_of_another_machine_is_not_indexed_even_when_the_path_exists_here(tmp_path, monkeypatch):
-    from cairnmind.ingest import current_source
-    from cairnmind.store_writer import label
+    from cairnmind.scip.ingest import current_source
+    from cairnmind.storage.store_writer import label
     store, pid, root, record = indexed(tmp_path)
     before = counts(store, pid, [record])
     source = next(row["id"] for row in store.query(
@@ -436,7 +439,7 @@ def test_project_root_moves_a_folder_to_this_machine_by_name(tmp_path, monkeypat
     from typer.testing import CliRunner
 
     from cairnmind import cli
-    from cairnmind.store_writer import label
+    from cairnmind.storage.store_writer import label
     store, pid, root, record = indexed(tmp_path)
     machine(monkeypatch, "b")
     assert index_project(store, pid)["unavailable"][0]["state"] == "elsewhere"
@@ -471,8 +474,9 @@ def test_a_backup_restored_on_another_machine_keeps_the_old_machines_folders(tmp
     assert "unavailable" not in result and result["changed"] == 1
 def test_restore_on_another_machine_names_the_folders_it_leaves_with_the_old_one(tmp_path, monkeypatch):
     from typer.testing import CliRunner
-    from cairnmind import person_proof
+
     from cairnmind.cli import app
+    from cairnmind.terminal import person_proof
     store, pid, root, record = indexed(tmp_path)
     backup = store.backup(tmp_path / "old.cairnmind.json.gz")
     machine(monkeypatch, "b")
@@ -486,7 +490,7 @@ def test_restore_on_another_machine_names_the_folders_it_leaves_with_the_old_one
 
 
 def test_a_mac_whose_ioreg_fails_is_not_asked_by_every_folder_check(monkeypatch):
-    from cairnmind import store_writer
+    from cairnmind.storage import store_writer
     calls = []
 
     def fail(*args, **kwargs):
@@ -502,7 +506,7 @@ def test_a_mac_whose_ioreg_fails_is_not_asked_by_every_folder_check(monkeypatch)
 
 
 def test_the_machine_of_a_folder_is_not_in_a_snapshot_or_its_state_hash(tmp_path, monkeypatch):
-    from cairnmind.memory import MemoryManager
+    from cairnmind.memory.memory import MemoryManager
     store, pid, root, record = indexed(tmp_path)
     for args in (("init", "-q", "-b", "main"), ("config", "user.name", "Fixture"),
                  ("config", "user.email", "fixture@example.invalid"), ("add", "."), ("commit", "-qm", "initial")):
@@ -523,8 +527,9 @@ def test_the_machine_of_a_folder_is_not_in_a_snapshot_or_its_state_hash(tmp_path
 
 
 def test_an_acknowledgement_holds_while_another_machine_scans_the_project(tmp_path, monkeypatch):
-    from cairnmind.sessions import SessionManager
     from test_sessions import acknowledge, git
+
+    from cairnmind.memory.sessions import SessionManager
     root = tmp_path / "repo"
     root.mkdir()
     git(root, "init", "-b", "main")
@@ -614,7 +619,7 @@ def test_the_elsewhere_notice_reads_in_english_and_polish():
 
 @pytest.mark.parametrize("identity", ["host:laptop", "machine-id:uninitialized"])
 def test_a_machine_known_only_by_its_host_name_neither_claims_nor_refuses_a_folder(tmp_path, monkeypatch, identity):
-    from cairnmind import store_writer
+    from cairnmind.storage import store_writer
     store, pid, root, record = indexed(tmp_path)  # stamped by an identifiable machine, as a Mac that could read ioreg
     assert stamped(store, pid)[0][0]
     monkeypatch.setattr(store_writer, "machine_identity", lambda: identity)

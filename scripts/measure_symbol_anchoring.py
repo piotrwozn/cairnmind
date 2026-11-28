@@ -25,8 +25,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "src"))
 
-from cairnmind.parsing import analyze_code  # noqa: E402
-from cairnmind.symbol_anchor import SYMBOL_ANCHOR_KINDS, find_symbol_in_analysis  # noqa: E402
+from cairnmind.scip.parsing import analyze_code  # noqa: E402
+from cairnmind.memory.symbol_anchor import SYMBOL_ANCHOR_KINDS, find_symbol_in_analysis  # noqa: E402
 
 _CODE_SUFFIXES = frozenset({".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"})
 

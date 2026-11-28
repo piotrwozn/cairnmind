@@ -8,11 +8,12 @@ import pytest
 from test_graph_transactions import counted_requests, graph, synthetic
 from test_index_batching import code_tree, dump
 
-from cairnmind import graph_duplicates, graph_transactions, ingest
-from cairnmind.code_graph import code_graph_pending
-from cairnmind.sql import clean_row
+from cairnmind.scip import ingest
+from cairnmind.scip.code_graph import code_graph_pending
+from cairnmind.storage import graph_duplicates, graph_transactions
+from cairnmind.storage.sql import clean_row
 from cairnmind.store import Store
-from cairnmind.terminal_i18n import tr
+from cairnmind.terminal.terminal_i18n import tr
 
 
 def store_twice(store, identifier):
@@ -92,7 +93,7 @@ def test_the_copy_that_stays_gets_what_the_pass_computed_where_the_two_copies_di
 def hiding_the_lookups_by_id(monkeypatch):
     """The engine's index of ids that does not find a row that is stored: every request that looks a vertex or an edge up by its
     id answers nothing, and says that it was asked. What the repair writes then is written without them or it is a third copy."""
-    from cairnmind.journal import JournalTransaction
+    from cairnmind.storage.journal import JournalTransaction
     asked, real = [], JournalTransaction.query
     lookup = re.compile(r"(?<![\w.])id\s*(=|IN)\s*:", re.IGNORECASE)
 
@@ -259,10 +260,14 @@ def test_the_check_costs_two_requests_where_rows_were_written_and_none_where_not
     assert nothing == requests_of_a_pass("same-too", False, lambda store, project, written: (0, 0))[0]
 
 def test_a_store_that_holds_a_vertex_twice_is_counted_by_doctor_and_said_in_both_languages(tmp_path, monkeypatch):
+    from test_first_start_round2 import healthy
     from typer.testing import CliRunner
 
-    from cairnmind import api_runtime, cli, doctor_attention, integrations, store_writer
-    from test_first_start_round2 import healthy
+    from cairnmind import cli
+    from cairnmind.agents import api_runtime
+    from cairnmind.cli_cmds import doctor_attention
+    from cairnmind.memory import integrations
+    from cairnmind.storage import store_writer
     store = Store(tmp_path / "memory")
     project, indexed = synthetic(store, tmp_path)
     ingest._build_graph(store, project, indexed)
@@ -302,7 +307,8 @@ def test_a_graph_without_a_duplicate_is_not_changed_by_the_check(tmp_path):
 
 def test_a_sqlite_store_cannot_hold_an_id_twice_so_the_check_finds_nothing_and_repairs_nothing(tmp_path):
     """The schema of the embedded backend makes `id` the primary key of every collection: a second row of an id is refused
-    by the database itself, so the lag of ArcadeDB's index (#456) has no counterpart, and the check is a plain count."""
+    by the database itself, so the lag of ArcadeDB's index (#456) has no counterpart; the backend runs no raw SQL, so the
+    check answers without a request (a request would raise NotImplementedError here)."""
     store = Store.open_memory(tmp_path / "mem")
     try:
         repo = tmp_path / "repo"
@@ -316,9 +322,8 @@ def test_a_sqlite_store_cannot_hold_an_id_twice_so_the_check_finds_nothing_and_r
             store.upsert_node(node, tx)
             store.upsert_edge(edge, tx)
         for collection, row in (("nodes", node), ("edges", edge)):
-            with pytest.raises(ValueError, match="Duplicate key"):
-                with store.transaction() as tx:
-                    store.backend.insert_document(tx, collection, row)
+            with pytest.raises(ValueError, match="Duplicate key"), store.transaction() as tx:
+                store.backend.insert_document(tx, collection, row)
         assert graph_duplicates.surplus(store, project) == graph_duplicates.surplus(store, project, "edges") == 0
         assert graph_duplicates.by_project(store) == [] and graph_duplicates.repair(store, project) == (0, 0)
     finally:

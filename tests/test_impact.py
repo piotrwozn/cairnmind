@@ -13,10 +13,10 @@ from typer.testing import CliRunner
 
 from cairnmind.cli import app
 from cairnmind.config import Settings
-from cairnmind.impact import build_impact
-from cairnmind.ingest import index_project
+from cairnmind.memory.impact import build_impact
+from cairnmind.scip.ingest import index_project
+from cairnmind.storage.sql import clean_row
 from cairnmind.store import Store
-from cairnmind.sql import clean_row
 
 AUTH = '''SESSION_MINUTES = 30
 
@@ -431,7 +431,7 @@ def test_ignored_and_reserved_directories_are_not_read(workspace, monkeypatch):
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text(text)
     (root / "notes" / "untracked.md").write_text(text)
-    from cairnmind import impact_docs
+    from cairnmind.memory import impact_docs
     read = []
     original = impact_docs._doc_text
     monkeypatch.setattr(impact_docs, "_doc_text", lambda *args: read.append(args[2]) or original(*args))
@@ -547,7 +547,7 @@ def test_files_that_were_not_read_are_counted_and_said_even_when_no_page_is_list
 def test_a_failure_to_list_the_files_is_said_and_not_taken_for_an_empty_answer(workspace, monkeypatch):
     store, pid, root, records = workspace
     touch_auth(root)
-    from cairnmind import impact_docs
+    from cairnmind.memory import impact_docs
     monkeypatch.setattr(impact_docs, "_git_bytes", lambda base, *args: None)
     report = build_impact(store, pid, "HEAD")
     assert report["documentation"]["unavailable"] is True and report["documentation"]["documents"] == []
@@ -588,7 +588,7 @@ def test_directories_and_files_the_indexer_skips_are_not_read(workspace, monkeyp
     text = "refresh_token is here.\n"
     commit_files(root, {"vendor/x.md": text, "node_modules/pkg/y.md": text, ".claude/commands/c.md": text,
                         ".env.local.md": text, "notes/.env.txt": text, "notes/ok.md": text})
-    from cairnmind import impact_docs
+    from cairnmind.memory import impact_docs
     read = []
     original = impact_docs._doc_text
     monkeypatch.setattr(impact_docs, "_doc_text", lambda *args: read.append(args[2]) or original(*args))
@@ -600,7 +600,7 @@ def test_directories_and_files_the_indexer_skips_are_not_read(workspace, monkeyp
 def test_the_scan_has_work_bounds_and_says_so(workspace, monkeypatch):
     store, pid, root, records = workspace
     commit_files(root, {f"docs/p{number}.md": "refresh_token\n" for number in range(8)})
-    from cairnmind import impact_docs
+    from cairnmind.memory import impact_docs
     touch_auth(root)
     monkeypatch.setattr(impact_docs, "MAX_FILES", 4)
     report = build_impact(store, pid, "HEAD")
@@ -679,7 +679,7 @@ def test_files_opened_but_not_usable_count_against_the_budgets(workspace, monkey
     store, pid, root, records = workspace
     commit_files(root, {f"docs/nul{number}.txt": b"refresh_token\0" for number in range(6)})
     touch_auth(root)
-    from cairnmind import impact_docs
+    from cairnmind.memory import impact_docs
     monkeypatch.setattr(impact_docs, "MAX_FILES", 3)
     report = build_impact(store, pid, "HEAD")
     assert report["documentation"]["not_scanned"] == 4 and report["documentation"]["skipped_documents"] == 2
@@ -688,7 +688,8 @@ def test_files_opened_but_not_usable_count_against_the_budgets(workspace, monkey
 def test_a_file_that_grew_after_the_size_check_is_read_with_a_cap(workspace, monkeypatch):
     store, pid, root, records = workspace
     from types import SimpleNamespace
-    from cairnmind import impact_docs
+
+    from cairnmind.memory import impact_docs
 
     class Liar(type(root)):
         """A path whose stat claims that the page is tiny, as if it had grown since."""
@@ -767,7 +768,7 @@ def test_a_record_is_linked_through_a_plain_word_only_when_its_evidence_writes_i
 
 
 def test_a_parameter_default_changes_only_when_its_own_text_does():
-    from cairnmind.impact import _definitions
+    from cairnmind.memory.impact import _definitions
     old = "@retry(times=3)\ndef connect(host, port=7311, timeout=5):\n    pass\n"
     new = "@retry(times=4)\ndef connect(host, port=7311, timeout=9):\n    pass\n"
     before, after = _definitions("net.py", old), _definitions("net.py", new)

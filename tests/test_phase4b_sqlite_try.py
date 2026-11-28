@@ -5,20 +5,28 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import sqlite3
 import subprocess
 import sys
 import tomllib
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, ingest, try_demo
+from cairnmind import cli
+from cairnmind.cli_cmds import try_demo
 from cairnmind.config import Settings, resolved_backend, sqlite_db_path
-from cairnmind.sqlite_backend import SQLiteBackend, cosine_distance, pack_vector, quote_fts5_query, unpack_vector
-from cairnmind.storage_backend import ALL_COLLECTIONS, StorageBackend
+from cairnmind.scip import ingest
+from cairnmind.storage.sqlite_backend import (
+    SQLiteBackend,
+    cosine_distance,
+    pack_vector,
+    quote_fts5_query,
+    unpack_vector,
+)
+from cairnmind.storage.storage_backend import ALL_COLLECTIONS, StorageBackend
 from cairnmind.store import Store
 
 
@@ -182,9 +190,9 @@ def test_sqlite_config_and_cli_init_without_java(tmp_path: Path, monkeypatch):
     (repo / "app.py").write_text("DEFAULT_PORT = 8080\n", encoding="utf-8")
 
     # Prove ArcadeDB/Java is never invoked when --backend sqlite is selected.
-    from cairnmind import engine
+    from cairnmind.storage import engine
     monkeypatch.setattr(engine, "ensure_engine", lambda *a, **k: pytest.fail("ensure_engine must not run for SQLite"))
-    monkeypatch.setattr("cairnmind.knowledge_mode.choose", lambda *a, **k: None)
+    monkeypatch.setattr("cairnmind.agents.knowledge_mode.choose", lambda *a, **k: None)
 
     runner = CliRunner()
     res = runner.invoke(cli.app, ["--data-dir", str(data_dir), "init", "--backend", "sqlite", "--json"])

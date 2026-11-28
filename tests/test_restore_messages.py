@@ -3,11 +3,11 @@ import string
 
 import pytest
 
-from cairnmind import engine_docker, restore_staged
-from cairnmind.arcade import ArcadeError
 from cairnmind.config import Settings
-from cairnmind.restore_staged import MESSAGES
-from cairnmind.terminal_i18n import CATALOG
+from cairnmind.storage import engine_docker, restore_staged
+from cairnmind.storage.arcade import ArcadeError
+from cairnmind.storage.restore_staged import MESSAGES
+from cairnmind.terminal.terminal_i18n import CATALOG
 
 HEAP = ArcadeError("ArcadeDB HTTP 500: Java heap space", status_code=500)
 PRODUCTION = ArcadeError("ArcadeDB HTTP 500: Internal error", status_code=500)

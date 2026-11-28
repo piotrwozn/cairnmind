@@ -8,15 +8,14 @@ import hashlib
 import json
 
 import pytest
-
-from cairnmind import arcade
-from cairnmind.journal import JournalTransaction
-from cairnmind.restore_groups import DOCUMENT_BYTES_PER_REQUEST, GRAPH_BYTES_HELD, GraphGroups
-from cairnmind.restore_staged import RestoreFailed
-from cairnmind.sql import clean_row, insert_document, json_text, quote_name
-from cairnmind.store import DOCUMENT_TYPES, Store
-
 from test_backup_restore_stream import FIXTURE_0_10_0, _backup_payload, _variants, comparable
+
+from cairnmind.storage import arcade
+from cairnmind.storage.journal import JournalTransaction
+from cairnmind.storage.restore_groups import DOCUMENT_BYTES_PER_REQUEST, GRAPH_BYTES_HELD, GraphGroups
+from cairnmind.storage.restore_staged import RestoreFailed
+from cairnmind.storage.sql import clean_row, insert_document, json_text, quote_name
+from cairnmind.store import DOCUMENT_TYPES, Store
 
 NODES = 600
 CHUNKS = 300
@@ -39,7 +38,7 @@ def _row_by_row(self, source, claims=None):
         self.command(f"CREATE INDEX IF NOT EXISTS ON {quote_name(name)}(vector) LSM_VECTOR METADATA "
                      f"{{dimensions:{dimension},similarity:'COSINE',idPropertyName:'id'}}")
     with self.transaction() as tx:
-        from cairnmind.journal import Journal
+        from cairnmind.storage.journal import Journal
         Journal.reset(tx, reason="restore")
         for row in tx.query("SELECT FROM vector_indexes"):
             if row.get("type_name", "").startswith("vector_"):
@@ -189,8 +188,8 @@ def _failing_at(monkeypatch, number, test):
     return left
 
 
-@pytest.mark.parametrize("statement", ["INSERT INTO `chunks` CONTENT :rows", "CREATE VERTEX nodes CONTENT :rows",
-                                       "CREATE EDGE edges", "INSERT INTO `vector_"])
+@pytest.mark.parametrize("statement", ["INSERT INTO chunks CONTENT :rows", "CREATE VERTEX nodes CONTENT :rows",
+                                       "CREATE EDGE edges", "INSERT INTO vector_"])
 def test_a_restore_that_fails_in_the_middle_of_a_group_changes_nothing(store, tmp_path, monkeypatch, statement):
     path = _large(store, tmp_path)
     store.add_project("after the backup", tmp_path / "after")
@@ -211,7 +210,7 @@ def test_a_group_the_database_did_not_store_in_full_fails_the_restore(store, tmp
 
     def short(self, sql, params=None):
         result = command(self, sql, params)
-        if sql.startswith("INSERT INTO `chunks` CONTENT :rows") and not short_once:
+        if sql.startswith("INSERT INTO chunks CONTENT :rows") and not short_once:
             short_once.append(sql)  # once: the undo writes its chunks in full, as an engine that recovered would
             return result[:-1]
         return result

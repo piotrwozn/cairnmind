@@ -2,30 +2,29 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
-from fastapi.testclient import TestClient
 import pytest
+from conftest import person_proven
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.confirmation import confirmed_by
-from cairnmind.evidence import evidence_states, orphans_report
-from cairnmind.ingest import index_project
-from cairnmind.inspector import Inspector
-from cairnmind.memory import MemoryManager
-from cairnmind.quote_healing import (
+from cairnmind.memory.confirmation import confirmed_by
+from cairnmind.memory.evidence import evidence_states, orphans_report
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.quote_healing import (
     QuoteCASConflict,
     heal_project_quotes,
     healing_audit_log,
     is_healing_audit_source,
     sha256_quote,
 )
+from cairnmind.scip.ingest import index_project
 from cairnmind.service import create_app
 from cairnmind.store import Store
-
-from conftest import person_proven
+from cairnmind.terminal.inspector import Inspector
 
 
 class NoInference:
@@ -358,7 +357,7 @@ def test_edge_case_concurrent_agents_blocked_by_optimistic_concurrency_cas(tmp_p
     _commit_files(repo, {"auth.py": "# one more line\n" + AUTH_V2_REFACTORED}, "shift again")
     before_audits = len(healing_audit_log(store, project["id"], record_id=rec["id"]))
 
-    import cairnmind.quote_healing as qh
+    import cairnmind.memory.quote_healing as qh
     real_plan = qh._plan_records_healing
 
     def plan_with_concurrent_writer(*args, **kwargs):

@@ -1,19 +1,21 @@
 """Stopping a command's process group: cases where the stop could end early (#175)."""
 import asyncio
+import contextlib
 import os
-from pathlib import Path
 import shlex
 import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
-from cairnmind import agent_tools, process_identity
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.agent_tools import ToolExecutor
+from cairnmind.agents import agent_tools
+from cairnmind.agents.agent_journal import AgentJournal
+from cairnmind.agents.agent_tools import ToolExecutor
 from cairnmind.config import Settings
+from cairnmind.pal import process_identity
 
 pytestmark = pytest.mark.skipif(
     sys.platform == "win32",
@@ -47,10 +49,8 @@ def running(pid):
 
 
 def kill(pid):
-    try:
+    with contextlib.suppress(ProcessLookupError):
         os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
 
 
 async def wait_for(path, written=False):

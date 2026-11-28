@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import closing
 import copy
 import gzip
 import json
+from contextlib import closing
 from pathlib import Path
 
 import pytest
-
 from contract_store_fixture import (
     assert_matches_frozen_example,
     build_contract_environment,
@@ -17,12 +16,13 @@ from contract_store_fixture import (
     capture_mcp_tool_contracts,
     run_contract_service,
 )
-from cairnmind.arcade import ArcadeClient
+
 from cairnmind.config import Settings
-from cairnmind.memory import MemoryManager, inspect_snapshot
-from cairnmind.memory_published_check import check_directory
-from cairnmind.memory_published_import import PublishedImporter
-from cairnmind.sql import insert_document, quote_name
+from cairnmind.memory.memory import MemoryManager, inspect_snapshot
+from cairnmind.memory.memory_published_check import check_directory
+from cairnmind.memory.memory_published_import import PublishedImporter
+from cairnmind.storage.arcade import ArcadeClient
+from cairnmind.storage.sql import insert_document, quote_name
 from cairnmind.store import EXPORT_TYPES, SCHEMA_VERSION, Store
 
 FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures"

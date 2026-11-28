@@ -2,27 +2,25 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
-
-from cairnmind.evidence import evidence_states
-from cairnmind.findings import save_finding
-from cairnmind.inspector import Inspector
-from cairnmind.memory_acts import confirm_plan
-from cairnmind.memory import MemoryConflict, MemoryManager
-from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
-from cairnmind.memory_published_check import check_directory
-from cairnmind.memory_published_format import render
-from cairnmind.memory_published_parse import parse_file
-from cairnmind.memory_published_import import PublishedImporter
-from cairnmind.plans import PlanManager
-from cairnmind.store import Store
-
-from cairnmind.confirmation import ConfirmationRefused
-
 from conftest import as_person, person_edit, person_unproven
+
+from cairnmind.memory.confirmation import ConfirmationRefused
+from cairnmind.memory.evidence import evidence_states
+from cairnmind.memory.findings import save_finding
+from cairnmind.memory.memory import MemoryConflict, MemoryManager
+from cairnmind.memory.memory_acts import confirm_plan
+from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
+from cairnmind.memory.memory_published_check import check_directory
+from cairnmind.memory.memory_published_format import render
+from cairnmind.memory.memory_published_import import PublishedImporter
+from cairnmind.memory.memory_published_parse import parse_file
+from cairnmind.memory.plans import PlanManager
+from cairnmind.store import Store
+from cairnmind.terminal.inspector import Inspector
 
 GUIDE = "# Guide\n\nThe active backend is ArcadeDB.\nNothing else stores memory.\n"
 
@@ -296,7 +294,7 @@ def test_a_round_trip_keeps_identity_revisions_and_sources(ada):
     assert rows[record["id"]]["metadata"]["publication"]["reviewed_by"][0]["name"] == "Ada Nowak"
     task = rows[saved["tasks"][0]["id"]]
     assert task["metadata"]["plan_ref"] == saved["plan"]["id"] and task["metadata"]["step_index"] == 0
-    from cairnmind.verification import verification_status
+    from cairnmind.memory.verification import verification_status
     assert verification_status(bo["store"], task, bo["root"])["status"] != "fresh"
     assert MemoryManager(bo["store"]).snapshot(bo["project"])["status"] == "created"
 

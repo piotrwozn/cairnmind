@@ -8,11 +8,10 @@ from uuid import uuid4
 import pytest
 from jsonschema import Draft202012Validator
 
-from cairnmind import agent as agent_module
-from cairnmind.agent import KnowledgeAgent
+from cairnmind.agents import agent as agent_module
+from cairnmind.agents.agent import KnowledgeAgent
 from cairnmind.config import Settings
 from cairnmind.store import Store
-
 
 HISTORY_CANARY = "UNRELATED_EXISTING_RECORD_CONTENT_MUST_NOT_ENTER_MODEL_INPUT"
 REJECTED_CANARY = "PRIVATE_REJECTED_MODEL_EVIDENCE_MUST_NOT_ENTER_DIAGNOSTICS"
@@ -119,7 +118,7 @@ def test_evidence_grammar_is_bounded_unique_literal_and_does_not_mutate_the_stat
     assert len(passages) == len(set(passages))
     assert all(isinstance(value, str) and value.strip() and len(value) <= 400 and value in text
                for value in passages)
-    assert agent_module.EXTRACTION_SCHEMA == original
+    assert original == agent_module.EXTRACTION_SCHEMA
     assert "enum" not in evidence_property(original)
     if len(text) <= 400:
         assert passages == [text]

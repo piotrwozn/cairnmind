@@ -1,12 +1,12 @@
 """HTTP-only ArcadeDB requests must never relax any other client's TLS policy."""
-from concurrent.futures import ThreadPoolExecutor
 import ssl
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import pytest
 
-from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 
 
 def settings(tmp_path, url="http://127.0.0.1:2480"):
@@ -142,15 +142,14 @@ def test_only_a_read_outside_a_transaction_is_sent_again_when_a_kept_connection_
         client.command("UPDATE x SET y=1")  # it may have been applied: never repeated
     assert seen == ["command"]
     seen[:] = ["skip"]  # the next request succeeds, the one after it fails
-    with pytest.raises(ArcadeError, match="RemoteProtocolError"):
-        with client.transaction() as tx:
-            tx.query("SELECT 1")  # inside a transaction nothing is repeated either
+    with pytest.raises(ArcadeError, match="RemoteProtocolError"), client.transaction() as tx:
+        tx.query("SELECT 1")  # inside a transaction nothing is repeated either
     assert seen == ["skip", "begin", "query", "rollback"]
 
 
 def test_a_commit_waits_as_long_as_any_request_unless_the_transaction_asks_for_longer(tmp_path, monkeypatch):
     """#362: only the transactions of a restore wait 120 s for their commit; every other command keeps 30 s."""
-    from cairnmind import arcade
+    from cairnmind.storage import arcade
     waits, request = [], ArcadeClient._request
 
     def noting(self, method, path, **kwargs):
@@ -170,7 +169,7 @@ def test_a_commit_waits_as_long_as_any_request_unless_the_transaction_asks_for_l
 
 
 def test_a_forked_process_does_not_use_the_connections_of_its_parent(tmp_path, monkeypatch):
-    import cairnmind.arcade as arcade
+    import cairnmind.storage.arcade as arcade
 
     client = ArcadeClient(settings(tmp_path), transport=httpx.MockTransport(
         lambda request: httpx.Response(200, json={"result": []})))
@@ -221,17 +220,15 @@ def test_transaction_headers_are_scoped_and_nested_transaction_reuses_session(tm
         seen.append((request.url.path, request.headers.get("arcadedb-session-id")))
         return httpx.Response(200, json={"result": []}, headers={"arcadedb-session-id": "session-one"})
     client = ArcadeClient(settings(tmp_path), transport=httpx.MockTransport(handle))
-    with client.transaction() as tx:
-        with tx.transaction() as nested:
-            assert nested is tx
-            nested.query("SELECT 1")
+    with client.transaction() as tx, tx.transaction() as nested:
+        assert nested is tx
+        nested.query("SELECT 1")
     client.query("SELECT 1")
     assert [session for _, session in seen] == [None, "session-one", "session-one", None]
     assert [path.split("/")[-2] for path, _ in seen] == ["begin", "query", "commit", "query"]
     seen.clear()
-    with pytest.raises(RuntimeError, match="abort"):
-        with client.transaction():
-            raise RuntimeError("abort")
+    with pytest.raises(RuntimeError, match="abort"), client.transaction():
+        raise RuntimeError("abort")
     assert [path.split("/")[-2] for path, _ in seen] == ["begin", "rollback"]
 
 

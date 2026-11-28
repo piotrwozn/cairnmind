@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from test_quick_finding import INTERRUPTED, KEY, FakeBroker, selected_workspace, text_of
+from test_quick_finding import stack as stack
 from textual.widgets import TextArea
 
-from cairnmind.terminal_client import BrokerClient, BrokerError
-from cairnmind.workspace_finding import ERROR_LIMIT, FindingApp
-from cairnmind.workspace_state import WorkspaceState
-from test_quick_finding import INTERRUPTED, KEY, FakeBroker, selected_workspace, stack as stack, text_of
+from cairnmind.terminal.terminal_client import BrokerClient, BrokerError
+from cairnmind.terminal.workspace_finding import ERROR_LIMIT, FindingApp
+from cairnmind.terminal.workspace_state import WorkspaceState
 
 
 class LostReplyBroker:
@@ -99,7 +100,7 @@ def test_the_service_compares_a_retry_with_what_the_first_request_asked(stack, w
 async def test_after_an_unclear_answer_the_next_save_finds_a_restarted_broker(tmp_path, monkeypatch):
     settings, state = selected_workspace(tmp_path)
     ports, seen = iter([8766, 8767]), []
-    monkeypatch.setattr("cairnmind.cockpit.cockpit_status",
+    monkeypatch.setattr("cairnmind.terminal.cockpit.cockpit_status",
                         lambda settings: {"available": True, "url": f"http://127.0.0.1:{next(ports)}"})
 
     def handler(request):

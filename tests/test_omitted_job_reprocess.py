@@ -1,16 +1,15 @@
 """A completed all-rejected extraction requires explicit, scoped reprocessing."""
-from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
 import json
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 
 import pytest
 from fastapi.testclient import TestClient
 
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
 from cairnmind.store import JobNotFoundError, Store, job_diagnostics
-
 
 OMITTED = {"stage": "extract", "code": "completed_with_omissions", "repair_attempted": False,
            "repair_outcome": "not_needed", "validation_codes": ["proposal_rejected"],

@@ -9,11 +9,13 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, integrations, knowledge_mode, memory_models
+from cairnmind import cli
+from cairnmind.agents import knowledge_mode
+from cairnmind.agents.knowledge_mode import missing_models as REAL_PROBE
 from cairnmind.config import Settings
-from cairnmind.knowledge_mode import missing_models as REAL_PROBE
-from cairnmind.memory_models import RemoteServerRefused
-from cairnmind.terminal_i18n import tr
+from cairnmind.memory import integrations, memory_models
+from cairnmind.memory.memory_models import RemoteServerRefused
+from cairnmind.terminal.terminal_i18n import tr
 
 REMOTE = "http://models.lan:11434"
 TAGS = {"models": [{"name": "qwen3.5:9b", "digest": "a" * 64}, {"name": "qwen3-embedding:0.6b", "digest": "b" * 64}]}
@@ -84,8 +86,9 @@ def test_the_clients_of_the_knowledge_agent_refuse_the_address(tmp_path, monkeyp
 
 
 def test_init_stores_nothing_and_asks_nobody_when_the_address_is_remote(tmp_path, monkeypatch, seen):
-    from cairnmind import database_mode, engine_docker
     from test_knowledge_mode import FakeStore
+
+    from cairnmind.storage import database_mode, engine_docker
     monkeypatch.setattr(engine_docker, "choose_engine_mode", lambda settings: None)
     monkeypatch.setattr(database_mode, "connect_only", lambda settings: False)
     monkeypatch.setattr(database_mode, "engine_mode", lambda settings: "native")
@@ -147,11 +150,11 @@ def test_every_loopback_form_the_rule_accepts_is_labelled_local(tmp_path, url):
 
 
 def test_the_installer_summary_prints_the_refusal_once_and_not_a_server_that_does_not_answer(tmp_path):
-    from cairnmind import doctor_attention
+    from cairnmind.cli_cmds import doctor_attention
     settings = Settings(data_dir=tmp_path, ollama_url=REMOTE)
     sentence = [memory_models._doctor_role(settings, role, None) for role in ("chat", "embedding")]
     report = {"ollama": {"available": False, "error": sentence[0]["error"], "refused": True, "url": REMOTE},
-              "memory_models": dict(zip(("chat", "embedding"), sentence))}
+              "memory_models": dict(zip(("chat", "embedding"), sentence, strict=False))}
     lines = doctor_attention.attention(report)
     assert len(lines) == 1 and "--allow-remote" in lines[0] and lines[0].endswith("11434.")
     assert "does not answer" not in lines[0]

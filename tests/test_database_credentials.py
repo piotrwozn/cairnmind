@@ -8,19 +8,19 @@ from __future__ import annotations
 import http.server
 import json
 import os
-from pathlib import Path
 import shutil
 import ssl
 import subprocess
 import sys
 import threading
+from pathlib import Path
 
 import httpx
 import pytest
 
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.agents.agent_journal import AgentJournal
 from cairnmind.config import Settings
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 
 SECRET = "Db-secret-7f3a9c41e2b8d6"
 STORED = "Stored-secret-0b1c2d3e4f5a"
@@ -35,7 +35,7 @@ def no_database_environment(monkeypatch):
 
 
 def config(root: Path, **values) -> Path:
-    from cairnmind import private_files
+    from cairnmind.pal import private_files
     if sys.platform == "win32":
         if not root.exists():
             private_files.ensure_private_dir(root)
@@ -47,8 +47,9 @@ def config(root: Path, **values) -> Path:
 
 
 def private_file(path: Path, text: str, mode: int = 0o600) -> Path:
-    from cairnmind import private_files
     from conftest import make_world_readable
+
+    from cairnmind.pal import private_files
     path.write_text(text, encoding="utf-8")
     if sys.platform == "win32":
         if (mode & 0o077) == 0:
@@ -366,7 +367,7 @@ def test_the_password_is_not_part_of_the_settings_repr(tmp_path):
 # --- What doctor says, and that no secret reaches it, an error or the journal ---------------------
 
 def doctor_block(settings, monkeypatch, answer):
-    from cairnmind import database_credentials
+    from cairnmind.storage import database_credentials
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", lambda self, request: answer(request))
     return database_credentials.doctor_block(settings, timeout=1.5)
 
@@ -524,7 +525,7 @@ def test_an_empty_current_spelling_does_not_hide_the_earlier_one(tmp_path, monke
 # --- A server on another host is never started here ---------------------------------------------------
 
 def test_an_unreachable_remote_server_is_reported_and_nothing_is_started_or_written(tmp_path, monkeypatch):
-    from cairnmind import engine
+    from cairnmind.storage import engine
 
     def unreachable(self, request):
         raise httpx.ConnectError("no route", request=request)
@@ -542,3 +543,64 @@ def test_an_unreachable_remote_server_is_reported_and_nothing_is_started_or_writ
     assert SECRET not in str(refused.value)
     assert not (tmp_path / "arcade").exists()
     assert not any(SECRET in path.read_text(errors="replace") for path in tmp_path.rglob("*") if path.is_file())
+
+
+# --- Defense-in-depth identifier validation before DDL commands ---------------------------------------
+
+@pytest.mark.parametrize("good", ["cairnmind", "cairnmind_a1b2c3", "devbrain_0123", "tls_test", "my-db_1", "A" * 64])
+def test_safe_database_and_user_identifiers_accept_valid_names(good):
+    from cairnmind.storage.database_credentials import require_safe_database, require_safe_user
+
+    assert require_safe_database(good) == good
+    assert require_safe_user(good) == good
+
+
+@pytest.mark.parametrize("bad", [
+    "",
+    "1starts_with_digit",
+    "foo bar",
+    "foo; drop database bar",
+    "foo'bar",
+    "foo\nbar",
+    "foo/bar",
+    "a" * 102,
+])
+def test_safe_database_and_user_identifiers_reject_injection_payloads(bad, tmp_path):
+    from cairnmind.storage.database_credentials import create_user, require_safe_database, require_safe_user
+
+    with pytest.raises(ValueError, match="Unsafe ArcadeDB database identifier"):
+        require_safe_database(bad)
+    with pytest.raises(ValueError, match="Unsafe ArcadeDB user identifier"):
+        require_safe_user(bad)
+
+    # ensure_database validates directly at the DDL boundary even if client.database is mutated
+    sent: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and "/api/v1/exists/" in request.url.path:
+            return httpx.Response(200, json={"result": False})
+        sent.append(request.content.decode("utf-8", errors="replace"))
+        return httpx.Response(200, json={"result": "ok"})
+
+    client = ArcadeClient(
+        Settings(data_dir=tmp_path, arcade_password=SECRET, arcade_database="safe_db"),
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        client.database = bad
+        with pytest.raises(ValueError, match="Unsafe ArcadeDB database identifier"):
+            client.ensure_database()
+        assert sent == []
+    finally:
+        client.close()
+
+    # create_user rejects an unsafe database name before opening any admin session
+    settings = Settings(
+        data_dir=tmp_path,
+        arcade_user="cairnmind_user",
+        arcade_password=SECRET,
+        arcade_database=bad,
+        _origin={"password": "environment"},
+    )
+    with pytest.raises(ValueError, match="Invalid ArcadeDB database name|Unsafe ArcadeDB database identifier"):
+        create_user(settings, admin_secret="Admin-secret-1")

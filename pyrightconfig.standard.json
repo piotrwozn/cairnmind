@@ -1,0 +1,11 @@
+{
+  "pythonVersion": "3.12",
+  "include": [
+    "src/cairnmind/pal",
+    "src/cairnmind/storage",
+    "src/cairnmind/mcp"
+  ],
+  "typeCheckingMode": "standard",
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "none"
+}

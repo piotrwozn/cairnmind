@@ -11,11 +11,16 @@ import httpx
 import pytest
 from jsonschema import Draft202012Validator
 
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.agent_memory import AgentMemoryClient, MEMORY_TOOLS, archive_agent_target, capture_agent_target
-from cairnmind.memory import MemoryManager, inspect_snapshot
+from cairnmind.agents.agent_journal import AgentJournal
+from cairnmind.agents.agent_memory import (
+    MEMORY_TOOLS,
+    AgentMemoryClient,
+    archive_agent_target,
+    capture_agent_target,
+)
+from cairnmind.memory.memory import MemoryManager, inspect_snapshot
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
 from cairnmind.store import Store
 
 
@@ -293,7 +298,7 @@ async def test_scope_override_and_foreign_sources_are_rejected(workspace, tmp_pa
         with pytest.raises(ValueError, match="cannot override"):
             await memory.execute("checkpoint", args)
     # #240: refused with a fixed hint the model can act on, never the service's text or the source.
-    from cairnmind.agent_memory import MemoryRefusal
+    from cairnmind.agents.agent_memory import MemoryRefusal
     with pytest.raises(MemoryRefusal) as foreign:
         await memory.execute("read_source", {"source_id": source["id"]})
     assert foreign.value.code == "unknown_source" and "Not visible" not in foreign.value.message
@@ -397,7 +402,7 @@ def test_portable_snapshot_keeps_api_sources_done_and_no_session_authority(works
 ])
 async def test_only_a_marked_refusal_or_a_known_conflict_becomes_a_refusal_for_the_model(tmp_path, status, body, code):
     # #240: the service's refusal of a confirmation is marked; a key that exists gets a fixed hint.
-    from cairnmind.agent_memory import KEY_EXISTS_HINT, MemoryRefusal
+    from cairnmind.agents.agent_memory import KEY_EXISTS_HINT, MemoryRefusal
     from cairnmind.config import Settings
     transport = httpx.MockTransport(lambda request: httpx.Response(status, json=body))
     worktree = tmp_path / "project"
@@ -432,7 +437,7 @@ async def test_only_a_marked_refusal_or_a_known_conflict_becomes_a_refusal_for_t
 async def test_a_wrong_record_field_or_an_unknown_source_becomes_a_refusal_for_the_model(
         tmp_path, name, status, body, code):
     # #240, second trial: both came back to the model as tool_failed; a service failure still does.
-    from cairnmind.agent_memory import UNKNOWN_SOURCE_HINT, UNKNOWN_TASK_HINT, MemoryRefusal
+    from cairnmind.agents.agent_memory import UNKNOWN_SOURCE_HINT, UNKNOWN_TASK_HINT, MemoryRefusal
     from cairnmind.config import Settings
     transport = httpx.MockTransport(lambda request: httpx.Response(status, json=body))
     worktree = tmp_path / "project"
@@ -459,7 +464,7 @@ async def test_a_wrong_record_field_or_an_unknown_source_becomes_a_refusal_for_t
 
 @pytest.mark.asyncio
 async def test_a_source_id_of_a_bad_shape_is_the_same_refusal_and_reaches_no_service(tmp_path):
-    from cairnmind.agent_memory import UNKNOWN_SOURCE_HINT, MemoryRefusal
+    from cairnmind.agents.agent_memory import UNKNOWN_SOURCE_HINT, MemoryRefusal
     from cairnmind.config import Settings
     requests = []
     transport = httpx.MockTransport(lambda request: requests.append(request) or httpx.Response(200, json={}))
@@ -477,7 +482,7 @@ async def test_a_source_id_of_a_bad_shape_is_the_same_refusal_and_reaches_no_ser
 @pytest.mark.asyncio
 async def test_the_store_sentence_about_a_record_shape_gets_what_a_record_looks_like(tmp_path):
     # #240, review: a record of an unknown kind or without content came back as a bare tool_failed.
-    from cairnmind.agent_memory import RECORD_SHAPE_HINT, MemoryRefusal
+    from cairnmind.agents.agent_memory import RECORD_SHAPE_HINT, MemoryRefusal
     from cairnmind.config import Settings
     from cairnmind.store import KINDS
     body = {"detail": "Record content must be nonempty text", "refusal": "record"}

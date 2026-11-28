@@ -4,17 +4,18 @@ from __future__ import annotations
 import inspect
 
 import pytest
+from consent_steps import consent_drawn, form_ready
+from test_terminal_panels import FakeBroker, settle, setup
 from textual.widgets import Button, Select, Static, TextArea
 
-from cairnmind import memory_published_release, terminal_release
-from cairnmind.memory_published_secrets import MAX_RELEASE_REASON
-from cairnmind.person_proof import PROOF_MISSING
-from cairnmind.terminal_client import BrokerError
-from cairnmind.terminal_i18n import CATALOG, tr
-from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
-from cairnmind.terminal_inspector import InspectorApp
-from consent_steps import consent_drawn, form_ready
-from test_terminal_panels import FakeBroker, setup, settle
+from cairnmind.memory import memory_published_release
+from cairnmind.memory.memory_published_secrets import MAX_RELEASE_REASON
+from cairnmind.terminal import terminal_release
+from cairnmind.terminal.person_proof import PROOF_MISSING
+from cairnmind.terminal.terminal_client import BrokerError
+from cairnmind.terminal.terminal_i18n import CATALOG, tr
+from cairnmind.terminal.terminal_i18n_messages import BROKER_MESSAGES
+from cairnmind.terminal.terminal_inspector import InspectorApp
 
 RELEASE = "/api/inspector/records/record-a/release"
 BROKER_KEYS = ("Nothing in this record needs a release", "The record is not published",
@@ -38,7 +39,7 @@ class ReleaseBroker(FakeBroker):
 
 def release_app(tmp_path, monkeypatch, language="pl"):
     settings, _, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     broker = ReleaseBroker({"id": "project-a", "name": "Project A", "root": str(tmp_path / "project")})
     return InspectorApp(settings, broker=broker, workspace=workspace), broker, workspace
 

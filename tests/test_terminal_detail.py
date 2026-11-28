@@ -10,12 +10,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from cairnmind import terminal_theme as theme
-from cairnmind.terminal_detail import conflict_parts, conflict_text, joined, record_parts
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_impact import impact_parts, impact_text
-from cairnmind.terminal_inspector import InspectorApp
-from cairnmind.terminal_safe import safe_text
+from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.terminal import terminal_theme as theme
+from cairnmind.terminal.terminal_detail import conflict_parts, conflict_text, joined, record_parts
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_impact import impact_parts, impact_text
+from cairnmind.terminal.terminal_inspector import InspectorApp
 
 RECORDS = {
     "anchored": {

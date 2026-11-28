@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from conftest import assert_private, make_private_again, make_symlink_or_skip, make_world_readable
-from cairnmind.api_credentials import CredentialStore, credential_environment_names
+
+from cairnmind.agents.api_credentials import CredentialStore, credential_environment_names
 from cairnmind.config import Settings
 
 

@@ -7,19 +7,19 @@ from __future__ import annotations
 
 import inspect
 import json
-from pathlib import Path
 import re
 import socket
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import typer
+from conftest import own_time, plain_words
 from typer.testing import CliRunner
 
-from conftest import plain_words, own_time
-
-from cairnmind import __version__, cli, file_locks
+from cairnmind import __version__, cli
 from cairnmind.config import Settings
+from cairnmind.pal import file_locks
 from cairnmind.store import Store
 
 runner = CliRunner()
@@ -122,7 +122,7 @@ def test_restore_and_engine_stop_with_the_service_running_are_refusals(tmp_path,
         assert "still holds the store lock" in no_usage_frame(held)
         served = runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "serve"])
         assert "already running for this store" in no_usage_frame(served)
-    monkeypatch.setattr("cairnmind.database_mode.connect_only", lambda settings: False)
+    monkeypatch.setattr("cairnmind.storage.database_mode.connect_only", lambda settings: False)
     stopped = runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "engine", "stop"])
     assert "Run cairnmind stop first" in no_usage_frame(stopped)
 
@@ -240,8 +240,8 @@ def test_a_missing_file_or_a_too_long_path_is_a_sentence(tmp_path, monkeypatch, 
     assert (code, shown.err) == (1, "Cairnmind: missing.json does not exist.\n")
     monkeypatch.setattr(cli, "store_for", lambda *args, **kwargs: pytest.fail("the store was opened"))
     code, shown = entry(monkeypatch, capsys, "--data-dir", str(data), "project", "add", "x", "/nope")
-    from cairnmind.first_start import PROJECT_FOLDER_MISSING  # the sentence of #313: how to go on
-    from cairnmind.process_control import quote_arg
+    from cairnmind.cli_cmds.first_start import PROJECT_FOLDER_MISSING  # the sentence of #313: how to go on
+    from cairnmind.pal.process_control import quote_arg
     nope = str(Path("/nope").expanduser().absolute())
     assert (code, shown.err) == (1, "Cairnmind: " + PROJECT_FOLDER_MISSING.format(root=nope, quoted=quote_arg(nope)) + "\n")
     import os
@@ -262,7 +262,7 @@ def test_an_error_with_a_bytes_path_shows_the_path_as_text():
 
 
 def test_a_missing_row_is_named_by_its_kind():
-    from cairnmind.sql import one_row
+    from cairnmind.storage.sql import one_row
     empty = SimpleNamespace(query=lambda sql, params=None: [])
     for sql, said in (("SELECT FROM plans WHERE id=:id", "Plan does not exist"),
                       ("SELECT FROM sessions WHERE id=:id", "Session does not exist"),
@@ -295,7 +295,7 @@ def test_an_unknown_id_is_refused_alike_for_a_task_a_plan_a_source_and_a_session
     def client(**kwargs):
         def answer(request):
             if request.url.path == "/health":  # the version check that precedes every request (#319)
-                from cairnmind.service_version import instance_id
+                from cairnmind.cli_cmds.service_version import instance_id
                 return httpx.Response(200, json={"service": "cairnmind", "version": __version__,
                                                  "instance": instance_id(Settings.load(Path(data)))})
             status, detail = answers[request.url.path]
@@ -316,19 +316,19 @@ def test_an_unknown_id_is_refused_alike_for_a_task_a_plan_a_source_and_a_session
 def test_an_unregistered_folder_is_refused_with_the_command_that_registers_it(tmp_path):
     # The same refusal for memory, retrieval, the inspector, checks and plans (#244): the folder, the project
     # and the command, quoted for the shell.
-    from cairnmind.ingest import register_default_histories
-    from cairnmind.inspector import Inspector
-    from cairnmind.memory import MemoryManager
-    from cairnmind.plans import PlanManager
-    from cairnmind.retrieval import Retriever
-    from cairnmind.verification import _root
+    from cairnmind.agents.retrieval import Retriever
+    from cairnmind.memory.memory import MemoryManager
+    from cairnmind.memory.plans import PlanManager
+    from cairnmind.memory.verification import _root
+    from cairnmind.scip.ingest import register_default_histories
+    from cairnmind.terminal.inspector import Inspector
     store = Store(tmp_path / "memory")
     root = tmp_path / "repo"
     root.mkdir()
     project = store.add_project("my team", root)
     folder = (tmp_path / "scratch dir").resolve()
     folder.mkdir()
-    from cairnmind.process_control import quote_arg
+    from cairnmind.pal.process_control import quote_arg
     said = (f"{folder} is not a registered project root of my team; register it with "
             f"`cairnmind project root {quote_arg('my team')} {quote_arg(str(folder))}`.")
     for refused in (lambda: MemoryManager(store)._scope(project["id"], folder),
@@ -344,7 +344,7 @@ def test_an_unregistered_folder_is_refused_with_the_command_that_registers_it(tm
 
 def test_a_long_unregistered_folder_keeps_the_command_that_registers_it():
     # The sentence is bounded, but never by cutting off the command it is there to give (#244).
-    from cairnmind.sql import unregistered_root
+    from cairnmind.storage.sql import unregistered_root
     fits = "/a/" + "b" * 600
     said = unregistered_root(fits, {"name": "demo"})
     assert said.endswith(f"register it with `cairnmind project root demo {fits}`.")
@@ -368,7 +368,7 @@ def test_a_printed_command_names_the_data_directory_it_was_refused_in(tmp_path, 
     code, shown = entry(monkeypatch, capsys, "--data-dir", data, "stage", "next", "demo", "--worktree", str(folder))
     assert code == 1 and shown.err.startswith("Cairnmind: ") and named in shown.err, shown.err
     monkeypatch.setattr(cli, "ensure_service", lambda settings: None)
-    monkeypatch.setattr("cairnmind.integrations.run_client", lambda *args: pytest.fail("the client started"))
+    monkeypatch.setattr("cairnmind.memory.integrations.run_client", lambda *args: pytest.fail("the client started"))
     code, shown = entry(monkeypatch, capsys, "--data-dir", data, "run", "demo", "codex", "--worktree", str(folder))
     assert code == 2 and shown.err.startswith("Error: ") and named in shown.err, shown.err
     # Only the register command, which writes to the store, is given the directory.
@@ -398,7 +398,7 @@ def test_an_unknown_answer_id_is_refused_as_an_unknown_task_is(tmp_path, monkeyp
 
 @pytest.mark.parametrize("content", ["[]", '[{"id": "a"}]', '"x"', "{}"])
 def test_a_question_file_of_another_shape_is_refused_in_a_sentence(tmp_path, content):
-    from cairnmind.repository_evaluation import load_questions
+    from cairnmind.agents.repository_evaluation import load_questions
     path = tmp_path / "q.json"
     path.write_text(content)
     with pytest.raises(ValueError, match="format_version 1 and a nonempty questions list"):
@@ -406,7 +406,7 @@ def test_a_question_file_of_another_shape_is_refused_in_a_sentence(tmp_path, con
 
 
 def test_a_question_file_that_is_missing_or_a_folder_is_a_sentence(tmp_path, monkeypatch):
-    from cairnmind.repository_evaluation import load_questions
+    from cairnmind.agents.repository_evaluation import load_questions
     for path, said in ((tmp_path / "missing.json", f"The question file {tmp_path / 'missing.json'} does not exist."),
                        (tmp_path, f"The question file {tmp_path} is a folder, not a file.")):
         with pytest.raises(ValueError) as refused:
@@ -428,7 +428,7 @@ def test_a_question_file_that_is_missing_or_a_folder_is_a_sentence(tmp_path, mon
 def test_a_bad_question_file_through_the_command_is_a_refusal_not_a_usage_error(tmp_path, monkeypatch, content):
     # The file is wrong, not the command line: no usage frame, and the run starts nothing (#244).
     monkeypatch.setattr(cli, "_managed_only", lambda *args: None)
-    monkeypatch.setattr("cairnmind.repository_evaluation._preflight", lambda *args: pytest.fail("a model was asked"))
+    monkeypatch.setattr("cairnmind.agents.repository_evaluation._preflight", lambda *args: pytest.fail("a model was asked"))
     data = tmp_path / "memory"
     Settings.load(data, create=True)
     questions = tmp_path / "q.json"
@@ -479,7 +479,8 @@ def test_a_plan_file_or_an_evidence_file_of_another_shape_is_a_refusal(tmp_path)
 
 def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
     import io
-    from cairnmind import doctor_attention
+
+    from cairnmind.cli_cmds import doctor_attention
     healthy = {"python": "3.12.3", "clients": {"codex": {"installed": True, "verified_resume": True},
                                                "claude": {"installed": False, "verified_resume": False}},
                "java": {"on_path": True, "executable": "/usr/bin/java", "compatible": True},
@@ -536,7 +537,7 @@ def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
     assert doctor_attention.main() == 0
     assert capsys.readouterr().out.startswith("The doctor report could not be read.")
     script = (Path(__file__).resolve().parents[1] / "scripts" / "install-wsl.sh").read_text()
-    assert '"$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.doctor_attention' in script
+    assert '"$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.cli_cmds.doctor_attention' in script
 
 
 # --- Help ------------------------------------------------------------------------------------------------------
@@ -592,10 +593,10 @@ def test_remember_and_store_takeover_help_read_as_sentences(monkeypatch):
 def test_the_menu_help_and_the_guide_do_not_say_the_menu_holds_every_command():
     # The activity panel has its own key and no menu entry (Notices stays the last entry): the help and the
     # guide say "main commands" and name the key (#244).
-    from cairnmind.terminal_commands import COMMANDS
-    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal.terminal_commands import COMMANDS
+    from cairnmind.terminal.terminal_i18n import tr
     assert "activ" not in " ".join(title.lower() for title, *_ in COMMANDS)
-    source = (Path(__file__).resolve().parents[1] / "src" / "cairnmind" / "terminal_commands.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[1] / "src" / "cairnmind" / "terminal" / "terminal_commands.py").read_text(encoding="utf-8")
     assert "search all commands" not in source and "Ctrl+B, then Space: search the main commands" in source
     assert "Ctrl+B, then a: activity panel" in source
     english = source.split("help_text(self.translate(")[1].split("))")[0]

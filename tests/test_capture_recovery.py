@@ -9,12 +9,11 @@ from uuid import uuid4
 
 import pytest
 
-from cairnmind.ingest import import_history
-from cairnmind.integrations import _transcript_watermark
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.integrations import _transcript_watermark
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.scip.ingest import import_history
+from cairnmind.storage.sql import insert_document, update_document, utc_now
 from cairnmind.store import Store
-from cairnmind.sql import insert_document, update_document, utc_now
-
 
 NATIVE_ID = "70000000-0000-4000-8000-000000000007"
 

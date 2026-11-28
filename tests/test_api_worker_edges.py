@@ -5,11 +5,12 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from test_api_worker import Engine, settle
 from textual.widgets import RichLog, Static, TextArea
 
-from cairnmind.api_worker import AgentApp, incomplete_streams, main as worker_main, usage_text
+from cairnmind.agents.api_worker import AgentApp, incomplete_streams, usage_text
+from cairnmind.agents.api_worker import main as worker_main
 from cairnmind.config import Settings
-from test_api_worker import Engine, settle
 
 
 class _RichJournal:
@@ -192,7 +193,7 @@ def test_worker_main_tty_and_error_paths(tmp_path, monkeypatch):
 
     monkeypatch.setattr("sys.stdin", SimpleNamespace(isatty=lambda: True))
     monkeypatch.setattr(
-        "cairnmind.api_runtime.api_worker_config",
+        "cairnmind.agents.api_runtime.api_worker_config",
         lambda s, rid, gen: {"run": {"id": "other", "generation": 1}, "profile": {"id": "p", "client": "api"}},
     )
     with pytest.raises(SystemExit):
@@ -207,9 +208,9 @@ def test_worker_main_tty_and_error_paths(tmp_path, monkeypatch):
         def run(self):
             ran.append(True)
 
-    monkeypatch.setattr("cairnmind.api_worker.AgentApp", DummyAgentApp)
+    monkeypatch.setattr("cairnmind.agents.api_worker.AgentApp", DummyAgentApp)
     monkeypatch.setattr(
-        "cairnmind.api_runtime.api_worker_config",
+        "cairnmind.agents.api_runtime.api_worker_config",
         lambda s, rid, gen: {"run": {"id": "r1", "generation": 1}, "profile": {"id": "p", "client": "api"}, "key": "k"},
     )
     worker_main()

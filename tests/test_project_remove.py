@@ -3,17 +3,16 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
-from cairnmind import project_removal as removal
-from cairnmind.ingest import index_pending_sources, index_project, poll_imports
-from cairnmind.memory import MemoryConflict, MemoryManager
-from cairnmind.record_kinds import FIELD, doctor_view
-from cairnmind.service import schedule_embeddings
-from cairnmind.sessions import SessionManager
-from cairnmind.sql import insert_document
-from cairnmind.store import EXPORT_TYPES, Store
-
 from conftest import as_person, plain_words
+
+from cairnmind.memory import project_removal as removal
+from cairnmind.memory.memory import MemoryConflict, MemoryManager
+from cairnmind.memory.record_kinds import FIELD, doctor_view
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.scip.ingest import index_pending_sources, index_project, poll_imports
+from cairnmind.service import schedule_embeddings
+from cairnmind.storage.sql import insert_document
+from cairnmind.store import EXPORT_TYPES, Store
 
 NOT_COUNTED = {"projects", "project_roots", "journal_state", "journal_events"}
 
@@ -281,7 +280,9 @@ def test_cli_backup_and_restore_round_trip_with_the_project_removed_and_after_it
 
     from typer.testing import CliRunner
 
-    from cairnmind import cli, ingest, person_proof
+    from cairnmind import cli
+    from cairnmind.scip import ingest
+    from cairnmind.terminal import person_proof
     store, project, root, extra, confirmed = world
     entry = {"client": "claude", "kind": "tool_note", "note": "technical", "accepted_at": "2026-11-22T10:00:00+00:00"}
     store.command(f"UPDATE projects SET {FIELD}=:entries WHERE id=:id", {"entries": [entry], "id": project["id"]})
@@ -322,8 +323,8 @@ def test_cli_backup_and_restore_round_trip_with_the_project_removed_and_after_it
 def test_the_memory_of_another_project_in_the_store_is_untouched_by_a_removal(world, monkeypatch, tmp_path):
     """Preview, snapshot and publishing of another project, and the store-wide readers, with a removed row (no
     name, no root) in the store."""
-    from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
-    from cairnmind.store_size import measure
+    from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
+    from cairnmind.storage.store_size import measure
     monkeypatch.setenv(PUBLICATION_SWITCH, "1")
     store, project, root, extra, confirmed = world
     other = tmp_path / "other"
@@ -337,7 +338,7 @@ def test_the_memory_of_another_project_in_the_store_is_untouched_by_a_removal(wo
     index_project(store, oid)
     source = store.query("SELECT id FROM sources WHERE project_id=:p LIMIT 1", {"p": oid})[0]["id"]
     record = store.remember(oid, {"kind": "decision", "key": "o", "content": "Use Z."}, [source])
-    from cairnmind.inspector import Inspector
+    from cairnmind.terminal.inspector import Inspector
     Inspector(store).review(oid, record["id"], "confirm", record["version"])
     remove(store, project)
     memory = MemoryManager(store)
@@ -354,7 +355,8 @@ def test_the_memory_of_another_project_in_the_store_is_untouched_by_a_removal(wo
 def test_cli_remove_and_add_again_end_to_end(monkeypatch, tmp_path):
     from typer.testing import CliRunner
 
-    from cairnmind import cli, ingest
+    from cairnmind import cli
+    from cairnmind.scip import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     monkeypatch.setattr(cli, "_stdout_is_terminal", lambda: True)
     folder = tmp_path / "mistake"

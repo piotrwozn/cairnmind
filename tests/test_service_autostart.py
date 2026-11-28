@@ -7,8 +7,8 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from cairnmind import service_autostart
 from cairnmind.config import Settings
+from cairnmind.pal import service_autostart
 
 
 def test_build_task_xml_is_valid_logon_and_restart_on_failure(tmp_path):

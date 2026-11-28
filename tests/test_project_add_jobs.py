@@ -4,8 +4,13 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, first_start, ingest, knowledge_mode, project_removal, setup_mark, upgrade_mark
-from cairnmind.store_writer import StoreNotWriter
+from cairnmind import cli
+from cairnmind.agents import knowledge_mode
+from cairnmind.cli_cmds import first_start, upgrade_mark
+from cairnmind.memory import project_removal
+from cairnmind.scip import ingest
+from cairnmind.storage.store_writer import StoreNotWriter
+from cairnmind.terminal import setup_mark
 
 
 class Store:
@@ -113,7 +118,7 @@ def test_a_reader_refuses_before_anything_is_counted_or_started(monkeypatch, wor
 
 
 def test_the_new_sentences_have_polish():
-    from cairnmind.first_start import MESSAGES
+    from cairnmind.cli_cmds.first_start import MESSAGES
     for sentence in (first_start.JOBS_HELD_STOPPED, first_start.JOBS_HELD_UPGRADE, first_start.JOBS_HELD_NO_MODELS):
         assert MESSAGES[sentence] != sentence
         for key in ("count", "project", "reason"):

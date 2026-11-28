@@ -5,16 +5,16 @@ import threading
 import time
 
 import pytest
-
-from cairnmind.terminal_notices import NoticeHistory
-from cairnmind.terminal_panels import SidebarApp
-from cairnmind.terminal_ui import FormModal, MessageModal
 from consent_steps import consent_drawn, form_ready
+from test_terminal_notices import clock, open_history  # noqa: F401  (the autouse clock fixture)
 from test_terminal_panels import settle
 from test_terminal_ux080 import setup_ui
 from test_workspace_stage import answer_stage, decision
 from test_workspace_stage_scope import notice_of
-from test_terminal_notices import clock, open_history  # noqa: F401  (the autouse clock fixture)
+
+from cairnmind.terminal.terminal_notices import NoticeHistory
+from cairnmind.terminal.terminal_panels import SidebarApp
+from cairnmind.terminal.terminal_ui import FormModal, MessageModal
 
 
 async def wait_for_state(pilot, condition, what, timeout=30):
@@ -181,7 +181,7 @@ async def test_a_notice_about_the_earlier_project_leaves_the_line_only_if_posted
         tmp_path, monkeypatch, posted):
     # #161: "Project changed…" is about the earlier project but is written after the workspace moved;
     # the poll that then sees the change must not take it off the line. One written before the move must go.
-    from cairnmind.terminal_notices import about
+    from cairnmind.terminal.terminal_notices import about
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     project = broker.projects[0]
     subject = about(project["id"], project["name"], project["root"])
@@ -228,10 +228,10 @@ async def test_a_notice_of_the_project_still_shown_stays_on_the_line(tmp_path, m
 @pytest.mark.asyncio
 async def test_the_inspector_import_notice_belongs_to_the_new_project_and_stays_on_the_line(tmp_path, monkeypatch):
     # #161 review: the notice was stored under the old scope (no project), so the next poll took it off the line.
+    from test_terminal_panels import setup
     from textual.widgets import Input
 
-    from cairnmind.terminal_inspector import InspectorApp
-    from test_terminal_panels import setup
+    from cairnmind.terminal.terminal_inspector import InspectorApp
     settings, broker, workspace = setup(tmp_path, monkeypatch, project=False)
     app = InspectorApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(95, 42)) as pilot:

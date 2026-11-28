@@ -7,15 +7,15 @@ import subprocess
 import threading
 
 import pytest
-from textual.widgets import Static
-
-from cairnmind import stages, workspace_stage
-from cairnmind.terminal_i18n import CATALOG
-from cairnmind.terminal_panels import SidebarApp
-from cairnmind.terminal_ui import MessageModal
 from test_terminal_panels import settle
 from test_terminal_ux080 import setup_ui
 from test_workspace_stage import answer_stage, decision
+from textual.widgets import Static
+
+from cairnmind.terminal import stages, workspace_stage
+from cairnmind.terminal.terminal_i18n import CATALOG
+from cairnmind.terminal.terminal_panels import SidebarApp
+from cairnmind.terminal.terminal_ui import MessageModal
 
 
 def notice_of(app):
@@ -129,7 +129,7 @@ async def test_choosing_a_project_cancels_a_running_check_stage_and_blocks_a_sec
         reconciling.set()
         opening.wait(10)
         return workspace.read()
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", reconcile)
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", reconcile)
 
     def runner(argv, **kwargs):
         calls.append(argv)
@@ -238,8 +238,8 @@ async def test_a_click_in_the_same_project_keeps_the_check_result_visible(tmp_pa
 @pytest.mark.asyncio
 async def test_new_entries_do_not_move_existing_menu_positions(tmp_path, monkeypatch):
     # Keyboard paths (and tests) reach existing entries by position; new ones are appended.
-    from cairnmind.terminal_commands import COMMANDS
-    from cairnmind.terminal_ui import ChoiceModal
+    from cairnmind.terminal.terminal_commands import COMMANDS
+    from cairnmind.terminal.terminal_ui import ChoiceModal
     assert [row[3] for row in COMMANDS] == [
         "search", "client1", "client2", "inspector", "ask", "brief", "graph", "search", "add_project", "start_work",
         "connections", "sessions", "more", "settings", "focus", "cockpit", "", "next_stage", "notices", "clone_project"]
@@ -258,7 +258,8 @@ async def test_new_entries_do_not_move_existing_menu_positions(tmp_path, monkeyp
 
 
 def test_every_text_stages_can_show_has_a_polish_entry():
-    tree = ast.parse(open(stages.__file__, encoding="utf-8").read())
+    with open(stages.__file__, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read())
     raised = [node.args[0].value for node in ast.walk(tree)
               if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "ValueError"
               and node.args and isinstance(node.args[0], ast.Constant)]

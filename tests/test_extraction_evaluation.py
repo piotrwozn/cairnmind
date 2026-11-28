@@ -7,10 +7,15 @@ from pathlib import Path
 
 import pytest
 
+from cairnmind.agents.extraction_evaluation import (
+    load_transcripts,
+    run_extraction_evaluation,
+    score_transcript,
+    summarize,
+    transcript_sources,
+)
+from cairnmind.agents.ollama import OllamaUnavailable
 from cairnmind.config import Settings
-from cairnmind.extraction_evaluation import (load_transcripts, run_extraction_evaluation, score_transcript,
-                                             summarize, transcript_sources)
-from cairnmind.ollama import OllamaUnavailable
 
 SET = Path(__file__).resolve().parents[1] / "docs" / "evaluation" / "extraction-transcripts.json"
 

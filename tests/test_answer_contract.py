@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import math
+from copy import deepcopy
 
 import pytest
 
-from cairnmind.answer_contract import answer_contract_errors, prepare_answer_schema
+from cairnmind.agents.answer_contract import answer_contract_errors, prepare_answer_schema
 
 
 def closed(properties):

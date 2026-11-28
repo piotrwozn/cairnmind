@@ -6,13 +6,12 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from conftest import plain_words
 from typer.testing import CliRunner
 
-from conftest import plain_words
-
 from cairnmind import __version__, cli
+from cairnmind.cli_cmds.service_version import instance_id
 from cairnmind.config import Settings
-from cairnmind.service_version import instance_id
 
 
 def no_start(monkeypatch):
@@ -21,7 +20,7 @@ def no_start(monkeypatch):
     monkeypatch.setattr(cli, "ensure_service", forbidden)
     monkeypatch.setattr(cli, "store_for", forbidden)
     monkeypatch.setattr(cli.subprocess, "Popen", forbidden)
-    monkeypatch.setattr("cairnmind.engine.start_engine", forbidden)
+    monkeypatch.setattr("cairnmind.storage.engine.start_engine", forbidden)
 
 
 def no_initialization(monkeypatch):
@@ -144,7 +143,7 @@ def test_unavailable_diagnostics_do_not_autostart_service(tmp_path, monkeypatch,
     result = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), *arguments])
     assert result.exit_code == 2
     # #287: the next command that needs the service starts it, so the refusal no longer tells a person to run serve.
-    from cairnmind import first_start
+    from cairnmind.cli_cmds import first_start
     assert plain_words(first_start.STATUS_NOT_RUNNING) in plain_words(result.output)
     assert "Usage:" not in result.output and "Invalid value" not in result.output
     assert files(settings.data_dir) == before
@@ -231,7 +230,7 @@ def test_explicit_init_and_explicit_tui_still_initialize(tmp_path, monkeypatch):
         assert settings.token and (settings.data_dir / "config.json").is_file()
         initialized.append(settings.data_dir)
 
-    module = ModuleType("cairnmind.workspace")
+    module = ModuleType("cairnmind.terminal.workspace")
 
     def launch(settings):
         store(settings)
@@ -241,7 +240,7 @@ def test_explicit_init_and_explicit_tui_still_initialize(tmp_path, monkeypatch):
     module.launch_workspace = launch
 
     monkeypatch.setattr(cli, "store_for", store)
-    monkeypatch.setitem(sys.modules, "cairnmind.workspace", module)
+    monkeypatch.setitem(sys.modules, "cairnmind.terminal.workspace", module)
     monkeypatch.setattr(cli, "_interactive_terminal", lambda: True)
     runner = CliRunner()
     first = runner.invoke(cli.app, ["--data-dir", str(tmp_path / "init"), "init"])
@@ -298,8 +297,8 @@ def test_retry_uses_current_ack_after_refresh_despite_old_launcher_packet(tmp_pa
 
     from fastapi.testclient import TestClient
 
+    from cairnmind.memory.sessions import SessionManager
     from cairnmind.service import create_app
-    from cairnmind.sessions import SessionManager
     from cairnmind.store import Store
 
     root = tmp_path / "repo"

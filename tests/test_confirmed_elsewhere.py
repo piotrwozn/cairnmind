@@ -7,22 +7,21 @@ from __future__ import annotations
 import subprocess
 
 import pytest
-
-from cairnmind.confirmation import confirmation_of, confirmation_text
-from cairnmind.evidence import evidence_states
-from cairnmind.inspector import Inspector
-from cairnmind.memory import MemoryManager
-from cairnmind.memory_acts import covered_by_local_act
-from cairnmind.memory_published import Publisher
-from cairnmind.memory_published_import import PublishedImporter
-from cairnmind.memory_view import show_snapshot
-from cairnmind.sessions import SessionManager
-from cairnmind.store import Store
-from cairnmind.terminal_detail import joined, record_parts
-from cairnmind.terminal_i18n import tr
-
 from conftest import as_person, person_edit
 from test_published_memory import commit, folder_of, published_bytes, repository, reviewed, teammate
+
+from cairnmind.memory.confirmation import confirmation_of, confirmation_text
+from cairnmind.memory.evidence import evidence_states
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.memory_acts import covered_by_local_act
+from cairnmind.memory.memory_published import Publisher
+from cairnmind.memory.memory_published_import import PublishedImporter
+from cairnmind.memory.memory_view import show_snapshot
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.store import Store
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.terminal.terminal_detail import joined, record_parts
+from cairnmind.terminal.terminal_i18n import tr
 
 
 def git(root, *args):
@@ -116,7 +115,7 @@ def test_an_archive_brings_a_confirmation_as_confirmed_elsewhere_with_who_and_wh
 
 
 def test_the_import_dialog_says_how_many_confirmed_records_a_package_brings():
-    from cairnmind.terminal_ui import summary_text
+    from cairnmind.terminal.terminal_ui import summary_text
     preview = {"status": "dry_run", "counts": {"records": 3}, "confirmed_records": {
         "total": 2, "confirmed_by": ["Ada Nowak", "Eve\x1b[31m\u202e"], "without_a_name": 1}}
     english, polish = summary_text(preview, "en"), summary_text(preview, "pl")
@@ -201,7 +200,7 @@ def test_a_local_persons_verdict_is_not_overwritten_by_an_import(ada):
                                        "content": "Use signed cookies."}, [*current["source_ids"], source["id"]])
     Inspector(store).review(pid, changed["id"], "confirm", changed["version"])
     Publisher(store).publish(pid)
-    from cairnmind.memory import MemoryConflict
+    from cairnmind.memory.memory import MemoryConflict
     with pytest.raises(MemoryConflict, match="diverged"):
         importer.import_published(folder_of(root), bo["project"])
     kept = rows(bo["store"], bo["project"])[record["id"]]

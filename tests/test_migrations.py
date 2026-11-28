@@ -7,10 +7,10 @@ import json
 
 import pytest
 
-from cairnmind.arcade import ArcadeClient
+from cairnmind.memory.verification import verification_status
+from cairnmind.storage.arcade import ArcadeClient
+from cairnmind.storage.sql import json_text, update_document
 from cairnmind.store import LEGACY_EXPORT_TYPES, SCHEMA_VERSION, V03_DOCUMENT_TYPES, Store
-from cairnmind.sql import json_text, update_document
-from cairnmind.verification import verification_status
 
 
 def read_envelope(path):

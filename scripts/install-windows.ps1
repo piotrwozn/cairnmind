@@ -337,7 +337,7 @@ try {
         if (-not $InitJson) { return }
         $pyCode = @"
 import json, sys
-from cairnmind.first_start import INIT_MARKED
+from cairnmind.cli_cmds.first_start import INIT_MARKED
 marks = json.load(sys.stdin).get("confirmations_before_rule")
 if marks:
     print(INIT_MARKED.format(marked=marks["marked_as_a_persons"], left=marks["still_before_the_rule"]))
@@ -349,7 +349,7 @@ if marks:
         }
     }
 
-    $storedMode = (& $cairnmindPython -I -c "from cairnmind.config import Settings; from cairnmind.database_mode import engine_mode; print(engine_mode(Settings.load()))" 2>$null)
+    $storedMode = (& $cairnmindPython -I -c "from cairnmind.config import Settings; from cairnmind.storage.database_mode import engine_mode; print(engine_mode(Settings.load()))" 2>$null)
     if ($storedMode) { $storedMode = $storedMode.Trim() }
 
     if ($connectUrl) {
@@ -379,7 +379,7 @@ if marks:
         Show-InitMarks $initSaid
         & $cairnmindBin engine status *> $null
     } else {
-        $present = (& $cairnmindPython -I -c "from cairnmind.config import Settings; from cairnmind.engine import runtime_dir; print('yes' if (runtime_dir(Settings.load()) / 'lib').is_dir() else 'no')" 2>$null)
+        $present = (& $cairnmindPython -I -c "from cairnmind.config import Settings; from cairnmind.storage.engine import runtime_dir; print('yes' if (runtime_dir(Settings.load()) / 'lib').is_dir() else 'no')" 2>$null)
         if ($present -and $present.Trim() -eq "yes") {
             Write-Output ""
             Write-Output "The pinned ArcadeDB release is already installed here; nothing is downloaded."
@@ -434,7 +434,7 @@ if marks:
     Write-Output "Checking the installation..."
     $doctorJson = (& $cairnmindBin doctor) -join "`n"
     $doctorExit = $LASTEXITCODE
-    $doctorJson | & $cairnmindPython -I -m cairnmind.doctor_attention
+    $doctorJson | & $cairnmindPython -I -m cairnmind.cli_cmds.doctor_attention
     exit $doctorExit
 } finally {
     End-Upgrade

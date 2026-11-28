@@ -9,9 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from cairnmind import integrations, mcp_server, recorder_agent, sessions, terminal_i18n
+from cairnmind.agents import recorder_agent
 from cairnmind.config import Settings
-from cairnmind.mcp_server import ServiceClient
+from cairnmind.mcp import mcp_server
+from cairnmind.mcp.mcp_server import ServiceClient
+from cairnmind.memory import integrations, sessions
+from cairnmind.terminal import terminal_i18n
 
 PATH = recorder_agent.RECORDER_PATH
 
@@ -321,7 +324,8 @@ def test_every_recorder_sentence_has_polish():
 
 
 def test_the_recorders_file_is_known_to_the_managed_file_lists(settings, project, probe):
-    from cairnmind import ingest, project_removal, scope
+    from cairnmind.memory import project_removal, scope
+    from cairnmind.scip import ingest
     integrations.install_integrations(settings, project)
     lines = (Path(project["root"]) / PATH).read_text(encoding="utf-8").splitlines()
     assert scope._MANAGED.match_file(PATH) and PATH in project_removal.INSTALLED_FILES
@@ -355,8 +359,8 @@ def test_the_recorder_file_can_use_nothing_but_its_own_servers_three_tools(setti
     assert [line.split(":")[0] for line in head if line and not line[0].isspace()] == [
         "name", "description", "tools", "mcpServers"]  # no model, hooks, permissionMode or a second list of servers
     assert [line for line in head if line.startswith("  - ")] == ["  - cairnmind-recorder:"]
-    assert recorder_agent.RECORDER_TOOLS == tuple(
-        f"mcp__cairnmind-recorder__{name}" for name in ("resume_context", "ack_resume", "remember"))
+    assert tuple(
+        f"mcp__cairnmind-recorder__{name}" for name in ("resume_context", "ack_resume", "remember")) == recorder_agent.RECORDER_TOOLS
     tools = text.split("\ntools: ", 1)[1].split("\n", 1)[0]
     assert tools == ", ".join(recorder_agent.RECORDER_TOOLS)
     for other in ("Bash", "Read", "Write", "Edit", "WebFetch", "WebSearch", "Task", "Agent", "mcp__cairnmind__"):

@@ -9,20 +9,20 @@ import subprocess
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi.testclient import TestClient
 import pytest
+from conftest import plain_words
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from cairnmind import confirmation, ingest, record_kinds
 from cairnmind.config import Settings
-from cairnmind.confirmation import person_source
-from cairnmind.memory import MemoryManager
-from cairnmind.record_kinds import AcceptanceRefused, act_as_person, set_acceptance
+from cairnmind.memory import confirmation, record_kinds
+from cairnmind.memory.confirmation import person_source
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.record_kinds import AcceptanceRefused, act_as_person, set_acceptance
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.scip import ingest
 from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
 from cairnmind.store import Store
-
-from conftest import plain_words
 
 SESSION_ID = "60000000-0000-4000-8000-000000000006"
 FUTURE = {"type": "future-claude-record", "sessionId": SESSION_ID, "version": "2.1.400",
@@ -307,8 +307,12 @@ def test_no_mcp_tool_or_built_in_agent_tool_can_reach_an_acceptance():
     # A coding client and the built-in agent reach the service through these modules only; none names the routes.
     import cairnmind
     package = Path(cairnmind.__file__).parent
-    for name in ("mcp_server.py", "mcp_schema.py", "mcp_agent.py", "agent_tools.py", "agent.py", "api_agent.py",
-                 "agent_reads.py", "agent_write_guard.py", "copilot_adapter.py", "workspace_mcp.py"):
+    for name in (
+        "mcp/mcp_server.py", "mcp/mcp_schema.py", "mcp/mcp_agent.py",
+        "agents/agent_tools.py", "agents/agent.py", "agents/api_agent.py",
+        "agents/agent_reads.py", "agents/agent_write_guard.py", "agents/copilot_adapter.py",
+        "terminal/workspace_mcp.py",
+    ):
         text = (package / name).read_text(encoding="utf-8")
         assert "record-kinds" not in text and "record_kinds" not in text and "record-kind" not in text, name
 

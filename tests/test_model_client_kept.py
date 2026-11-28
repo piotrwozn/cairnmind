@@ -9,9 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cairnmind import service
+from cairnmind.agents.ollama import Ollama, OllamaUnavailable
 from cairnmind.config import Settings
-from cairnmind.memory_models import MemoryModels
-from cairnmind.ollama import Ollama, OllamaUnavailable
+from cairnmind.memory.memory_models import MemoryModels
 
 VECTOR = {"embeddings": [[0.5, 0.25]]}
 
@@ -32,7 +32,7 @@ class Clients:
             client = real(transport=httpx.MockTransport(respond), **kwargs)
             self.made.append(client)
             return client
-        monkeypatch.setattr("cairnmind.ollama.httpx.AsyncClient", make)
+        monkeypatch.setattr("cairnmind.agents.ollama.httpx.AsyncClient", make)
 
 
 async def test_a_command_line_process_opens_and_closes_a_client_for_each_request(tmp_path, monkeypatch):

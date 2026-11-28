@@ -1,18 +1,18 @@
-"""Fast-tier edge-case validation tests for cairnmind.memory_published_parse."""
+"""Fast-tier edge-case validation tests for cairnmind.memory.memory_published_parse."""
 from __future__ import annotations
 
 from copy import deepcopy
 
 import pytest
 
-from cairnmind.memory_published_format import MAX_NOTE_CHARS, PublishedFormatError, render
-from cairnmind.memory_published_parse import (
-    _Lines,
+from cairnmind.memory.memory_published_format import MAX_NOTE_CHARS, PublishedFormatError, render
+from cairnmind.memory.memory_published_parse import (
     _blocks,
     _check_revision,
     _check_source,
     _entries,
     _fields,
+    _Lines,
     _plan_entry,
     _record_entry,
     _sources,

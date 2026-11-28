@@ -1,18 +1,17 @@
-from concurrent.futures import ThreadPoolExecutor
 import gzip
 import json
-from pathlib import Path
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
-
-from cairnmind.embed_jobs import repair_embed_jobs
-from cairnmind.store import Store
-
 from conftest import as_person, person_edit
-from cairnmind.verification import run_check, verification_status
+
+from cairnmind.memory.verification import run_check, verification_status
+from cairnmind.storage.embed_jobs import repair_embed_jobs
+from cairnmind.store import Store
 
 
 @pytest.fixture
@@ -82,10 +81,9 @@ def test_native_fulltext_update_delete_and_transaction_rollback(store, project):
     store.command("UPDATE chunks SET text='login session' WHERE id='chunk-one'")
     assert not store.query("SELECT id FROM chunks WHERE text CONTAINSTEXT :q", {"q": "refresh"})
     assert len(store.query("SELECT id FROM chunks WHERE text CONTAINSTEXT :q", {"q": "session"})) == 1
-    with pytest.raises(RuntimeError):
-        with store.transaction() as tx:
-            tx.command("DELETE FROM chunks WHERE id='chunk-one'")
-            raise RuntimeError("rollback")
+    with pytest.raises(RuntimeError), store.transaction() as tx:
+        tx.command("DELETE FROM chunks WHERE id='chunk-one'")
+        raise RuntimeError("rollback")
     assert store.query("SELECT count(*) AS total FROM chunks")[0]["total"] == 1
     store.forget_project(project["id"])
     assert not store.query("SELECT id FROM chunks WHERE text CONTAINSTEXT :q", {"q": "session"})
@@ -327,7 +325,7 @@ def test_corrupt_or_foreign_backups_rejected_without_destroying_store(store, pro
 
 
 def test_portable_backup_carries_no_vectors_and_search_says_so_after_restore(store, project, tmp_path):
-    from cairnmind.retrieval import Retriever
+    from cairnmind.agents.retrieval import Retriever
 
     s = source(store, project)
     namespace = "qwen3-embedding:0.6b@test-digest"
@@ -357,7 +355,7 @@ def test_portable_backup_carries_no_vectors_and_search_says_so_after_restore(sto
 
 
 def test_snapshot_invalidates_native_ann_and_lexical_current_flags(store, project):
-    from cairnmind.retrieval import Retriever
+    from cairnmind.agents.retrieval import Retriever
 
     s = source(store, project)
     retriever = Retriever(store, store.settings)
@@ -477,7 +475,7 @@ def test_observed_replaced_evidence_never_triggers_the_warning(store, project):
 
 
 def test_public_record_shows_evidence_fields_without_truncation(store, project):
-    from cairnmind.retrieval import public_record
+    from cairnmind.agents.retrieval import public_record
     june = _transcript(store, project, "transcript://june", "Sessions last one day.", "2026-06-01T09:00:00Z")
     march = _transcript(store, project, "transcript://march", "Sessions last one hour.", "2026-03-01T09:00:00Z")
     current = store.remember(project["id"], {"kind": "decision", "key": "ttl", "content": "One day",

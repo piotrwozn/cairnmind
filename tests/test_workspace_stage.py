@@ -1,28 +1,28 @@
 """Run next stage in the workspace: Start work for one assistant, or exactly `cairnmind check run`."""
 from __future__ import annotations
 
-from copy import deepcopy
 import json
 import subprocess
 import sys
+from copy import deepcopy
 
 import pytest
+from test_brief import check_profile, repository
+from test_terminal_panels import settle
+from test_terminal_ux080 import screen_text, setup_ui
 from textual.widgets import Static
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind import workspace_stage
 from cairnmind.config import Settings
-from cairnmind.plans import PlanManager
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.plans import PlanManager
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
-from cairnmind.terminal_commands import COMMANDS, dispatch_command
-from cairnmind.terminal_panels import SidebarApp
-from cairnmind.terminal_ui import ChoiceModal, FormModal, MessageModal
-from cairnmind.workspace_state import WorkspaceState
-from test_brief import check_profile, repository
-from test_terminal_panels import settle
-from test_terminal_ux080 import screen_text, setup_ui
+from cairnmind.terminal import workspace_stage
+from cairnmind.terminal.terminal_commands import COMMANDS, dispatch_command
+from cairnmind.terminal.terminal_panels import SidebarApp
+from cairnmind.terminal.terminal_ui import ChoiceModal, FormModal, MessageModal
+from cairnmind.terminal.workspace_state import WorkspaceState
 
 
 def decision(action, project, **extra):
@@ -188,7 +188,7 @@ async def test_a_failing_native_stage_never_falls_back_to_another_assistant(tmp_
     def refused(*args, **kwargs):
         workspace.update({"launch_errors": [{"slot_id": "slot-native", "client": "codex", "code": "client_missing"}]})
         return workspace.read()
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", refused)
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", refused)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 35)) as pilot:
         await settle(app, pilot)
@@ -203,7 +203,7 @@ async def test_a_failing_native_stage_never_falls_back_to_another_assistant(tmp_
 
 def test_the_supervisor_posts_exactly_the_requested_agent_slot_once(tmp_path, monkeypatch):
     """The step after Run next stage, shared with Start work: one launch, of the one slot."""
-    from cairnmind.workspace import WorkspaceManager
+    from cairnmind.terminal.workspace import WorkspaceManager
     settings = Settings.load(tmp_path / "data", create=True)
     project = {"id": "project-a", "name": "Project A", "root": str(tmp_path)}
     profiles = [{"id": "codex", "client": "codex", "label": "Codex"},
@@ -242,7 +242,7 @@ async def test_client_stage_shows_why_the_assistant_did_not_start(tmp_path, monk
     def refused(*args, **kwargs):
         workspace.update({"launch_errors": [{"slot_id": "slot-native", "client": "codex", "code": "login_required"}]})
         return workspace.read()
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", refused)
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", refused)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 35)) as pilot:
         await settle(app, pilot)
@@ -332,7 +332,7 @@ async def test_plan_stages_offer_only_launchable_assistants_and_save_in_preferen
 
 @pytest.mark.asyncio
 async def test_saving_a_stage_again_confirms_the_assistant_its_slot_now_names(tmp_path, monkeypatch):
-    from cairnmind.stages import project_routing, resolve_stage
+    from cairnmind.terminal.stages import project_routing, resolve_stage
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     # A map saved before #125: the slot only. Its slot holds Copilot, which was never confirmed.
     broker.preferences["project_stages"] = {"project-keyboard": {"review": "slot-github"}}

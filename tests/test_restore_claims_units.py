@@ -4,14 +4,23 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from cairnmind import person_proof, record_kinds, restore_claims
-from cairnmind.confirmation import (FALLBACK_WORDS, confirmation_of, confirmation_text, confirmed_by, import_mark,
-                                    kept_verdict, local_verdict)
-from cairnmind.restore_claims import BackupClaims
-from cairnmind.runtime_sockets import socket_directory, workspace_namespace
-from cairnmind.terminal_i18n import CATALOG, tr
 from test_person_proof import KEY, fake_tmux, settings, workspace_socket  # noqa: F401 (fixtures)
+
+from cairnmind.memory import record_kinds
+from cairnmind.memory.confirmation import (
+    FALLBACK_WORDS,
+    confirmation_of,
+    confirmation_text,
+    confirmed_by,
+    import_mark,
+    kept_verdict,
+    local_verdict,
+)
+from cairnmind.pal.runtime_sockets import socket_directory, workspace_namespace
+from cairnmind.storage import restore_claims
+from cairnmind.storage.restore_claims import BackupClaims
+from cairnmind.terminal import person_proof
+from cairnmind.terminal.terminal_i18n import CATALOG, tr
 
 AT = "2026-11-22T10:20:31+00:00"
 FILE = "cairnmind-20261122T101500-1a2b3c4d.cairnmind.json.gz"
@@ -115,7 +124,8 @@ def test_a_restored_claim_reads_as_the_backups_in_english_and_polish():
 
 def test_the_restore_asks_this_installations_workspace_socket(settings, monkeypatch):  # noqa: F811
     import sys
-    from cairnmind import person_pipe
+
+    from cairnmind.pal import person_pipe
     expected = (person_pipe.pipe_name_for(settings.data_dir) if sys.platform == "win32"
                 else str(socket_directory("ui", workspace_namespace(settings.data_dir)) / "tmux.sock"))
     asked = []

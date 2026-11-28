@@ -2,18 +2,19 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 import sys
 import tomllib
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, cli_human, first_start
-from cairnmind.terminal_commands import ask_summary
-from cairnmind.terminal_i18n import tr
+from cairnmind import cli
+from cairnmind.cli_cmds import cli_human, first_start
+from cairnmind.terminal.terminal_commands import ask_summary
+from cairnmind.terminal.terminal_i18n import tr
 
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"

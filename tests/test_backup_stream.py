@@ -3,27 +3,26 @@ import gzip
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import signal
 import subprocess
 import sys
 import time
 import tracemalloc
+from pathlib import Path
 
 import pytest
-
-from cairnmind import store_backup
-from cairnmind.arcade import ArcadeClient
-from cairnmind.config import BACKUP_FORMATS
-from cairnmind.journal import JournalTransaction
-from cairnmind.retrieval import Retriever
-from cairnmind.service import daily_backups
-from cairnmind.sql import json_text
-from cairnmind.store import EXPORT_TYPES, Store
-from cairnmind.store_size import _backups
-
 from conftest import as_person
+
+from cairnmind.agents.retrieval import Retriever
+from cairnmind.config import BACKUP_FORMATS
+from cairnmind.service import daily_backups
+from cairnmind.storage import store_backup
+from cairnmind.storage.arcade import ArcadeClient
+from cairnmind.storage.journal import JournalTransaction
+from cairnmind.storage.sql import json_text
+from cairnmind.storage.store_size import _backups
+from cairnmind.store import EXPORT_TYPES, Store
 
 FIXTURE_0_10_0 = Path(__file__).parent / "fixtures" / "backup-0.10.0.cairnmind.json.gz"
 # A fixed limit for the Python memory a backup may use at its peak, and a store several times larger.
@@ -271,7 +270,7 @@ def test_truncated_backup_is_refused_before_any_change(store, tmp_path, cut):
 KILLED_BACKUP = """
 import os, sys, time
 from pathlib import Path
-from cairnmind import store_backup
+from cairnmind.storage import store_backup
 from cairnmind.store import Store
 store_backup.PAGE_ROWS, store_backup.WRITE_BYTES = 10, 1
 pages = store_backup._pages

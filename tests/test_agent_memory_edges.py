@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from cairnmind import agent_memory as am
+from cairnmind.agents import agent_memory as am
 from cairnmind.config import Settings
 
 
@@ -34,7 +34,7 @@ def test_agent_memory_source_checks_continuity_and_archive_validation(tmp_path, 
     assert am.is_mcp_source({"kind": "agent_transcript", "metadata": "{bad-json"}) is False
 
     # _journal_events rejects non-list
-    monkeypatch.setattr("cairnmind.agent_journal.AgentJournal.events", lambda self: "not-a-list")
+    monkeypatch.setattr("cairnmind.agents.agent_journal.AgentJournal.events", lambda self: "not-a-list")
     with pytest.raises(ValueError, match="Invalid own-agent journal"):
         am._journal_events(settings, "sess-1")
 

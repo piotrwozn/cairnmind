@@ -9,17 +9,17 @@ import hashlib
 import json
 
 import pytest
-from typer.testing import CliRunner
-
-from cairnmind import ingest
-from cairnmind.cli import app
-from cairnmind.ingest import _write_chunks
-from cairnmind.replaced_chunks import drop_replaced_chunks
-from cairnmind.retrieval import Retriever
-from cairnmind.sql import clean_row
-from cairnmind.store import Store
 from test_index_batching import rewrite, tree
 from test_portable_memory import destination, head_path, origin  # noqa: F401 (origin is a fixture)
+from typer.testing import CliRunner
+
+from cairnmind.agents.retrieval import Retriever
+from cairnmind.cli import app
+from cairnmind.scip import ingest
+from cairnmind.scip.ingest import _write_chunks
+from cairnmind.storage.replaced_chunks import drop_replaced_chunks
+from cairnmind.storage.sql import clean_row
+from cairnmind.store import Store
 
 
 class Vectors:
@@ -121,14 +121,14 @@ def test_a_replacement_deletes_chunks_and_vectors_in_its_own_transaction(tmp_pat
 
     # A replacement that fails after the old rows were dropped leaves them all in place.
     import cairnmind.store as store_module
-    real = store_module.insert_document
+    real = store_module.db_insert_document
 
     def failing(tx, table, row):
         if table == "sources":
             raise RuntimeError("the disk is full")
         return real(tx, table, row)
     with monkeypatch.context() as patch:
-        patch.setattr(store_module, "insert_document", failing)
+        patch.setattr(store_module, "db_insert_document", failing)
         with pytest.raises(RuntimeError, match="disk is full"):
             store.snapshot(pid, "manual://note", "second version\n", "manual")
     assert len(store.query("SELECT id FROM chunks WHERE source_id=:s", {"s": old["id"]})) == len(chunks)
@@ -234,12 +234,22 @@ def test_left_over_vectors_go_in_batches_counted_as_transactions(tmp_path, monke
         context = real()
         tx = context.__enter__()
         command = tx.command
+        delete_where = tx.delete_where
 
         def counting(sql, params=None):
             if sql.startswith("DELETE FROM"):
                 sizes.append(len(params["ids"]))
             return command(sql, params)
+
+        def counting_delete(collection, where=(), *, limit=None):
+            from cairnmind.storage.storage_query import FieldCondition, normalize_where
+            for cond in normalize_where(where):
+                if isinstance(cond, FieldCondition) and cond.field == "id" and cond.op == "in":
+                    sizes.append(len(cond.value))
+            return delete_where(collection, where, limit=limit)
+
         tx.command = counting
+        tx.delete_where = counting_delete
 
         class Wrapped:
             def __enter__(self):

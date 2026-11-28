@@ -1,17 +1,17 @@
 """Windows path shapes (drive letter, spaces + diacritics, >260 chars, UNC) and PowerShell command formatting (#444)."""
 from __future__ import annotations
 
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
-from cairnmind import path_spelling, process_control
+from cairnmind.agents.retrieval import Retriever
 from cairnmind.config import Settings
-from cairnmind.ingest import index_project
-from cairnmind.retrieval import Retriever
+from cairnmind.pal import path_spelling, process_control
+from cairnmind.scip.ingest import index_project
 from cairnmind.store import Store
 
 

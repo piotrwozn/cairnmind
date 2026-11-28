@@ -8,22 +8,19 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
-
-from cairnmind.config import Settings
-from cairnmind.inspector import Inspector
-from cairnmind.mcp_server import _saved_record_view
-from cairnmind.memory import MemoryManager
-from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
-from cairnmind.store import Store
-
 from conftest import as_person
-
-from test_ack_under_extraction import (NEWER, ack_body, extract_one, indexed_notes, prepared,  # noqa: F401
-                                       session_view)
+from fastapi.testclient import TestClient
+from test_ack_under_extraction import NEWER, ack_body, extract_one, indexed_notes, prepared, session_view  # noqa: F401
 from test_external_session_writes import fixture as fixture  # noqa: F401 - a fixture
 from test_external_session_writes import post, readback
+
+from cairnmind.config import Settings
+from cairnmind.mcp.mcp_server import _saved_record_view
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.service import create_app
+from cairnmind.store import Store
+from cairnmind.terminal.inspector import Inspector
 
 SHORT_KEYS = {"session_id", "epoch", "status", "unchanged", "acknowledged", "packet_id", "packet_hash", NEWER, "note"}
 

@@ -27,6 +27,9 @@ release-tools/
 
 # Build outputs and local project state
 dist/
+ui/dist/
+ui/playwright-report/
+ui/test-results/
 website/.astro/
 website/dist/
 website/public/media/demo-60s.svg

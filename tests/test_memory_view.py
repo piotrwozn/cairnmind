@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from cairnmind import memory_view
-from cairnmind.memory_view import render_snapshot
+from cairnmind.memory import memory_view
+from cairnmind.memory.memory_view import render_snapshot
 
 
 def _record(identifier, kind, content, *, status="confirmed", sources=("s1",), updated="2026-11-01T10:00:00+00:00",

@@ -5,7 +5,8 @@ from contextlib import contextmanager
 
 import pytest
 
-from cairnmind import inspector as insp, process_control as pc
+from cairnmind.pal import process_control as pc
+from cairnmind.terminal import inspector as insp
 
 
 class _MiniInspectorStore:
@@ -19,11 +20,11 @@ class _MiniInspectorStore:
     def query(self, sql, params=None):
         if "project_roots" in sql:
             return [{"path": self.root}]
-        if "FROM records WHERE" in sql and "id=:id" in sql:
+        if "FROM records WHERE" in sql and "id=:" in sql:
             return list(self.rows)
-        if "FROM plans WHERE" in sql and "id=:id" in sql:
+        if "FROM plans WHERE" in sql and "id=:" in sql:
             return [{"id": "pl1", "project_id": "p1", "version": 1, "metadata": {}}]
-        if "FROM ingestion_inbox WHERE id=:id" in sql:
+        if "FROM ingestion_inbox WHERE id=:" in sql:
             return []
         if "count(*)" in sql:
             return [{"n": 0}]
@@ -112,7 +113,7 @@ def test_process_control_windows_and_posix_edge_branches(monkeypatch):
 
     # POSIX running with OSError + group_running, and terminate with timeout -> SIGKILL
     monkeypatch.setattr(pc.os, "killpg", lambda pgid, sig: (_ for _ in ()).throw(PermissionError()), raising=False)
-    monkeypatch.setattr("cairnmind.process_identity.group_running", lambda pgid: True)
+    monkeypatch.setattr("cairnmind.pal.process_identity.group_running", lambda pgid: True)
     assert job.running() is True
 
     calls = []
@@ -173,7 +174,7 @@ def test_process_control_windows_and_posix_edge_branches(monkeypatch):
 
     # TerminateProcess fails with ACCESS_DENIED on already-exited PID -> ProcessLookupError
     monkeypatch.setattr(pc, "_kernel32", _FakeK32(open_h=5, term_ok=False))
-    monkeypatch.setattr("cairnmind.process_identity.alive", lambda pid: False)
+    monkeypatch.setattr("cairnmind.pal.process_identity.alive", lambda pid: False)
     with pytest.raises(ProcessLookupError):
         pc.terminate_pid(123)
 

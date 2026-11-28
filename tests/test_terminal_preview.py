@@ -8,14 +8,21 @@ import shutil
 import signal
 import time
 
-from fastapi.testclient import TestClient
 import pytest
+from conftest import time_budget
+from fastapi.testclient import TestClient
 from textual.widgets import DataTable
 
-from conftest import time_budget
-
-from cairnmind.terminal_preview import (FixtureData, PreviewBroker, PreviewServer, PreviewTerminal, PreviewWorkspace,
-                                      capture_workspace, create_preview_app, preview_settings)
+from cairnmind.terminal.terminal_preview import (
+    FixtureData,
+    PreviewBroker,
+    PreviewServer,
+    PreviewTerminal,
+    PreviewWorkspace,
+    capture_workspace,
+    create_preview_app,
+    preview_settings,
+)
 
 
 @pytest.fixture
@@ -23,8 +30,8 @@ def preview(tmp_path, monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("Preview attempted real service/engine/storage initialization")
     monkeypatch.setattr("cairnmind.cli.ensure_service", forbidden)
-    monkeypatch.setattr("cairnmind.cockpit.ensure_cockpit", forbidden)
-    monkeypatch.setattr("cairnmind.engine.start_engine", forbidden)
+    monkeypatch.setattr("cairnmind.terminal.cockpit.ensure_cockpit", forbidden)
+    monkeypatch.setattr("cairnmind.storage.engine.start_engine", forbidden)
     monkeypatch.setattr("cairnmind.store.Store.__init__", forbidden)
     return preview_settings(tmp_path / "preview", create=True)
 
@@ -84,9 +91,11 @@ def test_auth_and_native_websocket_fail_closed(preview):
         assert client.post("/auth/exchange", json={"ticket": ticket}).status_code == 401
         assert client.get("/api/state").status_code == 200
         from starlette.websockets import WebSocketDisconnect
-        with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect("/api/client-runs/example/terminal"):
-                pass
+        with (
+            pytest.raises(WebSocketDisconnect),
+            client.websocket_connect("/api/client-runs/example/terminal"),
+        ):
+            pass
 
 
 @pytest.mark.parametrize("scenario", ["normal", "empty", "unicode-many"])
@@ -108,10 +117,10 @@ def test_synthetic_fixture_has_bounded_pages_and_exact_graph_identity(preview, s
 @pytest.mark.parametrize("size", [(80, 24), (120, 36), (180, 55)])
 @pytest.mark.parametrize("kind", ["sidebar", "inspector", "graph"])
 async def test_actual_panel_render_and_keyboard_without_storage(preview, size, kind):
-    from cairnmind.terminal_graph import GraphApp, TerminalGraph
-    from cairnmind.terminal_inspector import InspectorApp
-    from cairnmind.terminal_panels import SidebarApp
-    from cairnmind.workspace_state import WorkspaceState
+    from cairnmind.terminal.terminal_graph import GraphApp, TerminalGraph
+    from cairnmind.terminal.terminal_inspector import InspectorApp
+    from cairnmind.terminal.terminal_panels import SidebarApp
+    from cairnmind.terminal.workspace_state import WorkspaceState
     server = PreviewServer(preview, "normal").start()
     broker = PreviewBroker(preview)
     workspace = WorkspaceState(preview)
@@ -152,7 +161,7 @@ async def test_actual_panel_render_and_keyboard_without_storage(preview, size, k
 
 
 def test_real_five_pane_processes_render_and_recover(preview):
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal.cockpit_state import CockpitState
     CockpitState(preview).update({"view": "cockpit"})
     binary = shutil.which("tmux")
     if not binary:
@@ -222,8 +231,8 @@ def test_real_five_pane_processes_render_and_recover(preview):
 
 @pytest.mark.asyncio
 async def test_graph_keyboard_stays_live_during_slow_fetch_and_recovers_from_offline(preview):
-    from cairnmind.terminal_graph import GraphApp, TerminalGraph
-    from cairnmind.workspace_state import WorkspaceState
+    from cairnmind.terminal.terminal_graph import GraphApp, TerminalGraph
+    from cairnmind.terminal.workspace_state import WorkspaceState
     server = PreviewServer(preview, "slow").start()
     broker = PreviewBroker(preview)
     workspace = WorkspaceState(preview)

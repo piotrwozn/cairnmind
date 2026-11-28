@@ -2,20 +2,21 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 import pytest
-
-from cairnmind import mcp_host, mcp_schema
-from cairnmind.cockpit_state import CockpitState
-from cairnmind.config import Settings
-from cairnmind.mcp_host import McpHost, McpServer
-from cairnmind.mcp_schema import admit, valid_arguments
-from cairnmind.mcp_servers import LOADER_ENV, inside_worktree, validate_server
 from conftest import MCP_FIXTURE, mcp_fixture_processes
+
+from cairnmind.config import Settings
+from cairnmind.mcp import mcp_host, mcp_schema
+from cairnmind.mcp.mcp_host import McpHost, McpServer
+from cairnmind.mcp.mcp_schema import admit, valid_arguments
+from cairnmind.mcp.mcp_servers import LOADER_ENV, inside_worktree, validate_server
+from cairnmind.terminal.cockpit_state import CockpitState
 
 
 def server(*modes, identifier="files", **extra):
@@ -60,10 +61,8 @@ async def test_a_stop_that_has_begun_completes_when_its_caller_is_cancelled(tmp_
             await until(lambda: "files" in host.servers and host.servers["files"].state == "off"
                         and host.servers["files"].process is not None)
         task.cancel()  # the person presses Ctrl+C while the stop waits for the process
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
     finally:
         await host.close()
     await settled(lambda: mcp_fixture_processes() == [])

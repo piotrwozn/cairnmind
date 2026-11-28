@@ -1,9 +1,15 @@
 import pytest
 
-from cairnmind.plans import PlanManager
-from cairnmind.stages import (confirmed_choice, describe, project_routing, resolve_stage, validate_project_stages,
-                              validate_stage_map)
+from cairnmind.memory.plans import PlanManager
 from cairnmind.store import Store
+from cairnmind.terminal.stages import (
+    confirmed_choice,
+    describe,
+    project_routing,
+    resolve_stage,
+    validate_project_stages,
+    validate_stage_map,
+)
 
 SLOTS = [{"id": "codex", "profile_id": "codex"}, {"id": "claude", "profile_id": "claude"},
          {"id": "helper", "profile_id": "api-helper"}, {"id": "orphan", "profile_id": "gone"},
@@ -142,8 +148,8 @@ def test_an_old_map_with_an_agent_slot_must_be_confirmed(slot):
 
 
 def test_both_shapes_of_a_client_stage_are_valid_and_old_preferences_load(tmp_path):
-    from cairnmind.cockpit_state import CockpitState
     from cairnmind.config import Settings
+    from cairnmind.terminal.cockpit_state import CockpitState
     both = {"implement": "codex", "review": chosen("helper"), "test": "unit"}
     assert validate_stage_map(both) == both
     for bad in ({"implement": {"slot": "codex"}}, {"implement": {**chosen("codex"), "client": "cursor"}},
@@ -265,7 +271,7 @@ def test_routing_reads_next_task_without_changing_the_plan(tmp_path):
 
 def test_assistants_are_named_by_what_was_configured_never_by_a_slot_id():
     # #154: "ollama (slot-cb68a6d447a4)" and "claude (claude)" told the person nothing.
-    from cairnmind.stages import assistant_name
+    from cairnmind.terminal.stages import assistant_name
     assert assistant_name({"label": "Codex", "client": "codex"}) == "Codex"
     assert assistant_name({"label": "Claude", "client": "claude"}) == "Claude (Claude Code)"
     assert assistant_name({"label": "Local", "client": "api", "provider": "ollama", "model": "qwen3.5:9b"}) == (

@@ -2,24 +2,23 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 import itertools
 import json
 import uuid
+from dataclasses import replace
 
 import pytest
+from test_external_session_writes import fixture as fixture  # noqa: F401 - a fixture
+from test_knowledge_mode import _store_choice
 from typer.testing import CliRunner
 
 from cairnmind import cli
 from cairnmind import store as store_module
-from cairnmind.agent import KnowledgeAgent
-from cairnmind.inspector import Inspector
-from cairnmind.memory_egress import release_held_extractions
-from cairnmind.reextract import plan, queue
-from cairnmind.retrieval import json_value
-
-from test_external_session_writes import fixture as fixture  # noqa: F401 - a fixture
-from test_knowledge_mode import _store_choice
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.agents.retrieval import json_value
+from cairnmind.memory.memory_egress import release_held_extractions
+from cairnmind.memory.reextract import plan, queue
+from cairnmind.terminal.inspector import Inspector
 
 TEXT = "We decided that the cache stays off.\nThe build takes a minute."
 NEW = {"kind": "decision", "key": "cache", "content": "We decided that the cache stays off.",
@@ -249,7 +248,7 @@ def test_the_command_dry_runs_queues_once_and_refuses_without_models(fixture, tm
 
 
 def own_block_source(f):
-    from cairnmind.integrations import BEGIN, END
+    from cairnmind.memory.integrations import BEGIN, END
     return f.store.snapshot(f.project["id"], "file:///repo/AGENTS.md", f"{BEGIN}\nFIRST call resume_context.\n{END}\n",
                             "document", metadata={"path": "/repo/AGENTS.md"})
 

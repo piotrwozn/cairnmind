@@ -1,17 +1,17 @@
 """A third-party MCP tool result is archived as a degraded source that never anchors and is never chunked (#126)."""
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
 import time
+from pathlib import Path
 
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.agent_memory import archive_agent_target, capture_agent_target, is_mcp_source
-from cairnmind.evidence import evidence_states
-from cairnmind.ingest import _write_chunks, index_pending_sources
-from cairnmind.memory import MemoryManager
-from cairnmind.retrieval import Retriever
-from cairnmind.sessions import SessionManager
+from cairnmind.agents.agent_journal import AgentJournal
+from cairnmind.agents.agent_memory import archive_agent_target, capture_agent_target, is_mcp_source
+from cairnmind.agents.retrieval import Retriever
+from cairnmind.memory.evidence import evidence_states
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.scip.ingest import _write_chunks, index_pending_sources
 from cairnmind.store import Store
 
 

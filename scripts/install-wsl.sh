@@ -645,7 +645,7 @@ leftover_devbrain "$tool_bin_dir"
 stored_engine_mode() {
     "$(uv tool dir)/cairnmind/bin/python" -I -c '
 from cairnmind.config import Settings
-from cairnmind.database_mode import engine_mode
+from cairnmind.storage.database_mode import engine_mode
 print(engine_mode(Settings.load()))' 2>/dev/null || true
 }
 
@@ -654,7 +654,7 @@ print(engine_mode(Settings.load()))' 2>/dev/null || true
 engine_present() {
     "$(uv tool dir)/cairnmind/bin/python" -I -c '
 from cairnmind.config import Settings
-from cairnmind.engine import runtime_dir
+from cairnmind.storage.engine import runtime_dir
 print("yes" if (runtime_dir(Settings.load()) / "lib").is_dir() else "no")' 2>/dev/null || true
 }
 
@@ -663,7 +663,7 @@ print("yes" if (runtime_dir(Settings.load()) / "lib").is_dir() else "no")' 2>/de
 show_init_marks() {
     printf '%s' "$1" | "$(uv tool dir)/cairnmind/bin/python" -I -c '
 import json, sys
-from cairnmind.first_start import INIT_MARKED
+from cairnmind.cli_cmds.first_start import INIT_MARKED
 marks = json.load(sys.stdin).get("confirmations_before_rule")
 if marks:
     print(INIT_MARKED.format(marked=marks["marked_as_a_persons"], left=marks["still_before_the_rule"]))' || {
@@ -744,4 +744,4 @@ fi
 # The same summary as `cairnmind doctor` in a terminal: required, optional, the next step (#244, #287).
 # Under pipefail the installer ends with doctor's exit code: 1 when something required is missing (#313).
 printf '\nChecking the installation...\n'
-"$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.doctor_attention
+"$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.cli_cmds.doctor_attention

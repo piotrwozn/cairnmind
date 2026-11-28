@@ -5,20 +5,20 @@ whole graph would produce. Every scenario here ends by comparing the two.
 """
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
-from cairnmind import ingest
-from cairnmind.arcade import ArcadeClient
 from cairnmind.config import Settings
-from cairnmind.ingest import forget_index_signature, index_project, index_project_if_changed
-from cairnmind.journal import Journal, JournalTransaction
+from cairnmind.scip import ingest
+from cairnmind.scip.ingest import forget_index_signature, index_project, index_project_if_changed
+from cairnmind.storage.arcade import ArcadeClient
+from cairnmind.storage.journal import Journal, JournalTransaction
+from cairnmind.storage.sql import clean_row
 from cairnmind.store import Store
-from cairnmind.sql import clean_row
 
 
 @pytest.fixture(autouse=True)
@@ -283,7 +283,7 @@ def test_what_is_remembered_belongs_to_one_store_and_to_existing_projects(worksp
 
 def test_a_pass_that_indexed_gives_its_freed_memory_back_and_a_skipped_one_does_not(workspace, monkeypatch):
     store, pid, root = workspace
-    from cairnmind import memory_release
+    from cairnmind.pal import memory_release
     released = []
     monkeypatch.setattr(memory_release, "release_freed", lambda: released.append(1))
     index_project_if_changed(store, pid)

@@ -8,8 +8,8 @@ import subprocess
 
 import pytest
 
-from cairnmind.ingest import import_history
-from cairnmind.sessions import EXTERNAL_WARNING, SessionManager, format_packet
+from cairnmind.memory.sessions import EXTERNAL_WARNING, SessionManager, format_packet
+from cairnmind.scip.ingest import import_history
 from cairnmind.store import Store
 
 

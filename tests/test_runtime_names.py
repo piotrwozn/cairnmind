@@ -5,22 +5,25 @@ service announces, the session key of a spooled hook event, and a backup's suffi
 """
 from __future__ import annotations
 
+import contextlib
 import gzip
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 import pytest
-
 from installer_script import installer_functions as installer_text
-from cairnmind import cli, cockpit, sessions
+
+from cairnmind import cli
 from cairnmind.config import BACKUP_FORMATS, BACKUP_SUFFIXES, BROKER_NAMES, SERVICE_NAMES, Settings
+from cairnmind.memory import sessions
 from cairnmind.service import instance_id
 from cairnmind.store import Store
+from cairnmind.terminal import cockpit
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX bash installer scripts/install-wsl.sh and /tmp")
 
@@ -386,10 +389,8 @@ def test_an_installer_ended_by_a_signal_or_an_error_removes_its_mark(tmp_path, n
         assert process.wait(timeout=20) == code
         assert not mark.exists()
     finally:
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
         process.wait()
 
 
@@ -417,7 +418,7 @@ def test_scheduled_backups_of_both_suffixes_are_ordered_by_the_time_in_their_nam
     assert daily_backups(folder) == []
     folder.mkdir()
     names = [f"{1794000000000000000 + index}{BACKUP_SUFFIXES[index % 2]}" for index in range(10)]
-    for index, name in enumerate(names):
+    for _index, name in enumerate(names):
         (folder / name).write_bytes(b"x")
         # A copied directory: every file has the same, unrelated modification time.
         os.utime(folder / name, (1000, 1000))

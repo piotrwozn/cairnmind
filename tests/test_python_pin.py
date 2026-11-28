@@ -1,9 +1,9 @@
 """The development Python is pinned to the tested one, and the files that name it agree (#228)."""
 from __future__ import annotations
 
-from pathlib import Path
 import re
 import tomllib
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 

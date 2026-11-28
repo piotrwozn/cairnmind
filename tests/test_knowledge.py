@@ -10,15 +10,21 @@ from uuid import uuid4
 
 import httpx
 import pytest
-
-from cairnmind.agent import EXCERPT_CHARS, INITIAL_HITS, REPAIR_CATALOG_CHARS, KnowledgeAgent, SYSTEM, question_excerpt
-from cairnmind.config import Settings
-from cairnmind.ollama import Ollama, OllamaUnavailable
-from cairnmind.retrieval import Retriever, public_record
-from cairnmind.store import Store
-
 from conftest import as_person
-from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
+
+from cairnmind.agents.agent import (
+    EXCERPT_CHARS,
+    INITIAL_HITS,
+    REPAIR_CATALOG_CHARS,
+    SYSTEM,
+    KnowledgeAgent,
+    question_excerpt,
+)
+from cairnmind.agents.ollama import Ollama, OllamaUnavailable
+from cairnmind.agents.retrieval import Retriever, public_record
+from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
+from cairnmind.config import Settings
+from cairnmind.store import Store
 
 
 class FakeOllama:
@@ -142,10 +148,10 @@ def test_graph_walk_follows_four_hop_evidence_chain(workspace):
     source, _ = document(store, project, "Evidence for dependency topology")
     ids = [str(uuid4()) for _ in range(5)]
     labels = ["decision-login", "module", "function", "caller", "test"]
-    for node_id, label in zip(ids, labels):
+    for node_id, label in zip(ids, labels, strict=False):
         store.upsert_node({"id": node_id, "project_id": project["id"], "kind": "symbol", "label": label,
                            "source_id": source["id"], "metadata": {}})
-    for previous, following in zip(ids, ids[1:]):
+    for previous, following in zip(ids, ids[1:], strict=False):
         store.upsert_edge({"id": str(uuid4()), "project_id": project["id"], "from_id": previous,
                            "to_id": following, "kind": "depends_on", "source_id": source["id"], "status": "confirmed"})
     graph = Retriever(store, settings, FakeOllama()).graph(project["id"], "decision-login")
@@ -528,7 +534,7 @@ async def test_final_repair_does_not_import_foreign_project_source(workspace, tm
 
 
 async def test_citation_catalog_never_expands_other_worktree_record_pointers(workspace, tmp_path):
-    from cairnmind.ingest import index_project
+    from cairnmind.scip.ingest import index_project
     store, project, settings = workspace
     first = Path(project["root"])
     second = tmp_path / "second-worktree"
@@ -571,7 +577,7 @@ async def test_citation_catalog_never_expands_other_worktree_record_pointers(wor
 
 @pytest.mark.parametrize("during_repair", [False, True])
 async def test_final_repair_never_accepts_code_changed_during_generation(workspace, during_repair):
-    from cairnmind.ingest import index_project
+    from cairnmind.scip.ingest import index_project
     store, project, settings = workspace
     path = Path(project["root"]) / "policy.py"
     quote = 'POLICY = "original"'
@@ -593,7 +599,7 @@ async def test_final_repair_never_accepts_code_changed_during_generation(workspa
 
 
 async def test_current_read_clears_earlier_historical_intent_before_final_freshness_check(workspace):
-    from cairnmind.ingest import index_project
+    from cairnmind.scip.ingest import index_project
     store, project, settings = workspace
     path = Path(project["root"]) / "policy.py"
     quote = 'POLICY = "original"'
@@ -786,7 +792,7 @@ async def test_typed_answer_retains_public_string_and_uses_one_call(workspace, e
 
 @pytest.mark.parametrize("bad_quote", [False, True])
 async def test_typed_nested_unknown_repairs_contract_and_citations_together(workspace, bad_quote):
-    from cairnmind.answer_contract import prepare_answer_schema
+    from cairnmind.agents.answer_contract import prepare_answer_schema
 
     store, project, settings = workspace
     quote = '{"facts":{"answer":"unknown"},"scope":"No other-project data is available here."}'
@@ -856,7 +862,7 @@ async def test_typed_answer_keeps_foreign_source_guard(workspace, tmp_path):
 
 
 async def test_typed_contract_repair_keeps_current_source_freshness_guard(workspace):
-    from cairnmind.ingest import index_project
+    from cairnmind.scip.ingest import index_project
 
     store, project, settings = workspace
     path = Path(project["root"]) / "policy.py"
@@ -984,7 +990,7 @@ async def test_project_scope_blocks_source_read_from_other_project(workspace, tm
 
 
 async def test_current_code_is_refreshed_before_answer(workspace):
-    from cairnmind.ingest import index_project
+    from cairnmind.scip.ingest import index_project
 
     store, project, settings = workspace
     path = Path(project["root"]) / "auth.py"
@@ -1184,7 +1190,7 @@ async def test_model_digest_change_reembeds_but_old_sources_are_skipped(workspac
 
 
 async def test_crlf_code_quote_uses_text_view_and_preserves_raw_snapshot(workspace):
-    from cairnmind.ingest import index_project
+    from cairnmind.scip.ingest import index_project
 
     store, project, settings = workspace
     path = Path(project["root"]) / "windows.py"
@@ -1201,7 +1207,7 @@ async def test_crlf_code_quote_uses_text_view_and_preserves_raw_snapshot(workspa
 
 
 async def test_missing_current_code_is_not_reported_complete_but_history_is_readable(workspace):
-    from cairnmind.ingest import index_project
+    from cairnmind.scip.ingest import index_project
 
     store, project, settings = workspace
     path = Path(project["root"]) / "removed.py"
@@ -1282,7 +1288,7 @@ def test_final_citations_have_fixed_count_and_excerpt_budget(workspace):
     result = KnowledgeAgent(store, settings, FakeOllama())._final(text, project["id"], evidence, time.monotonic())
     assert len(result["sources"]) == 8
     # Each quote is capped at the size of a shown passage (#241: it was 750, below the 900 shown).
-    from cairnmind.agent import EXCERPT_CHARS
+    from cairnmind.agents.agent import EXCERPT_CHARS
     assert all(len(s["quote"]) <= EXCERPT_CHARS for s in result["sources"])
     assert sum(len(s["quote"]) for s in result["sources"]) <= 8 * EXCERPT_CHARS
     assert all("analysis" not in s["metadata"] for s in result["sources"])
@@ -1413,7 +1419,7 @@ async def test_reported_test_flags_and_done_progress_are_never_fresh_machine_pro
 
 
 async def test_check_status_reads_real_run_sources_and_current_worktree_scope(workspace, tmp_path):
-    from cairnmind.verification import run_check
+    from cairnmind.memory.verification import run_check
 
     store, project, settings = workspace
     root = Path(project["root"])
@@ -1452,7 +1458,7 @@ async def test_check_status_reads_real_run_sources_and_current_worktree_scope(wo
 
 
 async def test_workflow_projects_managed_metadata_with_explicit_bounds(workspace):
-    from cairnmind.plans import PlanManager
+    from cairnmind.memory.plans import PlanManager
 
     store, project, settings = workspace
     saved = PlanManager(store).save(project["id"], {"title": "Large plan", "goal": "Goal " * 2000,
@@ -1483,8 +1489,8 @@ async def test_workflow_projects_managed_metadata_with_explicit_bounds(workspace
 
 
 async def test_plan_request_goals_and_constraints_are_native_fulltext_retrievable(workspace):
-    from cairnmind.ingest import index_pending_sources
-    from cairnmind.plans import PlanManager
+    from cairnmind.memory.plans import PlanManager
+    from cairnmind.scip.ingest import index_pending_sources
 
     store, project, settings = workspace
     saved = PlanManager(store).save(project["id"], {"title": "Calibration", "goal": "orbital calibrator",
@@ -1517,7 +1523,7 @@ async def test_plan_request_goals_and_constraints_are_native_fulltext_retrievabl
 
 
 async def test_current_worktree_filters_native_fts_ann_graph_and_direct_source_reads_before_limits(workspace, tmp_path):
-    from cairnmind.ingest import index_project
+    from cairnmind.scip.ingest import index_project
 
     store, project, settings = workspace
     root_a, root_b = Path(project["root"]), tmp_path / "worktree-b"
@@ -1599,7 +1605,7 @@ def _record_ids(retriever, project, query, limit=8):
 
 
 def test_disputed_record_never_outranks_confirmed_record(workspace, monkeypatch):
-    import cairnmind.retrieval as retrieval_module
+    import cairnmind.agents.retrieval as retrieval_module
     store, project, settings = workspace
     # The disputed finding repeats the query terms, so full-text search ranks it first.
     disputed = _record(store, project, "session-a", "disputed",
@@ -1646,7 +1652,7 @@ def test_strong_disputed_record_is_not_buried_under_weak_confirmed_matches(works
     ("tests/fixtures/settings.toml", True), ("config/app.yaml", False), ("web/app.test.json", False),
 ])
 def test_secondary_source_recognises_tests_lock_files_and_minified_text(path, secondary):
-    from cairnmind.retrieval import secondary_source
+    from cairnmind.agents.retrieval import secondary_source
     assert secondary_source(path) is secondary
     assert secondary_source(path.replace("/", "\\")) is secondary
 
@@ -1661,7 +1667,7 @@ def _source_ids(retriever, project, query, limit=8):
 
 
 def test_definition_outranks_a_test_of_similar_score(workspace, monkeypatch):
-    import cairnmind.retrieval as retrieval_module
+    import cairnmind.agents.retrieval as retrieval_module
     store, project, settings = workspace
     # The test repeats the query terms, so full-text search ranks it first on its own.
     test = _file(store, project, "tests/test_settings.py",
@@ -1686,7 +1692,7 @@ def test_a_query_only_a_test_matches_still_finds_the_test(workspace):
 
 
 def test_a_better_matching_test_moves_down_only_by_the_penalty(workspace):
-    from cairnmind.retrieval import SECONDARY_SOURCE_PENALTY
+    from cairnmind.agents.retrieval import SECONDARY_SOURCE_PENALTY
     store, project, settings = workspace
     test = _file(store, project, "tests/test_cache.py", "def test_cache_eviction_order():\n    # cache eviction order")
     weak = [_file(store, project, f"src/pkg/cache_{index}.py", f"CACHE_{index} = {{}}  # cache")
@@ -1698,7 +1704,7 @@ def test_a_better_matching_test_moves_down_only_by_the_penalty(workspace):
 
 
 def test_confirmed_record_beats_slightly_more_relevant_disputed_records(workspace, monkeypatch):
-    import cairnmind.retrieval as retrieval_module
+    import cairnmind.agents.retrieval as retrieval_module
     store, project, settings = workspace
     crowd = [_record(store, project, f"evict-{index}", "disputed",
                      "Cache eviction: cache eviction runs hourly; cache eviction is aggressive.")

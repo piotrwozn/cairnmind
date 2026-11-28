@@ -9,15 +9,15 @@ import sys
 import pytest
 from typer.testing import CliRunner
 
+import cairnmind.memory.scope as scope_module
 from cairnmind.cli import app
 from cairnmind.config import Settings
-from cairnmind.memory import MemoryManager
-from cairnmind.plans import PlanManager
-from cairnmind.scope import drift_warning, record_baseline, scope_drift
-import cairnmind.scope as scope_module
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.plans import PlanManager
+from cairnmind.memory.scope import drift_warning, record_baseline, scope_drift
+from cairnmind.memory.verification import task_definition_hash, verification_status
+from cairnmind.storage.sql import clean_row
 from cairnmind.store import Store
-from cairnmind.sql import clean_row
-from cairnmind.verification import task_definition_hash, verification_status
 
 
 def git(root, *args):
@@ -223,7 +223,7 @@ def test_an_unmanaged_task_and_a_direct_note(workspace):
 
 
 def test_plan_next_and_the_model_view_carry_the_warning(workspace, monkeypatch):
-    from cairnmind.mcp_server import _next_task_view
+    from cairnmind.mcp.mcp_server import _next_task_view
 
     store, pid, root, settings = workspace
     saved, task = scoped_plan(store, pid, root)
@@ -259,7 +259,7 @@ def test_staging_or_committing_a_file_is_not_a_change(workspace):
 
 
 def test_an_unchanged_tree_is_compared_without_reading_a_file(workspace, monkeypatch):
-    import cairnmind.verification as verification
+    import cairnmind.memory.git_worktree as git_worktree
 
     store, pid, root, settings = workspace
     for item in root.rglob("*"):
@@ -268,8 +268,8 @@ def test_an_unchanged_tree_is_compared_without_reading_a_file(workspace, monkeyp
     saved, task = scoped_plan(store, pid, root)
     task = start(store, pid, root, saved, task)
     read = []
-    real = verification._file_hash
-    monkeypatch.setattr(verification, "_file_hash", lambda path: read.append(path) or real(path))
+    real = git_worktree._file_hash
+    monkeypatch.setattr(git_worktree, "_file_hash", lambda path: read.append(path) or real(path))
     assert scope_drift(store, task, root)["status"] == "in_scope" and read == []
     (root / "src/billing/invoice.py").write_text("RATE = 2\n")
     assert scope_drift(store, task, root)["status"] == "out_of_scope" and [item.name for item in read] == ["invoice.py"]
@@ -434,11 +434,10 @@ def test_the_note_is_taken_only_after_the_write_is_committed(workspace):
     store, pid, root, settings = workspace
     saved, task = scoped_plan(store, pid, root)
     folder = store.data_dir / "scope-baselines"
-    with pytest.raises(RuntimeError):
-        with store.transaction():
-            start(store, pid, root, saved, task)
-            assert not folder.exists()
-            raise RuntimeError("the write is abandoned")
+    with pytest.raises(RuntimeError), store.transaction():
+        start(store, pid, root, saved, task)
+        assert not folder.exists()
+        raise RuntimeError("the write is abandoned")
     assert not folder.exists()
     with store.transaction():
         task = start(store, pid, root, saved, task)
@@ -479,9 +478,9 @@ def test_an_open_note_is_kept_however_old_and_leftovers_of_a_broken_write_are_re
 
 
 def test_a_long_scope_fits_the_model_view_and_the_brief_and_contract_say_the_warning(workspace):
-    from cairnmind.brief import _verification
-    from cairnmind.contract import build_contract
-    from cairnmind.mcp_server import _next_task_view
+    from cairnmind.mcp.mcp_server import _next_task_view
+    from cairnmind.memory.brief import _verification
+    from cairnmind.memory.contract import build_contract
 
     store, pid, root, settings = workspace
     saved, task = scoped_plan(store, pid, root, scope=["src/auth/**"] + [f"docs/{'x' * 480}{n}/**" for n in range(63)])
@@ -514,7 +513,7 @@ def test_a_worktree_that_cannot_be_read_gives_unknown(workspace, monkeypatch):
 def test_the_service_gives_the_warning_to_a_model_and_the_resume_packet_carries_the_scope(workspace):
     from fastapi.testclient import TestClient
 
-    from cairnmind.mcp_server import _next_task_view
+    from cairnmind.mcp.mcp_server import _next_task_view
     from cairnmind.service import create_app
 
     class NoModel:

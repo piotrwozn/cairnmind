@@ -1,27 +1,27 @@
 """The human brief is built from stored rows and Git only, and marks where each line comes from."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
 import os
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from cairnmind import brief as brief_module
 from cairnmind import cli
-from cairnmind import verification
-from cairnmind.brief import MAX_LINES, build_brief
 from cairnmind.config import Settings
-from cairnmind.plans import PlanManager
+from cairnmind.memory import brief as brief_module
+from cairnmind.memory import verification
+from cairnmind.memory.brief import MAX_LINES, build_brief
+from cairnmind.memory.plans import PlanManager
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.memory.verification import run_check
 from cairnmind.service import create_app
-from cairnmind.sessions import SessionManager
-from cairnmind.inspector import Inspector
 from cairnmind.store import Store
-from cairnmind.verification import run_check
+from cairnmind.terminal.inspector import Inspector
 
 
 def git(root, *args, when=None):
@@ -38,7 +38,7 @@ def repository(root):
     git(root, "config", "user.email", "fixture@example.invalid")
     (root / "app.py").write_text("value = 1\n")
     git(root, "add", ".")
-    git(root, "commit", "-qm", "fixture", when=datetime.now(timezone.utc) - timedelta(days=2))
+    git(root, "commit", "-qm", "fixture", when=datetime.now(UTC) - timedelta(days=2))
     return root
 
 
@@ -92,13 +92,13 @@ def test_brief_after_a_session_shows_checkpoint_next_task_fresh_check_and_later_
     store, project, root, settings = workspace
     check_profile(root)
     git(root, "add", ".")
-    git(root, "commit", "-qm", "add the check profile", when=datetime.now(timezone.utc) - timedelta(days=1))
+    git(root, "commit", "-qm", "add the check profile", when=datetime.now(UTC) - timedelta(days=1))
     PlanManager(store).save(project["id"], {"title": "Harden login", "goal": "No endless retries"},
                             [{"key": "limit", "content": "Add the retry limit"},
                              {"key": "docs", "content": "Document the limit", "depends_on": ["limit"]}],
                             "initial", worktree=str(root), activate=True)
     store.checkpoint(project["id"], {"summary": "Retry limit half done", "next": ["write the test"], "empty": ""})
-    later = datetime.now(timezone.utc) + timedelta(hours=1)
+    later = datetime.now(UTC) + timedelta(hours=1)
     (root / "app.py").write_text("value = 2\n")
     git(root, "commit", "-qam", "Raise the value\x1b[31m", when=later)
     task = waiting_task(store, project, required_profiles=["unit"])

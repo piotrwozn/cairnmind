@@ -6,15 +6,14 @@ a Mac is imitated on Linux. On macOS (the CI job) /bin/bash is the bash 3.2 that
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
-
 from installer_script import installer_functions
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX bash scripts/install-wsl.sh")
@@ -199,7 +198,7 @@ def test_the_installer_ends_with_the_workspace_lines_only_when_tmux_is_ready_and
     assert "\nelse\n" not in ending and "cairnmind serve" not in ending
     assert ending.count("Open the terminal workspace") == 1
     last = script.rstrip().splitlines()[-1]
-    assert last == '"$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.doctor_attention'
+    assert last == '"$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.cli_cmds.doctor_attention'
     assert "Models were not downloaded" not in script
     assert script.count('engine status >/dev/null') == 3 and 'engine install >/dev/null' in script  # no engine JSON
 
@@ -410,9 +409,9 @@ def test_the_refusal_names_the_data_directory_of_each_socket_it_can_ask(tmp_path
         panes = tmp_path / "panes"
         panes.mkdir()
         starts = {  # the first pane's start command of each server; tmux prints a shell string in double quotes
-            "ui-0000000000000001": "\"'/usr/bin/python3' -I -m cairnmind.terminal_panels --kind sidebar --workspace-id default "
+            "ui-0000000000000001": "\"'/usr/bin/python3' -I -m cairnmind.terminal.terminal_panels --kind sidebar --workspace-id default "
                                    "--data-dir '/home/me/my data'\"\nsecond pane --data-dir /other",
-            "native-0000000000000002": "\"python -I -m cairnmind.native_worker --spec /home/me/.local/share/cairnmind/runtime/abc.launch.json\"",
+            "native-0000000000000002": "\"python -I -m cairnmind.terminal.native_worker --spec /home/me/.local/share/cairnmind/runtime/abc.launch.json\"",
             "native-0000000000000003": "",  # asked, no answer: listed as before
             "native-0000000000000004": "\"bash -c 'sleep 1'\""}  # another command
         servers = []
@@ -596,7 +595,7 @@ def test_an_unpacked_engine_is_not_announced_as_a_download(tmp_path):
             (home / "config.json").write_text(config)
         if unpacked:
             from cairnmind.config import Settings
-            from cairnmind.engine import runtime_dir
+            from cairnmind.storage.engine import runtime_dir
             (runtime_dir(Settings.load(home)) / "lib").mkdir(parents=True)
         result = subprocess.run([BASH, "-c", "set -euo pipefail\n" + function + "\nengine_present"],
                                 env={**os.environ, "PATH": f"{uv.parent}:{os.environ['PATH']}",

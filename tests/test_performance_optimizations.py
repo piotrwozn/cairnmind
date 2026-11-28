@@ -1,20 +1,23 @@
 """Unit tests for snapshot, store, verification and hook CLI performance optimizations."""
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 
-from cairnmind import arcade, cli_entry, memory, sql, verification
+from cairnmind.cli_cmds import cli_entry
 from cairnmind.config import Settings
+from cairnmind.memory import memory, verification
+from cairnmind.storage import arcade, sql
 from cairnmind.store import Store
 
 
@@ -178,7 +181,7 @@ def test_memory_unchanged_since_receipt_fast_path(tmp_path, monkeypatch):
                 return list(aliases_rows)
             return []
 
-    monkeypatch.setattr("cairnmind.project_folders.require_here", lambda store, p, r: None)
+    monkeypatch.setattr("cairnmind.memory.project_folders.require_here", lambda store, p, r: None)
     mgr = memory.MemoryManager(FakeStore())
 
     # Exact seq match -> unchanged
@@ -253,10 +256,11 @@ def test_store_load_checked_sources_and_record_graph_unit():
 
         def query(self, statement, params=None):
             self.queries.append((statement, params))
-            if "FROM sources WHERE id IN :ids" in statement:
-                return [src_row] if sid in params["ids"] else []
-            if "FROM nodes WHERE id IN :ids" in statement:
-                return [existing_src_node] if f"source:{sid}" in params["ids"] else []
+            ids = (params or {}).get("ids") or (params or {}).get("w0") or ()
+            if "FROM sources WHERE id IN :" in statement:
+                return [src_row] if sid in ids else []
+            if "FROM nodes WHERE id IN :" in statement:
+                return [existing_src_node] if f"source:{sid}" in ids else []
             return []
 
         def command(self, statement, params=None):
@@ -359,8 +363,8 @@ def test_cli_entry_hook_fast_path_and_fallback(tmp_path, monkeypatch, capsys):
 
     # Fast-path hook runs without touching cli module when argv matches
     calls = []
-    monkeypatch.setattr("cairnmind.integrations.hook", lambda s, p, c: calls.append((s.data_dir, p, c)) or {"ok": True})
-    monkeypatch.setattr("cairnmind.cli_entry.sys.stdin", SimpleNamespace(read=lambda: '{"hook_event_name":"Stop"}'))
+    monkeypatch.setattr("cairnmind.memory.integrations.hook", lambda s, p, c: calls.append((s.data_dir, p, c)) or {"ok": True})
+    monkeypatch.setattr("cairnmind.cli_cmds.cli_entry.sys.stdin", SimpleNamespace(read=lambda: '{"hook_event_name":"Stop"}'))
     data_dir = tmp_path / "data"
     cli_entry.entrypoint(["--data-dir", str(data_dir), "hook", "--client", "claude"])
     out = capsys.readouterr()
@@ -368,7 +372,7 @@ def test_cli_entry_hook_fast_path_and_fallback(tmp_path, monkeypatch, capsys):
     assert calls[0][1] == {"hook_event_name": "Stop"} and calls[0][2] == "claude"
 
     # Broken JSON stdin logs cleanly to stderr matching cli.hook
-    monkeypatch.setattr("cairnmind.cli_entry.sys.stdin", SimpleNamespace(read=lambda: "{broken"))
+    monkeypatch.setattr("cairnmind.cli_cmds.cli_entry.sys.stdin", SimpleNamespace(read=lambda: "{broken"))
     cli_entry.entrypoint(["--data-dir", str(data_dir), "hook", "--client", "claude"])
     assert "Cairnmind hook:" in capsys.readouterr().err
 
@@ -398,10 +402,8 @@ def test_memory_and_store_optimization_edge_branches(tmp_path, monkeypatch):
     real_obj = tmp_path / "outside_obj"
     real_obj.mkdir()
     if hasattr(os, "symlink"):
-        try:
+        with contextlib.suppress(OSError):
             (base / "objects").symlink_to(real_obj, target_is_directory=True)
-        except OSError:
-            pass
         if (base / "objects").is_symlink():
             empty = {t: [] for t in memory.TABLES}
             m = {
@@ -464,16 +466,27 @@ def test_memory_and_store_optimization_edge_branches(tmp_path, monkeypatch):
     edge_row = {"id": "e:1", "project_id": pid, "from_id": "custom:1", "to_id": "custom:1", "kind": "relates_to"}
 
     class FakeCaptureStore:
+        def find(self, collection, where=(), *, columns=None, order_by=(), limit=None, distinct=False):
+            from cairnmind.storage.storage_query import normalize_where
+            conds = normalize_where(where)
+            if collection == "projects":
+                return [{"id": pid, "name": "Demo", "root": str(root.resolve())}]
+            if collection == "project_roots":
+                return [{"id": "pr1"}]
+            if collection == "edges" and any(getattr(c, "op", None) == "not_in" for c in conds):
+                return [edge_row]
+            if collection == "nodes" and any(getattr(c, "field", None) == "id" and getattr(c, "op", None) == "in" for c in conds):
+                return [extra_node]
+            return []
+
         def query(self, statement, params=None):
             if "FROM projects WHERE" in statement:
                 return [{"id": pid, "name": "Demo", "root": str(root.resolve())}]
             if "FROM project_roots WHERE" in statement:
                 return [{"id": "pr1"}]
-            if "kind NOT IN :code_edges" in statement:
+            if "FROM edges" in statement and "NOT IN" in statement:
                 return [edge_row]
-            if "kind IN :kept_nodes" in statement:
-                return []
-            if "FROM nodes WHERE project_id=:project AND id IN :ids" in statement:
+            if "FROM nodes" in statement and " id IN " in statement:
                 return [extra_node]
             if "FROM journal_state" in statement:
                 return []
@@ -485,7 +498,7 @@ def test_memory_and_store_optimization_edge_branches(tmp_path, monkeypatch):
         def _require_project(self, tx, project_id):
             return None
 
-    monkeypatch.setattr("cairnmind.project_folders.require_here", lambda store, p, r: None)
+    monkeypatch.setattr("cairnmind.memory.project_folders.require_here", lambda store, p, r: None)
     mgr = memory.MemoryManager(FakeCaptureStore())
     _, captured_payload = mgr._capture(pid, root, FakeCaptureStore())
     assert [n["id"] for n in captured_payload["nodes"]] == ["custom:1"]

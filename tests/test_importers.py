@@ -2,19 +2,20 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, importers
+from cairnmind import cli
+from cairnmind.agents.retrieval import Retriever
 from cairnmind.config import Settings
-from cairnmind.evidence import evidence_states
-from cairnmind.inspector import Inspector
-from cairnmind.retrieval import Retriever
-from cairnmind.sessions import SessionManager
+from cairnmind.memory import importers
+from cairnmind.memory.evidence import evidence_states
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
+from cairnmind.terminal.inspector import Inspector
 
 runner = CliRunner()
 

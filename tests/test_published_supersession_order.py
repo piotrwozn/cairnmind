@@ -6,15 +6,14 @@ supersedes edge was written before the replaced record's node existed, and the w
 from __future__ import annotations
 
 import pytest
-
-from cairnmind.inspector import Inspector
-from cairnmind.memory import MemoryManager
-from cairnmind.memory_published import Publisher
-from cairnmind.memory_published_import import PublishedImporter
-from cairnmind.store import Store
-
 from conftest import person_edit
 from test_published_memory import ada, commit, folder_of, teammate  # noqa: F401 (ada is a fixture)
+
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.memory_published import Publisher
+from cairnmind.memory.memory_published_import import PublishedImporter
+from cairnmind.store import Store
+from cairnmind.terminal.inspector import Inspector
 
 LOW, HIGH = "00000000-0000-4000-8000-000000000001", "ffffffff-ffff-4fff-bfff-fffffffffffe"
 ORDERS = pytest.mark.parametrize("old_id,new_id", [(HIGH, LOW), (LOW, HIGH)],

@@ -8,14 +8,13 @@ import json
 
 import httpx
 import pytest
+from conftest import plain_words
 from typer.testing import CliRunner
 
-from conftest import plain_words
-from cairnmind import memory_models
+from cairnmind.agents.ollama import Ollama, OllamaUnavailable
 from cairnmind.config import Settings
-from cairnmind.memory_openai import OpenAICompatible
-from cairnmind.ollama import Ollama, OllamaUnavailable
-
+from cairnmind.memory import memory_models
+from cairnmind.memory.memory_openai import OpenAICompatible
 
 LMSTUDIO = {"provider": "openai_compatible", "base_url": "http://127.0.0.1:1234/v1"}
 
@@ -338,7 +337,7 @@ def test_doctor_says_where_memory_content_goes_and_never_shows_a_key(tmp_path, m
 
 def mock_async_client(monkeypatch, server):
     real = httpx.AsyncClient
-    monkeypatch.setattr("cairnmind.ollama.httpx.AsyncClient",
+    monkeypatch.setattr("cairnmind.agents.ollama.httpx.AsyncClient",
                         lambda **kwargs: real(**kwargs, transport=httpx.MockTransport(server)))
 
 
@@ -378,7 +377,7 @@ def test_models_set_checks_the_server_before_saving_and_names_the_rebuild(tmp_pa
 
 
 def test_doctor_names_a_server_without_structured_output_instead_of_unavailable(tmp_path):
-    from cairnmind import structured_output
+    from cairnmind.agents import structured_output
     settings = settings_with(tmp_path)
 
     def server(request):

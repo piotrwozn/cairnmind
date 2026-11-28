@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 import inspect
 import json
 import logging
@@ -10,13 +9,14 @@ import os
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from types import SimpleNamespace as NS
 
 import pytest
 
+from cairnmind.agents import copilot_adapter as module
+from cairnmind.agents.copilot_adapter import CopilotAdapter, CopilotError
 from cairnmind.config import Settings
-from cairnmind import copilot_adapter as module
-from cairnmind.copilot_adapter import CopilotAdapter, CopilotError
 
 
 @dataclass
@@ -431,7 +431,7 @@ async def test_probe_requires_actual_model_tool_call(tmp_path):
 
 
 def make_receipt(settings):
-    from cairnmind import private_files
+    from cairnmind.pal import private_files
     directory = module._runtime_root(settings)
     bundle = directory / module.RUNTIME_VERSION
     binary = bundle / "prebuilds/linux-x64/copilot"
@@ -458,7 +458,7 @@ def test_status_and_login_command_are_nonmutating_and_do_not_download(tmp_path, 
     monkeypatch.setattr(module, "_sdk", lambda: SDK)
     command = module.login_command(settings)
     assert command[-3:] == ["--login", "--data-dir", str(settings.data_dir)]
-    assert command[1:4] == ["-I", "-m", "cairnmind.copilot_adapter"]
+    assert command[1:4] == ["-I", "-m", "cairnmind.agents.copilot_adapter"]
     assert before == (receipt.read_bytes(), receipt.stat().st_mtime_ns)
     binary.write_text("tampered")
     assert module.runtime_status(settings)["code"] == "copilot_runtime_invalid"

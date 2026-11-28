@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import ast
 import itertools
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable
 
 import pytest
 from conftest import plain_words
@@ -28,18 +28,26 @@ from test_project_forget_workspace import ui as forget_ui
 from test_record_kinds_workspace import ACCEPTED, BLOCKING
 from test_record_kinds_workspace import ui as kinds_ui
 from test_terminal_impact import VERDICT, Impact, open_impact
-from test_terminal_panels import setup, settle
+from test_terminal_panels import settle, setup
 from test_terminal_ux080 import CONFLICT, screen_text, setup_ui
 from test_workspace_stage_scope import wait_until
 from textual.widgets import Button, Select, Static, TextArea
 
-from cairnmind import (person_proof, project_forget, terminal_person_act, terminal_plan_confirm,
-                       terminal_project_forget, terminal_record_kinds, terminal_release, terminal_replace)
-from cairnmind.terminal_i18n import CATALOG, tr
-from cairnmind.terminal_inspector import InspectorApp
-from cairnmind.terminal_panels import ConfirmModal, SidebarApp
-from cairnmind.terminal_person_act import NOT_GIVEN, agreed, record_line, typed
-from cairnmind.terminal_ui import ChoiceModal, FormModal
+from cairnmind.memory import project_forget
+from cairnmind.terminal import (
+    person_proof,
+    terminal_person_act,
+    terminal_plan_confirm,
+    terminal_project_forget,
+    terminal_record_kinds,
+    terminal_release,
+    terminal_replace,
+)
+from cairnmind.terminal.terminal_i18n import CATALOG, tr
+from cairnmind.terminal.terminal_inspector import InspectorApp
+from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
+from cairnmind.terminal.terminal_person_act import NOT_GIVEN, agreed, record_line, typed
+from cairnmind.terminal.terminal_ui import ChoiceModal, FormModal
 
 REASON = "Read the source."
 NEW = "Validate tokens with the shared helper."
@@ -76,7 +84,7 @@ def posts_of(broker, suffix):
 
 def make_review(tmp_path, monkeypatch, language):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     return InspectorApp(settings, broker=broker, workspace=workspace), workspace, posts_of(broker, "/review")
 
 
@@ -123,7 +131,7 @@ async def reach_conflict(app, pilot, text):
 
 def make_apply(tmp_path, monkeypatch, language):
     settings, broker, workspace = setup(tmp_path, monkeypatch, project=False)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     return InspectorApp(settings, broker=broker, workspace=workspace), workspace, posts_of(broker, "/api/memory/import")
 
 
@@ -257,7 +265,7 @@ async def reach_forget(app, pilot, text):
 
 def make_sidebar_import(tmp_path, monkeypatch, language):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     return SidebarApp(settings, broker=broker, workspace=workspace), workspace, posts_of(broker, "/api/memory/import")
 
 
@@ -482,7 +490,7 @@ def _person_paths(call, names, filename):
         return []
     body = next((k.value for k in call.keywords if k.arg == "json"), None)
     if isinstance(body, ast.Dict) and any(getattr(k, "value", None) == "dry_run" and getattr(v, "value", None) is True
-                                          for k, v in zip(body.keys, body.values)):
+                                          for k, v in zip(body.keys, body.values, strict=False)):
         return []
     return [path for path in _strings(args[1], names)
             if person_proof.PERSON_BROKER_PATH.fullmatch(path) and (filename, path) not in EXCEPTIONS]

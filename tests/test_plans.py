@@ -1,10 +1,10 @@
-from concurrent.futures import ThreadPoolExecutor
 import json
+from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
 import pytest
 
-from cairnmind.plans import PlanManager
+from cairnmind.memory.plans import PlanManager
 from cairnmind.store import Store
 
 

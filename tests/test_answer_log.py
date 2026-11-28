@@ -6,16 +6,17 @@ import json
 import os
 import subprocess
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from cairnmind import answer_log, ingest
+from cairnmind.agents import answer_log
+from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 from cairnmind.config import Settings
-from cairnmind.ingest import forget_index_signature
+from cairnmind.scip import ingest
+from cairnmind.scip.ingest import forget_index_signature
 from cairnmind.service import create_app
 from cairnmind.store import Store
-from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 
 
 class LocalModel:
@@ -186,7 +187,8 @@ def test_replay_asks_each_distinct_question_once_and_reports_what_changed(tmp_pa
     verdicts = {row["question"]: row["verdict"] for row in report["answers"]}
     assert verdicts == {"Stable?": "unchanged", "Loses?": "lost_sources", "Regresses?": "regressed"}
     assert report["status"] == "failed" and report["summary"]["regressed"] == 1
-    assert json.loads(open(report["report_path"], encoding="utf-8").read())["replayed"] == 3
+    with open(report["report_path"], encoding="utf-8") as handle:
+        assert json.loads(handle.read())["replayed"] == 3
     empty = answer_log.replay(settings, "p2", ask, report_dir=tmp_path / "reports")
     assert empty["status"] == "not_run" and empty["replayed"] == 0
 
@@ -230,6 +232,7 @@ def test_cli_asks_with_log_lists_shows_prunes_and_replays(tmp_path, monkeypatch)
 
 def test_replay_asks_without_the_launched_session_and_keeps_a_refusal_as_its_reason(tmp_path, monkeypatch):
     import httpx
+
     from cairnmind import cli
     settings = Settings.load(tmp_path / "memory", create=True)
     answer_log.append(settings, {**_entry(settings, "Logged?"), "worktree": "/repo/wt"})
@@ -308,7 +311,9 @@ def test_an_unexpected_log_error_is_only_a_warning(workspace, monkeypatch, caplo
 def test_forgetting_a_project_deletes_its_answer_log(workspace):
     settings, store, project, _ = workspace
     answer_log.append(settings, {**_entry(settings, "Logged?"), "project_id": project["id"]})
-    from cairnmind import project_forget  # the command line refuses since #347; the workspace's route calls this
+    from cairnmind.memory import (
+        project_forget,  # the command line refuses since #347; the workspace's route calls this
+    )
     result = project_forget.delete(settings, store, project["id"])
     assert result["answer_log_deleted"] is True
     assert not answer_log.log_path(settings, project["id"]).parent.exists()

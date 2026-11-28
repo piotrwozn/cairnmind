@@ -5,17 +5,18 @@ from __future__ import annotations
 import json
 import sys
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
-
-from cairnmind import cockpit as cockpit_module, person_proof
-from cairnmind.cockpit import create_cockpit_app
-from cairnmind.config import Settings
-from cairnmind.terminal_client import BrokerClient
-from cairnmind.workspace import WorkspaceManager
+from fastapi.testclient import TestClient
 from test_cockpit_server import ORIGIN, Runtime, login
 from test_person_proof import KEY, fake_tmux, workspace_socket  # noqa: F401 (the fixture)
+
+from cairnmind.config import Settings
+from cairnmind.terminal import cockpit as cockpit_module
+from cairnmind.terminal import person_proof
+from cairnmind.terminal.cockpit import create_cockpit_app
+from cairnmind.terminal.terminal_client import BrokerClient
+from cairnmind.terminal.workspace import WorkspaceManager
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX tmux person-key delivery")
 
@@ -133,7 +134,7 @@ def broker_app(settings, monkeypatch):
     def upstream(request):
         seen.append((request.method, request.url.path, dict(request.headers)))
         return httpx.Response(200, json={"ok": True})
-    monkeypatch.setattr("cairnmind.client_auth.probe_client", lambda client, **kwargs: {})
+    monkeypatch.setattr("cairnmind.agents.client_auth.probe_client", lambda client, **kwargs: {})
     app = create_cockpit_app(settings, runtime=Runtime(), proxy_transport=httpx.MockTransport(upstream),
                              public_url=ORIGIN)
     with TestClient(app, base_url=ORIGIN) as client:

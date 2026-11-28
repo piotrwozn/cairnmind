@@ -12,23 +12,26 @@ import sys
 import time
 
 import pytest
-from typer.testing import CliRunner
-
 from conftest import counted_waits
-from cairnmind import api_runtime, arcade, cli, file_locks, integrations, restore_staged, store_writer
-from cairnmind.journal import Journal, JournalTransaction
-from cairnmind.memory import MemoryManager
-from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
-from cairnmind.restore_staged import RestoreFailed, RestoreUnfinished
-from cairnmind.store import GRAPH_ROWS_PER_REQUEST, Store
-from cairnmind.store_readonly import StoreNotReady
-from cairnmind.sql import utc_now
-
-from cairnmind.restore_claims import VECTORS_REBUILT, VECTORS_UNDECIDED, VECTORS_WAIT
 from test_backup_restore_stream import comparable
 from test_backup_without_vectors import embedded  # noqa: F401 - a fixture
 from test_restore_groups import _large
 from test_store_writer import second_installation
+from typer.testing import CliRunner
+
+from cairnmind import cli
+from cairnmind.agents import api_runtime
+from cairnmind.memory import integrations
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
+from cairnmind.pal import file_locks
+from cairnmind.storage import arcade, restore_staged, store_writer
+from cairnmind.storage.journal import Journal, JournalTransaction
+from cairnmind.storage.restore_claims import VECTORS_REBUILT, VECTORS_UNDECIDED, VECTORS_WAIT
+from cairnmind.storage.restore_staged import RestoreFailed, RestoreUnfinished
+from cairnmind.storage.sql import utc_now
+from cairnmind.storage.store_readonly import StoreNotReady
+from cairnmind.store import GRAPH_ROWS_PER_REQUEST, Store
 
 runner = CliRunner()
 
@@ -142,8 +145,10 @@ def test_a_restore_commits_no_more_than_the_bound_per_transaction(tmp_path, monk
     assert comparable(target.export()) == comparable(source.export())
 
 
-def _failing_commits(monkeypatch, *numbers, error=OSError("the engine went away")):
+def _failing_commits(monkeypatch, *numbers, error=None):
     """Make the ``n``-th commit of the write phase (counted over every restore of the test) fail, as a lost engine does."""
+    if error is None:
+        error = OSError("the engine went away")
     seen = [0]
 
     def failing(self):
@@ -367,7 +372,7 @@ def _hiding_the_index(monkeypatch, hidden, at="wait"):
     (`at="edges"`: it misses again after the wait), the next `hidden` lookups of vertices by id answer nothing,
     and so does every later lookup of a transaction that has missed one, as under the engine's REPEATABLE_READ (measured
     on 26.11.1): the end points of its CREATE EDGE are not found either. The sleeps that follow a hidden answer are counted, not slept; others (a real lag) are slept, not counted (#417)."""
-    from cairnmind import graph_transactions, restore_groups
+    from cairnmind.storage import graph_transactions, restore_groups
     query, script, write = JournalTransaction.query, JournalTransaction.script, restore_groups.GraphGroups._write
     state = {"hidden": hidden, "armed": False, "stale": []}
 
@@ -434,7 +439,7 @@ def test_a_group_of_edges_whose_vertices_the_index_misses_again_is_committed_wai
 
 
 def test_a_group_that_misses_its_vertices_on_the_retry_too_fails_by_name_and_is_put_back(tmp_path, monkeypatch):
-    from cairnmind import graph_transactions
+    from cairnmind.storage import graph_transactions
     store, path, before, known = _world(tmp_path, monkeypatch)
     state = _hiding_the_index(monkeypatch, 2, at="edges")  # the group, then the read-back of the retry's wait
     monkeypatch.setattr(graph_transactions, "VERTEX_WAIT", 0)
@@ -461,7 +466,7 @@ def test_a_restore_of_the_usual_shape_commits_once_for_its_vertices_and_once_at_
 
 
 def test_a_restore_whose_index_misses_once_with_no_time_left_to_wait_fails_by_name_and_is_put_back(tmp_path, monkeypatch):
-    from cairnmind import graph_transactions
+    from cairnmind.storage import graph_transactions
     store, path, before, known = _world(tmp_path, monkeypatch)
     state = _hiding_the_index(monkeypatch, 1)  # the first wait finds nothing, and with no time to wait it fails
     monkeypatch.setattr(graph_transactions, "VERTEX_WAIT", 0)
@@ -474,7 +479,7 @@ def test_a_restore_whose_index_misses_once_with_no_time_left_to_wait_fails_by_na
 
 
 def test_a_restore_whose_index_keeps_missing_cannot_put_the_store_back_either_and_keeps_the_mark(tmp_path, monkeypatch):
-    from cairnmind import graph_transactions
+    from cairnmind.storage import graph_transactions
     store, path, before, known = _world(tmp_path, monkeypatch)
     _hiding_the_index(monkeypatch, 10 ** 9)
     monkeypatch.setattr(graph_transactions, "VERTEX_WAIT", 0)
@@ -590,7 +595,7 @@ def test_the_undo_says_what_becomes_of_the_vectors_as_the_setting_does(embedded,
 KILLED_RESTORE = """
 import sys, time
 from pathlib import Path
-from cairnmind import restore_staged
+from cairnmind.storage import restore_staged
 from cairnmind.store import Store
 restore_staged.ROWS_PER_TRANSACTION = 100
 commit, seen = restore_staged.Batches.commit, [0]
@@ -623,7 +628,7 @@ def test_a_restore_killed_midway_is_refused_at_the_next_start_and_finishes_when_
     finally:
         try:
             if sys.platform == "win32":
-                from cairnmind import process_control
+                from cairnmind.pal import process_control
                 process_control.terminate_pid(child.pid, force=True)
             else:
                 os.killpg(child.pid, signal.SIGKILL)
@@ -728,7 +733,7 @@ def test_setup_of_a_marked_store_is_refused_with_the_whole_sentence_and_the_past
     _mark(store)
     found = store_writer.inspect(store.settings)
     assert found["restore_unfinished"] and found["reason"].endswith("removes the mark.")  # not cut to 300 characters
-    from cairnmind import setup_profiles
+    from cairnmind.terminal import setup_profiles
     monkeypatch.setattr(store_writer, "inspect", lambda settings: found)
     with pytest.raises(setup_profiles.SetupRefused):
         setup_profiles._inspected(store.settings, "http://db")

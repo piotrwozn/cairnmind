@@ -14,8 +14,8 @@ import typer.main
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.memory import inspect_snapshot
-from cairnmind.memory_view import show_snapshot
+from cairnmind.memory.memory import inspect_snapshot
+from cairnmind.memory.memory_view import show_snapshot
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 SAMPLE = REPOSITORY / "examples" / "sample-project"

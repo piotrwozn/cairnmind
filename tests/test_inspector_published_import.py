@@ -8,20 +8,21 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from textual import _time as textual_time, events
+from consent_steps import form_ready, form_state
+from test_terminal_panels import FakeBroker, settle, setup
+from test_trial011_workspace import wait_until
+from textual import _time as textual_time
+from textual import events
 from textual.widgets import Button, Input, Static, TextArea
 
-from cairnmind import person_proof
-from cairnmind.confirmation import REPLACED_CHANGED
-from cairnmind.terminal_client import BrokerError
-from cairnmind.terminal_i18n import CATALOG, tr
-from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
-from cairnmind.terminal_inspector import InspectorApp
-from cairnmind import terminal_published_import as published
-from cairnmind.terminal_published_import import MESSAGES, folder_error, taken_ids, take_error
-from consent_steps import form_ready, form_state
-from test_terminal_panels import FakeBroker, setup, settle
-from test_trial011_workspace import wait_until
+from cairnmind.memory.confirmation import REPLACED_CHANGED
+from cairnmind.terminal import person_proof
+from cairnmind.terminal import terminal_published_import as published
+from cairnmind.terminal.terminal_client import BrokerError
+from cairnmind.terminal.terminal_i18n import CATALOG, tr
+from cairnmind.terminal.terminal_i18n_messages import BROKER_MESSAGES
+from cairnmind.terminal.terminal_inspector import InspectorApp
+from cairnmind.terminal.terminal_published_import import MESSAGES, folder_error, take_error, taken_ids
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
@@ -60,7 +61,7 @@ class PublishedBroker(FakeBroker):
 
 def published_app(tmp_path, monkeypatch, language="pl", project=True, **broker):
     settings, _, workspace = setup(tmp_path, monkeypatch, project=project)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     value = {"id": "project-a", "name": "Project A", "root": str(tmp_path / "project")}
     fake = PublishedBroker(value, **broker)
     return InspectorApp(settings, broker=fake, workspace=workspace), fake, workspace
@@ -247,7 +248,7 @@ def test_taken_ids_accepts_ids_and_file_names_and_refuses_the_rest():
 
 @pytest.mark.skipif(__import__("sys").platform == "win32", reason="WSL wslpath conversion is not used on native Windows")
 def test_a_typed_windows_drive_path_is_a_full_path_and_is_sent_translated(monkeypatch):
-    from cairnmind import cockpit_state
+    from cairnmind.terminal import cockpit_state
     monkeypatch.setattr(cockpit_state.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError("no wslpath")))
     typed = "C:\\Users\\me\\repo\\.memory\\cairnmind-published"
     assert folder_error(typed) is None

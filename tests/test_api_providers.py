@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
 import inspect
+import json
 import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 import pytest
 
-from cairnmind.api_providers import ProviderError, make_provider
-
+from cairnmind.agents.api_providers import ProviderError, make_provider
 
 TOOL = {"name": "read_file", "description": "Read a project file.", "parameters": {
     "type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"], "additionalProperties": False}}
@@ -266,7 +265,7 @@ async def test_output_limit_and_size_limit_do_not_return_a_success(monkeypatch):
         with pytest.raises(ProviderError) as error:
             await make_provider(profile("openai"), "SAFE", client=client).complete([{"role": "user", "content": "Test"}], [])
         assert error.value.code == "output_limit"
-    monkeypatch.setattr("cairnmind.api_providers.MAX_RESPONSE_BYTES", 100)
+    monkeypatch.setattr("cairnmind.agents.api_providers.MAX_RESPONSE_BYTES", 100)
     async with httpx.AsyncClient(transport=transport(lambda request: stream_response("openai"))) as client:
         with pytest.raises(ProviderError) as error:
             await make_provider(profile("openai"), "SAFE", client=client).complete([{"role": "user", "content": "Test"}], [])
@@ -331,9 +330,9 @@ async def test_ollama_large_context_is_rejected_before_request_until_window_expl
 async def test_ollama_default_window_takes_a_real_post_ack_agent_step():
     # #157: a one-line step after ACK (system prompt, 18 tools, a ~30 KB resume packet) measured about
     # 11.5k real tokens, yet counting bytes as tokens refused it at the default 32768 window.
-    from cairnmind.agent_memory import MEMORY_TOOLS
-    from cairnmind.agent_tools import FILE_TOOLS
-    from cairnmind.api_agent import COMPACT_TOOL, SYSTEM
+    from cairnmind.agents.agent_memory import MEMORY_TOOLS
+    from cairnmind.agents.agent_tools import FILE_TOOLS
+    from cairnmind.agents.api_agent import COMPACT_TOOL, SYSTEM
 
     requests = []
 

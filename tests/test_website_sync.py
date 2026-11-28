@@ -108,7 +108,7 @@ def _normalize_try_line(line: str) -> str:
 
 
 def test_website_try_output_matches_live_cli():
-    from cairnmind.try_demo import run_try_sandbox
+    from cairnmind.cli_cmds.try_demo import run_try_sandbox
 
     website_data = json.loads((WEBSITE / "src" / "data" / "try-output.json").read_text(encoding="utf-8"))
     live_lines: list[str] = []

@@ -4,7 +4,6 @@ import threading
 import time
 
 import pytest
-
 from json_wait import read_json_when_complete
 
 

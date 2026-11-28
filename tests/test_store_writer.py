@@ -2,18 +2,18 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import shutil
 import threading
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import store_writer
-from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.cli import app
+from cairnmind.storage import store_writer
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
+from cairnmind.storage.store_writer import StoreNotWriter, StoreWriterLost, take_over
 from cairnmind.store import Store
-from cairnmind.store_writer import StoreNotWriter, StoreWriterLost, take_over
 
 runner = CliRunner()
 
@@ -49,7 +49,7 @@ def head(store: Store) -> dict:
 def test_a_second_installation_on_the_same_database_cannot_write(tmp_path):
     first = Store(tmp_path / "first")
     pid = project(tmp_path, first)
-    from cairnmind.ingest import index_project
+    from cairnmind.scip.ingest import index_project
     index_project(first, pid)
     before = counts(first)
     second = Store(second_installation(tmp_path, first))
@@ -170,7 +170,7 @@ def test_taking_writing_back_lets_the_store_that_lost_it_write_again_without_reo
 
 
 def test_a_reader_takes_over_a_store_that_this_release_cannot_read_as_a_reader(tmp_path, monkeypatch):
-    from cairnmind.store_readonly import StoreNotReady
+    from cairnmind.storage.store_readonly import StoreNotReady
     for name in ("CAIRNMIND_SESSION_ID", "DEVBRAIN_SESSION_ID"):
         monkeypatch.delenv(name, raising=False)
     first = Store(tmp_path / "first")
@@ -241,11 +241,10 @@ def test_a_write_in_flight_during_a_takeover_does_not_commit(tmp_path):
     first = Store(tmp_path / "first")
     pid = project(tmp_path, first)
     second = Store(second_installation(tmp_path, first))
-    with pytest.raises((StoreWriterLost, ArcadeError)) as refused:
-        with first.transaction() as tx:
-            tx.query("SELECT FROM journal_state WHERE id='current'")
-            take_over(second)
-            tx.command("UPDATE projects SET name='renamed' WHERE id=:project", {"project": pid})
+    with pytest.raises((StoreWriterLost, ArcadeError)) as refused, first.transaction() as tx:
+        tx.query("SELECT FROM journal_state WHERE id='current'")
+        take_over(second)
+        tx.command("UPDATE projects SET name='renamed' WHERE id=:project", {"project": pid})
     # The head was read before the takeover, so the check passed on the old value: the engine refused the commit
     # (on 26.11.1: "Slot rebase not possible ... concurrent change to the same record").
     assert isinstance(refused.value, ArcadeError)

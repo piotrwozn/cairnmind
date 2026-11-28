@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from cairnmind import memory_published_import as mpi
-from cairnmind.memory import MemoryConflict
-from cairnmind.sessions import SessionManager
+from cairnmind.memory import memory_published_import as mpi
+from cairnmind.memory.memory import MemoryConflict
+from cairnmind.memory.sessions import SessionManager
 
 
 def test_sessions_same_generation_and_merge_targets_edges(tmp_path):
@@ -80,9 +80,9 @@ def test_memory_published_import_stubs_store_and_plans_edges(monkeypatch):
     assert imp._placement({}, "missing", "t1") == {}
 
     # _published_here catches Held and returns []
-    from cairnmind.memory_published import Held
-    monkeypatch.setattr("cairnmind.memory_published.Publisher.destination", lambda self, pid: (None, "/root"))
-    monkeypatch.setattr("cairnmind.memory_published.select_history", lambda *a, **k: (_ for _ in ()).throw(Held("held")))
+    from cairnmind.memory.memory_published import Held
+    monkeypatch.setattr("cairnmind.memory.memory_published.Publisher.destination", lambda self, pid: (None, "/root"))
+    monkeypatch.setattr("cairnmind.memory.memory_published.select_history", lambda *a, **k: (_ for _ in ()).throw(Held("held")))
     assert imp._published_here("p1", "fact", "r1", [], {}) == []
 
     # _stubs: conflict on mismatched published ref; quote growth updates document
@@ -98,23 +98,25 @@ def test_memory_published_import_stubs_store_and_plans_edges(monkeypatch):
         "id": sid, "project_id": pid, "kind": "published", "content": "hello",
         "metadata": {"published": src["ref"]},
     })
-    monkeypatch.setattr(mpi, "one_row", lambda tx, sql, params, required=True: {
+    monkeypatch.setattr(mpi, "db_find_one", lambda tx, col, where=(), **kw: {
         "id": "s1", "kind": "published", "content": "different", "metadata": {"published": {"kind": "file", "path": "a.py"}},
     })
     with pytest.raises(MemoryConflict, match="published differently"):
         imp._stubs(SimpleNamespace(), tree, "p1", {"stubs": 0})
 
     updated_docs = []
-    monkeypatch.setattr(mpi, "one_row", lambda tx, sql, params, required=True: {
+    monkeypatch.setattr(mpi, "db_find_one", lambda tx, col, where=(), **kw: {
         "id": "s1", "kind": "published", "content": "hello",
         "metadata": {"published": {"kind": "file", "path": "a.py"}, "published_quotes": []},
     })
-    monkeypatch.setattr(mpi, "update_document", lambda tx, tbl, data, where, params: updated_docs.append((tbl, data)))
+    monkeypatch.setattr(
+        mpi, "db_update_where", lambda tx, tbl, *, set_fields=None, remove_fields=(), where=(): updated_docs.append((tbl, set_fields))
+    )
     imp._stubs(SimpleNamespace(), tree, "p1", {"stubs": 0})
     assert len(updated_docs) == 1 and updated_docs[0][0] == "sources"
 
     # _store active_key collision raises MemoryConflict
-    monkeypatch.setattr(mpi, "one_row", lambda tx, sql, params, required=True: {"id": "other-rec"})
+    monkeypatch.setattr(mpi, "db_find_one", lambda tx, col, where=(), **kw: {"id": "other-rec"})
     with pytest.raises(MemoryConflict, match="belong to the local record"):
         imp._store(
             SimpleNamespace(),
@@ -138,6 +140,6 @@ def test_memory_published_import_stubs_store_and_plans_edges(monkeypatch):
             }
         }],
     )
-    monkeypatch.setattr(mpi, "one_row", lambda tx, sql, params, required=True: local_plan)
+    monkeypatch.setattr(mpi, "db_find_one", lambda tx, col, where=(), **kw: local_plan)
     with pytest.raises(MemoryConflict, match="diverged from the published memory"):
         imp._plans(fake_tx, "p1", plan_tree, {}, {}, {"plans": []}, "2026-01-03")

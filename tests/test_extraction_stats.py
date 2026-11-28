@@ -3,19 +3,19 @@ from __future__ import annotations
 
 import json
 
+import pytest
+from conftest import as_person
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, extraction_stats as stats_module
-from cairnmind.confirmation import SEED_ROUTE, remember_as_person
-from cairnmind.extraction_stats import extraction_stats, render
-from cairnmind.inspector import Inspector
-from cairnmind.inspector_api import attach_inspector_routes
+from cairnmind import cli
+from cairnmind.agents import extraction_stats as stats_module
+from cairnmind.agents.extraction_stats import extraction_stats, render
+from cairnmind.memory.confirmation import SEED_ROUTE, remember_as_person
 from cairnmind.store import Store
-
-from conftest import as_person
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.terminal.inspector_api import attach_inspector_routes
 
 
 def stamp(version):

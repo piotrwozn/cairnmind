@@ -5,22 +5,23 @@ working and no error in its log. Now a restore is many short transactions, so no
 the network cuts in the middle leaves a mark that every installation of the store sees, which any installation can
 finish by restoring a valid backup once it is the writer.
 """
-from contextlib import closing
 import shutil
+from contextlib import closing
 
 import pytest
-
-from cairnmind import arcade, ingest, store_writer
-from cairnmind.arcade import ArcadeError
-from cairnmind.config import Settings
-from cairnmind.restore_staged import RestoreFailed
-from cairnmind.store import Store
-from cairnmind.store_readonly import StoreNotReady
 from test_connect_only import data_directory, test_engine  # noqa: F401 - a fixture
 from test_connect_only_network import MARK_ROW, contents, direct, relay, whole_transactions_only  # noqa: F401
 from test_index_batching import tree
 from test_restore_groups import _large
 from test_store_writer import second_installation
+
+from cairnmind.config import Settings
+from cairnmind.scip import ingest
+from cairnmind.storage import arcade, store_writer
+from cairnmind.storage.arcade import ArcadeError
+from cairnmind.storage.restore_staged import RestoreFailed
+from cairnmind.storage.store_readonly import StoreNotReady
+from cairnmind.store import Store
 
 
 @pytest.mark.parametrize("finish", ["the same installation restores again", "the other one restores another backup"])

@@ -1,0 +1,1577 @@
+"""Project-only, evidence-preserving portable memory; no model or Git execution.
+
+Content-addressed JSON objects are published before an atomic manifest switch.
+Operational authority (sessions, ACKs, leases and local check provenance) is
+never restored from a portable package.
+"""
+from __future__ import annotations
+
+import ctypes
+import hashlib
+import json
+import math
+import os
+import re
+import sys
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from copy import deepcopy
+from datetime import UTC, datetime
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from uuid import UUID, uuid4
+
+from cairnmind.memory.memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
+from cairnmind.memory.memory_size import WARN_FRACTION, package_size
+from cairnmind.pal.file_locks import lock_exclusive
+from cairnmind.pal.private_files import (
+    atomic_replace,
+    fsync_directory,
+    is_reparse_point,
+    make_private,
+    make_private_fd,
+    open_no_follow,
+)
+from cairnmind.pal.system_links import passes_planted_link
+from cairnmind.scip.code_graph import code_graph_pending
+from cairnmind.storage.journal import Journal
+from cairnmind.storage.sql import clean_row, insert_document, json_text, unregistered_root, utc_now
+from cairnmind.storage.storage_query import (
+    any_of,
+    db_count,
+    db_find,
+    db_find_one,
+    db_update_where,
+    desc,
+    eq,
+    gt,
+    is_in,
+    is_null,
+    ne,
+    not_in,
+)
+from cairnmind.store import (
+    EXTRACTION_MARK,
+    EXTRACTOR_STAMP,
+    KINDS,
+    STATUSES,
+    TASK_STATES,
+    validate_criterion_links,
+    validate_extractor_stamp,
+)
+
+# Written into every new manifest, and so into its identifier. Manifests written under the
+# earlier name are read as they are: rewriting one would change its identifier and its history.
+FORMAT = "cairnmind-portable-memory"
+FORMATS = (FORMAT, "devbrain-portable-memory")
+VERSION = 1
+TABLES = ("sources", "records", "record_revisions", "plans", "plan_revisions", "nodes", "edges", "check_runs")
+HISTORY_LIMIT = 5
+MAX_OBJECT_BYTES = 16 * 1024 * 1024
+MAX_MANIFEST_BYTES = 32 * 1024 * 1024
+MAX_TOTAL_BYTES = 512 * 1024 * 1024
+MAX_ROWS = 1_000_000
+_SHA = re.compile(r"^[a-f0-9]{64}$")
+_CODE_EDGES = {"imports", "defines", "calls", "references", "test_imports", "snapshot_of"}
+_GLOBAL_NODES = KINDS | {"plan", "source"}
+_LOCAL_SOURCE_KINDS = {"code", "document", "file", "check_output", "check_profile"}
+
+
+def _without_rebuilt_graph(payload):
+    """The package's rows without the code graph, which indexing rebuilds from the files (#261).
+
+    Left out: the edges indexing derives from files (_CODE_EDGES) and the nodes it makes (files, symbols,
+    external modules, unresolved references), 150,000 rows in a repository of 450 files. Kept: the nodes of
+    records, plans and sources, their supported_by, depends_on, supersedes and has_step edges, and a relates_to
+    link from a record to a code node with that node, so that the link has its end. Applied to what is
+    captured and to what is read, so a package of 0.12.0, which carries the graph, is read as one without it.
+    """
+    edges = [row for row in payload["edges"] if row.get("kind") not in _CODE_EDGES]
+    linked = {row.get(end) for row in edges for end in ("from_id", "to_id")}
+    nodes = [row for row in payload["nodes"] if row.get("kind") in _GLOBAL_NODES or row.get("id") in linked]
+    return {**payload, "nodes": nodes, "edges": edges}
+
+
+_DEFAULT_WITHOUT_REBUILT_GRAPH = _without_rebuilt_graph
+
+
+class MemoryConflict(ValueError):
+    """Identity, ancestry, local edits or publication require explicit resolution."""
+
+
+def _bytes(value):
+    return json_text(value).encode("utf-8")
+
+
+def _digest(value):
+    return hashlib.sha256(_bytes(value)).hexdigest()
+
+
+def _manifest_id(manifest):
+    return _digest({key: value for key, value in manifest.items() if key != "snapshot_id"})
+
+
+_LABELS = {"rows": "rows", "manifest_bytes": "manifest bytes", "bytes": "total bytes", "object_bytes": "object bytes"}
+_REAL_OS_FSYNC = os.fsync
+_LIBC_SYNCFS = None
+_LIBC_SYNCFS_LOADED = False
+_NON_SNAPSHOT_EVENTS = ("job", "embedding", "embedding_index", "session", "inbox", "import", "chunk", "memory")
+
+
+def _encode_objects(payload):
+    """Build object descriptors and canonical JSON bytes in one serialization pass per row."""
+    objects, encoded = {}, {}
+    for table, rows in payload.items():
+        table_objects = []
+        for row in rows:
+            data = _bytes(row)
+            digest = hashlib.sha256(data).hexdigest()
+            encoded[digest] = data
+            table_objects.append({"id": row["id"], "sha256": digest, "path": f"objects/{digest}.json", "bytes": len(data)})
+        objects[table] = table_objects
+    return objects, encoded
+
+
+def _descriptors(payload):
+    return _encode_objects(payload)[0]
+
+
+def _budget(objects, manifest_bytes):
+    """What a package of these objects is against each limit a snapshot keeps: {name: (used, limit)} (#261)."""
+    listed = [d for rows in objects.values() for d in rows]
+    return {"rows": (len(listed), MAX_ROWS), "manifest_bytes": (manifest_bytes, MAX_MANIFEST_BYTES),
+            "bytes": (manifest_bytes + sum(d["bytes"] for d in listed), MAX_TOTAL_BYTES),
+            "object_bytes": (max((d["bytes"] for d in listed), default=0), MAX_OBJECT_BYTES)}
+
+
+def _without_local_mark(record):
+    """A record without the local extraction worker's mark (#168).
+
+    The mark leaves an untouched extraction proposal out of every session's ACK state (#256).
+    A package never carries it in or out, so an imported record always counts as somebody else's write. An extractor stamp (#192)
+    travels, but only one the store would accept on an extracted record (_carried_stamp).
+    """
+    metadata = record.get("metadata")
+    # The confirmation mark (#177) is local in the same way: it says what happened on this machine. A package
+    # carries the audits and notes instead, and the importer writes its own mark: confirmed elsewhere.
+    if isinstance(metadata, dict) and (EXTRACTION_MARK in metadata or "confirmation" in metadata):
+        metadata = record["metadata"] = {key: value for key, value in metadata.items()
+                                         if key not in (EXTRACTION_MARK, "confirmation")}
+    if isinstance(metadata, dict) and EXTRACTOR_STAMP in metadata and not _carried_stamp(metadata):
+        record["metadata"] = {key: value for key, value in metadata.items() if key != EXTRACTOR_STAMP}
+    return record
+
+
+def _carried_stamp(metadata):
+    """Whether a record's extractor stamp (#192) is one the extraction worker could have written: well formed,
+    on a record with origin automatic_extraction. A package carrying anything else loses it on the way in."""
+    try:
+        validate_extractor_stamp(metadata[EXTRACTOR_STAMP])
+    except ValueError:
+        return False
+    return metadata.get("origin") == "automatic_extraction"
+
+
+def _logical(table, original, *, copy=True):
+    cleaned = clean_row(original)
+    if copy:
+        row = {k: deepcopy(v) for k, v in cleaned.items() if k not in {"in", "out"}}
+    else:
+        row = {k: v for k, v in cleaned.items() if k not in {"in", "out"}}
+    if table == "sources":
+        row.pop("current_key", None)
+    if table in {"nodes", "edges"}:
+        row.pop("is_current", None)
+    if table == "records":
+        row.pop("active_key", None)
+        _without_local_mark(row)
+    if table == "record_revisions" and isinstance(row.get("snapshot"), dict):
+        row["snapshot"] = _logical("records", row["snapshot"], copy=copy)
+    if table == "plan_revisions" and isinstance(row.get("snapshot"), dict):
+        row["snapshot"] = deepcopy(row["snapshot"]) if copy else dict(row["snapshot"])
+        row["snapshot"]["tasks"] = [_logical("records", task, copy=copy) for task in row["snapshot"].get("tasks", [])]
+    if table == "check_runs":
+        provenance = row.pop("portable_provenance", None)
+        if row.get("origin") == "portable_import" and isinstance(provenance, dict):
+            row["origin"] = provenance.get("original_origin", "unknown")
+    return row
+
+
+def _state_hash(payload, *, logical=False):
+    # Local parser/index/vector/source-currentness changes are not knowledge edits.
+    if logical:
+        state = {table: list(payload.get(table, []))
+                 for table in ("records", "record_revisions", "plans", "plan_revisions")}
+        state["edges"] = [row for row in payload.get("edges", [])
+                          if row.get("kind") not in _CODE_EDGES
+                          and row.get("kind") not in {"supported_by", "depends_on", "supersedes", "has_step"}]
+    else:
+        state = {table: sorted([_logical(table, row) for row in payload.get(table, [])], key=lambda r: r["id"])
+                 for table in ("records", "record_revisions", "plans", "plan_revisions")}
+        state["edges"] = sorted([_logical("edges", row) for row in payload.get("edges", [])
+                                 if row.get("kind") not in _CODE_EDGES
+                                 and row.get("kind") not in {"supported_by", "depends_on", "supersedes", "has_step"}],
+                                key=lambda r: r["id"])
+    # Raw conversational/manual memory is portable state even before extraction.
+    # Parser metadata, local file reindexing and runner outputs are derived noise.
+    state["source_heads"] = sorted([
+        {key: row.get(key) for key in ("id", "uri", "sha256", "is_current")}
+        for row in payload.get("sources", []) if row.get("kind") not in _LOCAL_SOURCE_KINDS], key=lambda r: r["id"])
+    return _digest(state)
+
+
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON property in memory package")
+        result[key] = value
+    return result
+
+
+def _read(path, limit):
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Memory package file is missing or is a symbolic link")
+    with path.open("rb") as handle:
+        raw = handle.read(limit + 1)
+    if len(raw) > limit:
+        raise ValueError("Memory package exceeds its byte budget")
+    return raw
+
+
+def _parse(raw):
+    try:
+        value = json.loads(raw, object_pairs_hook=_unique_pairs,
+                           parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Nonfinite JSON number")))
+        # json.loads already enforces valid UTF-8, finite numbers and unique object keys; only escaped UTF-16
+        # surrogates require strict UTF-8 round-trip validation via _bytes().
+        if b"\\ud" in raw or b"\\uD" in raw:
+            _bytes(value)
+        return value
+    except (UnicodeError, json.JSONDecodeError, RecursionError, TypeError, OverflowError) as exc:
+        raise ValueError("Invalid memory package JSON") from exc
+
+
+def _text(value, label):
+    if not isinstance(value, str) or not value.strip() or len(value) > 4096:
+        raise ValueError(f"Invalid memory {label}")
+    return value
+
+
+def _version(value):
+    if type(value) is not int or not 1 <= value <= MAX_ROWS:
+        raise ValueError("Invalid memory entity version")
+
+
+def _validate(payload, project_id, active_plan_id=None, *, graph=True):
+    """Check a whole archive payload. graph=False skips only the canonical graph, which a published
+    memory directory (#170) does not carry: every other check is the same as for an archive."""
+    maps = {}
+    for table in TABLES:
+        rows = payload.get(table)
+        if not isinstance(rows, list):
+            raise ValueError("Invalid memory collection")
+        if len(rows) > MAX_ROWS:
+            raise ValueError("Memory package exceeds its publication byte or row budget: "
+                             f"rows {len(rows):,} over the limit of {MAX_ROWS:,} in {table}")
+        mapping = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError("Invalid memory entity")
+            identifier = _text(row.get("id"), "entity ID")
+            if identifier in mapping or row.get("project_id") != project_id:
+                raise ValueError("Duplicate or foreign-project memory entity")
+            mapping[identifier] = row
+        maps[table] = mapping
+
+    def source_refs(refs):
+        if not isinstance(refs, list) or not all(isinstance(s, str) and s in maps["sources"] for s in refs):
+            raise ValueError("Missing or foreign memory source reference")
+
+    def record(row):
+        if (not isinstance(row, dict) or row.get("project_id") != project_id
+                or row.get("kind") not in KINDS or row.get("status") not in STATUSES):
+            raise ValueError("Invalid memory record")
+        _text(row.get("id"), "record ID")
+        if not isinstance(row.get("content"), str) or not row["content"].strip():
+            raise ValueError("Invalid memory record content")
+        _text(row.get("key"), "record key")
+        _version(row.get("version"))
+        source_refs(row.get("source_ids"))
+        if not row["source_ids"]:
+            raise ValueError("Memory records require evidence")
+        metadata = row.get("metadata")
+        if not isinstance(metadata, dict):
+            raise ValueError("Invalid memory record metadata")
+        if row.get("supersedes") and row["supersedes"] not in maps["records"]:
+            raise ValueError("Missing superseded memory record")
+        if row["kind"] != "task":
+            return  # Checkpoint/fact metadata is arbitrary data, not a task contract.
+        if metadata.get("state", "todo") not in TASK_STATES:
+            raise ValueError("Invalid memory task state")
+        for flag in ("requires_test", "requires_review", "test_passed", "review_passed", "acceptance_passed"):
+            if flag in metadata and type(metadata[flag]) is not bool:
+                raise ValueError("Invalid memory task boolean")
+        criteria = metadata.get("acceptance_criteria", [])
+        if not isinstance(criteria, list) or not all(isinstance(c, str) and c.strip() for c in criteria):
+            raise ValueError("Invalid memory acceptance criteria")
+        profiles = metadata.get("required_profiles", [])
+        if not isinstance(profiles, list) or not all(isinstance(p, str) and p.strip() for p in profiles):
+            raise ValueError("Invalid memory required check profiles")
+        try:
+            # The same rule as for a local write: an imported record is no way around it.
+            validate_criterion_links(metadata, criteria)
+        except ValueError:
+            raise ValueError("Invalid memory criterion checks") from None
+        if "step_index" in metadata and (type(metadata["step_index"]) is not int or metadata["step_index"] < 0):
+            raise ValueError("Invalid memory plan step index")
+        for name in ("test_source_ids", "review_source_ids", "acceptance_source_ids"):
+            if name in metadata:
+                source_refs(metadata[name])
+        dependencies = metadata.get("depends_on", [])
+        if not isinstance(dependencies, list) or not all(
+                isinstance(i, str) and i in maps["records"] and maps["records"][i].get("kind") == "task"
+                for i in dependencies):
+            raise ValueError("Missing memory task dependency")
+        if metadata.get("plan_ref") is not None and metadata["plan_ref"] not in maps["plans"]:
+            raise ValueError("Missing managed memory plan")
+        runs = metadata.get("check_run_ids", [])
+        if not isinstance(runs, list) or not all(isinstance(i, str) and i in maps["check_runs"]
+                and maps["check_runs"][i].get("task_id") == row["id"] for i in runs):
+            raise ValueError("Missing memory check evidence")
+
+    def plan(row):
+        if not isinstance(row, dict) or row.get("project_id") != project_id:
+            raise ValueError("Invalid memory plan")
+        _version(row.get("version"))
+        if (not isinstance(row.get("title"), str) or not row["title"].strip()
+                or not isinstance(row.get("goal"), str) or not isinstance(row.get("constraints"), list)
+                or not all(isinstance(c, str) for c in row["constraints"])):
+            raise ValueError("Invalid memory plan definition")
+        source_refs(row.get("source_ids"))
+        steps = row.get("step_ids")
+        if not isinstance(steps, list) or len(steps) != len(set(steps)) or not all(
+                isinstance(i, str) and i in maps["records"] and maps["records"][i].get("kind") == "task"
+                for i in steps):
+            raise ValueError("Missing managed memory plan step")
+
+    for source in maps["sources"].values():
+        content = source.get("content")
+        evidence_type = source.get("evidence_type")
+        if evidence_type in {"git_ref", "working_tree_ref", "transcript_ref_omitted"}:
+            if (not isinstance(content, str) or not isinstance(source.get("metadata"), dict)
+                    or type(source.get("is_current")) is not bool
+                    or not _SHA.fullmatch(str(source.get("content_sha256") or ""))
+                    or source.get("sha256") != source.get("content_sha256")):
+                raise ValueError("Corrupt memory source snapshot")
+            if evidence_type == "git_ref":
+                _text(source.get("file_path"), "source file_path")
+                if not isinstance(source.get("commit_sha"), str) or not re.fullmatch(r"[0-9a-f]{40,64}", source["commit_sha"]):
+                    raise ValueError("Corrupt memory source snapshot")
+                if (type(source.get("line_start")) is not int or type(source.get("line_end")) is not int
+                        or source["line_start"] < 1 or source["line_end"] < source["line_start"]):
+                    raise ValueError("Corrupt memory source snapshot")
+        elif (not isinstance(content, str) or not isinstance(source.get("metadata"), dict)
+                or type(source.get("is_current")) is not bool
+                or hashlib.sha256(content.encode()).hexdigest() != source.get("sha256")):
+            raise ValueError("Corrupt memory source snapshot")
+        _text(source.get("uri"), "source URI")
+        _text(source.get("kind"), "source kind")
+    current_uris = [source["uri"] for source in maps["sources"].values() if source["is_current"]]
+    if len(current_uris) != len(set(current_uris)):
+        raise ValueError("Memory contains competing current snapshots for one source URI")
+    for row in maps["records"].values():
+        record(row)
+    tasks = {i: r for i, r in maps["records"].items() if r["kind"] == "task"}
+    remaining = {i: len(set(r["metadata"].get("depends_on", []))) for i, r in tasks.items()}
+    dependents = {i: [] for i in tasks}
+    for identifier, row in tasks.items():
+        for dependency in set(row["metadata"].get("depends_on", [])):
+            dependents[dependency].append(identifier)
+    ready = [i for i, count in remaining.items() if count == 0]
+    visited = 0
+    while ready:
+        identifier = ready.pop()
+        visited += 1
+        for dependent in dependents[identifier]:
+            remaining[dependent] -= 1
+            if remaining[dependent] == 0:
+                ready.append(dependent)
+    if visited != len(tasks):
+        raise ValueError("Memory task dependencies contain a cycle")
+    for row in maps["plans"].values():
+        plan(row)
+    for table, owner, validator in (("record_revisions", "records", record), ("plan_revisions", "plans", plan)):
+        revisions = {}
+        for row in maps[table].values():
+            key = "record_id" if table == "record_revisions" else "plan_id"
+            identifier = row.get(key)
+            _version(row.get("version"))
+            if (identifier not in maps[owner] or row["id"] != f"{identifier}:{row['version']}"
+                    or row["version"] > maps[owner][identifier]["version"]):
+                raise ValueError("Invalid memory revision identity")
+            snapshot = row.get("snapshot")
+            if table == "plan_revisions":
+                if not isinstance(snapshot, dict) or not isinstance(snapshot.get("tasks"), list):
+                    raise ValueError("Invalid memory plan revision")
+                for task in snapshot["tasks"]:
+                    record(task)
+                    task_revision = maps["record_revisions"].get(f"{task['id']}:{task['version']}")
+                    if not task_revision or task_revision.get("snapshot") != task:
+                        raise ValueError("Plan revision task does not match its immutable record revision")
+                if [task["id"] for task in snapshot["tasks"]] != snapshot.get("plan", {}).get("step_ids"):
+                    raise ValueError("Plan revision tasks do not match managed step order")
+                snapshot = snapshot.get("plan")
+            validator(snapshot)
+            if not isinstance(snapshot, dict) or snapshot.get("id") != identifier or snapshot.get("version") != row["version"]:
+                raise ValueError("Memory revision does not match its owner")
+            revisions.setdefault(identifier, {})[row["version"]] = snapshot
+        for identifier, current in maps[owner].items():
+            versions = revisions.get(identifier, {})
+            if (len(versions) != current["version"] or not versions or min(versions) != 1
+                    or max(versions) != current["version"] or versions[current["version"]] != current):
+                raise ValueError("Incomplete or inconsistent immutable memory revision history")
+    for identifier, node in maps["nodes"].items():
+        for prefix, owners in (("record:", "records"), ("plan:", "plans"), ("source:", "sources")):
+            if identifier.startswith(prefix) and identifier[len(prefix):] not in maps[owners]:  # the inspector shows the row, not the vertex (#450)
+                raise ValueError("Logical memory graph node without its record, plan or source")
+        _text(node.get("kind"), "node kind")
+        if not isinstance(node.get("label"), str) or not isinstance(node.get("metadata", {}), dict):
+            raise ValueError("Invalid logical memory graph node")
+        if node.get("source_id"):
+            source_refs([node["source_id"]])
+    for edge in maps["edges"].values():
+        if any(not isinstance(edge.get(k), str) or edge[k] not in maps["nodes"] for k in ("from_id", "to_id")):
+            raise ValueError("Missing logical memory graph endpoint")
+        _text(edge.get("kind"), "edge kind")
+        if edge.get("source_id"):
+            source_refs([edge["source_id"]])
+    if graph:
+        _canonical_graph(maps)
+    for run in maps["check_runs"].values():
+        task = maps["records"].get(run.get("task_id"))
+        if not task or task["kind"] != "task" or not isinstance(run.get("source_ids"), dict):
+            raise ValueError("Invalid historical memory check")
+        source_refs([run.get("profile_source_id"), *run["source_ids"].values()])
+    if active_plan_id is not None and active_plan_id not in maps["plans"]:
+        raise ValueError("Missing active memory plan")
+    return maps
+
+
+def _canonical_graph(maps):
+    """The logical graph of records and plans must be exactly what their current heads say."""
+    expected, owned_kinds = set(), {}
+    for row in maps["records"].values():
+        identifier = f"record:{row['id']}"
+        node = maps["nodes"].get(identifier)
+        if (not node or node["kind"] != row["kind"] or node["label"] != row["content"][:1000]
+                or node.get("source_id") != row["source_ids"][0]):
+            raise ValueError("Canonical memory record graph does not match its current head")
+        owned_kinds[identifier] = {"supported_by", "depends_on", "supersedes"}
+        expected.update((identifier, "supported_by", f"source:{source}", source) for source in row["source_ids"])
+        dependencies = row["metadata"].get("depends_on", [])
+        if isinstance(dependencies, (list, str)):
+            expected.update((identifier, "depends_on", f"record:{dependency}", row["source_ids"][0])
+                            for dependency in dependencies if f"record:{dependency}" in maps["nodes"])
+        if row.get("supersedes"):
+            expected.add((identifier, "supersedes", f"record:{row['supersedes']}", row["source_ids"][0]))
+    for row in maps["plans"].values():
+        identifier, sources = f"plan:{row['id']}", row["source_ids"]
+        node = maps["nodes"].get(identifier)
+        if (not node or node["kind"] != "plan" or node["label"] != row["title"]
+                or node.get("source_id") != (sources[-1] if sources else None)):
+            raise ValueError("Canonical memory plan graph does not match its current head")
+        owned_kinds[identifier] = {"supported_by", "has_step"}
+        expected.update((identifier, "supported_by", f"source:{source}", source) for source in sources)
+        expected.update((identifier, "has_step", f"record:{step}", sources[-1] if sources else None) for step in row["step_ids"])
+    actual = [(edge["from_id"], edge["kind"], edge["to_id"], edge.get("source_id"))
+              for edge in maps["edges"].values() if edge["kind"] in owned_kinds.get(edge["from_id"], set())]
+    if len(actual) != len(expected) or set(actual) != expected:
+        raise ValueError("Canonical memory relationships do not match current records and plans")
+
+
+def _strip_local_marks(table, row):
+    """Drop every extraction mark a package row holds, before it is validated or applied (#168)."""
+    if table == "records":
+        _without_local_mark(row)
+    snapshot = row.get("snapshot") if table in {"record_revisions", "plan_revisions"} else None
+    if not isinstance(snapshot, dict):
+        return
+    if table == "record_revisions":
+        _without_local_mark(snapshot)
+    elif isinstance(snapshot.get("tasks"), list):
+        for task in snapshot["tasks"]:
+            if isinstance(task, dict):
+                _without_local_mark(task)
+
+
+def _is_portable_absolute(value: str) -> bool:
+    """Accept absolute paths from either POSIX (/...) or Windows (C:\\... / C:/...) in portable manifests."""
+    return PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute()
+
+
+def _check_manifest(path):
+    """The manifest alone, checked for format, identity, ancestry and its own checksum; no object is read."""
+    path = Path(path).expanduser().absolute()
+    if path.is_dir():
+        path /= "manifest.json"
+    if passes_planted_link(path):  # The system's own links (/tmp on macOS) are not planted (#229).
+        raise ValueError("Memory package paths cannot traverse symbolic links")
+    # Snapshot paths are exact files, never unpacked archive paths.
+    raw = _read(path, MAX_MANIFEST_BYTES)
+    manifest = _parse(raw)
+    if (not isinstance(manifest, dict) or manifest.get("format") not in FORMATS
+            or type(manifest.get("format_version")) is not int or manifest["format_version"] != VERSION):
+        raise ValueError("Unsupported portable memory format")
+    project = manifest.get("project")
+    if not isinstance(project, dict):
+        raise ValueError("Missing memory project identity")
+    try:
+        if str(UUID(project.get("id"))) != project["id"]:
+            raise ValueError("Noncanonical project UUID")
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError("Invalid memory project identity") from exc
+    _text(project.get("name"), "project name")
+    _text(manifest.get("origin_root"), "origin root")
+    if not _is_portable_absolute(manifest["origin_root"]):
+        raise ValueError("Memory origin root must be absolute")
+    aliases = manifest.get("root_aliases", [])
+    if not isinstance(aliases, list) or not all(isinstance(r, str) and _is_portable_absolute(r) for r in aliases):
+        raise ValueError("Invalid memory root bindings")
+    ancestors = manifest.get("ancestors", [])
+    if (not isinstance(ancestors, list) or len(ancestors) > 4096
+            or not all(isinstance(i, str) and _SHA.fullmatch(i) for i in ancestors)):
+        raise ValueError("Invalid memory ancestry")
+    parent = manifest.get("parent_id")
+    if parent is not None and (not isinstance(parent, str) or not _SHA.fullmatch(parent)
+                               or not ancestors or ancestors[0] != parent):
+        raise ValueError("Invalid memory parent snapshot")
+    if manifest.get("snapshot_id") != _manifest_id(manifest):
+        raise ValueError("Memory manifest checksum mismatch")
+    if len(ancestors) != len(set(ancestors)) or manifest["snapshot_id"] in ancestors:
+        raise ValueError("Memory snapshot ancestry contains a cycle")
+    objects = manifest.get("objects")
+    if not isinstance(objects, dict) or set(objects) != set(TABLES):
+        raise ValueError("Invalid memory object collections")
+    return path, raw, manifest
+
+
+def _load_snapshot_impl(path):
+    path, raw, manifest = _check_manifest(path)
+    project, objects = manifest["project"], manifest["objects"]
+    base = path.parent if path.parent.name != "manifests" else path.parent.parent
+    objects_dir = base / "objects"
+    if objects_dir.exists() and objects_dir.is_symlink():
+        raise ValueError("Memory object path escapes its package")
+    payload, total, count = {}, len(raw), 0
+    for table in TABLES:
+        descriptors = objects[table]
+        if not isinstance(descriptors, list):
+            raise ValueError("Invalid memory object list")
+        payload[table] = []
+        for descriptor in descriptors:
+            count += 1
+            if count > MAX_ROWS or not isinstance(descriptor, dict):
+                raise ValueError("Memory object count exceeds budget")
+            digest = descriptor.get("sha256")
+            if (not isinstance(digest, str) or not _SHA.fullmatch(digest)
+                    or descriptor.get("path") != f"objects/{digest}.json"
+                    or type(descriptor.get("bytes")) is not int or not 0 <= descriptor["bytes"] <= MAX_OBJECT_BYTES):
+                raise ValueError("Invalid memory content-addressed object")
+            object_path = objects_dir / f"{digest}.json"
+            data = _read(object_path, MAX_OBJECT_BYTES)
+            total += len(data)
+            if (total > MAX_TOTAL_BYTES or len(data) != descriptor["bytes"]
+                    or hashlib.sha256(data).hexdigest() != digest):
+                raise ValueError("Memory object checksum or budget mismatch")
+            row = _parse(data)
+            if not isinstance(row, dict) or row.get("id") != descriptor.get("id"):
+                raise ValueError("Memory object identity mismatch")
+            _strip_local_marks(table, row)
+            payload[table].append(row)
+    _validate(payload, project["id"], manifest.get("active_plan_id"))
+    if manifest.get("state_hash") != _state_hash(payload):
+        raise ValueError("Memory portable-state checksum mismatch")
+    if manifest.get("counts") != {table: len(payload[table]) for table in TABLES}:
+        raise ValueError("Memory manifest counts do not match objects")
+    return path, raw, manifest, _without_rebuilt_graph(payload)
+
+
+def _load_snapshot(path):
+    try:
+        return _load_snapshot_impl(path)
+    except (OSError, KeyError, TypeError, AttributeError, RecursionError, OverflowError) as exc:
+        raise ValueError("Invalid or unreadable portable memory package") from exc
+
+
+def _named_objects(path):
+    """The object digests a kept manifest names, read without loading its objects (#158).
+
+    Retention needs only the names: loading every kept manifest read and hashed each object again,
+    several full passes over a large project at every snapshot. The manifest checksum is still checked,
+    and nothing is removed when a kept manifest is unreadable.
+    """
+    try:
+        manifest = _parse(_read(path, MAX_MANIFEST_BYTES))
+        if not isinstance(manifest, dict) or manifest.get("snapshot_id") != _manifest_id(manifest):
+            raise ValueError("Memory manifest checksum mismatch")
+        return {descriptor["sha256"] for rows in manifest["objects"].values() for descriptor in rows}
+    except (OSError, KeyError, TypeError, AttributeError, RecursionError, OverflowError) as exc:
+        raise ValueError("Invalid or unreadable portable memory package") from exc
+
+
+def _summary(path, manifest, status="valid"):
+    summary = {"status": status, "path": str(path), "manifest_path": str(path), "format_version": VERSION,
+               **{key: deepcopy(manifest.get(key)) for key in
+                  ("project", "snapshot_id", "parent_id", "state_hash", "origin_root", "active_plan_id", "counts",
+                   "created_at", "processing", "completeness")}}
+    for key in ("profile", "contains_transcripts", "redacted"):
+        if key in manifest:
+            summary[key] = deepcopy(manifest[key])
+    return summary
+
+
+def inspect_snapshot(path):
+    """Validate the complete package without constructing or mutating a Store."""
+    path, _, manifest, _ = _load_snapshot(path)
+    return _summary(path, manifest)
+
+
+def manifest_summary(path):
+    """What `memory status` shows of a package: its manifest, checked alone (#161).
+
+    Reading and hashing every object of a large project took longer than an ordinary request, as a
+    snapshot did (#158). The objects are checked by `memory inspect` and by every import.
+    """
+    try:
+        path, _, manifest = _check_manifest(path)
+    except (OSError, KeyError, TypeError, AttributeError, RecursionError, OverflowError) as exc:
+        raise ValueError("Invalid or unreadable portable memory package") from exc
+    return {**_summary(path, manifest, status="manifest_valid"), "objects_checked": False}
+
+
+def _sync_directory(directory):
+    fsync_directory(directory)
+
+
+def _atomic_write(path, data):
+    _write_whole(path, data)
+    _sync_directory(path.parent)
+
+
+def _try_syncfs(directory: Path) -> bool:
+    """Flush dirty filesystem buffers and metadata for `directory` in a single kernel call on Linux."""
+    global _LIBC_SYNCFS, _LIBC_SYNCFS_LOADED
+    if not sys.platform.startswith("linux"):
+        return False
+    if not _LIBC_SYNCFS_LOADED:
+        _LIBC_SYNCFS_LOADED = True
+        try:
+            libc = ctypes.CDLL(None, use_errno=True)
+            func = libc.syncfs
+            func.argtypes = [ctypes.c_int]
+            func.restype = ctypes.c_int
+            _LIBC_SYNCFS = func
+        except (OSError, AttributeError):
+            _LIBC_SYNCFS = None
+    if _LIBC_SYNCFS is None or sys.platform != "linux":
+        return False
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        return _LIBC_SYNCFS(descriptor) == 0
+    finally:
+        os.close(descriptor)
+
+
+def _write_whole(path, data):
+    """Write a file whole or not at all, its content on disk; the caller syncs its directory.
+
+    The objects of a snapshot are written with this and their directory is synced once, before the
+    manifest that names them is published: one directory sync per object made a large snapshot slow (#158).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if path.is_symlink() or path.parent.is_symlink():
+        raise ValueError("Memory publication cannot replace symbolic links")
+    fd, temporary = tempfile.mkstemp(prefix=".cairnmind-memory-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        make_private(temporary)
+        atomic_replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def _write_objects_batch(objects_dir: Path, items: list[tuple[Path, bytes]]) -> None:
+    """Write multiple new immutable objects durably before publishing any manifest."""
+    if not items:
+        return
+    if len(items) <= 4 or os.fsync is not _REAL_OS_FSYNC:
+        for target, data in items:
+            _write_whole(target, data)
+        return
+    objects_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if objects_dir.is_symlink():
+        raise ValueError("Memory publication cannot replace symbolic links")
+    staged: list[tuple[str, Path]] = []
+    try:
+        if sys.platform == "linux":
+            for target, data in items:
+                if target.is_symlink():
+                    raise ValueError("Memory publication cannot replace symbolic links")
+                fd, temporary = tempfile.mkstemp(prefix=".cairnmind-memory-", dir=objects_dir)
+                staged.append((temporary, target))
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(data)
+                    make_private_fd(handle.fileno(), temporary)
+            if not _try_syncfs(objects_dir):
+                def _fsync_path(tmp_path: str) -> None:
+                    rfd = os.open(tmp_path, os.O_RDONLY | os.O_NOFOLLOW)
+                    try:
+                        os.fsync(rfd)
+                    finally:
+                        os.close(rfd)
+                with ThreadPoolExecutor(max_workers=min(16, len(staged))) as pool:
+                    list(pool.map(_fsync_path, [tmp for tmp, _ in staged]))
+        else:
+            def _stage_and_sync(item: tuple[Path, bytes]) -> tuple[str, Path]:
+                target, data = item
+                if target.is_symlink():
+                    raise ValueError("Memory publication cannot replace symbolic links")
+                fd, temporary = tempfile.mkstemp(prefix=".cairnmind-memory-", dir=objects_dir)
+                try:
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(data)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    make_private(temporary)
+                    return temporary, target
+                except BaseException:
+                    Path(temporary).unlink(missing_ok=True)
+                    raise
+            with ThreadPoolExecutor(max_workers=min(16, len(items))) as pool:
+                staged = list(pool.map(_stage_and_sync, items))
+        for temporary, target in staged:
+            atomic_replace(temporary, target)
+    finally:
+        for temporary, _ in staged:
+            Path(temporary).unlink(missing_ok=True)
+
+
+class MemoryManager:
+    def __init__(self, store):
+        self.store = store
+
+    def _scope(self, project_id, worktree=None, reader=None) -> tuple[dict, Path]:
+        reader = reader or self.store
+        project = db_find_one(reader, "projects", {"id": project_id}, required=True)
+        if project is None:
+            raise ValueError(f"Unknown project: {project_id}")
+        root = Path(worktree if worktree is not None else project["root"]).expanduser().resolve()
+        if not db_find(reader, "project_roots", {"project_id": project_id, "path": str(root)}, columns=("id",)):
+            raise ValueError(unregistered_root(root, project))
+        return project, root
+
+    @staticmethod
+    def _path(root):
+        return root / MEMORY_RELATIVE / "manifest.json"
+
+    @staticmethod
+    def _earlier_package(root):
+        """What a reader should know about a package left in the earlier directory, or None."""
+        earlier, current = (root / directory / "manifest.json" for directory in (EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE))
+        if not (earlier.exists() or earlier.is_symlink()):
+            return None
+        note = {"path": str(earlier.parent), "state": "only_copy" if not current.exists() else "superseded"}
+        if current.exists():
+            try:
+                old, new = _parse(_read(earlier, MAX_MANIFEST_BYTES)), _parse(_read(current, MAX_MANIFEST_BYTES))
+                if old.get("snapshot_id") not in [new.get("snapshot_id"), *new.get("ancestors", [])]:
+                    # Someone still publishes there with an earlier version; that snapshot is not in this history.
+                    note["state"] = "diverged"
+            except (OSError, ValueError, AttributeError, TypeError):
+                note["state"] = "unreadable"
+        return note
+
+    @contextmanager
+    def _publisher_lock(self, project_id, worktree=None):
+        project, root = self._scope(project_id, worktree)
+        from cairnmind.memory.project_folders import require_here
+        require_here(self.store, project, root)  # never a package into a same-path folder of another machine (#371)
+        folder = self._path(root).parent
+        if not root.is_dir() or any(is_reparse_point(p) for p in (root / ".memory", folder)):
+            raise ValueError("Memory publication needs a real project directory")
+        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        descriptor = open_no_follow(folder / ".publish.lock", os.O_CREAT | os.O_RDWR, 0o600)
+        with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+            lock_exclusive(handle)
+            yield
+
+    def _capture(self, project_id, worktree=None, reader=None, authorize=None):
+        if reader is None:
+            if authorize is not None and hasattr(authorize, "refresh"):
+                authorize.refresh()  # hashes the worktree: never inside the transaction below (#255)
+            with self.store.transaction() as tx:
+                return self._capture(project_id, worktree, tx, authorize)
+        if authorize is not None:
+            authorize()
+        project, root = self._scope(project_id, worktree, reader)
+        if _without_rebuilt_graph is _DEFAULT_WITHOUT_REBUILT_GRAPH:
+            raw_rows = {"edges": db_find(
+                reader, "edges", [eq("project_id", project_id), not_in("kind", sorted(_CODE_EDGES))]
+            )}
+            base_nodes = list(db_find(
+                reader, "nodes", [eq("project_id", project_id), is_in("kind", sorted(_GLOBAL_NODES))]
+            ))
+            seen_node_ids = {r.get("id") for r in base_nodes}
+            linked = sorted({
+                node_id
+                for r in raw_rows["edges"]
+                for end in ("from_id", "to_id")
+                if isinstance((node_id := r.get(end)), str) and node_id not in seen_node_ids
+            })
+            for start in range(0, len(linked), 500):
+                base_nodes.extend(db_find(
+                    reader, "nodes", [eq("project_id", project_id), is_in("id", linked[start:start + 500])]
+                ))
+            raw_rows["nodes"] = base_nodes
+            for table in TABLES:
+                if table not in raw_rows:
+                    raw_rows[table] = db_find(reader, table, {"project_id": project_id})
+        else:
+            raw_rows = {
+                table: db_find(reader, table, {"project_id": project_id})
+                for table in TABLES
+            }
+        payload = _without_rebuilt_graph({
+            table: sorted([_logical(table, r, copy=False) for r in raw_rows[table]], key=lambda r: r["id"])
+            for table in TABLES
+        })
+        focus = db_find_one(
+            reader, "worktree_states", {"project_id": project_id, "worktree": str(root)}, columns=("active_plan_id",)
+        )
+        active = focus.get("active_plan_id") if focus else None
+        _validate(payload, project_id, active)
+        aliases = [str(root)] + [
+            r["origin_root"]
+            for r in db_find(
+                reader, "memory_bindings", {"project_id": project_id, "local_root": str(root)}, columns=("origin_root",)
+            )
+        ]
+        jobs = db_find(reader, "jobs", {"project_id": project_id}, columns=("kind", "state"))
+        processing = {kind: {state: sum(j.get("kind") == kind and j.get("state") == state for j in jobs)
+                             for state in ("pending", "running", "failed", "completed")}
+                      for kind in ("extract", "embed", "import")}
+        return {"project": {"id": project_id, "name": project["name"]}, "origin_root": str(root),
+                "root_aliases": sorted(set(aliases)), "active_plan_id": active,
+                "counts": {table: len(payload[table]) for table in TABLES},
+                "state_hash": _state_hash(payload, logical=True), "processing": processing,
+                "completeness": {"meaning": "committed_rows_only", "models_required": False,
+                    "pending_analysis": processing["extract"]["pending"] + processing["extract"]["running"],
+                    "failed_analysis": processing["extract"]["failed"]}}, payload
+
+    def preview(self, project_id, worktree=None, *, profile=None, include_transcripts=False,
+                skip_uncommitted=False, redact=False):
+        captured, payload = self._capture(project_id, worktree)
+        privacy = None
+        if profile is not None:
+            from cairnmind.memory.snapshot_privacy import apply_snapshot_privacy
+            privacy = apply_snapshot_privacy(
+                payload, Path(captured["origin_root"]), profile=profile,
+                include_transcripts=include_transcripts, skip_uncommitted=skip_uncommitted,
+                redact=redact, settings=self.store.settings,
+            )
+            captured["counts"] = {table: len(payload[table]) for table in TABLES}
+            captured["state_hash"] = _state_hash(payload)
+            captured["profile"] = privacy["profile"]
+            captured["contains_transcripts"] = privacy["contains_transcripts"]
+            captured["redacted"] = privacy["redacted"]
+            _validate(payload, project_id, captured.get("active_plan_id"))
+        objects = _descriptors(payload)
+        # The manifest as snapshot() would write it, with the parent and ancestry of the tip (an earlier file
+        # without a receipt makes snapshot() refuse, so the tip is the only parent that matters).
+        tip = db_find_one(
+            self.store, "memory_snapshots", {"project_id": project_id}, order_by=(desc("created_at"), desc("id"))
+        )
+        parent = tip["snapshot_id"] if tip else None
+        ancestors = list(dict.fromkeys([parent, *tip.get("ancestors", [])]))[:4096] if tip else []
+        manifest = len(_bytes({"format": FORMAT, "format_version": VERSION, **captured, "objects": objects,
+                               "created_at": utc_now(), "parent_id": parent, "ancestors": ancestors,
+                               "content_hash": "0" * 64, "snapshot_id": "0" * 64}))
+        figures = {name: {"used": used, "limit": limit, "fraction": round(used / limit, 4)}
+                   for name, (used, limit) in _budget(objects, manifest).items()}
+        near = [name for name, figure in figures.items() if figure["fraction"] >= WARN_FRACTION]
+        over = [name for name, figure in figures.items() if figure["used"] > figure["limit"]]
+        size = {"measured": "exact", "warn_at": WARN_FRACTION, **figures, "warning": near or None, "over": over or None}
+        return {"status": "preview", **captured, "path": str(self._path(Path(captured["origin_root"]))),
+                "package_size": size, "worktree": captured["origin_root"],
+                "bytes": sum(d["bytes"] for rows in objects.values() for d in rows),
+                "contains_raw_sources": bool(payload["sources"]), "model_calls": 0,
+                **({"redaction_counts": privacy["redaction_counts"]} if privacy and privacy["redaction_counts"] else {})}
+
+    def _known_manifest(self, project_id, path):
+        return db_find_one(
+            self.store,
+            "memory_snapshots",
+            {"project_id": project_id, "path": str(path)},
+            order_by=(desc("created_at"), desc("id")),
+        )
+
+    def _receipt(self, tx, project_id, path, raw, manifest, origin, worktree=None):
+        self.store._require_project(tx, project_id)
+        try:
+            journal_cursor = Journal(self.store).cursor(tx)
+        except (ValueError, KeyError, IndexError):
+            journal_cursor = None
+        row = {"id": _digest([project_id, str(path), manifest["snapshot_id"]]), "project_id": project_id,
+               "snapshot_id": manifest["snapshot_id"], "parent_id": manifest.get("parent_id"),
+               "state_hash": manifest["state_hash"], "ancestors": manifest.get("ancestors", []),
+               "worktree": str(worktree if worktree is not None else manifest["origin_root"]),
+               "active_plan_id": manifest.get("active_plan_id"),
+               "path": str(path), "manifest_sha": hashlib.sha256(raw).hexdigest(),
+               "journal_cursor": journal_cursor,
+               "created_at": utc_now(), "origin": origin}
+        if not db_find(tx, "memory_snapshots", {"id": row["id"]}, columns=("id",)):
+            insert_document(tx, "memory_snapshots", row)
+
+    def _unchanged_since_receipt(self, project_id, worktree=None):
+        """Fast unchanged check for scheduled `tick()` using journal cursor + manifest checksum."""
+        project, root = self._scope(project_id, worktree)
+        from cairnmind.memory.project_folders import require_here
+        require_here(self.store, project, root)
+        path = self._path(root)
+        earlier_path = root / EARLIER_MEMORY_RELATIVE / "manifest.json"
+        if earlier_path.exists() or earlier_path.is_symlink() or not path.exists() or path.is_symlink():
+            return None
+        if any(is_reparse_point(p) or p.is_symlink() for p in (root / ".memory", path.parent, path.parent / "objects")):
+            return None
+        known = self._known_manifest(project_id, path)
+        tip = db_find_one(
+            self.store, "memory_snapshots", {"project_id": project_id}, order_by=(desc("created_at"), desc("id"))
+        )
+        cursor = known.get("journal_cursor") if known else None
+        if not known or not tip or known["id"] != tip["id"] or not isinstance(cursor, dict):
+            return None
+        _, raw, manifest = _check_manifest(path)
+        if (hashlib.sha256(raw).hexdigest() != known.get("manifest_sha")
+                or manifest["project"]["id"] != project_id
+                or manifest["snapshot_id"] != tip["snapshot_id"]):
+            return None
+        state = db_find_one(self.store, "journal_state", {"id": "current"}, columns=("epoch", "seq", "first_seq"))
+        if (not state or state.get("epoch") != cursor.get("epoch")
+                or type(cursor.get("seq")) is not int or cursor["seq"] > state.get("seq", -1)
+                or cursor["seq"] < state.get("first_seq", 1) - 1):
+            return None
+        if state["seq"] > cursor["seq"]:
+            changed = db_find(
+                self.store,
+                "journal_events",
+                [
+                    eq("epoch", state["epoch"]),
+                    gt("seq", cursor["seq"]),
+                    any_of(eq("project_id", project_id), is_null("project_id")),
+                    not_in("entity_type", list(_NON_SNAPSHOT_EVENTS)),
+                ],
+                columns=("entity_type",),
+                limit=1,
+            )
+            if changed:
+                return None
+            aliases = sorted({
+                str(root),
+                *(
+                    r["origin_root"]
+                    for r in db_find(
+                        self.store,
+                        "memory_bindings",
+                        {"project_id": project_id, "local_root": str(root)},
+                        columns=("origin_root",),
+                    )
+                ),
+            })
+            if aliases != manifest.get("root_aliases", []):
+                return None
+        return _summary(path, manifest, "unchanged")
+
+    def snapshot(self, project_id, worktree=None, *, authorize=None, profile=None,
+                 include_transcripts=False, skip_uncommitted=False, redact=False):
+        if profile is not None:
+            from cairnmind.memory.snapshot_privacy import apply_snapshot_privacy, validate_profile_options
+            validate_profile_options(profile, include_transcripts)
+        with self._publisher_lock(project_id, worktree):
+            captured, payload = self._capture(project_id, worktree, authorize=authorize)
+            root, path = Path(captured["origin_root"]), self._path(Path(captured["origin_root"]))
+            if not root.is_dir() or any(p.is_symlink() for p in
+                    (root / ".memory", path.parent, path.parent / "objects", path.parent / "manifests")):
+                raise ValueError("Memory publication needs a real project directory")
+            privacy = None
+            if profile is not None:
+                privacy = apply_snapshot_privacy(
+                    payload, root, profile=profile,
+                    include_transcripts=include_transcripts, skip_uncommitted=skip_uncommitted,
+                    redact=redact, settings=self.store.settings,
+                )
+                captured["counts"] = {table: len(payload[table]) for table in TABLES}
+                captured["state_hash"] = _state_hash(payload)
+                captured["profile"] = privacy["profile"]
+                captured["contains_transcripts"] = privacy["contains_transcripts"]
+                captured["redacted"] = privacy["redacted"]
+                _validate(payload, project_id, captured.get("active_plan_id"))
+            previous, previous_raw = None, None
+            known = self._known_manifest(project_id, path)
+            if path.exists() or path.is_symlink():
+                _, previous_raw, previous, _ = _load_snapshot(path)
+                if (not known or known.get("manifest_sha") != hashlib.sha256(previous_raw).hexdigest()
+                        or previous["project"]["id"] != project_id):
+                    raise MemoryConflict("Memory manifest changed externally; inspect/import it before publishing")
+            elif known:
+                raise MemoryConflict("Previously published memory manifest is missing")
+            # Nothing was published in this directory yet. A package left in the earlier one gets the
+            # same scrutiny as a manifest here would: it must be the one this store published or accepted.
+            earlier, earlier_path = None, root / EARLIER_MEMORY_RELATIVE / "manifest.json"
+            if previous is None and (earlier_path.exists() or earlier_path.is_symlink()):
+                _, earlier_raw, earlier, _ = _load_snapshot(earlier_path)
+                receipt = self._known_manifest(project_id, earlier_path)
+                if (not receipt or receipt.get("manifest_sha") != hashlib.sha256(earlier_raw).hexdigest()
+                        or earlier["project"]["id"] != project_id):
+                    raise MemoryConflict(f"The memory package in {EARLIER_MEMORY_RELATIVE} was not published or imported "
+                                         "by this store; inspect/import it before publishing")
+            objects, encoded_by_digest = _encode_objects(payload)
+            content_hash = _digest({**{k: v for k, v in captured.items() if k not in {"processing", "completeness"}},
+                                    "objects": objects})
+            tip = db_find_one(
+                self.store, "memory_snapshots", {"project_id": project_id}, order_by=(desc("created_at"), desc("id"))
+            )
+            if (previous and tip and tip["snapshot_id"] != previous["snapshot_id"]
+                    and previous["snapshot_id"] not in tip.get("ancestors", [])):
+                raise MemoryConflict("Published and accepted memory snapshot histories diverged")
+            if (previous and previous.get("content_hash") == content_hash
+                    and (not tip or tip["snapshot_id"] == previous["snapshot_id"])):
+                return _summary(path, previous, "unchanged")
+            if (earlier and earlier.get("content_hash") == content_hash
+                    and (not tip or tip["snapshot_id"] == earlier["snapshot_id"])):
+                # What is in the earlier directory is already this state: no second copy is written.
+                return _summary(earlier_path, earlier, "unchanged")
+            parent = tip["snapshot_id"] if tip else previous["snapshot_id"] if previous else None
+            ancestors = ([parent] + (tip.get("ancestors", []) if tip else previous.get("ancestors", []) if previous else [])) if parent else []
+            manifest = {"format": FORMAT, "format_version": VERSION, **captured, "objects": objects,
+                        "created_at": utc_now(), "parent_id": parent, "ancestors": list(dict.fromkeys(ancestors))[:4096],
+                        "content_hash": content_hash}
+            manifest["snapshot_id"] = _manifest_id(manifest)
+            raw = _bytes(manifest)
+            over = [f"{_LABELS[name]} {used:,} over the limit of {limit:,}"
+                    for name, (used, limit) in _budget(objects, len(raw)).items() if used > limit]
+            if over:  # which limit, with both numbers (#261)
+                raise ValueError("Memory package exceeds its publication byte or row budget: " + "; ".join(over))
+            verified_here = ({d["sha256"] for group in previous["objects"].values() for d in group}
+                             if previous is not None else set())
+            to_write: list[tuple[Path, bytes]] = []
+            seen_targets: set[str] = set()
+            for table in TABLES:
+                for descriptor in objects[table]:
+                    digest = descriptor["sha256"]
+                    if digest in seen_targets:
+                        continue
+                    seen_targets.add(digest)
+                    target = path.parent / descriptor["path"]
+                    data = encoded_by_digest[digest]
+                    if digest in verified_here and target.is_file() and not target.is_symlink():
+                        continue
+                    if target.exists() or target.is_symlink():
+                        if _read(target, MAX_OBJECT_BYTES) != data:
+                            raise MemoryConflict("Existing memory object changed externally")
+                    else:
+                        to_write.append((target, data))
+            _write_objects_batch(path.parent / "objects", to_write)
+            # Also when each object was already there: an attempt killed after renaming its objects into place
+            # but before this sync left entries that are not yet durable (#158). A snapshot with no objects has none.
+            if any(objects.values()):
+                _sync_directory(path.parent / "objects")
+            _atomic_write(path.parent / "manifests" / f"{manifest['snapshot_id']}.json", raw)
+            # Compare immediately before the only mutable pointer replacement.
+            if ((previous_raw is None and path.exists()) or (previous_raw is not None and _read(path, MAX_MANIFEST_BYTES) != previous_raw)):
+                raise MemoryConflict("Memory manifest changed during publication")
+            _atomic_write(path, raw)
+            with self.store.transaction() as tx:
+                self._receipt(tx, project_id, path, raw, manifest, "local")
+            self._retain(path, manifest)
+            summary = _summary(path, manifest, "created")
+            if privacy is not None:
+                if privacy["redaction_counts"]:
+                    summary["redaction_counts"] = privacy["redaction_counts"]
+                if privacy["git_refs"]:
+                    summary["git_refs"] = privacy["git_refs"]
+                if privacy["skipped_uncommitted"]:
+                    summary["skipped_uncommitted"] = privacy["skipped_uncommitted"]
+            return summary
+
+    def _retain(self, path, latest):
+        wanted = [latest["snapshot_id"], *latest.get("ancestors", [])]
+        referenced, kept = set(), set()
+        for identifier in wanted:
+            if len(kept) >= HISTORY_LIMIT:
+                break
+            manifest_path = path.parent / "manifests" / f"{identifier}.json"
+            if not manifest_path.exists():
+                continue
+            referenced.update(_named_objects(manifest_path))
+            kept.add(identifier)
+        # Only owned, content-addressed files are collected after successful publication.
+        for directory, allowed in (("manifests", kept), ("objects", referenced)):
+            for entry in (path.parent / directory).glob("*.json"):
+                if not entry.is_symlink() and _SHA.fullmatch(entry.stem) and entry.stem not in allowed:
+                    entry.unlink()
+
+    def import_snapshot(self, path, root, name=None, dry_run=False, *, expected_snapshot_id=None, expected_project_id=None,
+                        authorize=None, replace_confirmed=False, expected_replaced=None, heal_quotes=True):
+        from cairnmind.memory.snapshot_privacy import (
+            PROFILE_TEAM,
+            REF_EVIDENCE_TYPES,
+            TRANSCRIPT_SOURCE_KINDS,
+            _referenced_source_ids,
+            resolve_snapshot_refs,
+        )
+        path, raw, manifest, payload = _load_snapshot(path)
+        project_id, snapshot_id = manifest["project"]["id"], manifest["snapshot_id"]
+        if ((expected_snapshot_id is not None and expected_snapshot_id != snapshot_id)
+                or (expected_project_id is not None and expected_project_id != project_id)):
+            raise MemoryConflict("Memory package identity changed after inspection")
+        root = Path(root).expanduser().resolve()
+        if not root.is_dir():
+            raise ValueError("Memory import target must be an existing directory")
+        self.store.require_safe_project_root(root)
+        stale_refs = resolve_snapshot_refs(payload, root)
+        # Phase 1 + 2 quote self-healing runs outside the database writer lock: read-only Git diff + AST + SHA-256.
+        healing_plan = None
+        if heal_quotes:
+            from cairnmind.memory.quote_healing import plan_snapshot_healing
+            healing_plan = plan_snapshot_healing(
+                payload, root, origin_root=manifest["origin_root"],
+                root_aliases=manifest.get("root_aliases", ()), snapshot_id=snapshot_id,
+            )
+        chosen_name = manifest["project"]["name"] if name is None else _text(name, "project name").strip()
+        result = {"status": "dry_run" if dry_run else "imported", "project": {"id": project_id, "name": chosen_name, "root": str(root)},
+                  "snapshot_id": snapshot_id, "counts": manifest["counts"], "active_plan_id": manifest.get("active_plan_id"),
+                  "verification": "historical", "model_calls": 0,
+                  **({"stale_refs": stale_refs} if stale_refs else {})}
+        if authorize is not None and hasattr(authorize, "refresh"):
+            authorize.refresh()  # hashes the worktree: never inside the transaction below (#255)
+        with self.store.transaction() as tx:
+            if authorize is not None:
+                authorize()
+            current = db_find_one(tx, "projects", {"id": project_id})
+            if current and current.get("removed_at"):
+                from cairnmind.memory.project_removal import import_refusal
+                raise MemoryConflict(import_refusal(current, self.store.data_dir))  # the way back is named; nothing is imported (#327)
+            # A package never carries the code graph (#261): it is built from the project's files by indexing.
+            result["code_graph"] = {"state": "not_built" if code_graph_pending(current) else "built_here"}
+            conflicts = db_find(
+                tx,
+                "projects",
+                [any_of(eq("name", chosen_name), eq("root", str(root))), ne("id", project_id)],
+                columns=("id",),
+            )
+            roots = db_find(tx, "project_roots", {"path": str(root)}, columns=("project_id",))
+            if conflicts or any(r["project_id"] != project_id for r in roots):
+                raise MemoryConflict("Memory target name or root belongs to another project identity")
+            prior = db_find_one(
+                tx, "memory_imports", {"project_id": project_id}, order_by=(desc("imported_at"), desc("id"))
+            )
+            if prior and prior["snapshot_id"] == snapshot_id:
+                if not roots:
+                    raise MemoryConflict("An already imported snapshot is bound to a different local root")
+                return {**result, "status": "unchanged", "project": current or result["project"]}
+            if current:
+                captured, existing_payload = self._capture(project_id, current["root"], tx)
+                published = db_find_one(
+                    tx, "memory_snapshots", {"project_id": project_id}, order_by=(desc("created_at"), desc("id"))
+                )
+                baseline = published or prior
+                exact_current = existing_payload == payload
+                team_state_hash = captured["state_hash"]
+                if manifest.get("profile") == PROFILE_TEAM:
+                    referenced = _referenced_source_ids(existing_payload)
+                    team_view = {
+                        **existing_payload,
+                        "sources": [
+                            s for s in existing_payload["sources"]
+                            if not (s.get("kind") in TRANSCRIPT_SOURCE_KINDS and s["id"] not in referenced)
+                        ],
+                    }
+                    team_state_hash = _state_hash(team_view)
+                unchanged = bool(baseline) and (
+                    captured["state_hash"] == baseline["state_hash"]
+                    or team_state_hash == baseline["state_hash"]
+                    or exact_current
+                )
+                if baseline and baseline["snapshot_id"] == snapshot_id and unchanged:
+                    # This store's own latest snapshot (#239): a manifest never lists itself among its ancestors.
+                    if not roots:
+                        raise MemoryConflict(f"This snapshot is this store's own, for the root {current['root']}")
+                    return {**result, "status": "unchanged", "project": current}
+                # One reason each (#239); an import never merges two histories, so nothing is imported.
+                if baseline and baseline["snapshot_id"] not in [snapshot_id, *manifest.get("ancestors", [])]:
+                    raise MemoryConflict(f"The package does not continue this store's last snapshot "
+                                         f"{baseline['snapshot_id']}: the two histories diverged, and an import does "
+                                         "not merge them. Nothing was imported.")
+                if (baseline and not unchanged) or (not baseline and not exact_current):
+                    since = f"since its last snapshot {baseline['snapshot_id']}" if baseline else "and it has no snapshot"
+                    raise MemoryConflict(f"Local knowledge of project {current['name']} changed {since}, and an import "
+                                         "does not merge it with the package. Nothing was imported. Record it with "
+                                         f"`cairnmind memory snapshot {current['name']}` before choosing which "
+                                         "history to keep.")
+                focus = db_find_one(
+                    tx, "worktree_states", {"project_id": project_id, "worktree": str(root)}, columns=("active_plan_id",)
+                )
+                selected = focus.get("active_plan_id") if focus else None
+                focus_baseline = db_find_one(
+                    tx,
+                    "memory_snapshots",
+                    {"project_id": project_id, "worktree": str(root)},
+                    columns=("active_plan_id",),
+                    order_by=(desc("created_at"), desc("id")),
+                )
+                previous_focus = focus_baseline.get("active_plan_id") if focus_baseline else None
+                if selected != previous_focus and selected != manifest.get("active_plan_id"):
+                    raise MemoryConflict("The local worktree's active plan changed since its memory baseline")
+            else:
+                existing_payload = {table: [] for table in TABLES}
+            existing = {table: {r["id"]: r for r in rows} for table, rows in existing_payload.items()}
+            for table in TABLES:
+                identifiers = [row["id"] for row in payload[table]]
+                for start in range(0, len(identifiers), 1000):
+                    if any(
+                        row.get("project_id") != project_id
+                        for row in db_find(tx, table, is_in("id", identifiers[start:start + 1000]), columns=("project_id",))
+                    ):
+                        raise MemoryConflict("A memory entity ID belongs to another local project")
+            for table in ("record_revisions", "plan_revisions", "check_runs"):
+                for row in payload[table]:
+                    if row["id"] in existing[table] and _logical(table, existing[table][row["id"]]) != row:
+                        raise MemoryConflict("An immutable memory revision or check conflicts locally")
+            for table in ("records", "record_revisions", "plans", "plan_revisions"):
+                incoming = {row["id"]: row for row in payload[table]}
+                if any(identifier not in incoming for identifier in existing[table]):
+                    raise MemoryConflict("Incoming memory omits existing immutable knowledge history")
+                if table in {"records", "plans"} and any(
+                        incoming[identifier]["version"] < row["version"]
+                        or (incoming[identifier]["version"] == row["version"] and incoming[identifier] != row)
+                        for identifier, row in existing[table].items()):
+                    raise MemoryConflict("Incoming memory regresses an existing knowledge head")
+            for row in payload["sources"]:
+                old = existing["sources"].get(row["id"])
+                if old:
+                    if row.get("evidence_type") in REF_EVIDENCE_TYPES:
+                        if any(old.get(k) != row.get(k) for k in ("project_id", "uri", "sha256")):
+                            raise MemoryConflict("An immutable memory source conflicts locally")
+                    elif any(old.get(k) != row.get(k) for k in ("project_id", "uri", "content", "sha256")):
+                        raise MemoryConflict("An immutable memory source conflicts locally")
+            if current and any(r["id"] not in {i["id"] for i in payload["records"]} for r in existing_payload["records"]):
+                raise MemoryConflict("Incoming memory omits existing knowledge records")
+            origins = sorted(set([manifest["origin_root"], *manifest.get("root_aliases", [])]))
+            for origin in origins:
+                if any(
+                    r["local_root"] != str(root)
+                    for r in db_find(
+                        tx, "memory_bindings", {"project_id": project_id, "origin_root": origin}, columns=("local_root",)
+                    )
+                ):
+                    raise MemoryConflict("Memory origin already has a different local root binding")
+            # What the package brings as confirmed (#177): every record whose head is confirmed and is new
+            # here or moves this store's head on. It is kept as confirmed elsewhere, with who the package
+            # says confirmed it, and is never this machine's own confirmation. A head that does not move
+            # keeps the mark this store gave it.
+            from cairnmind.memory.confirmation import (
+                REPLACES_NOTE,
+                archive_claims,
+                import_mark,
+                local_verdict,
+                replaces_refusal,
+                said,
+            )
+            package_sources = {row["id"]: row for row in payload["sources"]}
+            # Read from the rows: the captured state above leaves local marks out, as a package does.
+            local_marks = {
+                row["id"]: row.get("mark")
+                for row in db_find(
+                    tx, "records", {"project_id": project_id}, columns=("id", ("metadata.confirmation", "mark"))
+                )
+            } if current else {}
+            marks, imported_at, names, unnamed, brought, replaced = {}, utc_now(), set(), 0, 0, []
+            for row in payload["records"]:
+                old = existing["records"].get(row["id"])
+                mine = local_marks.get(row["id"]) if isinstance(local_marks.get(row["id"]), dict) else None
+                head = {**old, "metadata": {**(old.get("metadata") or {}), "confirmation": mine}} if old else None
+                if old and old["version"] == row["version"]:
+                    if mine:
+                        marks[row["id"]] = mine
+                    continue
+                if (old is not None and local_verdict(head) and old["status"] == "confirmed" == row["status"] and said(
+                        old["kind"], old["content"], old["key"], old.get("supersedes"), old.get("metadata")) == said(
+                        row["kind"], row["content"], row["key"], row.get("supersedes"), row.get("metadata"))):
+                    # The package moves on a record confirmed here and leaves it confirmed and saying the
+                    # same (progress on a task): the confirmation given here is kept.
+                    if mine:
+                        marks[row["id"]] = mine
+                    continue
+                if local_verdict(head):
+                    replaced.append(row["id"])
+                if row["status"] == "confirmed":
+                    claims = archive_claims(row, package_sources)
+                    marks[row["id"]] = {**import_mark("archive", manifest["origin_root"], claims, imported_at,
+                                                      row["version"]), "snapshot_id": snapshot_id}
+                    names.update(str(claim["name"]) for claim in claims[-1:] if claim.get("name"))
+                    unnamed += not claims
+                    brought += 1
+            result["confirmed_records"] = {
+                "total": brought, "confirmed_by": sorted(names)[:50], "without_a_name": unnamed,
+                "note": "confirmed elsewhere; kept as confirmed, shown as imported, never verified here"}
+            # A verdict a person gave here is never replaced by a package without that person's choice (#177).
+            # Every record, none cut: the person agrees to this list and the import sends it back (#333).
+            result["replaces_confirmed_here"] = {"total": len(replaced), "records": sorted(replaced),
+                                                 "note": REPLACES_NOTE}
+            if dry_run:
+                if healing_plan is not None:
+                    result["quote_healing"] = healing_plan.preview()
+                return result
+            if expected_replaced is not None and sorted(expected_replaced) != sorted(replaced):
+                # The person agreed to the list their check showed; any other list is not their choice.
+                from cairnmind.memory.confirmation import REPLACED_CHANGED
+                raise MemoryConflict(REPLACED_CHANGED)
+            if replaced and not replace_confirmed:
+                raise MemoryConflict(replaces_refusal(sorted(replaced)))
+            if replaced:
+                # Putting a package over a verdict given here is the person's choice, made in the workspace (#214).
+                from cairnmind.memory.confirmation import ConfirmationRefused
+                from cairnmind.terminal.person_proof import IMPORT_REPLACE, present
+                if not present():
+                    raise ConfirmationRefused(IMPORT_REPLACE)
+            from cairnmind.storage.journal import Journal
+            Journal.reset(tx, reason="memory_import")
+            if not current:
+                insert_document(tx, "projects", {**result["project"], "created_at": utc_now()})
+            if not roots:
+                from cairnmind.memory.project_folders import stamp
+                insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": str(root),
+                                                      **stamp()})
+            for origin in origins:
+                binding = {"id": _digest([project_id, origin, str(root)]), "project_id": project_id,
+                           "origin_root": origin, "local_root": str(root)}
+                if not db_find(tx, "memory_bindings", {"id": binding["id"]}, columns=("id",)):
+                    insert_document(tx, "memory_bindings", binding)
+            # Clear only affected derived unique keys before applying a complete
+            # final record set; legitimate key swaps must not depend on row order.
+            for row in payload["records"]:
+                if row["id"] in existing["records"]:
+                    db_update_where(tx, "records", set_fields={"active_key": None}, where={"id": row["id"]})
+            for row in payload["sources"]:
+                if (row["id"] in existing["sources"] and not (row["kind"] in {"code", "document", "file"}
+                        and isinstance(row["metadata"].get("path"), str))):
+                    db_update_where(tx, "sources", set_fields={"current_key": None}, where={"id": row["id"]})
+            for table in TABLES:
+                for original in payload[table]:
+                    row, old = deepcopy(original), existing[table].get(original["id"])
+                    if table == "sources":
+                        if old:
+                            if not (row["kind"] in {"code", "document", "file"}
+                                    and isinstance(row["metadata"].get("path"), str)):
+                                db_update_where(
+                                    tx,
+                                    "sources",
+                                    set_fields={
+                                        "is_current": row["is_current"],
+                                        "current_key": json_text([project_id, row["uri"]]) if row["is_current"] else None,
+                                    },
+                                    where={"id": row["id"]},
+                                )
+                                if row["is_current"]:
+                                    db_update_where(tx, "chunks", set_fields={"is_current": True}, where={"source_id": row["id"]})
+                                else:  # no longer current: its chunks and vectors go, as on a replacement (#186)
+                                    self.store.drop_chunks(tx, [row["id"]])
+                                    self.store._delete_old_vectors(tx, [row["id"]])
+                            continue
+                        foreign_file = row["kind"] in {"code", "document", "file"} and isinstance(row["metadata"].get("path"), str)
+                        current_source = row["is_current"] and not foreign_file
+                        for ref_field in ("evidence_type", "file_path", "commit_sha", "line_start", "line_end", "content_sha256"):
+                            row.pop(ref_field, None)
+                        row.update(is_current=current_source,
+                                   current_key=json_text([project_id, row["uri"]]) if current_source else None)
+                    elif table == "records":
+                        row["active_key"] = json_text([project_id, row["kind"], row["key"]]) if row["status"] != "superseded" else None
+                        if row["id"] in marks:
+                            row["metadata"] = {**row["metadata"], "confirmation": marks[row["id"]]}
+                    elif table == "check_runs":
+                        if old:
+                            continue  # A genuine local matching run retains its local authority.
+                        row["portable_provenance"] = {"snapshot_id": snapshot_id, "original_origin": row.get("origin", "unknown"),
+                                                      "origin_root": manifest["origin_root"]}
+                        row["origin"] = "portable_import"
+                    elif table == "nodes":
+                        if old and row["kind"] not in _GLOBAL_NODES:
+                            continue
+                        row["is_current"] = row["kind"] in _GLOBAL_NODES
+                        self.store.upsert_node(row, tx)
+                        continue
+                    elif table == "edges":
+                        if old and row["kind"] in _CODE_EDGES:
+                            continue
+                        row["is_current"] = row["kind"] not in _CODE_EDGES
+                        self.store.upsert_edge(row, tx)
+                        continue
+                    if old:
+                        if table in {"record_revisions", "plan_revisions"}:
+                            continue
+                        db_update_where(tx, table, set_fields=row, where={"id": row["id"]})
+                    else:
+                        insert_document(tx, table, row)
+            # Canonical relationships describe the final heads, not a union of
+            # old and new dependency/plan membership projections.
+            from cairnmind.memory.plans import _plan_graph
+            records = {r["id"]: r for r in payload["records"]}
+            for record in payload["records"]:
+                self.store._record_graph(tx, record)
+            for plan in payload["plans"]:
+                _plan_graph(self.store, tx, plan, [records[i] for i in plan["step_ids"]])
+            # Search is usable without GPU; chunks are derived locally, never imported claims.
+            from cairnmind.agents.agent import source_text
+            from cairnmind.agents.agent_memory import is_mcp_source
+            from cairnmind.memory.impact_verdicts import is_verdict_source
+            from cairnmind.memory.quote_healing import is_healing_audit_source
+            from cairnmind.scip.ingest import _chunks, _identifier
+            for source in payload["sources"]:
+                if is_verdict_source(source) or is_mcp_source(source) or is_healing_audit_source(source):
+                    continue  # imported with the memory, never searchable text
+                if db_find(tx, "chunks", {"source_id": source["id"]}, columns=("id",), limit=1):
+                    continue
+                saved = db_find_one(tx, "sources", {"id": source["id"]}, columns=("is_current",), required=True)
+                if saved is None or saved.get("is_current") is False:
+                    continue  # nothing searches a chunk of a source that is not current (#186)
+                for number, (text, first, last) in enumerate(_chunks(source_text(source), source.get("uri", ""))):
+                    insert_document(tx, "chunks", {"id": _identifier(project_id, source["id"], number, first, last, text),
+                        "project_id": project_id, "source_id": source["id"], "text": text,
+                        "line_start": first, "line_end": last, "is_current": saved["is_current"],
+                        "metadata": {"source_kind": source["kind"], "role": source["metadata"].get("role", "unknown")}})
+            active = manifest.get("active_plan_id")
+            if active:
+                from cairnmind.memory.plans import PlanManager
+                PlanManager(self.store).activate(project_id, active, str(root))
+            else:
+                focus = db_find_one(tx, "worktree_states", {"project_id": project_id, "worktree": str(root)})
+                if focus and focus.get("active_plan_id") is not None:
+                    db_update_where(
+                        tx,
+                        "worktree_states",
+                        set_fields={"active_plan_id": None, "version": focus["version"] + 1, "updated_at": utc_now()},
+                        where={"id": focus["id"]},
+                    )
+            receipt = {"id": _digest([project_id, snapshot_id]), "project_id": project_id, "snapshot_id": snapshot_id,
+                       "state_hash": manifest["state_hash"], "ancestors": manifest.get("ancestors", []),
+                       "origin_root": manifest["origin_root"], "local_root": str(root),
+                       "source_ids": [s["id"] for s in payload["sources"] if s["id"] not in existing["sources"]],
+                       "imported_at": utc_now()}
+            insert_document(tx, "memory_imports", receipt)
+            self._receipt(tx, project_id, path, raw, manifest, "import", str(root))
+            if healing_plan is not None:
+                if healing_plan.actions:
+                    from cairnmind.memory.quote_healing import apply_healing_plan
+                    result["quote_healing"] = apply_healing_plan(
+                        self.store, tx, project_id, healing_plan, actor="snapshot_import",
+                    )
+                else:
+                    result["quote_healing"] = healing_plan.preview()
+        return result
+
+    def configure_auto(self, project_id, enabled, interval_minutes=15, worktree=None):
+        if type(enabled) is not bool or type(interval_minutes) is not int or not 1 <= interval_minutes <= 10080:
+            raise ValueError("Memory schedule requires a boolean and interval from 1 to 10080 minutes")
+        _, root = self._scope(project_id, worktree)
+        with self.store.transaction() as tx:
+            row = {"id": project_id, "project_id": project_id, "enabled": enabled,
+                   "interval_minutes": interval_minutes, "worktree": str(root), "updated_at": utc_now()}
+            if db_find(tx, "memory_settings", {"id": project_id}, columns=("id",)):
+                db_update_where(tx, "memory_settings", set_fields=row, where={"id": project_id})
+            else:
+                insert_document(tx, "memory_settings", row)
+        return {"status": "configured", **self.status(project_id, str(root))}
+
+    def status(self, project_id, worktree=None):
+        project, root = self._scope(project_id, worktree)
+        # Shown: the package there is to read. Written next: always the current directory.
+        found = snapshot_directory(root)
+        path = found / "manifest.json" if found is not None else self._path(root)
+        schedule = db_find_one(self.store, "memory_settings", {"id": project_id}) or {}
+        result = {"project_id": project_id, "path": str(path), "write_path": str(self._path(root)),
+                  "earlier_package": self._earlier_package(root), "latest": None,
+                  "auto": {"enabled": False, "interval_minutes": 15, "worktree": str(root),
+                           "last_checked_at": None, "last_success_at": None, "error": None}}
+        result["auto"].update({k: v for k, v in schedule.items() if k in result["auto"]})
+        jobs = db_find(self.store, "jobs", {"project_id": project_id}, columns=("kind", "state"))
+        result["processing"] = {kind: {state: sum(r.get("kind") == kind and r.get("state") == state for r in jobs)
+                                       for state in ("pending", "running", "failed", "completed")}
+                                for kind in ("extract", "embed", "import")}
+
+        def count(table):
+            return db_count(self.store, table, {"project_id": project_id})
+
+        result["rebuilding"] = {"code_index_pending": code_graph_pending(project),
+                                "chunks": count("chunks"), "embedding_rows": count("embeddings"),
+                                "model_required_to_read_memory": False}
+        imported = db_find_one(
+            self.store,
+            "memory_imports",
+            {"project_id": project_id},
+            columns=("snapshot_id", "imported_at", "origin_root", "local_root"),
+            order_by=(desc("imported_at"), desc("id")),
+        )
+        result["last_import"] = imported
+        result["verification"] = "Imported checks are historical; local execution and a new session ACK remain required."
+        # Against the limits of publication (#191); the behaviour at the limit is in snapshot() and is unchanged.
+        result["package_size"] = package_size(
+            self.store,
+            project_id,
+            TABLES,
+            max_rows=MAX_ROWS,
+            max_bytes=MAX_TOTAL_BYTES,
+            max_manifest_bytes=MAX_MANIFEST_BYTES,
+            max_object_bytes=MAX_OBJECT_BYTES,
+            only={
+                "nodes": is_in("kind", sorted(_GLOBAL_NODES)),
+                "edges": not_in("kind", sorted(_CODE_EDGES)),
+            },
+        )
+        if path.exists() or path.is_symlink():
+            try:
+                result["latest"] = manifest_summary(path)
+            except (OSError, ValueError):
+                result["error"] = "invalid_snapshot"
+        return result
+
+    def tick(self, now=None):
+        moment = datetime.now(UTC).timestamp() if now is None else now.timestamp() if isinstance(now, datetime) else float(now)
+        if not math.isfinite(moment):
+            raise ValueError("Invalid memory schedule time")
+        results, errors = [], []
+        from cairnmind.memory.project_removal import removed_ids
+        removed = removed_ids(self.store)  # the schedule of a removed project pauses until it is back (#327)
+        for row in db_find(self.store, "memory_settings", {"enabled": True}):
+            if row["project_id"] in removed:
+                continue
+            checked = row.get("last_checked_at")
+            if checked and moment - datetime.fromisoformat(checked).timestamp() < row["interval_minutes"] * 60:
+                continue
+            timestamp = datetime.fromtimestamp(moment, UTC).isoformat()
+            try:
+                result = self._unchanged_since_receipt(row["project_id"], row["worktree"])
+                if result is None:
+                    result = self.snapshot(row["project_id"], row["worktree"])
+                values = {"last_checked_at": timestamp, "last_success_at": timestamp, "error": None}
+                results.append({"project_id": row["project_id"], **result})
+            except (OSError, ValueError, RuntimeError) as exc:
+                code = "memory_conflict" if isinstance(exc, MemoryConflict) else "snapshot_failed"
+                values = {"last_checked_at": timestamp, "error": code}
+                errors.append({"project_id": row["project_id"], "code": code})
+            with self.store.transaction() as tx:
+                db_update_where(tx, "memory_settings", set_fields=values, where={"id": row["id"]})
+        return {"status": "completed", "projects": results, "errors": errors}

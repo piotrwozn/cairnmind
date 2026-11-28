@@ -11,18 +11,18 @@ from contextlib import closing
 from dataclasses import replace
 
 import pytest
-from typer.testing import CliRunner
-
-from cairnmind import person_proof
-from cairnmind.arcade import ArcadeClient
-from cairnmind.cli import app
-from cairnmind.config import Settings
-from cairnmind.confirmation import confirmation_of
-from cairnmind.database_mode import connect_only
-from cairnmind.store import Store
 from conftest import as_person
 from database_relay import Relay
 from test_connect_only import data_directory, repository, test_engine  # noqa: F401 - test_engine is a fixture
+from typer.testing import CliRunner
+
+from cairnmind.cli import app
+from cairnmind.config import Settings
+from cairnmind.memory.confirmation import confirmation_of
+from cairnmind.storage.arcade import ArcadeClient
+from cairnmind.storage.database_mode import connect_only
+from cairnmind.store import Store
+from cairnmind.terminal import person_proof
 
 runner = CliRunner()
 

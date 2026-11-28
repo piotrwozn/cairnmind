@@ -15,22 +15,32 @@ from pathlib import Path
 
 import httpx
 import pytest
+from conftest import make_symlink_or_skip, make_world_readable, plain_words
 from typer.testing import CliRunner
 
-from conftest import make_symlink_or_skip, make_world_readable, plain_words
-from cairnmind import (backup_reader, cli, database_credentials, engine, engine_docker, file_locks, memory_models,
-                       person_proof, setup_profiles, store_writer)
-from cairnmind import topology as topology_module
-from cairnmind.arcade import ArcadeError
+from cairnmind import cli
+from cairnmind.agents.ollama import Ollama, OllamaUnavailable
+from cairnmind.cli_cmds import topology as topology_module
 from cairnmind.config import Settings, derived_database, is_own_variable
-from cairnmind.database_mode import connect_only
-from cairnmind.restore_claims import BackupClaims, restore_notice
+from cairnmind.memory import memory_models
+from cairnmind.memory.memory_openai import OpenAICompatible
+from cairnmind.pal import file_locks
+from cairnmind.storage import backup_reader, database_credentials, engine, engine_docker, store_writer
+from cairnmind.storage.arcade import ArcadeError
+from cairnmind.storage.database_mode import connect_only
+from cairnmind.storage.restore_claims import BackupClaims, restore_notice
+from cairnmind.storage.store_readonly import StoreNotReady
 from cairnmind.store import Store
-from cairnmind.store_readonly import StoreNotReady
-from cairnmind.memory_openai import OpenAICompatible
-from cairnmind.ollama import Ollama, OllamaUnavailable
-from cairnmind.setup_profiles import (
-    MESSAGES, Request, render, render_one, run, SetupRefused, TEST_STORAGE_OK)
+from cairnmind.terminal import person_proof, setup_profiles
+from cairnmind.terminal.setup_profiles import (
+    MESSAGES,
+    TEST_STORAGE_OK,
+    Request,
+    SetupRefused,
+    render,
+    render_one,
+    run,
+)
 
 REMOTE = {"provider": "openai_compatible", "base_url": "https://models.example/v1", "allow_remote": True}
 DB = "https://db.example:2490"
@@ -184,7 +194,7 @@ def config(tmp_path) -> dict:
 
 
 def private(tmp_path, name, text):
-    from cairnmind import private_files
+    from cairnmind.pal import private_files
     path = tmp_path / name
     path.write_text(text + "\n", encoding="utf-8")
     private_files.make_private(path)
@@ -1062,7 +1072,7 @@ def test_an_applied_change_can_be_put_back_with_what_it_left(tmp_path, world):
 
 
 def test_every_setup_sentence_has_polish_with_the_same_placeholders():
-    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal.terminal_i18n import tr
     names = {name for name, value in vars(setup_profiles).items()
              if isinstance(value, str) and name.isupper() and " " in value}
     sentences = {getattr(setup_profiles, name) for name in names}

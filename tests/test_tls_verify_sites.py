@@ -11,13 +11,17 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import api_runtime, cli, cockpit, integrations, topology
-from cairnmind.api_providers import make_provider
+from cairnmind import cli
+from cairnmind.agents import api_runtime
+from cairnmind.agents.api_providers import make_provider
+from cairnmind.agents.knowledge_mode import missing_models as REAL_PROBE
+from cairnmind.agents.ollama import Ollama
+from cairnmind.cli_cmds import topology
 from cairnmind.config import ENV_PREFIXES, Settings, tls_verify
-from cairnmind.knowledge_mode import missing_models as REAL_PROBE
-from cairnmind.memory_models import doctor_verify
-from cairnmind.ollama import Ollama
-from cairnmind.terminal_client import BrokerClient, BrokerError
+from cairnmind.memory import integrations
+from cairnmind.memory.memory_models import doctor_verify
+from cairnmind.terminal import cockpit
+from cairnmind.terminal.terminal_client import BrokerClient, BrokerError
 
 HTTPS, HTTP = "https://models.example.com", "http://127.0.0.1:9911"
 REAL_CLIENT, REAL_ASYNC = httpx.Client, httpx.AsyncClient

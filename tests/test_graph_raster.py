@@ -7,8 +7,8 @@ from time import perf_counter
 
 from conftest import time_budget
 
-from cairnmind.graph_raster import LUMINANCE, SELECTED_COLOR, _Raster, render_scene
-from cairnmind.terminal_graph import Camera, seed_position
+from cairnmind.terminal.terminal_graph import Camera, seed_position
+from cairnmind.ui.graph_raster import LUMINANCE, SELECTED_COLOR, _Raster, render_scene
 
 
 def _occupied(text):

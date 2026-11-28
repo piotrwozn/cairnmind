@@ -21,11 +21,9 @@ CAIRNMIND_TEST_SCHEMA_TEMPLATE=0 builds every database from nothing instead.
 from __future__ import annotations
 
 import contextlib
-from dataclasses import replace
 import json
 import os
 import re
-from pathlib import Path
 import shutil
 import socket
 import subprocess
@@ -34,21 +32,23 @@ import tempfile
 import threading
 import time
 import types
-from urllib.parse import quote, urlparse
 import uuid
 import zlib
+from dataclasses import replace
+from pathlib import Path
+from urllib.parse import quote, urlparse
 
 if sys.platform != "win32":
     import fcntl
     import termios
 
 import pytest
-
-from cairnmind import file_locks, private_files, process_control, process_identity
-from cairnmind.arcade import ArcadeClient, ArcadeError
-from cairnmind.config import SESSION_NAMES, Settings, env_names, env_value
-from cairnmind.engine import install_engine, start_engine, stop_engine
 import stall_watch
+
+from cairnmind.config import SESSION_NAMES, Settings, env_names, env_value
+from cairnmind.pal import file_locks, private_files, process_control, process_identity
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
+from cairnmind.storage.engine import install_engine, start_engine, stop_engine
 
 # Keep existing test suites completely offline/deterministic unless a SCIP test opts in.
 os.environ.setdefault("CAIRNMIND_SCIP_MODE", "off")
@@ -62,7 +62,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_api_credentials", "test_api_panels", "test_api_profiles", "test_api_providers",
     "test_api_runtime", "test_api_worker", "test_arcade_transport", "test_client_auth", "test_repository_evaluation",
     "test_client_runtime", "test_json_wait", "test_pty_drain", "test_cockpit_cli", "test_cockpit_server", "test_cockpit_state",
-    "test_copilot_adapter", "test_database_credentials", "test_deployment", "test_environment_names", "test_graph_raster", "test_graph_widget_rendering", "test_memory_models", "test_memory_view", "test_module_alias",
+    "test_copilot_adapter", "test_database_credentials", "test_deployment", "test_environment_names", "test_graph_raster", "test_graph_widget_rendering", "test_memory_models", "test_memory_view",
     "test_project_remove_cli", "test_recorder_install", "test_hook_spool_unassigned", "test_published_memory_format",
     "test_published_memory_secrets",
     "test_published_memory_diff", "test_setup_profiles",
@@ -105,6 +105,8 @@ NO_ARCADE_MODULES = frozenset({
     "test_sessions_and_published_edges", "test_published_ui_agent_edges", "test_ui_server",
     "test_project_clone", "test_quote_healing",
     "test_pulse", "test_mcp_presets", "test_doctor_preflight",
+    "test_ui_packaging", "test_storage_dal_guard", "test_import_graph",
+    "test_sqlite_vec_ann",
 })
 
 TMUX_MODULES = frozenset({
@@ -171,7 +173,7 @@ def server_under_test():
                                 "CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE.")
     if urlparse(address).port in default_ports():  # the identity of a server fails closed: never the installed one
         raise pytest.UsageError(f"CAIRNMIND_TEST_ARCADE_SERVER_URL names a default port of Cairnmind ({address}).")
-    from cairnmind.database_credentials import read_private_file
+    from cairnmind.storage.database_credentials import read_private_file
     try:
         return address, read_private_file(password_file, "CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE")
     except ValueError as problem:  # a usage error, not an INTERNALERROR traceback from the collection hook
@@ -322,7 +324,7 @@ def person_proven():
     that can import Cairnmind and do the same can equally write the database, which the document names. Tests
     of a route do not use it: they send the proof (`workspace_person`) and the route sets it.
     """
-    from cairnmind import person_proof
+    from cairnmind.terminal import person_proof
     token = person_proof._PROVEN.set(True)
     try:
         yield
@@ -336,7 +338,7 @@ def person_proven():
 @contextlib.contextmanager
 def person_unproven():
     """A token holder's request inside a test that is otherwise a person's: the door shut for the block."""
-    from cairnmind import person_proof
+    from cairnmind.terminal import person_proof
     token = person_proof._PROVEN.set(False)
     try:
         yield
@@ -364,7 +366,7 @@ def workspace_person(monkeypatch):
 
     Returns the two headers for a request to a route. Without them the same request is a token holder's.
     """
-    from cairnmind import person_proof
+    from cairnmind.terminal import person_proof
     monkeypatch.setattr(person_proof, "_tmux", lambda settings: "tmux")
     monkeypatch.setattr(person_proof, "read_key", lambda *args, **kwargs: ("key", TEST_KEY))
     monkeypatch.setattr(person_proof, "workspace_socket",
@@ -403,7 +405,7 @@ def as_person(store, project_id, record, sources=None):
     The command line no longer does this (#214). A test that needs a confirmed record and is not about how it
     was confirmed uses this instead of asking the store for the status, which only a person's route may do.
     """
-    from cairnmind.confirmation import remember_as_person
+    from cairnmind.memory.confirmation import remember_as_person
     with person_proven():
         return remember_as_person(store, project_id, {"status": "confirmed", **record}, sources)
 
@@ -415,7 +417,7 @@ def person_edit(store, project_id, record, sources):
     person (the act a person's route opens). A changed record is stored as proposed, without a lapsed mark,
     until the person confirms it again.
     """
-    from cairnmind.confirmation import person_source
+    from cairnmind.memory.confirmation import person_source
     with person_proven(), store.transaction():
         note = person_source(store, project_id, "edit", action="person_edit")
         with store.person_act("cli", note["id"]):
@@ -427,7 +429,7 @@ def confirmed_before_rule(store, record_id):
 
     Writes the rows directly, as an old store holds them: status confirmed and no confirmation mark.
     """
-    from cairnmind.sql import clean_row, update_document
+    from cairnmind.storage.sql import clean_row, update_document
     with store.transaction() as tx:
         row = clean_row(tx.query("SELECT FROM records WHERE id=:id", {"id": record_id})[0])
         row["status"] = "confirmed"
@@ -445,7 +447,7 @@ def person_terminal(monkeypatch):
 
     CliRunner has no terminal, so without this fixture a CLI test is what an agent's command is.
     """
-    import cairnmind.confirmation as confirmation
+    import cairnmind.memory.confirmation as confirmation
     monkeypatch.setattr(confirmation, "person_at_terminal", lambda *args, **kwargs: True)
 
 
@@ -665,7 +667,7 @@ def no_inherited_session():
 def no_upgrade_mark(tmp_path_factory):
     """No test sees an upgrade the person who runs the tests may have in progress (#298); a test that wants a mark
     points mark_path elsewhere. By hand, not monkeypatch, for the reason given at no_inherited_session."""
-    from cairnmind import upgrade_mark
+    from cairnmind.cli_cmds import upgrade_mark
     original = upgrade_mark.mark_path
     missing = tmp_path_factory.getbasetemp() / "no-upgrade-mark" / "upgrade-in-progress"
     upgrade_mark.mark_path = lambda: missing
@@ -680,7 +682,7 @@ def models_found_at_init():
 
     Done by hand and not with monkeypatch, for the reason given at no_inherited_session.
     """
-    from cairnmind import knowledge_mode
+    from cairnmind.agents import knowledge_mode
     original = knowledge_mode.missing_models
     knowledge_mode.missing_models = lambda settings: []
     yield
@@ -800,10 +802,8 @@ def no_mcp_server_outlives_its_test(request):
             process_control.terminate_pid(pid, force=True)
         else:
             for kill in (lambda: os.killpg(pid, signal.SIGKILL), lambda: os.kill(pid, signal.SIGKILL)):
-                try:
+                with contextlib.suppress(OSError):
                     kill()
-                except OSError:
-                    pass
     if left:
         pytest.fail(f"A fixture MCP server outlived its test and was killed: {left}")
 
@@ -814,7 +814,7 @@ def start_test_engine(settings):
     When it fails twice the whole run stops with the cause named once: a fixture that raises is raised
     again for every test that uses it, which would be a thousand identical setup errors.
     """
-    for attempt in range(2):
+    for _attempt in range(2):
         try:
             start_engine(settings)
             return
@@ -1059,6 +1059,10 @@ def server_mode_keeps_the_address_to_the_engine_tests(request, monkeypatch):
 def release_test_databases(request, run_slot):
     """Start the engine for ``arcade`` tests and drop their databases afterwards, inside the slot."""
     if request.node.get_closest_marker("arcade") is None:
+        yield
+        return
+    selected_backend = (env_value("STORAGE_BACKEND") or env_value("BACKEND") or "").strip().lower()
+    if selected_backend == "sqlite":
         yield
         return
     require_slot(request.config, "Starting the engine")

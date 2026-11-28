@@ -4,19 +4,20 @@ The plan must be printed whether or not the user exists yet, and the server must
 """
 from __future__ import annotations
 
-from contextlib import closing
-from dataclasses import replace
 import json
 import os
 import uuid
+from contextlib import closing, suppress
+from dataclasses import replace
 
 import pytest
+from conftest import plain_words
 from typer.testing import CliRunner
 
-from conftest import plain_words
-from cairnmind import cli, database_credentials
-from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind import cli
 from cairnmind.config import Settings, is_own_variable
+from cairnmind.storage import database_credentials
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 
 USER_SECRET = "User-password-for-the-plan-1"
 
@@ -43,10 +44,8 @@ def server(tmp_path, monkeypatch, arcade_test_engine):
     finally:
         with closing(ArcadeClient(replace(root, arcade_password=root_secret), administrator=True)) as client:
             for command in (f"drop user {names['user']}", f"drop database {names['database']}"):
-                try:
+                with suppress(ArcadeError):
                     client.server_command(command)
-                except ArcadeError:
-                    pass
 
 
 def dry_run(server, admin_secret=None, password=USER_SECRET, *more):

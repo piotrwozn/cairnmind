@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from conftest import in_shard, shard_of
 
 IDS = [f"tests/test_module_{m}.py::test_case_{c}[{p}]" for m in range(40) for c in range(25) for p in ("en", "pl")]

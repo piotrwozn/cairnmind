@@ -15,7 +15,6 @@ if sys.platform != "win32":
     import termios
 
 import pytest
-
 from test_workspace import manager as manager
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX tmux/PTY locale handling")
@@ -68,7 +67,7 @@ def test_c_locale_formats_and_actual_attach_keep_exact_terminal_lease(manager, m
     script = """import fcntl, os, sys, termios
 from pathlib import Path
 from cairnmind.config import Settings
-from cairnmind.workspace import WorkspaceManager
+from cairnmind.terminal.workspace import WorkspaceManager
 # Python may coerce an unset locale at startup; restore the user's environment
 # before creating either the query clients or the interactive tmux client.
 for key in list(os.environ):

@@ -6,13 +6,12 @@ import socket
 
 import pytest
 
-from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.cli import READ_KINDS
 from cairnmind.config import Settings
-from cairnmind.journal import TABLE_TYPES
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
+from cairnmind.storage.journal import TABLE_TYPES
+from cairnmind.storage.store_readonly import ReadOnlyStoreError, StoreNotReady
 from cairnmind.store import SCHEMA_VERSION, Store
-from cairnmind.store_readonly import ReadOnlyStoreError, StoreNotReady
-
 
 # Read by opening the store and by the consistency check itself, not by a command.
 BOOKKEEPING = {"schema", "devbrain_meta", "journal_state", "journal_events"}
@@ -21,8 +20,8 @@ BOOKKEEPING = {"schema", "devbrain_meta", "journal_state", "journal_events"}
 def forbid_starting(monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("Opening the store for reading started the engine or a process")
-    monkeypatch.setattr("cairnmind.engine.start_engine", forbidden)
-    monkeypatch.setattr("cairnmind.engine.ensure_engine", forbidden)
+    monkeypatch.setattr("cairnmind.storage.engine.start_engine", forbidden)
+    monkeypatch.setattr("cairnmind.storage.engine.ensure_engine", forbidden)
     monkeypatch.setattr("subprocess.Popen", forbidden)
 
 
@@ -94,9 +93,8 @@ def test_a_store_opened_for_reading_refuses_every_write(tmp_path, monkeypatch):
         reader.client.command("DELETE FROM projects")
     with pytest.raises(ReadOnlyStoreError):
         reader.client.server_command(f"drop database {store.settings.arcade_database}")
-    with pytest.raises(ReadOnlyStoreError):
-        with reader.transaction() as tx:
-            tx.command("DELETE FROM projects")
+    with pytest.raises(ReadOnlyStoreError), reader.transaction() as tx:
+        tx.command("DELETE FROM projects")
     assert changes(sent) == []
     assert names(store) == ["demo"]
 
@@ -186,9 +184,11 @@ def test_another_schema_version_is_refused_and_not_migrated(tmp_path, monkeypatc
 def test_the_read_commands_work_on_a_ready_store_without_preparing_it(tmp_path, monkeypatch):
     import json
     import subprocess
+
     from typer.testing import CliRunner
+
     from cairnmind.cli import app
-    from cairnmind.plans import PlanManager
+    from cairnmind.memory.plans import PlanManager
     store, project = ready(tmp_path)
     root = tmp_path / "repo"
     (root / "app.py").write_text("def run():\n    return 1\n")
@@ -200,7 +200,7 @@ def test_the_read_commands_work_on_a_ready_store_without_preparing_it(tmp_path, 
                                    "plan-key", activate=True)
     before = files(store.data_dir)
     # Git runs as a process here, so only the engine start and the full store are forbidden.
-    for name in ("cairnmind.engine.start_engine", "cairnmind.engine.ensure_engine", "cairnmind.cli.ensure_service"):
+    for name in ("cairnmind.storage.engine.start_engine", "cairnmind.storage.engine.ensure_engine", "cairnmind.cli.ensure_service"):
         monkeypatch.setattr(name, lambda *a, **k: pytest.fail("A read command started the engine or service"))
     monkeypatch.setattr(Store, "__init__", lambda *a, **k: pytest.fail("A read command prepared the store"))
     sent = record_requests(monkeypatch)
@@ -232,14 +232,14 @@ def test_the_read_commands_work_on_a_ready_store_without_preparing_it(tmp_path, 
 
 
 def plan_fixture(tmp_path):
-    from cairnmind.plans import PlanManager
+    from cairnmind.memory.plans import PlanManager
     store, project = ready(tmp_path)
     first = PlanManager(store).save(project["id"], {"title": "Ship"}, [{"key": "one", "content": "Do it"}], "first")
     return store, project, first
 
 
 def save_second_version(store, project, first):
-    from cairnmind.plans import PlanManager
+    from cairnmind.memory.plans import PlanManager
     PlanManager(store).save(project["id"], {"id": first["plan"]["id"], "title": "Ship again"},
                             [{"key": "one", "content": "Do it better"}], "second", expected_version=1,
                             task_versions={task["id"]: task["version"] for task in first["tasks"]})
@@ -247,8 +247,10 @@ def save_second_version(store, project, first):
 
 def test_a_commit_between_the_queries_of_plan_show_is_never_shown_half(tmp_path, monkeypatch):
     import json
+
     from typer.testing import CliRunner
-    import cairnmind.plans as plans
+
+    import cairnmind.memory.plans as plans
     from cairnmind.cli import app
     store, project, first = plan_fixture(tmp_path)
     real, calls = plans._tasks, []
@@ -272,8 +274,10 @@ def test_a_commit_between_the_queries_of_plan_show_is_never_shown_half(tmp_path,
 
 def test_commits_of_other_kinds_or_projects_between_the_queries_do_not_repeat_plan_show(tmp_path, monkeypatch):
     import json
+
     from typer.testing import CliRunner
-    import cairnmind.plans as plans
+
+    import cairnmind.memory.plans as plans
     from cairnmind.cli import app
     store, project, first = plan_fixture(tmp_path)
     (tmp_path / "other").mkdir()
@@ -294,14 +298,14 @@ def test_commits_of_other_kinds_or_projects_between_the_queries_do_not_repeat_pl
     assert json.loads(shown.output)["plan"]["version"] == 1
     assert calls == [1]  # read once: nothing it reads changed
     # More events than are looked at count as a change of the read.
-    monkeypatch.setattr("cairnmind.store_readonly.EVENT_LIMIT", 1)
+    monkeypatch.setattr("cairnmind.storage.store_readonly.EVENT_LIMIT", 1)
     calls.clear()
     refused = CliRunner().invoke(app, ["--data-dir", str(store.data_dir), "plan", "show", "demo", first["plan"]["id"]])
     assert refused.exit_code != 0 and calls == [1, 1, 1]
 
 
 def test_a_store_that_keeps_changing_is_refused_with_one_sentence(tmp_path, monkeypatch, capsys):
-    import cairnmind.plans as plans
+    import cairnmind.memory.plans as plans
     from cairnmind import cli
     store, project, first = plan_fixture(tmp_path)
     real, saved = plans._tasks, []

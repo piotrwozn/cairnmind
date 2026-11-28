@@ -5,24 +5,37 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
+import os
 import subprocess
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.ignore_rules import IgnoreMatcher, escapes_root, git_check_ignore, is_binary_bytes
-from cairnmind.ingest import _files
-from cairnmind.integrations import PRE_COMMIT_HOOK_ID, install_pre_commit_hook
-from cairnmind.memory import MemoryConflict, inspect_snapshot
-from cairnmind.memory_audit import audit_memory
-from cairnmind.memory_published_secrets import (
-    REGISTERED, Rules, SecretRulesError, load_rules, random_looking, redact_text, scan_text, value_sha256,
+from cairnmind.memory.integrations import PRE_COMMIT_HOOK_ID, install_pre_commit_hook
+from cairnmind.memory.memory import MemoryConflict, inspect_snapshot
+from cairnmind.memory.memory_audit import audit_memory
+from cairnmind.memory.memory_published_secrets import (
+    REGISTERED,
+    Rules,
+    SecretRulesError,
+    load_rules,
+    random_looking,
+    redact_text,
+    scan_text,
+    value_sha256,
 )
+from cairnmind.memory.snapshot_privacy import (
+    SnapshotPrivacyError,
+    apply_snapshot_privacy,
+    merge_snapshots,
+    resolve_snapshot_refs,
+)
+from cairnmind.scip.ignore_rules import IgnoreMatcher, escapes_root, git_check_ignore, is_binary_bytes
+from cairnmind.scip.ingest import _files
 from cairnmind.service import MemoryPublishBody
-from cairnmind.snapshot_privacy import SnapshotPrivacyError, apply_snapshot_privacy, merge_snapshots, resolve_snapshot_refs
 
 ROOT = Path(__file__).resolve().parents[1]
 runner = CliRunner()
@@ -116,7 +129,16 @@ def _write_package(root: Path, project_id: str, payload: dict, *,
                    redacted: bool = False, parent_id: str | None = None,
                    ancestors: list[str] | None = None,
                    subdir: Path | None = None) -> Path:
-    from cairnmind.memory import FORMAT, TABLES, VERSION, _bytes, _descriptors, _digest, _manifest_id, _state_hash
+    from cairnmind.memory.memory import (
+        FORMAT,
+        TABLES,
+        VERSION,
+        _bytes,
+        _descriptors,
+        _digest,
+        _manifest_id,
+        _state_hash,
+    )
     out = (subdir or (root / ".memory" / "cairnmind"))
     (out / "objects").mkdir(parents=True, exist_ok=True)
     (out / "manifests").mkdir(parents=True, exist_ok=True)
@@ -226,7 +248,14 @@ def test_ignore_rules_negation_cairnmindignore_symlinks_and_binaries(tmp_path):
     outside = tmp_path / "outside.txt"
     outside.write_text("outside secret\n")
     link = root / "escape.txt"
-    link.symlink_to(outside)
+    has_symlink = True
+    try:
+        link.symlink_to(outside)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            has_symlink = False
+        else:
+            raise
 
     # Canonical git check-ignore respects negation !important.env
     git_ignored = git_check_ignore(root, ["secret.env", "important.env", "debug.log", "keep.py"])
@@ -242,13 +271,15 @@ def test_ignore_rules_negation_cairnmindignore_symlinks_and_binaries(tmp_path):
     assert not matcher.is_ignored("keep.py")
 
     # Symlink escaping repo detected and never walked by _files
-    assert escapes_root(link, root)
+    if has_symlink:
+        assert escapes_root(link, root)
     assert not escapes_root(root / "keep.py", root)
     walked = {p.relative_to(root).as_posix() for p in _files(root)}
     assert "keep.py" in walked and "important.env" in walked
     assert "secret.env" not in walked and "debug.log" not in walked
     assert "private/notes.md" not in walked and "secret.internal.txt" not in walked
-    assert "escape.txt" not in walked
+    if has_symlink:
+        assert "escape.txt" not in walked
 
     # Binary detection (NUL byte)
     assert is_binary_bytes(b"\x89PNG\r\n\x1a\n\x00\x00")

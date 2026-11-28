@@ -4,20 +4,22 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
+from test_terminal_panels import FakeBroker, FakeWorkspace, settle
 from textual.app import App
 from textual.widgets import Button, DataTable, Input, Static, Switch
 
 from cairnmind.config import Settings
-from cairnmind.terminal_client import BrokerError
-from cairnmind.terminal_panels import (
+from cairnmind.terminal.terminal_client import BrokerError
+from cairnmind.terminal.terminal_panels import (
     CredentialModal,
     DiscoveryModal,
     SidebarApp,
-    main as panels_main,
     profile_fields,
     profile_from_form,
 )
-from test_terminal_panels import FakeBroker, FakeWorkspace, settle
+from cairnmind.terminal.terminal_panels import (
+    main as panels_main,
+)
 
 
 class _ModalHost(App):
@@ -307,7 +309,7 @@ def _setup_rich(tmp_path, monkeypatch, *, project=True):
     broker = RichBroker(proj)
     workspace = FakeWorkspace(proj if project else None)
     settings = Settings(data_dir=tmp_path / "data")
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", lambda *args, **kwargs: workspace.read())
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", lambda *args, **kwargs: workspace.read())
     return settings, broker, workspace
 
 
@@ -373,12 +375,12 @@ async def test_sidebar_scan_ask_brief_snapshot_memory_and_more_flows(tmp_path, m
 
         async def boom(*args, **kwargs):
             raise RuntimeError("subview failed")
-        monkeypatch.setattr("cairnmind.workspace_stage.run_next_stage", boom)
-        monkeypatch.setattr("cairnmind.workspace_stage.edit_stages", boom)
-        monkeypatch.setattr("cairnmind.workspace_mcp.edit_mcp_servers", boom)
-        monkeypatch.setattr("cairnmind.terminal_legacy_groups.open_view", boom)
-        monkeypatch.setattr("cairnmind.terminal_project_forget.open_view", boom)
-        monkeypatch.setattr("cairnmind.terminal_record_kinds.open_view", boom)
+        monkeypatch.setattr("cairnmind.terminal.workspace_stage.run_next_stage", boom)
+        monkeypatch.setattr("cairnmind.terminal.workspace_stage.edit_stages", boom)
+        monkeypatch.setattr("cairnmind.terminal.workspace_mcp.edit_mcp_servers", boom)
+        monkeypatch.setattr("cairnmind.terminal.terminal_legacy_groups.open_view", boom)
+        monkeypatch.setattr("cairnmind.terminal.terminal_project_forget.open_view", boom)
+        monkeypatch.setattr("cairnmind.terminal.terminal_record_kinds.open_view", boom)
         for fn in (app.action_next_stage, app.edit_stages, app.edit_mcp_servers, app.legacy_groups, app.forget_project, app.record_kinds):
             fn()
             await settle(app, pilot)
@@ -445,7 +447,7 @@ async def test_sidebar_assistants_slots_queue_and_settings(tmp_path, monkeypatch
         # action_settings: cancel, topology error, language change, reduced_motion
         async def topo_boom(self_app):
             raise RuntimeError("topo err")
-        monkeypatch.setattr("cairnmind.terminal_setup.open_view", topo_boom)
+        monkeypatch.setattr("cairnmind.terminal.terminal_setup.open_view", topo_boom)
         answers = iter([None, "topology", "language", "pl", "reduced_motion", "on"])
         for _ in range(4):
             app.action_settings()
@@ -471,10 +473,10 @@ async def test_sidebar_login_profile_connection_and_sessions(tmp_path, monkeypat
     selected_runs = []
     taken_runs = []
     resumed_runs = []
-    monkeypatch.setattr("cairnmind.workspace.show_auth", lambda *args: auth_opened.append(args))
-    monkeypatch.setattr("cairnmind.workspace.select_run", lambda *args: selected_runs.append(args))
-    monkeypatch.setattr("cairnmind.workspace.take_control", lambda *args: taken_runs.append(args))
-    monkeypatch.setattr("cairnmind.workspace.resume_run", lambda *args: resumed_runs.append(args))
+    monkeypatch.setattr("cairnmind.terminal.workspace.show_auth", lambda *args: auth_opened.append(args))
+    monkeypatch.setattr("cairnmind.terminal.workspace.select_run", lambda *args: selected_runs.append(args))
+    monkeypatch.setattr("cairnmind.terminal.workspace.take_control", lambda *args: taken_runs.append(args))
+    monkeypatch.setattr("cairnmind.terminal.workspace.resume_run", lambda *args: resumed_runs.append(args))
 
     async with app.run_test(size=(100, 38)) as pilot:
         await settle(app, pilot)
@@ -579,10 +581,10 @@ def test_panels_main_dispatches_all_kinds(tmp_path, monkeypatch):
         def run(self):
             ran.append("run")
 
-    monkeypatch.setattr("cairnmind.terminal_panels.SidebarApp", DummyApp)
-    monkeypatch.setattr("cairnmind.terminal_inspector.InspectorApp", DummyApp)
-    monkeypatch.setattr("cairnmind.terminal_graph.GraphApp", DummyApp)
-    monkeypatch.setattr("cairnmind.terminal_activity.activity_app", lambda *a, **k: DummyApp(*a, **k))
+    monkeypatch.setattr("cairnmind.terminal.terminal_panels.SidebarApp", DummyApp)
+    monkeypatch.setattr("cairnmind.terminal.terminal_inspector.InspectorApp", DummyApp)
+    monkeypatch.setattr("cairnmind.terminal.terminal_graph.GraphApp", DummyApp)
+    monkeypatch.setattr("cairnmind.terminal.terminal_activity.activity_app", lambda *a, **k: DummyApp(*a, **k))
 
     for kind in ("sidebar", "inspector", "graph", "activity"):
         monkeypatch.setattr("sys.argv", ["panels", "--kind", kind, "--data-dir", str(tmp_path)])

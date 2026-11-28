@@ -8,21 +8,21 @@ from __future__ import annotations
 import logging
 from uuid import uuid4
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
-
-from cairnmind import confirmation, person_proof
-from cairnmind.cockpit import create_cockpit_app
-from cairnmind.confirmation import ConfirmationRefused, VerdictKept, confirmation_of
-from cairnmind.memory import MemoryManager
-from cairnmind.plans import PlanManager
-from cairnmind.record_kinds import act_as_person
-
 from conftest import TEST_KEY, as_person, person_proven
+from fastapi.testclient import TestClient
 from test_cockpit_server import ORIGIN, Runtime, login
 from test_confirmed_by_person import fixture  # noqa: F401 (the fixture)
 from test_confirmed_elsewhere import rows, two_computers  # noqa: F401 (a fixture and a helper)
+
+from cairnmind.memory import confirmation
+from cairnmind.memory.confirmation import ConfirmationRefused, VerdictKept, confirmation_of
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.plans import PlanManager
+from cairnmind.memory.record_kinds import act_as_person
+from cairnmind.terminal import person_proof
+from cairnmind.terminal.cockpit import create_cockpit_app
 
 KIND = {"client": "claude", "kind": "future-claude-record"}
 
@@ -251,7 +251,7 @@ def test_a_broker_session_from_the_token_does_not_carry_a_person(fixture, tmp_pa
                                                 if name.lower() in {"authorization", "content-type"}
                                                 or name.lower().startswith("x-cairnmind-")})
         return httpx.Response(reply.status_code, content=reply.content, headers={"Content-Type": "application/json"})
-    monkeypatch.setattr("cairnmind.client_auth.probe_client", lambda client, **kwargs: {})
+    monkeypatch.setattr("cairnmind.agents.client_auth.probe_client", lambda client, **kwargs: {})
     app = create_cockpit_app(fixture.settings, runtime=Runtime(), proxy_transport=httpx.MockTransport(upstream),
                              public_url=ORIGIN)
     requests = person_requests(fixture)
@@ -324,7 +324,7 @@ def test_the_store_counts_no_act_without_the_proof(fixture):  # noqa: F811
 
 @pytest.mark.unproven
 def test_a_record_kind_acceptance_needs_the_proof_too(fixture):  # noqa: F811
-    from cairnmind.record_kinds import AcceptanceRefused
+    from cairnmind.memory.record_kinds import AcceptanceRefused
     with pytest.raises(AcceptanceRefused):
         act_as_person(fixture.store, fixture.pid, "claude", "future-claude-record", "Because",
                       route="inspector_review")
@@ -341,8 +341,8 @@ def test_seed_data_needs_no_proof(fixture):  # noqa: F811
 
 @pytest.mark.unproven
 def test_imports_replace_a_verdict_only_with_the_proof(two_computers):  # noqa: F811
-    from cairnmind.memory import MemoryConflict  # noqa: F401
-    from cairnmind.inspector import Inspector
+    from cairnmind.memory.memory import MemoryConflict  # noqa: F401
+    from cairnmind.terminal.inspector import Inspector
     source, destination, pid, first, second = two_computers
     with person_proven():
         note = source.snapshot(pid, "manual://note", "Keep the decision across computers", "manual")

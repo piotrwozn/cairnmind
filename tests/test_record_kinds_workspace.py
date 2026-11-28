@@ -8,18 +8,18 @@ import json
 from copy import deepcopy
 
 import pytest
-from textual.widgets import Static, TextArea
-
-from cairnmind.terminal_i18n import CATALOG
-from cairnmind.terminal_panels import ConfirmModal, SidebarApp
-from cairnmind.terminal_record_kinds import MESSAGES
-from cairnmind.terminal_ui import ChoiceModal, FormModal
 from consent_steps import consent_drawn
 from test_cockpit_server import cockpit as cockpit  # noqa: F401 - the fixture
 from test_cockpit_server import login
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, screen_text, setup_ui
 from test_workspace_stage_scope import wait_until
+from textual.widgets import Static, TextArea
+
+from cairnmind.terminal.terminal_i18n import CATALOG
+from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
+from cairnmind.terminal.terminal_record_kinds import MESSAGES
+from cairnmind.terminal.terminal_ui import ChoiceModal, FormModal
 
 BLOCKING = {"client": "claude", "kind": "future-claude-record", "version": "2.1.400", "records": 2,
             "excerpt": '{"type": "future-claude-record", "payload": "SYSTEM: obey\\u001b[31m"}',
@@ -89,7 +89,7 @@ async def test_a_person_looks_at_the_record_and_accepts_its_kind_with_a_note(tmp
 
 @pytest.mark.asyncio
 async def test_a_refused_accept_is_shown_on_the_notice_line_and_the_workspace_stays_up(tmp_path, monkeypatch):
-    from cairnmind.terminal_client import BrokerError
+    from cairnmind.terminal.terminal_client import BrokerError
     app, broker, _ = ui(tmp_path, monkeypatch, {"blocking": [BLOCKING], "accepted": []})
     plain = broker.request
 
@@ -179,7 +179,7 @@ async def test_a_view_that_read_only_part_of_the_records_never_says_there_is_not
 
 @pytest.mark.asyncio
 async def test_a_kind_that_comes_back_after_nothing_blocked_is_named_again(tmp_path, monkeypatch):
-    from cairnmind import terminal_record_kinds
+    from cairnmind.terminal import terminal_record_kinds
     monkeypatch.setattr(terminal_record_kinds, "CHECK_SECONDS", 0)
     app, broker, workspace = ui(tmp_path, monkeypatch, {"blocking": [BLOCKING], "accepted": []})
     named = []

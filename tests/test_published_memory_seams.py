@@ -2,26 +2,26 @@
 commit, the carriers and the memory directory of a project in a subdirectory, on real ArcadeDB and Git."""
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.agent_tools import ToolError, _parts
-from cairnmind.evidence import evidence_states
-from cairnmind.ingest import index_project
-from cairnmind.inspector import Inspector
-from cairnmind.memory import MemoryConflict
-from cairnmind.memory_paths import nested_reserved
-from cairnmind.memory_published import Publisher
-from cairnmind.memory_published_carrier import configure
-from cairnmind.memory_published_git import project_files, published_files
-from cairnmind.memory_published_import import PublishedImporter
-from cairnmind.memory_published_main import import_commit
-from cairnmind.memory_published_release import checkout_rules
+from cairnmind.agents.agent_tools import ToolError, _parts
+from cairnmind.memory.evidence import evidence_states
+from cairnmind.memory.memory import MemoryConflict
+from cairnmind.memory.memory_paths import nested_reserved
+from cairnmind.memory.memory_published import Publisher
+from cairnmind.memory.memory_published_carrier import configure
+from cairnmind.memory.memory_published_git import project_files, published_files
+from cairnmind.memory.memory_published_import import PublishedImporter
+from cairnmind.memory.memory_published_main import import_commit
+from cairnmind.memory.memory_published_release import checkout_rules
+from cairnmind.scip.ingest import index_project
 from cairnmind.store import Store
+from cairnmind.terminal.inspector import Inspector
 
 GUIDE = "# Guide\n\nThe active backend is ArcadeDB.\nNothing else stores memory.\n"
 PUBLISHED = Path(".memory/cairnmind-published")

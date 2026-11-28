@@ -7,13 +7,14 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-
 from conftest import make_symlink_or_skip, own_time
-from cairnmind.arcade import ArcadeError
+
+from cairnmind.agents.client_runtime import NativeRuntime
 from cairnmind.config import Settings
-from cairnmind import engine, integrations
-from cairnmind import runtime_selection
-from cairnmind.client_runtime import NativeRuntime
+from cairnmind.memory import integrations
+from cairnmind.storage import engine
+from cairnmind.storage.arcade import ArcadeError
+from cairnmind.terminal import runtime_selection
 
 
 def executable(tmp_path):
@@ -386,8 +387,9 @@ def test_tmux_diagnostics_and_operations_use_same_selected_binary(tmp_path, monk
 
 @pytest.mark.skipif(sys.platform == "win32", reason="native_worker PTY attach is POSIX-only")
 def test_native_attach_rejects_invalid_binary_before_tty_or_exec(tmp_path, monkeypatch):
-    from cairnmind import native_worker
     import sys
+
+    from cairnmind.terminal import native_worker
     monkeypatch.setattr(sys, "argv", ["worker", "--attach", "--tmux-bin", "/missing/tmux",
                                       "--socket", "/private/socket", "--session", "private"])
     monkeypatch.setattr(native_worker.fcntl, "ioctl", lambda *args: pytest.fail("TTY touched"))

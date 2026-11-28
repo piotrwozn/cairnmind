@@ -6,22 +6,23 @@ travels: not its output, not its error output.
 """
 from __future__ import annotations
 
-from copy import deepcopy
 import json
 import logging
+from copy import deepcopy
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
-
-from cairnmind.cockpit_state import CockpitState
-from cairnmind.mcp_host import McpHost
-from cairnmind.terminal_panels import SidebarApp
+from fastapi.testclient import TestClient
 from test_api_runtime import local_profile, mcp_server, runtime  # noqa: F401  (runtime is a fixture)
-from test_mcp_agent import server as fixture_server, worker
+from test_mcp_agent import server as fixture_server
+from test_mcp_agent import worker
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, setup_ui
 from test_workspace_stage_scope import notice_of, wait_until
+
+from cairnmind.mcp.mcp_host import McpHost
+from cairnmind.terminal.cockpit_state import CockpitState
+from cairnmind.terminal.terminal_panels import SidebarApp
 
 SECRET = "SERVER_SAID_PRIVATE_TEXT"
 REASON_EN = "its program did not start or stopped during its start"
@@ -41,7 +42,7 @@ def report(run, **changes):
 
 
 def broker_for(runner):
-    from cairnmind.cockpit import create_cockpit_app
+    from cairnmind.terminal.cockpit import create_cockpit_app
     return create_cockpit_app(runner.settings, runtime=runner,
                               proxy_transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})))
 
@@ -75,7 +76,7 @@ def test_the_broker_refuses_a_report_it_cannot_trust(runtime, changes, refusal):
 
 
 def test_an_unknown_run_is_refused(runtime):  # noqa: F811
-    from cairnmind.client_runtime import UnknownRun
+    from cairnmind.agents.client_runtime import UnknownRun
     runner, _, project, _, _ = runtime
     run = started_run(runner, project, [mcp_server("gone", command="/nonexistent/server", args=())])
     with pytest.raises(UnknownRun):
@@ -150,7 +151,7 @@ async def test_the_pane_names_the_reason_in_words_and_reports_each_server_once(t
 
 
 def test_the_worker_sends_only_the_run_the_id_and_the_code_and_never_fails_on_it(tmp_path, monkeypatch):
-    from cairnmind import api_runtime
+    from cairnmind.agents import api_runtime
     from cairnmind.config import Settings
     settings = Settings.load(tmp_path / "data", create=True)
     run = {"id": "run-a", "generation": 2, "project_id": "project-a", "worktree": "/w", "session_id": "s"}
@@ -159,7 +160,7 @@ def test_the_worker_sends_only_the_run_the_id_and_the_code_and_never_fails_on_it
     def answer(request):
         sent.append((request.url.path, json.loads(request.content), request.headers["authorization"]))
         return httpx.Response(200, json={"recorded": True})
-    monkeypatch.setattr("cairnmind.cockpit.cockpit_status",
+    monkeypatch.setattr("cairnmind.terminal.cockpit.cockpit_status",
                         lambda settings: {"available": True, "url": "http://127.0.0.1:9"})
     monkeypatch.setattr(api_runtime.httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(answer), **kw))
     assert api_runtime.report_mcp_failure(settings, run, "gone", "start_failed") is True
@@ -306,7 +307,7 @@ class NoticeSink:
 
 def test_the_cockpit_state_carries_the_report_to_the_project_shown(runtime):  # noqa: F811
     # No rewriting of the rows: the real /api/state, its enrich() step, and the run's own project and folder.
-    from cairnmind.mcp_failure_notice import announce
+    from cairnmind.mcp.mcp_failure_notice import announce
     runner, _, project, _, _ = runtime
     run = started_run(runner, project, [mcp_server("gone", command="/nonexistent/server", args=())])
     app = broker_for(runner)
@@ -349,14 +350,14 @@ async def test_nothing_the_server_printed_reaches_the_broker_the_notice_or_a_log
 
 
 def test_every_code_the_host_reports_has_a_reason_in_both_languages():
-    from cairnmind import mcp_host
-    from cairnmind.mcp_failure_notice import REASONS, START_FAILURE_CODES, notice_text
-    from cairnmind.terminal_agent_i18n import tr as agent_tr
-    from cairnmind.terminal_i18n import tr
+    from cairnmind.mcp import mcp_host
+    from cairnmind.mcp.mcp_failure_notice import REASONS, START_FAILURE_CODES, notice_text
+    from cairnmind.terminal.terminal_agent_i18n import tr as agent_tr
+    from cairnmind.terminal.terminal_i18n import tr
     produced = set(mcp_host._START_CODES.values()) | {"start_failed", "start_timeout", "protocol_unsupported",
                                                       "catalogue_invalid", "definition_refused",
                                                       "program_unavailable"}
-    assert produced == START_FAILURE_CODES and START_FAILURE_CODES <= set(REASONS)
+    assert produced == START_FAILURE_CODES and set(REASONS) >= START_FAILURE_CODES
     for code in REASONS:
         for translate in (tr, agent_tr):
             assert translate(REASONS[code], "pl") != REASONS[code]

@@ -9,21 +9,20 @@ import asyncio
 import subprocess
 
 import pytest
-
-import cairnmind.sessions as sessions_module
-from cairnmind.agent import KnowledgeAgent
-from cairnmind.extraction_input import source_text
-from cairnmind.ingest import index_project
-from cairnmind.inspector import Inspector
-from cairnmind.plans import PlanManager
-from cairnmind.retrieval import json_value
-from cairnmind.sessions import origin_mark
-
 from conftest import as_person
 from test_agent_own_extraction import ScriptedModel
 from test_external_session_writes import fixture as fixture  # noqa: F401 - a fixture
 from test_external_session_writes import post, readback
 from test_sessions import active_plan
+
+import cairnmind.memory.sessions as sessions_module
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.agents.extraction_input import source_text
+from cairnmind.agents.retrieval import json_value
+from cairnmind.memory.plans import PlanManager
+from cairnmind.memory.sessions import origin_mark
+from cairnmind.scip.ingest import index_project
+from cairnmind.terminal.inspector import Inspector
 
 NOTES = 5
 STALE = "state or code changed before ACK"
@@ -291,7 +290,7 @@ def test_a_restore_keeps_the_rule(fixture, tmp_path):  # noqa: F811
 
 
 def test_only_an_untouched_proposal_with_the_stores_mark_is_left_out():
-    from cairnmind.sessions import _automatic_proposal
+    from cairnmind.memory.sessions import _automatic_proposal
     base = {"project_id": "p", "status": "proposed", "version": 1, "source_ids": ["s"],
             "metadata": {"extraction_source_id": "s"}}
     sources = {"s": {"id": "s", "project_id": "p"}}

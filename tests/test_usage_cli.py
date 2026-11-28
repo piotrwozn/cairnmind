@@ -1,16 +1,17 @@
 """The `usage` command through the real CLI (it opens the store to resolve the project, so it needs the database)."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
 import re
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, ingest
+from cairnmind import cli
 from cairnmind.cli import app
 from cairnmind.config import Settings
+from cairnmind.scip import ingest
 from cairnmind.store import Store
 
 
@@ -27,7 +28,7 @@ def workspace(tmp_path):
     (runtime / "agents" / "s1").mkdir(parents=True)
     (runtime / "runs.json").write_text(json.dumps({"version": 1, "runs": [
         {"id": "r1", "session_id": "s1", "project_id": pid, "client": "api", "profile_id": "cheap", "model": "m1"}]}))
-    at = datetime.now(timezone.utc) - timedelta(hours=1)
+    at = datetime.now(UTC) - timedelta(hours=1)
     (runtime / "agents" / "s1" / "events.jsonl").write_text(
         event("turn_started", {"run_id": "r1", "generation": 1}, at)
         + event("provider_started", {"call": 1}, at + timedelta(seconds=1))
@@ -59,7 +60,7 @@ def test_the_command_prints_the_report_and_json(tmp_path, monkeypatch):
 def test_by_week_groups_by_iso_week_and_a_bad_value_fails(tmp_path, monkeypatch):
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
     settings, _ = workspace(tmp_path)
-    year, number, _ = (datetime.now(timezone.utc) - timedelta(hours=1)).isocalendar()
+    year, number, _ = (datetime.now(UTC) - timedelta(hours=1)).isocalendar()
     expected = f"{year}-W{number:02d}"
     shown = run(settings, "demo", "--by", "week")
     assert shown.exit_code == 0, shown.output or repr(shown.exception)
@@ -80,7 +81,7 @@ def codex_rollout(path, root):
         return {"input_tokens": incoming, "cached_input_tokens": 0, "output_tokens": outgoing,
                 "reasoning_output_tokens": 0, "total_tokens": incoming + outgoing}
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     events = [{"type": "session_meta", "payload": {"id": "native", "cwd": str(root)}}] if root else []
     for number, (own, total) in enumerate([((100, 10), (100, 10)), ((60, 6), (160, 16)), ((40, 4), (200, 20))], 1):
         events.append({"type": "token_usage_record", "timestamp": (now - timedelta(hours=4 - number)).isoformat(),
@@ -99,7 +100,7 @@ def codex_totals(settings, name, *args):
 
 def test_codex_usage_comes_from_what_import_stored_for_the_project(tmp_path, monkeypatch):
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
-    monkeypatch.setattr("cairnmind.codex_usage.PAGE", 2)  # three records: the second page is read too
+    monkeypatch.setattr("cairnmind.cli_cmds.codex_usage.PAGE", 2)  # three records: the second page is read too
     settings, pid = workspace(tmp_path)
     rollout = codex_rollout(tmp_path / "rollout.jsonl", tmp_path / "repo")
     assert ingest.import_history(Store(settings.data_dir), rollout, pid, "codex")["errors"] == []
@@ -166,7 +167,7 @@ def park(store, name, raw, created):
 def test_only_usage_records_of_the_period_in_the_inbox_make_the_report_partial(tmp_path, monkeypatch):
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
     settings, _ = workspace(tmp_path)
-    store, now = Store(settings.data_dir), datetime.now(timezone.utc)
+    store, now = Store(settings.data_dir), datetime.now(UTC)
     record = json.dumps({"type": "token_usage_record", "payload": {}})
     park(store, "old", record, now - timedelta(days=60))
     park(store, "chat", json.dumps({"type": "event_msg", "payload": {"type": "user_message",
@@ -185,11 +186,11 @@ def test_only_usage_records_of_the_period_in_the_inbox_make_the_report_partial(t
 
 def test_inbox_pages_are_all_read(tmp_path, monkeypatch):
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
-    monkeypatch.setattr("cairnmind.codex_usage.PAGE", 2)
+    monkeypatch.setattr("cairnmind.cli_cmds.codex_usage.PAGE", 2)
     settings, _ = workspace(tmp_path)
     store = Store(settings.data_dir)
     for number in range(5):
-        park(store, f"p{number}", json.dumps({"type": "token_usage_record"}), datetime.now(timezone.utc))
+        park(store, f"p{number}", json.dumps({"type": "token_usage_record"}), datetime.now(UTC))
     assert codex_totals(settings, "demo")[0]["data"]["codex_waiting"] == 5
 
 
@@ -213,10 +214,10 @@ class RemovingAfterFirstPage:
 
 def test_a_row_leaving_the_inbox_between_pages_hides_no_later_row(tmp_path, monkeypatch):
     # usage reads without a lock; import may assign a parked row to a project while the pages are read.
-    from cairnmind.codex_usage import waiting_in_inbox
-    monkeypatch.setattr("cairnmind.codex_usage.PAGE", 2)
+    from cairnmind.cli_cmds.codex_usage import waiting_in_inbox
+    monkeypatch.setattr("cairnmind.cli_cmds.codex_usage.PAGE", 2)
     settings, pid = workspace(tmp_path)
-    store, now = Store(settings.data_dir), datetime.now(timezone.utc)
+    store, now = Store(settings.data_dir), datetime.now(UTC)
     for number in range(5):
         park(store, f"p{number}", json.dumps({"type": "token_usage_record"}), now - timedelta(minutes=5 - number))
     reader = RemovingAfterFirstPage(store, "ingestion_inbox",
@@ -226,15 +227,15 @@ def test_a_row_leaving_the_inbox_between_pages_hides_no_later_row(tmp_path, monk
 
 
 def test_a_stored_line_that_stops_being_current_between_pages_hides_no_later_line(tmp_path, monkeypatch):
-    from cairnmind.codex_usage import stored_records
-    monkeypatch.setattr("cairnmind.codex_usage.PAGE", 2)
+    from cairnmind.cli_cmds.codex_usage import stored_records
+    monkeypatch.setattr("cairnmind.cli_cmds.codex_usage.PAGE", 2)
     settings, pid = workspace(tmp_path)
     store = Store(settings.data_dir)
     ids = [store.snapshot(pid, f"transcript://codex/r/{number}", json.dumps({"type": "token_usage_record", "n": number}),
                           "transcript")["id"] for number in range(5)]
     reader = RemovingAfterFirstPage(store, "sources", lambda: store.command(
         "UPDATE sources SET is_current=false WHERE id=:id", {"id": ids[0]}))
-    lines = list(stored_records(reader, pid, datetime.now(timezone.utc) - timedelta(hours=1)))
+    lines = list(stored_records(reader, pid, datetime.now(UTC) - timedelta(hours=1)))
     assert sorted(json.loads(line)["n"] for line in lines) == [0, 1, 2, 3, 4]
 
 
@@ -282,7 +283,7 @@ def test_the_default_threshold_comes_from_the_checks_file_and_the_option_wins(tm
     over = json.loads(run(settings, "demo", "--warn-over", "5", "--json").output)
     assert over["warning"]["threshold_tokens"] == 5
     # The check profiles beside it are read as before.
-    from cairnmind.verification import load_profiles
+    from cairnmind.memory.verification import load_profiles
     assert list(load_profiles(Store(settings.data_dir), pid)) == ["unit"]
 
 
@@ -324,7 +325,7 @@ def test_other_problems_of_the_checks_file_do_not_stop_the_report_either(tmp_pat
 
 
 def test_load_profiles_still_raises_the_errors_it_raised_before(tmp_path, monkeypatch):
-    from cairnmind.verification import load_profiles
+    from cairnmind.memory.verification import load_profiles
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
     settings, pid = workspace(tmp_path)
     store, root = Store(settings.data_dir), tmp_path / "repo"

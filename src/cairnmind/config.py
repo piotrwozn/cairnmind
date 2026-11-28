@@ -1,17 +1,16 @@
 """Shared runtime settings. All persistent state belongs in the WSL filesystem."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
-import hashlib
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .file_locks import lock_exclusive
-from .private_files import ensure_private_dir, write_durable_private
-
+from cairnmind.pal.file_locks import lock_exclusive
+from cairnmind.pal.private_files import ensure_private_dir, write_durable_private
 
 # Environment variables are spelled CAIRNMIND_<NAME>. The earlier spelling DEVBRAIN_<NAME> is
 # still read, and still set for child processes, so that sessions, project files and shell
@@ -289,7 +288,7 @@ class Settings:
                 # Only the managed engine on this machine gets a generated password, kept in config.json
                 # as before (#72). The password of a database this installation only connects to (#68) is
                 # set where that server runs, and comes from the environment or a file.
-                from .database_mode import connect_only, savable
+                from cairnmind.storage.database_mode import connect_only, savable
                 # The connect address is saved the first time it is seen in the environment (#68): a command
                 # started later without the variable (another shell, a terminal server started before the
                 # export) must not find a managed installation here and start an engine with an empty store.
@@ -304,7 +303,7 @@ class Settings:
                     changed = True
                 if obj._origin.get("password") == "none" and not connect_only(obj):
                     obj.arcade_password = secrets.token_urlsafe(32)
-                    obj._origin["password"] = "config"
+                    obj._origin["password"] = "config"  # noqa: S105 - origin label, not a secret
                     obj._origin["kept"].pop("arcade_password", None)
                     changed = True
                 if changed:
@@ -321,6 +320,7 @@ class Settings:
         kept = {}
         environment = {}  # field -> the spelling of the variable that supplied it (topology.py names it)
         for name, variable in (("storage_backend", "BACKEND"),
+                               ("storage_backend", "STORAGE_BACKEND"),
                                ("db_path", "DB_PATH"),
                                ("arcade_url", "ARCADE_URL"),
                                ("arcade_user", "ARCADE_USER"),
@@ -393,7 +393,7 @@ class Settings:
             kept["arcade_url"] = (stored.get("arcade_url"), connect)
             values["arcade_url"] = connect
         # The password: the environment, then arcade_password_file, then config.json for this machine only.
-        from .database_credentials import resolve_password
+        from cairnmind.storage.database_credentials import resolve_password
         password, source, problem = resolve_password(values)
         problem = conflict or problem
         if password != stored.get("arcade_password", ""):
@@ -403,7 +403,7 @@ class Settings:
         prefix = env_value("ARCADE_DB_PREFIX", "cairnmind")
         derived = derived_database(root)
         if not values.get("arcade_database"):
-            if not prefix.replace("_", "").isalnum():
+            if not prefix or not prefix.replace("_", "").isalnum():
                 raise ValueError("Invalid ArcadeDB database prefix")
             values["arcade_database"] = derived
         # The first save stores the derived name in config.json, so it is recognised by its value.

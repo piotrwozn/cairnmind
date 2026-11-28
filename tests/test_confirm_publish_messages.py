@@ -3,16 +3,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
-
-from cairnmind.inspector import Inspector
-from cairnmind.inspector_api import attach_inspector_routes
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_i18n_messages import broker_error_text
-
 from test_published_memory_acts import workspace  # noqa: F401 (a fixture)
+
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.terminal.inspector_api import attach_inspector_routes
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_i18n_messages import broker_error_text
 
 
 def test_confirming_a_record_already_confirmed_here_says_so_and_not_version_conflict(workspace,  # noqa: F811
@@ -56,7 +55,8 @@ def test_confirming_a_record_already_confirmed_here_says_so_and_not_version_conf
 def test_a_refusal_for_the_command_line_says_where_a_person_confirms_now(workspace, monkeypatch):  # noqa: F811
     from typer.testing import CliRunner
 
-    from cairnmind import cli, confirmation, record_kinds
+    from cairnmind import cli
+    from cairnmind.memory import confirmation, record_kinds
     store, pid, _, _ = workspace
     for name in ("CAIRNMIND_SESSION_ID", "CAIRNMIND_PACKET_ID", *confirmation.CLIENT_MARKERS):
         monkeypatch.delenv(name, raising=False)
@@ -84,9 +84,10 @@ def test_a_plan_save_that_changes_a_confirmed_plan_says_where_a_person_changes_i
 
     from typer.testing import CliRunner
 
-    from cairnmind import cli, confirmation
-    from cairnmind.memory_acts import confirm_plan
-    from cairnmind.plans import PlanManager
+    from cairnmind import cli
+    from cairnmind.memory import confirmation
+    from cairnmind.memory.memory_acts import confirm_plan
+    from cairnmind.memory.plans import PlanManager
     store, pid, _, _ = workspace
     for name in ("CAIRNMIND_SESSION_ID", "CAIRNMIND_PACKET_ID", *confirmation.CLIENT_MARKERS):
         monkeypatch.delenv(name, raising=False)
@@ -116,9 +117,10 @@ def test_a_plan_save_that_changes_a_confirmed_plan_says_where_a_person_changes_i
 
 
 def test_adopting_a_confirmed_legacy_task_names_it_by_its_text_and_its_id_once(workspace):  # noqa: F811
-    from cairnmind.confirmation import ConfirmationRefused
-    from cairnmind.plans import PlanManager
     from conftest import as_person
+
+    from cairnmind.memory.confirmation import ConfirmationRefused
+    from cairnmind.memory.plans import PlanManager
     store, pid, _, _ = workspace
     source = store.snapshot(pid, "note://legacy", "Ship the importer", "note")
     task = as_person(store, pid, {"kind": "task", "content": "Ship the importer",
@@ -132,7 +134,7 @@ def test_adopting_a_confirmed_legacy_task_names_it_by_its_text_and_its_id_once(w
 
 
 def test_an_unknown_revision_is_named_as_unknown_and_other_git_failures_keep_their_reason(workspace, tmp_path):  # noqa: F811
-    from cairnmind.memory_published_git import GitReadError, resolve
+    from cairnmind.memory.memory_published_git import GitReadError, resolve
     _, _, root, commit = workspace
     assert resolve(root, "HEAD") == commit
     with pytest.raises(GitReadError, match=r"^Unknown revision nope-rev: no commit of that name in "):
@@ -147,7 +149,7 @@ def test_check_published_exits_2_for_a_path_that_is_no_directory_and_names_what_
     from typer.testing import CliRunner
 
     from cairnmind import cli
-    from cairnmind.memory_published import Publisher
+    from cairnmind.memory.memory_published import Publisher
     store, pid, root, _ = workspace
     source = store.snapshot(pid, "note://check", "Use cookies.", "note")
     record = store.remember(pid, {"kind": "decision", "content": "Use cookies."}, [source["id"]])
@@ -182,7 +184,7 @@ def test_check_published_exits_2_for_a_path_that_is_no_directory_and_names_what_
 
 
 def test_importing_the_stores_own_snapshot_is_unchanged_and_a_refusal_says_which_reason(workspace, tmp_path):  # noqa: F811
-    from cairnmind.memory import MemoryConflict, MemoryManager
+    from cairnmind.memory.memory import MemoryConflict, MemoryManager
     from cairnmind.store import Store
     store, pid, root, _ = workspace
     source = store.snapshot(pid, "note://snap", "Use cookies.", "note")
@@ -215,7 +217,7 @@ def test_importing_the_stores_own_snapshot_is_unchanged_and_a_refusal_says_which
 
 
 def test_the_refusal_for_a_confirmed_checkpoint_record_points_to_the_checkpoint_tool(workspace):  # noqa: F811
-    from cairnmind.confirmation import ConfirmationRefused
+    from cairnmind.memory.confirmation import ConfirmationRefused
     store, pid, _, _ = workspace
     saved = store.checkpoint(pid, {"goal": "Ship", "next": "Write tests"})
     confirmed = Inspector(store).review(pid, saved["id"], "confirm", saved["version"])["record"]

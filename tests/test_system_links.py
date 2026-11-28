@@ -7,17 +7,23 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
 
-from cairnmind import system_links
-from cairnmind.memory import _check_manifest
-from cairnmind.memory_paths import bound_metadata, is_memory_path, memory_bindings
-from cairnmind.system_links import (SYSTEM_LINKS, owned_by_system, passes_planted_link, platform_links,
-                                    system_spelling, verified_links)
-from cairnmind.terminal_preview import preview_settings
+from cairnmind.memory.memory import _check_manifest
+from cairnmind.memory.memory_paths import bound_metadata, is_memory_path, memory_bindings
+from cairnmind.pal import system_links
+from cairnmind.pal.system_links import (
+    SYSTEM_LINKS,
+    owned_by_system,
+    passes_planted_link,
+    platform_links,
+    system_spelling,
+    verified_links,
+)
+from cairnmind.terminal.terminal_preview import preview_settings
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX/macOS root-owned system symlinks")
 

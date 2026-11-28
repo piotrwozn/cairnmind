@@ -7,10 +7,9 @@ import subprocess
 
 import pytest
 
-from cairnmind import ingest
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.scip import ingest
 from cairnmind.store import Store
-
 
 TECHNICAL_TYPES = {"world_state", "token_usage_record"}
 

@@ -11,18 +11,33 @@ import sys
 from urllib.parse import urlparse
 
 import pytest
+from conftest import own_time
 from typer.testing import CliRunner
 
-from conftest import own_time
-from cairnmind import config, engine, engine_docker
+from cairnmind import config
 from cairnmind.cli import app
-from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
-from cairnmind.database_mode import MODE_INVALID, describe, engine_mode
-from cairnmind.engine_docker import (CONTAINER_RUNS, EXITED, IMAGE_FILES_MISSING, NATIVE_RUNS, NOT_OURS,
-                                     OTHER_IMAGE, PATH_UNSAFE, RECORD_NOT_OURS, ROOT_REFUSED, SHORT_PASSWORD,
-                                     TIMED_OUT, UNPUBLISHED, container_name, labels, start_docker_engine,
-                                     stop_docker_engine)
+from cairnmind.storage import engine, engine_docker
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
+from cairnmind.storage.database_mode import MODE_INVALID, describe, engine_mode
+from cairnmind.storage.engine_docker import (
+    CONTAINER_RUNS,
+    EXITED,
+    IMAGE_FILES_MISSING,
+    NATIVE_RUNS,
+    NOT_OURS,
+    OTHER_IMAGE,
+    PATH_UNSAFE,
+    RECORD_NOT_OURS,
+    ROOT_REFUSED,
+    SHORT_PASSWORD,
+    TIMED_OUT,
+    UNPUBLISHED,
+    container_name,
+    labels,
+    start_docker_engine,
+    stop_docker_engine,
+)
 
 runner = CliRunner()
 DIGEST = "sha256:" + "ab" * 32
@@ -255,7 +270,7 @@ def test_the_wheel_ships_deploy_arcadedb_as_the_build_context(tmp_path, monkeypa
     assert shipped["examples/sample-project"] == "cairnmind/sample_project"
     assert (root / "deploy" / "arcadedb" / "Dockerfile").is_file()  # what the mapping ships
     # The context is the package's own folder: an installed wheel has it, a source checkout does not.
-    monkeypatch.setattr(engine_docker, "__file__", str(tmp_path / "package" / "engine_docker.py"))
+    monkeypatch.setattr(engine_docker, "__file__", str(tmp_path / "package" / "storage" / "engine_docker.py"))
     with pytest.raises(ArcadeError) as missing:
         engine_docker.build_context()
     assert str(missing.value) == IMAGE_FILES_MISSING.format(path=tmp_path / "package" / "arcadedb_image")
@@ -739,6 +754,7 @@ def test_engine_start_docker_through_a_docker_stand_in_on_path(tmp_path, monkeyp
 def init_run(docker, tmp_path, monkeypatch):
     """`cairnmind init` with the store replaced, Java and Docker as each test sets them; records the order."""
     import types
+
     from cairnmind import cli
     order, java = [], {"path": None, "major": None}
 
@@ -860,7 +876,9 @@ def quiet_settings(tmp_path, name="data", **values) -> Settings:
 
 @pytest.fixture
 def doctor_cli(docker, monkeypatch):
-    from cairnmind import cli, integrations, store_writer
+    from cairnmind import cli
+    from cairnmind.memory import integrations
+    from cairnmind.storage import store_writer
     monkeypatch.setattr(integrations, "_probe_cli", lambda name: {
         "installed": False, "version": None, "verified_resume": False, "checks": {}, "notes": []})
     monkeypatch.setattr(cli, "service_alive", lambda settings: False)
@@ -868,7 +886,7 @@ def doctor_cli(docker, monkeypatch):
     monkeypatch.setattr(cli, "store_for_read", lambda settings: (_ for _ in ()).throw(ArcadeError("no store")))
 
     def report(settings):
-        from cairnmind.doctor_attention import required_missing
+        from cairnmind.cli_cmds.doctor_attention import required_missing
         result = cli_(settings)
         found = json.loads(result.stdout)
         # #313: doctor exits 1 exactly when something required is missing; an engine nobody started is one here.
@@ -882,7 +900,7 @@ def doctor_cli(docker, monkeypatch):
 
 
 def test_doctor_in_docker_mode_needs_no_java_and_names_the_mode(docker, doctor_cli, tmp_path, monkeypatch):
-    from cairnmind.doctor_attention import attention
+    from cairnmind.cli_cmds.doctor_attention import attention
     native = doctor_cli(quiet_settings(tmp_path, "native"))
     assert native["arcadedb"]["engine"] == "native" and "docker" not in native
     assert set(native["java"]) >= {"on_path", "minimum_major"}
@@ -901,7 +919,7 @@ def test_doctor_in_docker_mode_needs_no_java_and_names_the_mode(docker, doctor_c
 
 
 def test_doctor_names_a_wrong_engine_mode_and_exits_1_for_it(docker, doctor_cli, tmp_path):
-    from cairnmind.doctor_attention import attention
+    from cairnmind.cli_cmds.doctor_attention import attention
     report = doctor_cli(quiet_settings(tmp_path, engine_mode="dokker"))
     assert report["arcadedb"]["engine"] == "unknown"
     assert report["arcadedb"]["engine_problem"] == MODE_INVALID.format(value="'dokker'")
@@ -911,8 +929,8 @@ def test_doctor_names_a_wrong_engine_mode_and_exits_1_for_it(docker, doctor_cli,
 # --- Words ---------------------------------------------------------------------------------------------------
 
 def test_every_engine_docker_message_has_a_polish_translation_with_the_same_placeholders():
-    from cairnmind import database_mode
-    from cairnmind.terminal_i18n import tr
+    from cairnmind.storage import database_mode
+    from cairnmind.terminal.terminal_i18n import tr
     names = {name for name, value in vars(engine_docker).items()
              if name.isupper() and isinstance(value, str) and " " in value and name != "MESSAGES"}
     sentences = {getattr(engine_docker, name) for name in names} | {database_mode.MODE_INVALID}
@@ -973,7 +991,7 @@ def test_the_recorded_container_of_a_connect_only_installation_is_stopped_by_eng
 
 
 def test_doctor_attention_names_a_container_that_is_not_ours_or_unknown():
-    from cairnmind.doctor_attention import attention
+    from cairnmind.cli_cmds.doctor_attention import attention
     base = {"environment_notes": [], "data_dir": "x", "store_writer": {}}
     for state in ("not ours", "unknown"):
         report = {**base, "docker": {"available": True, "container": {"state": state, "error": f"problem {state}"}}}

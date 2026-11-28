@@ -9,10 +9,10 @@ import time
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind.arcade import ArcadeClient
+from cairnmind.agents.retrieval import Retriever
 from cairnmind.cli import app
-from cairnmind.ingest import _write_chunks
-from cairnmind.retrieval import Retriever
+from cairnmind.scip.ingest import _write_chunks
+from cairnmind.storage.arcade import ArcadeClient
 from cairnmind.store import EXPORT_TYPES, Store
 
 SECRET = "SECRET-PASSAGE-184"
@@ -76,7 +76,7 @@ def vector_types(store):
 
 
 def test_every_collection_matches_direct_queries_exactly_on_a_small_store(tmp_path):
-    from cairnmind.store_size import measure
+    from cairnmind.storage.store_size import measure
     store, project, _ = filled(tmp_path)
     reader = Store.open_readonly(store.settings)
     report = measure(reader)
@@ -123,7 +123,7 @@ def test_every_collection_matches_direct_queries_exactly_on_a_small_store(tmp_pa
 
 
 def test_one_project_is_measured_alone(tmp_path):
-    from cairnmind.store_size import measure
+    from cairnmind.storage.store_size import measure
     store, project, other = filled(tmp_path)
     report = measure(Store.open_readonly(store.settings), project["id"])
     collections = {row["name"]: row for row in report["collections"]}
@@ -145,7 +145,7 @@ def test_one_project_is_measured_alone(tmp_path):
 
 
 def test_sampling_covers_the_whole_collection_whatever_its_ids_look_like(tmp_path, monkeypatch):
-    import cairnmind.store_size as store_size
+    import cairnmind.storage.store_size as store_size
     store, project, _ = filled(tmp_path, notes=400)
     # Rows of uneven length, so that a sample from one end of a collection would be far off.
     for number in range(300):
@@ -170,7 +170,7 @@ def test_sampling_covers_the_whole_collection_whatever_its_ids_look_like(tmp_pat
 
 
 def test_chunks_of_a_source_that_is_not_found_are_shown_as_such(tmp_path, monkeypatch):
-    import cairnmind.store_size as store_size
+    import cairnmind.storage.store_size as store_size
     store, project, _ = filled(tmp_path)
     note = store.query("SELECT id FROM sources WHERE uri='manual://note'")[0]["id"]
     chunks = direct(store, "chunks", " WHERE source_id=:s", {"s": note})
@@ -191,7 +191,7 @@ def test_chunks_of_a_source_that_is_not_found_are_shown_as_such(tmp_path, monkey
 
 
 def test_a_vector_type_name_that_is_not_an_identifier_is_not_queried():
-    from cairnmind.store_size import _vector_types
+    from cairnmind.storage.store_size import _vector_types
 
     class Schema:
         def query(self, sql, params=None):
@@ -203,7 +203,7 @@ def test_a_vector_type_name_that_is_not_an_identifier_is_not_queried():
 
 
 def test_above_the_exact_limit_bytes_are_sampled_within_one_percent(tmp_path, monkeypatch):
-    import cairnmind.store_size as store_size
+    import cairnmind.storage.store_size as store_size
     store, project, _ = filled(tmp_path, notes=400)
     monkeypatch.setattr(store_size, "EXACT_ROWS", 50)
     reader = Store.open_readonly(store.settings)
@@ -238,7 +238,7 @@ def sql_sent(monkeypatch):
 
 
 def test_the_cost_is_bounded_no_text_is_fetched_and_queries_do_not_grow_with_rows(tmp_path, monkeypatch):
-    import cairnmind.store_size as store_size
+    import cairnmind.storage.store_size as store_size
     monkeypatch.setattr(store_size, "EXACT_ROWS", 10)
     counts = []
     for size, notes in (("small", 20), ("large", 90)):
@@ -270,7 +270,7 @@ def files(root):
 def test_the_command_prints_sizes_never_content_and_changes_nothing(tmp_path, monkeypatch, arguments):
     store, project, _ = filled(tmp_path)
     before = files(store.data_dir)
-    for name in ("cairnmind.engine.start_engine", "cairnmind.engine.ensure_engine", "cairnmind.cli.ensure_service"):
+    for name in ("cairnmind.storage.engine.start_engine", "cairnmind.storage.engine.ensure_engine", "cairnmind.cli.ensure_service"):
         monkeypatch.setattr(name, lambda *a, **k: pytest.fail("store size started the engine or the service"))
     monkeypatch.setattr(Store, "__init__", lambda *a, **k: pytest.fail("store size prepared the store"))
     runner = CliRunner()
@@ -290,7 +290,7 @@ def test_the_command_prints_sizes_never_content_and_changes_nothing(tmp_path, mo
 
 
 def test_a_kind_or_namespace_from_the_store_cannot_control_the_terminal(tmp_path):
-    from cairnmind.store_size import measure
+    from cairnmind.storage.store_size import measure
     store, project, _ = filled(tmp_path)
     store.snapshot(project["id"], "manual://odd", "x", "odd\x1b[31mkind\n")
     text = measure(Store.open_readonly(store.settings))["text"]

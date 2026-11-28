@@ -4,22 +4,20 @@ Real HTTP service, ArcadeDB and Git; no model is asked. The recorder is an ordin
 """
 import json
 
-from fastapi.testclient import TestClient
-
-from cairnmind.inspector import Inspector
-from cairnmind.mcp_server import _saved_record_view
-from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
-from cairnmind.packet_origin import EXTERNAL
-from cairnmind.recorder_agent import RECORDER_REPLY
-from cairnmind.service import create_app
-from cairnmind.store import ORIGIN_METADATA, Store
-
 from conftest import as_person
-
+from fastapi.testclient import TestClient
 from test_ack_under_extraction import ack_body
 from test_external_session_writes import fixture as fixture  # noqa: F401 - a fixture
 from test_external_session_writes import post
 from test_short_resume import read, sample_project, size
+
+from cairnmind.agents.recorder_agent import RECORDER_REPLY
+from cairnmind.mcp.mcp_server import _saved_record_view
+from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
+from cairnmind.memory.packet_origin import EXTERNAL
+from cairnmind.service import create_app
+from cairnmind.store import ORIGIN_METADATA, Store
+from cairnmind.terminal.inspector import Inspector
 
 WORDS = "We keep the old reader working until March. " * 14
 

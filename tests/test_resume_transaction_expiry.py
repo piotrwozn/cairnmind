@@ -5,17 +5,16 @@ answers 404 "Remote transaction ... not found or expired". Hashing a checkout on
 that long, more while the queue indexes the same files, and it ran inside the writer transaction of
 ack_resume, of an exact resume read and of every session-scoped write. Real ArcadeDB, Git and HTTP service.
 """
-from contextlib import contextmanager
 import threading
 import time
+from contextlib import contextmanager
 
 import pytest
-
-from cairnmind import verification
-from cairnmind.arcade import ArcadeClient
-
 from test_external_session_writes import fixture as fixture  # noqa: F401 - a fixture
 from test_external_session_writes import post, readback
+
+from cairnmind.memory import verification
+from cairnmind.storage.arcade import ArcadeClient
 
 # Longer than ArcadeDB 26.11.1 keeps an idle remote transaction: its default timeout is five seconds and
 # expired sessions are swept every five, so an idle transaction ends after five to ten seconds.
@@ -144,9 +143,11 @@ def test_a_write_refused_for_its_session_hashes_nothing(fixture, transactions, m
     response = fixture.client.post("/remember", json={**write, "packet_id": packet["id"]})  # no ACK yet
     assert response.status_code == 409 and "acknowledge the current ready resume packet" in response.text
     monkeypatch.setenv("CAIRNMIND_SESSION_ID", session_id)
-    with pytest.raises(ValueError, match="acknowledge the current ready resume packet"):
-        with actor_write(fixture.store, fixture.settings, fixture.project["id"]):
-            pass
+    with (
+        pytest.raises(ValueError, match="acknowledge the current ready resume packet"),
+        actor_write(fixture.store, fixture.settings, fixture.project["id"]),
+    ):
+        pass
     assert transactions == []
     fixture.manager.ack(session_id, packet["id"], packet["hash"], readback(packet))
     transactions.clear()
@@ -168,9 +169,8 @@ def test_a_session_acknowledged_after_its_write_began_is_refused_without_hashing
     assert transactions == []
     fixture.manager.ack(session_id, packet["id"], packet["hash"], readback(packet))
     transactions.clear()
-    with pytest.raises(ValueError, match="retry it"):
-        with fixture.store.transaction():
-            fixture.manager.require_ack(session_id, packet["id"], code)
+    with pytest.raises(ValueError, match="retry it"), fixture.store.transaction():
+        fixture.manager.require_ack(session_id, packet["id"], code)
     assert transactions == []
     fixture.manager.require_ack(session_id, packet["id"])  # the retry
 
@@ -182,14 +182,13 @@ def test_a_root_registered_after_the_code_state_was_taken_refuses_the_check(fixt
     nested = fixture.root / "services" / "inner"
     nested.mkdir(parents=True)
     fixture.store.add_project("inner", nested)
-    with pytest.raises(ValueError, match="registered project roots changed"):
-        with fixture.store.transaction():
-            fixture.manager.require_ack(bound["session_id"], bound["packet_id"], code)
+    with pytest.raises(ValueError, match="registered project roots changed"), fixture.store.transaction():
+        fixture.manager.require_ack(bound["session_id"], bound["packet_id"], code)
 
 
 def test_a_memory_write_rechecks_the_code_as_it_was_when_its_transaction_began(fixture, transactions,
                                                                                monkeypatch):  # noqa: F811
-    from cairnmind.memory import MemoryManager
+    from cairnmind.memory.memory import MemoryManager
     bound = fixture.session("external")
     lock = MemoryManager._publisher_lock
 

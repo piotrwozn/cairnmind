@@ -7,9 +7,10 @@ from __future__ import annotations
 import subprocess
 import time
 
-from cairnmind import terminal_i18n
-from cairnmind.client_runtime import ENDED
 from test_client_runtime import native as native  # noqa: F401 (fixture)
+
+from cairnmind.agents.client_runtime import ENDED
+from cairnmind.terminal import terminal_i18n
 
 
 def start_session(runtime, project, slot="slot-native"):

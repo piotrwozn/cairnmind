@@ -7,22 +7,22 @@ from __future__ import annotations
 import json
 
 import pytest
-
-from cairnmind import conflicts, person_proof, record_replace
-from cairnmind.confirmation import ConfirmationRefused, confirmation_of
-from cairnmind.inspector import Inspector
-from cairnmind.memory_published import Publisher
-from cairnmind.memory_published_check import check_directory
-from cairnmind.memory_published_format import identity_hash, reviewed_by
-from cairnmind.memory_published_import import PublishedImporter
-from cairnmind.memory_published_parse import parse_file
-from cairnmind.memory import MemoryManager
-from cairnmind.store import Store
-
 from conftest import confirmed_before_rule
 from test_confirmed_by_person import fixture  # noqa: F401 (the fixture)
 from test_published_conflict_decision import EXTERNAL, head
 from test_published_memory import ada, commit, folder_of, reviewed, teammate  # noqa: F401 (ada is a fixture)
+
+from cairnmind.memory import conflicts, record_replace
+from cairnmind.memory.confirmation import ConfirmationRefused, confirmation_of
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.memory_published import Publisher
+from cairnmind.memory.memory_published_check import check_directory
+from cairnmind.memory.memory_published_format import identity_hash, reviewed_by
+from cairnmind.memory.memory_published_import import PublishedImporter
+from cairnmind.memory.memory_published_parse import parse_file
+from cairnmind.store import Store
+from cairnmind.terminal import person_proof
+from cairnmind.terminal.inspector import Inspector
 
 NEW = "Use WAL mode with a short checkpoint."
 
@@ -198,7 +198,7 @@ def test_a_fresh_import_takes_a_record_and_its_replacement_with_one_key_in_any_f
 
 
 def confirmed_claims(store, pid, record_id):
-    from cairnmind.confirmation import archive_claims
+    from cairnmind.memory.confirmation import archive_claims
     record = next(row for row in store.list_records(pid) if row["id"] == record_id)
     sources = {row["id"]: row for row in store.query("SELECT FROM sources WHERE project_id=:p", {"p": pid})}
     return archive_claims(record, sources)

@@ -10,15 +10,15 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
-
-from cairnmind import __version__, cli
-from cairnmind.config import Settings
-from cairnmind.service_version import instance_id
 from conftest import own_time
 from test_other_version import OLD, forbidden, invoke, isolated, old_service  # noqa: F401 - isolated: autouse
 
+from cairnmind import __version__, cli
+from cairnmind.cli_cmds.service_version import instance_id
+from cairnmind.config import Settings
+
 HEAVY = ("cairnmind.service", "fastapi", "uvicorn", "starlette")
-RUN = """
+RUN = f"""
 import json, sys
 from cairnmind import cli
 sys.argv = ["cairnmind", "--data-dir", sys.argv[1], *sys.argv[2:]]
@@ -26,8 +26,8 @@ try:
     cli.entrypoint()
 except SystemExit:
     pass
-print(json.dumps([name for name in %r if name in sys.modules]), file=sys.stderr)
-""" % (HEAVY,)
+print(json.dumps([name for name in {HEAVY!r} if name in sys.modules]), file=sys.stderr)
+"""
 
 
 class StubService:
@@ -93,7 +93,7 @@ def test_a_command_that_asks_the_service_does_not_import_it_or_the_web_framework
 
 def test_the_bridge_module_does_not_import_the_service_or_the_web_framework():
     # starlette and uvicorn are the MCP library's own imports, not ours
-    code = f"import sys, cairnmind.mcp_server; print([n for n in {HEAVY[:2]!r} if n in sys.modules])"
+    code = f"import sys, cairnmind.mcp.mcp_server; print([n for n in {HEAVY[:2]!r} if n in sys.modules])"
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
     assert done.returncode == 0 and done.stdout.strip() == "[]", done.stdout + done.stderr
 
@@ -125,7 +125,7 @@ def test_a_second_command_asks_again_and_a_stale_answer_is_not_reused(tmp_path, 
     settings = Settings.load(tmp_path / "data", create=True)
     seen = old_service(monkeypatch, settings, version=__version__)
     assert cli.service_alive(settings) is True
-    from cairnmind import service_version
+    from cairnmind.cli_cmds import service_version
     assert service_version.refusal(settings) is None and len(seen) == 1
     assert service_version.refusal(settings) is None and len(seen) == 2  # used once: the next one asks
     cli.service_alive(settings)

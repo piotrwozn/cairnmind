@@ -5,7 +5,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from cairnmind.config import Settings
-from cairnmind.mcp_server import create_server
+from cairnmind.mcp.mcp_server import create_server
 
 
 class FakeService:

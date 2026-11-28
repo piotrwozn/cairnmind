@@ -1,19 +1,19 @@
 """The main-branch import (#172): published memory of a commit, re-checked against that commit's code."""
 from __future__ import annotations
 
-from pathlib import Path
 import re
 import subprocess
+from pathlib import Path
 
 import pytest
 
-from cairnmind.evidence import evidence_states
-from cairnmind.inspector import Inspector
-from cairnmind.memory import MemoryConflict, MemoryManager
-from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
-from cairnmind.memory_published_main import import_commit
+from cairnmind.memory.evidence import evidence_states
+from cairnmind.memory.memory import MemoryConflict, MemoryManager
+from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
+from cairnmind.memory.memory_published_main import import_commit
 from cairnmind.store import Store
-from cairnmind.terminal_detail import evidence_parts, joined
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.terminal.terminal_detail import evidence_parts, joined
 
 GUIDE = "# Guide\n\nThe active backend is ArcadeDB.\nNothing else stores memory.\n"
 
@@ -163,6 +163,7 @@ class NoInference:
 
 def test_the_service_route_imports_a_commit_without_a_model(team):
     from fastapi.testclient import TestClient
+
     from cairnmind.service import create_app
     store = team["store"]
     headers = {"Authorization": f"Bearer {store.settings.token}"}

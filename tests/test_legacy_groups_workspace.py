@@ -8,21 +8,23 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
-from textual import _time as textual_time, events
-from textual.widgets import Button, Input, Static
-
-from cairnmind import confirmation, person_proof, terminal_legacy_groups
-from cairnmind.confirmation import GROUP_CHANGED
-from cairnmind.terminal_client import BrokerError
-from cairnmind.terminal_i18n import CATALOG, tr
-from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
-from cairnmind.terminal_legacy_groups import MESSAGES, TOO_LONG
-from cairnmind.terminal_panels import ConfirmModal, SidebarApp
-from cairnmind.terminal_ui import ChoiceModal, FormModal, drop_unseen_key
 from consent_steps import form_ready
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, screen_text, setup_ui
 from test_workspace_stage_scope import wait_until
+from textual import _time as textual_time
+from textual import events
+from textual.widgets import Button, Input, Static
+
+from cairnmind.memory import confirmation
+from cairnmind.memory.confirmation import GROUP_CHANGED
+from cairnmind.terminal import person_proof, terminal_legacy_groups
+from cairnmind.terminal.terminal_client import BrokerError
+from cairnmind.terminal.terminal_i18n import CATALOG, tr
+from cairnmind.terminal.terminal_i18n_messages import BROKER_MESSAGES
+from cairnmind.terminal.terminal_legacy_groups import MESSAGES, TOO_LONG
+from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
+from cairnmind.terminal.terminal_ui import ChoiceModal, FormModal, drop_unseen_key
 
 VIEW = {"groups": [{"group": "old-group", "confirmed": 1, "tasks": [
     {"id": "t1", "version": 3, "content": "Ship the importer \x1b[31mnow", "status": "confirmed",
@@ -207,7 +209,7 @@ async def test_no_group_and_no_project_are_said(tmp_path, monkeypatch):
 def test_every_adoption_sentence_has_polish():
     import inspect
 
-    from cairnmind import plans
+    from cairnmind.memory import plans
     for key in MESSAGES:
         assert CATALOG[key] == MESSAGES[key] != key
     assert BROKER_MESSAGES[GROUP_CHANGED] and GROUP_CHANGED is confirmation.GROUP_CHANGED

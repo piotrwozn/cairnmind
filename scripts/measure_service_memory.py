@@ -214,7 +214,7 @@ def serve_child(data: Path, trace: bool, broker: bool = False) -> None:
 
 def index_child(data: Path) -> None:
     """The first index of the project in a process of its own, so the service starts as the store's only writer."""
-    from cairnmind import ingest
+    from cairnmind.scip import ingest
     from cairnmind.config import Settings
     from cairnmind.store import Store
     store = Store(data, settings=Settings.load(data))
@@ -239,7 +239,7 @@ class Measurement:
 
     def setup(self):
         from cairnmind.config import Settings
-        from cairnmind.engine import install_engine, runtime_dir, start_engine
+        from cairnmind.storage.engine import install_engine, runtime_dir, start_engine
         from cairnmind.store import Store
         shutil.copytree(self.args.repo, self.repo, ignore=shutil.ignore_patterns(".git", ".venv", "__pycache__", ".*_cache", "node_modules"))
         git = ["git", "-C", str(self.repo), "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
@@ -279,8 +279,8 @@ class Measurement:
 
     def teardown(self):
         self.stop_service()
-        from cairnmind import process_identity
-        from cairnmind.engine import stop_engine
+        from cairnmind.pal import process_identity
+        from cairnmind.storage.engine import stop_engine
         pid = None
         with contextlib.suppress(OSError, ValueError, KeyError):
             pid = int(json.loads((self.data / "arcade" / "process.json").read_text())["pid"])
@@ -425,8 +425,8 @@ class Measurement:
         """The cockpit's broker, started as the product starts it, asked what a workspace asks most (#450).
 
         Its resident memory and that of every process below it, in blocks of 50 requests, with the time per request."""
-        from cairnmind.cockpit import _runtime_file, stop_cockpit
-        from cairnmind.terminal_client import BrokerClient
+        from cairnmind.terminal.cockpit import _runtime_file, stop_cockpit
+        from cairnmind.terminal.terminal_client import BrokerClient
         pid = self.client.get("/projects").json()[0]["id"]
         shutil.rmtree(self.data / "trace-broker", ignore_errors=True)
         self.seqs["trace-broker"] = 0

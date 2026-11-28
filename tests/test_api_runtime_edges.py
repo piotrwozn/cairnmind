@@ -1,4 +1,4 @@
-"""Fast-tier edge-case coverage tests for cairnmind.api_runtime."""
+"""Fast-tier edge-case coverage tests for cairnmind.agents.api_runtime."""
 from __future__ import annotations
 
 import json
@@ -7,10 +7,10 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from cairnmind import api_runtime as ar
+from cairnmind.agents import api_runtime as ar
 from cairnmind.config import Settings
-from cairnmind.private_files import write_durable_private
-from cairnmind.terminal_client import BrokerError, BrokerUnreachable
+from cairnmind.pal.private_files import write_durable_private
+from cairnmind.terminal.terminal_client import BrokerError, BrokerUnreachable
 
 
 def test_read_private_and_prepare_session_errors(tmp_path):
@@ -65,14 +65,14 @@ def test_runtime_supervisor_validation_auth_and_worker_helpers(tmp_path, monkeyp
     with pytest.raises(ValueError, match="profile_invalid"):
         sup.start_agent({"id": "p1", "root": str(tmp_path)}, {"id": "a1", "client": "api", "label": "A", "provider": "ollama", "model": "qwen"}, slot_id="bad slot!")
 
-    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda _s: {"available": False, "code": "copilot_runtime_missing"})
+    monkeypatch.setattr("cairnmind.agents.copilot_adapter.runtime_status", lambda _s: {"available": False, "code": "copilot_runtime_missing"})
     work = tmp_path / "repo"
     work.mkdir()
     with pytest.raises(ValueError, match="copilot_runtime_missing"):
         sup.start_agent({"id": "p1", "root": str(work)}, {"id": "cp1", "client": "copilot", "label": "CP"}, slot_id="slot1")
 
     # start_auth for copilot: spawns & reuses live auth run
-    monkeypatch.setattr("cairnmind.copilot_adapter.login_command", lambda _s: ["python", "-m", "cairnmind.copilot_adapter", "--login"])
+    monkeypatch.setattr("cairnmind.agents.copilot_adapter.login_command", lambda _s: ["python", "-m", "cairnmind.agents.copilot_adapter", "--login"])
     spawned = []
 
     def fake_spawn(rows, project, client, slot_id, launch, generation, purpose, run_id=None):
@@ -89,8 +89,8 @@ def test_runtime_supervisor_validation_auth_and_worker_helpers(tmp_path, monkeyp
     assert first_auth["id"] == second_auth["id"] == "auth1" and len(spawned) == 1
 
     # api_worker_config: happy path, non-str key, and HTTPError
-    monkeypatch.setattr("cairnmind.cockpit.cockpit_status", lambda _s: {"available": True, "url": "http://127.0.0.1:8766"})
-    monkeypatch.setattr("cairnmind.terminal_client.BrokerClient._validated", staticmethod(lambda _st: "http://127.0.0.1:8766"))
+    monkeypatch.setattr("cairnmind.terminal.cockpit.cockpit_status", lambda _s: {"available": True, "url": "http://127.0.0.1:8766"})
+    monkeypatch.setattr("cairnmind.terminal.terminal_client.BrokerClient._validated", staticmethod(lambda _st: "http://127.0.0.1:8766"))
 
     class FakeHttpClient:
         def __init__(self, responses):
@@ -148,15 +148,15 @@ def test_runtime_supervisor_validation_auth_and_worker_helpers(tmp_path, monkeyp
         def close(self):
             self.closed = True
 
-    monkeypatch.setattr("cairnmind.terminal_client.BrokerClient", lambda _s: FakeBroker("not-a-dict"))
+    monkeypatch.setattr("cairnmind.terminal.terminal_client.BrokerClient", lambda _s: FakeBroker("not-a-dict"))
     assert ar.cli_stage_readiness(settings)({"id": "p1", "client": "api"}) == {"credential": None, "runtime": None}
-    monkeypatch.setattr("cairnmind.terminal_client.BrokerClient", lambda _s: FakeBroker("unreachable"))
+    monkeypatch.setattr("cairnmind.terminal.terminal_client.BrokerClient", lambda _s: FakeBroker("unreachable"))
     assert ar.cli_stage_readiness(settings)({"id": "p1", "client": "api"}) == {"credential": "unknown", "runtime": "unknown"}
-    monkeypatch.setattr("cairnmind.terminal_client.BrokerClient", lambda _s: FakeBroker("err"))
+    monkeypatch.setattr("cairnmind.terminal.terminal_client.BrokerClient", lambda _s: FakeBroker("err"))
     assert ar.cli_stage_readiness(settings)({"id": "p1", "client": "api"}) == {"credential": None, "runtime": None}
 
     # coding_profiles_status: live broker ok & error, plus corrupt preferences fallback
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal.cockpit_state import CockpitState
     cs = CockpitState(settings)
     existing = cs.load()["profiles"]
     cs.update({
@@ -166,15 +166,15 @@ def test_runtime_supervisor_validation_auth_and_worker_helpers(tmp_path, monkeyp
             {"id": "p-cp", "client": "copilot", "label": "CP"},
         ]
     })
-    monkeypatch.setattr("cairnmind.terminal_client.BrokerClient", lambda _s: FakeBroker({"code": "ok"}))
+    monkeypatch.setattr("cairnmind.terminal.terminal_client.BrokerClient", lambda _s: FakeBroker({"code": "ok"}))
     st_live = ar.coding_profiles_status(settings)
     assert st_live["observed_only"] is True and st_live["profiles"][0]["status"] == {"code": "ok"}
 
-    monkeypatch.setattr("cairnmind.terminal_client.BrokerClient", lambda _s: FakeBroker("err"))
+    monkeypatch.setattr("cairnmind.terminal.terminal_client.BrokerClient", lambda _s: FakeBroker("err"))
     st_err = ar.coding_profiles_status(settings)
     assert st_err["profiles"][0]["status"] == {"code": "unavailable"}
 
-    monkeypatch.setattr("cairnmind.cockpit.cockpit_status", lambda _s: {"available": False})
+    monkeypatch.setattr("cairnmind.terminal.cockpit.cockpit_status", lambda _s: {"available": False})
     st_local = ar.coding_profiles_status(settings)
     cp_row = next(r for r in st_local["profiles"] if r["id"] == "p-cp")
     assert "runtime" in cp_row

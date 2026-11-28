@@ -14,15 +14,14 @@ import json
 from types import SimpleNamespace
 
 import pytest
-
 from test_knowledge import FakeOllama, calls, document, final, workspace  # noqa: F401  (workspace is a fixture)
 from test_second_look import ANSWER, QUESTION, UNKNOWN, long_chunk
 
-from cairnmind import agent as agent_module
 from cairnmind import config
-from cairnmind.agent import KnowledgeAgent
+from cairnmind.agents import agent as agent_module
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 from cairnmind.config import Settings
-from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 
 # Discovery measured on the Mac (10,677 prompt tokens); repair and support are smaller prompts,
 # estimated from their size, not measured.

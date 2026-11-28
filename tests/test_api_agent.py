@@ -2,19 +2,19 @@
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
 import hashlib
 import json
 import subprocess
+from copy import deepcopy
 from uuid import uuid4
 
 import httpx
 import pytest
 
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.agent_memory import AgentMemoryClient
-from cairnmind.api_agent import AgentEngine
-from cairnmind.api_providers import ProviderError
+from cairnmind.agents.agent_journal import AgentJournal
+from cairnmind.agents.agent_memory import AgentMemoryClient
+from cairnmind.agents.api_agent import AgentEngine
+from cairnmind.agents.api_providers import ProviderError
 from cairnmind.config import Settings
 from cairnmind.service import create_app
 from cairnmind.store import Store
@@ -526,7 +526,7 @@ async def test_explicit_interrupt_cancels_current_generation_without_retry(setup
 
 @pytest.mark.asyncio
 async def test_context_compaction_requires_checkpoint_then_new_model_ack(setup, monkeypatch):
-    monkeypatch.setattr("cairnmind.api_agent.CONTEXT_BUDGET_CHARS", 200)
+    monkeypatch.setattr("cairnmind.agents.api_agent.CONTEXT_BUDGET_CHARS", 200)
     memory = Memory()
     compact = {"state": {"goal": "Continue", "results": ["Read saved sources"], "next_step": "Review"}}
     provider = ScriptedProvider(
@@ -808,7 +808,8 @@ async def test_a_refused_confirmation_reaches_the_model_with_what_to_do_on_real_
     # #240: the store's "only a person confirms" refusals reached the model as a bare tool_failed, or as a
     # state_conflict that sends it to read and retry; a key that exists came back as tool_failed.
     from conftest import as_person
-    from cairnmind.confirmation import REFUSED
+
+    from cairnmind.memory.confirmation import REFUSED
     root = tmp_path / "project"
     root.mkdir()
     for args in (("init", "-q"), ("config", "user.name", "Fixture"),
@@ -885,7 +886,7 @@ async def test_invalid_tool_arguments_say_which_argument_and_why_without_its_val
 
 def test_the_instructions_say_effect_tools_appear_only_after_the_ack():
     # #240: a small model asked to write a file said it had no write tool and never acknowledged.
-    from cairnmind.api_agent import SYSTEM
+    from cairnmind.agents.api_agent import SYSTEM
     assert "offered only after" in SYSTEM and "ack_resume" in SYSTEM
 
 
@@ -980,7 +981,7 @@ async def test_a_reread_packet_replaces_the_earlier_ones_in_the_model_context(se
 async def test_the_compaction_notice_comes_before_the_ollama_window_refuses(setup, window, notice):
     # #240, second trial: on the default 32k Ollama window a turn ended in context_limit, because the
     # notice waited for 80,000 characters while the provider's own check refused at about 50,000.
-    from cairnmind.api_providers import _ollama_messages, ollama_prompt_estimate
+    from cairnmind.agents.api_providers import _ollama_messages, ollama_prompt_estimate
     settings, run, profile, _ = setup
     profile = {**profile, "limits": {"context_window_tokens": window, "max_output_tokens": 4096}}
     provider = ScriptedProvider(reply(text="Need the packet first."))
@@ -1050,8 +1051,8 @@ async def test_a_record_the_store_does_not_save_reaches_the_model_with_what_to_d
 def _pad_catalogue(agent, target):
     """Add tool schemas until the system prompt, the whole catalogue and the output room alone are
     estimated at about `target` tokens, as a large MCP catalogue would be."""
-    from cairnmind.api_agent import SYSTEM
-    from cairnmind.api_providers import _ollama_messages, ollama_prompt_estimate
+    from cairnmind.agents.api_agent import SYSTEM
+    from cairnmind.agents.api_providers import _ollama_messages, ollama_prompt_estimate
 
     def fixed():
         tools = [{"type": "function", "function": tool} for tool in agent._schemas.values()]
@@ -1066,7 +1067,7 @@ def _pad_catalogue(agent, target):
 
 
 def _fits_the_window(request, window=32768):
-    from cairnmind.api_providers import _ollama_messages, ollama_prompt_estimate
+    from cairnmind.agents.api_providers import _ollama_messages, ollama_prompt_estimate
     tools = [{"type": "function", "function": tool} for tool in request["tools"]]
     return ollama_prompt_estimate(_ollama_messages(request["messages"]), tools) + 4096 <= window
 

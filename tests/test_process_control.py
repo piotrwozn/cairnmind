@@ -5,7 +5,7 @@ import subprocess
 import sys
 import time
 
-from cairnmind import process_control, process_identity
+from cairnmind.pal import process_control, process_identity
 
 
 def test_popen_kwargs_and_format_command():

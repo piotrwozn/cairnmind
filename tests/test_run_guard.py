@@ -8,7 +8,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-from pathlib import Path
 import shutil
 import signal
 import subprocess
@@ -16,12 +15,13 @@ import sys
 import tempfile
 import textwrap
 import time
+from pathlib import Path
 
 import pytest
-
 import run_guard
-from cairnmind import file_locks
-from cairnmind.arcade import ArcadeError
+
+from cairnmind.pal import file_locks
+from cairnmind.storage.arcade import ArcadeError
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="run_guard SIGALRM/killpg tests are POSIX-only")
 
@@ -162,9 +162,11 @@ def test_a_test_waiting_at_the_gate_fails_in_time(tmp_path):
     with gate.open("a") as holder, gate.open("a") as waiter:
         file_locks.lock_exclusive(holder)  # another worker's test that never ends
         started = time.monotonic()
-        with pytest.raises(pytest.fail.Exception, match="waiting for the test slot took longer than 1 s"):
-            with run_guard.waiting(1, "waiting for the test slot"):
-                file_locks.lock_exclusive(waiter)
+        with (
+            pytest.raises(pytest.fail.Exception, match="waiting for the test slot took longer than 1 s"),
+            run_guard.waiting(1, "waiting for the test slot"),
+        ):
+            file_locks.lock_exclusive(waiter)
         assert time.monotonic() - started < 10
 
 
@@ -422,7 +424,7 @@ def test_a_tmux_server_that_was_running_before_the_test_is_not_the_tests(tmp_pat
 
 
 def test_an_engine_left_in_the_tests_directory_is_stopped_through_its_identity_check(tmp_path, monkeypatch):
-    import cairnmind.engine as engine
+    import cairnmind.storage.engine as engine
     ended = subprocess.Popen([sys.executable, "-c", "pass"])
     ended.wait()
     running = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
@@ -477,7 +479,8 @@ def test_a_tmux_server_a_failed_test_started_is_stopped_after_it(tmp_path):
 @pytest.mark.parametrize("platform", ["darwin", "linux"])
 def test_the_socket_directories_a_run_left_are_removed_and_nothing_else(short_tmp_path, monkeypatch, platform):
     import socket
-    from cairnmind import runtime_sockets
+
+    from cairnmind.pal import runtime_sockets
     monkeypatch.setattr(runtime_sockets, "SYSTEM_TEMP", str(short_tmp_path))  # macOS: <it>/cairnmind-UID
     monkeypatch.setattr(tempfile, "tempdir", str(short_tmp_path))  # Linux: the temporary folder itself
     monkeypatch.setattr(sys, "platform", platform)

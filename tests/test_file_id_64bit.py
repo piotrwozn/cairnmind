@@ -3,19 +3,19 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import socket
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
-from cairnmind import engine, private_files, process_control, process_identity
 from cairnmind.config import Settings
-from cairnmind.integrations import _transcript_watermark
-from cairnmind.sessions import SessionManager
+from cairnmind.memory.integrations import _transcript_watermark
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.pal import private_files, process_control, process_identity
+from cairnmind.storage import engine
 from cairnmind.store import Store
-
 
 UNSIGNED_DEV = 10974387285115203278  # > 2**63 - 1 (real Windows NTFS st_dev from #431)
 UNSIGNED_INO = (1 << 64) - 7         # > 2**63 - 1
@@ -162,10 +162,8 @@ def test_real_engine_pid_reuse_guard_and_kill_recovery(arcade_test_engine, tmp_p
         engine.stop_engine(iso)
         assert engine.engine_status(iso)["available"] is False
     finally:
-        try:
+        with contextlib.suppress(Exception):
             engine.stop_engine(iso)
-        except Exception:
-            pass
         if dst_runtime.exists() or private_files.is_reparse_point(dst_runtime):
             if sys.platform == "win32":
                 os.rmdir(dst_runtime)

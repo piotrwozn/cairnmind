@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from cairnmind.terminal_i18n import CATALOG, LEGACY, tr
+from cairnmind.terminal.terminal_i18n import CATALOG, LEGACY, tr
 
-SOURCE = Path(__file__).resolve().parents[1] / "src" / "cairnmind"
+SOURCE = Path(__file__).resolve().parents[1] / "src" / "cairnmind" / "terminal"
 POLISH = re.compile("[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]")
 PANELS = ("terminal_panels.py", "terminal_inspector.py", "terminal_impact.py")
 
@@ -53,9 +53,9 @@ def test_the_stale_revision_message_is_english_and_reads_as_before():
 
 
 def test_the_preview_answers_in_english_and_is_translated():
-    from cairnmind import terminal_preview
-    from cairnmind.terminal_i18n_messages import broker_error_text
-    from cairnmind.terminal_client import BrokerError
+    from cairnmind.terminal import terminal_preview
+    from cairnmind.terminal.terminal_client import BrokerError
+    from cairnmind.terminal.terminal_i18n_messages import broker_error_text
     fixed = [terminal_preview.NOTICE, "The synthetic preview server does not answer.", "Synthetic connection failure."]
     assert all(text in literals("terminal_preview.py") and not POLISH.search(text) for text in fixed)
     assert all(CATALOG.get(text) and POLISH.search(CATALOG[text]) for text in fixed)

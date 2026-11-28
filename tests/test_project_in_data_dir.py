@@ -21,7 +21,7 @@ def test_the_data_directory_inside_the_project_folder_stays_allowed(tmp_path):
 
 
 def test_the_refusal_is_a_fixed_sentence_with_a_polish_form(tmp_path):
-    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal.terminal_i18n import tr
     store = Store(tmp_path / 'data')
     with pytest.raises(ValueError) as refusal:
         store.add_project('demo', store.data_dir / 'proj')
@@ -29,8 +29,8 @@ def test_the_refusal_is_a_fixed_sentence_with_a_polish_form(tmp_path):
 
 
 def test_a_project_registered_inside_the_data_directory_by_an_earlier_version_is_named_by_indexing(tmp_path):
-    from cairnmind.ingest import index_project
-    from cairnmind.sql import insert_document
+    from cairnmind.scip.ingest import index_project
+    from cairnmind.storage.sql import insert_document
     store = Store(tmp_path / 'data')
     inside = store.data_dir / 'proj'
     inside.mkdir()
@@ -44,7 +44,9 @@ def test_a_project_registered_inside_the_data_directory_by_an_earlier_version_is
     assert [row['name'] for row in store.list_projects()] == ['old']  # nothing is removed
     assert any(str(inside.resolve()) in error and '`cairnmind project remove old --yes`' in error
                and '`cairnmind project add old NEWFOLDER`' in error for error in result['errors'])
-    from cairnmind import project_removal  # the advice works: the registration goes, its memory stays (#327)
+    from cairnmind.memory import (
+        project_removal,  # the advice works: the registration goes, its memory stays (#327)
+    )
     plan = project_removal.plan(store.settings, store, store.resolve_project('old'))
     said = ' '.join(project_removal.sentences(plan))  # the dry run promises no way back that the code refuses
     assert 'cairnmind project add cannot bring old back' in said and 'brings back the same project' not in said
@@ -61,8 +63,8 @@ def test_a_project_registered_inside_the_data_directory_by_an_earlier_version_is
 
 
 def test_an_extra_root_inside_the_data_directory_is_named_with_the_command_for_roots(tmp_path):
-    from cairnmind.ingest import index_project
-    from cairnmind.sql import insert_document
+    from cairnmind.scip.ingest import index_project
+    from cairnmind.storage.sql import insert_document
     store = Store(tmp_path / 'data')
     main = tmp_path / 'main'
     main.mkdir()
@@ -80,7 +82,7 @@ def test_an_extra_root_inside_the_data_directory_is_named_with_the_command_for_r
 
 
 def test_the_credential_store_refusal_has_a_polish_form(tmp_path):
-    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal.terminal_i18n import tr
     store = Store(tmp_path / 'data')
     (store.data_dir / 'credentials').mkdir()
     (store.data_dir / 'credentials' / 'api-keys.json').write_text('{}')

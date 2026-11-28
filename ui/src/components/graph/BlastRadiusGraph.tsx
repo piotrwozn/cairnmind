@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import dagre from '@dagrejs/dagre';
+import '@xyflow/react/dist/style.css';
 import {
   Background,
   BackgroundVariant,

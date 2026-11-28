@@ -3,10 +3,10 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-
 from conftest import assert_private, make_symlink_or_skip
+
 from cairnmind.config import Settings
-from cairnmind.workspace_state import WorkspaceState
+from cairnmind.terminal.workspace_state import WorkspaceState
 
 
 def test_workspace_read_is_pure_and_updates_are_private_cas(tmp_path):
@@ -113,8 +113,8 @@ def menu_request(tmp_path, row):
     """What choosing this menu row writes: the real menu dispatch and the real request_command, a real state."""
     from types import SimpleNamespace
 
-    from cairnmind.terminal_commands import dispatch_command
-    from cairnmind.workspace import WorkspaceManager
+    from cairnmind.terminal.terminal_commands import dispatch_command
+    from cairnmind.terminal.workspace import WorkspaceManager
 
     state = WorkspaceState(Settings(data_dir=tmp_path / "data"))
     stub = SimpleNamespace(state=state, _layout=lambda: None, _revive=lambda role, **_: None)  # no tmux here
@@ -124,7 +124,7 @@ def menu_request(tmp_path, row):
 
 
 def test_every_command_the_menu_lists_is_accepted_by_the_workspace_state(tmp_path):
-    from cairnmind.terminal_commands import COMMANDS
+    from cairnmind.terminal.terminal_commands import COMMANDS
 
     for row in COMMANDS:
         if row[2] != "command":
@@ -138,9 +138,9 @@ def test_ui_command_option_takes_every_command_of_the_menu_and_of_the_state(tmp_
     worked from the menu and were refused on the command line."""
     import sys
 
-    from cairnmind import workspace
-    from cairnmind.terminal_commands import COMMANDS
-    from cairnmind.workspace_state import UI_COMMANDS
+    from cairnmind.terminal import workspace
+    from cairnmind.terminal.terminal_commands import COMMANDS
+    from cairnmind.terminal.workspace_state import UI_COMMANDS
 
     assert {row[3] for row in COMMANDS if row[2] == "command"} <= set(UI_COMMANDS)
     assert len(UI_COMMANDS) == len(set(UI_COMMANDS))

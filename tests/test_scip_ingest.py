@@ -2,18 +2,18 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import time
+from pathlib import Path
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from cairnmind.cli import app as cli_app
 from cairnmind.config import Settings
-from cairnmind.ingest import index_project
-from cairnmind.scip_ingest import apply_scip_index, enqueue_project_scip
-from cairnmind.scip_proto import (
+from cairnmind.scip.ingest import index_project
+from cairnmind.scip.scip_ingest import apply_scip_index, enqueue_project_scip
+from cairnmind.scip.scip_proto import (
     ROLE_DEFINITION,
     ROLE_IMPORT,
     ROLE_READ_ACCESS,
@@ -271,7 +271,7 @@ def test_service_scip_worker_processes_queued_job_in_background(tmp_path, monkey
         applied = apply_scip_index(st, project_id, Path(worktree or repo), scip_file)
         return {"project_id": project_id, "errors": [], "indexers": [applied]}
 
-    monkeypatch.setattr("cairnmind.scip_ingest.index_project_scip", fake_index_project_scip)
+    monkeypatch.setattr("cairnmind.scip.scip_ingest.index_project_scip", fake_index_project_scip)
 
     queued = enqueue_project_scip(store, settings, pid, repo)
     assert queued["queued"] is True
@@ -298,8 +298,8 @@ def test_service_scip_worker_processes_queued_job_in_background(tmp_path, monkey
 
 
 def test_index_project_scip_paths_cli_install_index_and_edge_cases(tmp_path, monkeypatch):
-    from cairnmind import scip_ingest as si
-    from cairnmind.scip_manager import InstalledIndexer, ScipRunError
+    from cairnmind.scip import scip_ingest as si
+    from cairnmind.scip.scip_manager import InstalledIndexer, ScipRunError
 
     settings = Settings.load(tmp_path / "data", create=True)
     store = Store(settings.data_dir)
@@ -391,7 +391,7 @@ def test_index_project_scip_paths_cli_install_index_and_edge_cases(tmp_path, mon
 
     # 3. CLI scip install & scip index commands
     runner = CliRunner()
-    monkeypatch.setattr("cairnmind.scip_manager.ensure_indexer", lambda cfg, iid, allow_download=True: InstalledIndexer(iid, "1", "ready", "native", fake_exe))
+    monkeypatch.setattr("cairnmind.scip.scip_manager.ensure_indexer", lambda cfg, iid, allow_download=True: InstalledIndexer(iid, "1", "ready", "native", fake_exe))
     cli_inst = runner.invoke(cli_app, ["--data-dir", str(settings.data_dir), "scip", "install", "go", "rust"])
     assert cli_inst.exit_code == 0, cli_inst.output
     assert set(json.loads(cli_inst.output)["indexers"].keys()) == {"scip-go", "rust-analyzer"}

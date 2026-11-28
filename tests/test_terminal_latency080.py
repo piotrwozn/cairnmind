@@ -12,12 +12,12 @@ import threading
 import time
 
 import pytest
+from test_terminal_panels import settle
+from test_terminal_ux080 import setup_ui
 from textual import events, on
 from textual.widgets import DataTable, Input
 
-from cairnmind.terminal_panels import SidebarApp
-from test_terminal_panels import settle
-from test_terminal_ux080 import setup_ui
+from cairnmind.terminal.terminal_panels import SidebarApp
 
 # Budgets target the developer workstation. Shared CI runners set a larger scale; it stays
 # below the 3 s controlled backend delay, so a UI blocked on the backend still fails.

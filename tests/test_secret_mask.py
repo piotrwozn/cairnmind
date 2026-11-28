@@ -10,12 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from cairnmind.agent_journal import AgentJournal, redact_secrets
+from cairnmind.agents.agent_journal import AgentJournal, redact_secrets
+from cairnmind.agents.extraction_evaluation import load_transcripts, transcript_sources
+from cairnmind.agents.extraction_input import extraction_request
 from cairnmind.config import Settings
-from cairnmind.extraction_evaluation import load_transcripts, transcript_sources
-from cairnmind.extraction_input import extraction_request
-from cairnmind.ingest import import_history, index_pending_sources, reparse_history_sources
-from cairnmind.secret_mask import MASK, Masker, registered_secrets
+from cairnmind.memory.secret_mask import MASK, Masker, registered_secrets
+from cairnmind.scip.ingest import import_history, index_pending_sources, reparse_history_sources
 from cairnmind.store import Store
 
 GITHUB_SHAPE = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"  # the well-known shape, not a real token
@@ -78,8 +78,8 @@ def test_the_journal_keeps_its_own_replacement_through_the_shared_helper():
 
 
 def test_registered_secrets_cover_each_kind_the_issue_names(tmp_path, monkeypatch):
-    from cairnmind.api_credentials import CredentialStore
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.agents.api_credentials import CredentialStore
+    from cairnmind.terminal.cockpit_state import CockpitState
     settings = Settings(data_dir=tmp_path, token="fixture-service-token-000000000",
                         arcade_password="fixture-arcade-password-11111",
                         memory_chat={"provider": "openai_compatible", "base_url": "http://127.0.0.1:1234/v1",
@@ -136,8 +136,8 @@ def test_a_transcript_line_with_the_service_token_is_indexed_and_extracted_maske
 @pytest.mark.parametrize("kind", ["saved_key", "profile_env", "github_shape", "private_key"])
 def test_each_kind_of_secret_is_masked_in_a_transcript(workspace, tmp_path, monkeypatch, kind):
     store, project, root = workspace
-    from cairnmind.api_credentials import CredentialStore
-    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.agents.api_credentials import CredentialStore
+    from cairnmind.terminal.cockpit_state import CockpitState
     if kind == "saved_key":
         CredentialStore(store.settings).set("saved-profile", SAVED_KEY, persist=True)
         value, expected = SAVED_KEY, "registered_secret"
@@ -176,7 +176,7 @@ def test_a_metadata_record_chunked_from_its_raw_line_is_masked_and_still_reparse
     assert all(token not in chunk["text"] for chunk in chunks_of(store, source["id"]))
     # As an earlier parser archived it: an unknown record. Its reparse checks the chunks against the same
     # masked view, so the record is repaired instead of reported as a mismatch.
-    from cairnmind.ingest import UNKNOWN_TRANSCRIPT_WARNING
+    from cairnmind.scip.ingest import UNKNOWN_TRANSCRIPT_WARNING
     store.command("UPDATE sources SET kind='transcript_unknown',metadata=:m WHERE id=:id", {"id": source["id"], "m": {
         **source["metadata"], "role": "unknown", "schema_warning": UNKNOWN_TRANSCRIPT_WARNING}})
     result = reparse_history_sources(store, history, project["id"])
@@ -220,8 +220,8 @@ class QuotingModel:
 
 
 async def test_an_extracted_record_quotes_the_masked_view_and_its_evidence_verifies(workspace, tmp_path):
-    from cairnmind.agent import KnowledgeAgent
-    from cairnmind.evidence import evidence_states
+    from cairnmind.agents.agent import KnowledgeAgent
+    from cairnmind.memory.evidence import evidence_states
     store, project, root = workspace
     token = store.settings.token
     history = tmp_path / "claude.jsonl"
@@ -240,8 +240,8 @@ async def test_an_extracted_record_quotes_the_masked_view_and_its_evidence_verif
 # The agent archive and remember notes ------------------------------------------------------------------
 
 def test_an_archived_agent_event_is_indexed_masked(workspace):
-    from cairnmind.agent_memory import archive_agent_target, capture_agent_target
-    from cairnmind.sessions import SessionManager
+    from cairnmind.agents.agent_memory import archive_agent_target, capture_agent_target
+    from cairnmind.memory.sessions import SessionManager
     store, project, root = workspace
     subprocess_git(root)
     manager = SessionManager(store, store.settings)
@@ -269,7 +269,7 @@ def subprocess_git(root):
 
 
 def test_a_remember_note_is_indexed_masked_and_its_record_is_kept_as_written(workspace):
-    from cairnmind.remember_input import external_report_source
+    from cairnmind.memory.remember_input import external_report_source
     store, project, _ = workspace
     token = store.settings.token
     note = {"kind": "fact", "content": f"The hook uses {token} to authenticate."}
@@ -286,8 +286,9 @@ def test_a_remember_note_is_indexed_masked_and_its_record_is_kept_as_written(wor
 
 def test_a_cli_remember_note_is_indexed_masked(tmp_path, monkeypatch):
     from typer.testing import CliRunner
-    from cairnmind import ingest
+
     from cairnmind.cli import app
+    from cairnmind.scip import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     data, root = tmp_path / "memory", tmp_path / "repo"
     root.mkdir()
@@ -342,9 +343,9 @@ def test_a_text_block_beside_a_tool_call_is_given_to_extraction_masked(workspace
 # Review of the first version --------------------------------------------------------------------------
 
 async def test_a_metadata_line_is_read_masked_everywhere_its_readable_view_is_used(workspace, tmp_path):
-    from cairnmind.agent import KnowledgeAgent
-    from cairnmind.extraction_input import source_text
-    from cairnmind.ingest import _chunks
+    from cairnmind.agents.agent import KnowledgeAgent
+    from cairnmind.agents.extraction_input import source_text
+    from cairnmind.scip.ingest import _chunks
     store, project, root = workspace
     token = store.settings.token
     history = tmp_path / "title.jsonl"
@@ -405,7 +406,7 @@ def assistant_with_tool(root, text):
 
 
 def test_a_text_block_that_ends_in_a_piece_of_a_value_still_matches_the_view(workspace, tmp_path):
-    from cairnmind.secret_mask import ingest_masker
+    from cairnmind.memory.secret_mask import ingest_masker
     store, project, root = workspace
     piece = store.settings.token[:14]
     history = tmp_path / "piece.jsonl"
@@ -419,7 +420,7 @@ def test_a_text_block_that_ends_in_a_piece_of_a_value_still_matches_the_view(wor
 
 async def test_extraction_of_a_masked_source_fails_instead_of_skipping_when_secrets_are_unreadable_or_changed(
         workspace, tmp_path):
-    from cairnmind.agent import KnowledgeAgent
+    from cairnmind.agents.agent import KnowledgeAgent
     store, project, root = workspace
     token = store.settings.token
     history = tmp_path / "assistant.jsonl"
@@ -440,15 +441,16 @@ async def test_extraction_of_a_masked_source_fails_instead_of_skipping_when_secr
 
 def test_session_findings_checkpoints_and_tasks_are_indexed_masked(workspace, tmp_path, monkeypatch):
     from typer.testing import CliRunner
+
     from cairnmind.cli import app
-    from cairnmind.findings import save_finding
+    from cairnmind.memory.findings import save_finding
     store, project, _ = workspace
     token = store.settings.token
     store.checkpoint(project["id"], {"summary": f"The hook uses {token}."})
     with store.transaction():
         finding = save_finding(store, project["id"], "8d2e4f60-1a3b-4c5d-9e7f-0a1b2c3d4e5f",
                                f"Never paste {token} into a commit.", "constraint", "proposed", session_id="s-1")
-    monkeypatch.setattr("cairnmind.ingest.register_default_histories", lambda *a: {})
+    monkeypatch.setattr("cairnmind.scip.ingest.register_default_histories", lambda *a: {})
     result = CliRunner().invoke(app, ["--data-dir", str(store.data_dir), "task", "add", "masking", f"Rotate {token}"])
     assert result.exit_code == 0, result.output
     sources = [store.get_source(finding["source"]["id"])]

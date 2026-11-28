@@ -21,11 +21,11 @@ import subprocess
 import sys
 import threading
 import time
+import warnings
 from pathlib import Path
 from urllib.parse import urlparse
-import warnings
 
-from cairnmind import file_locks, process_identity
+from cairnmind.pal import file_locks, process_identity
 
 STALL_AFTER = 20.0
 DUMP_EVERY = 10.0  # at most one thread dump in this many seconds for all workers sharing the engine
@@ -165,6 +165,9 @@ def watch(settings, original, after: float = STALL_AFTER):
             timer.cancel()
             timer.join()
         if record:  # a passing test shows no stderr: a warning reaches the summary
-            warnings.warn(f"SLOW REQUEST, answered after {time.monotonic() - started:.0f}s, not lost:\n{record[0]}")
+            warnings.warn(
+                f"SLOW REQUEST, answered after {time.monotonic() - started:.0f}s, not lost:\n{record[0]}",
+                stacklevel=2,
+            )
         return response
     return request

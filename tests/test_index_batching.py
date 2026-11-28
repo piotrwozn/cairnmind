@@ -6,11 +6,11 @@ import json
 
 import pytest
 
-from cairnmind import ingest
-from cairnmind.arcade import ArcadeClient
-from cairnmind.journal import MAX_TRANSACTION_EVENTS
+from cairnmind.scip import ingest
+from cairnmind.storage.arcade import ArcadeClient
+from cairnmind.storage.journal import MAX_TRANSACTION_EVENTS
+from cairnmind.storage.sql import clean_row
 from cairnmind.store import Store
-from cairnmind.sql import clean_row
 
 
 def tree(root, files=24):
@@ -255,7 +255,7 @@ def test_a_file_too_large_to_share_a_transaction_keeps_its_named_journal_events(
     assert events[("chunk", "upsert", True)] == len(chunks) and events[("source", "upsert", True)] == 5
     assert not [key for key in events if key[1] == "reset" and key[0] in ("source", "chunk", "job")]
     # The small files before and after it still share transactions; the large one took the ordinary path.
-    assert sum(text.startswith("SELECT FROM sources WHERE current_key=:key") for text in seen) == 1
+    assert sum(text.startswith(("SELECT FROM sources WHERE current_key=:key", "SELECT FROM sources WHERE current_key=:w0")) for text in seen) == 1
 
 
 def test_a_group_never_holds_more_events_than_its_limit(tmp_path, monkeypatch):
@@ -556,7 +556,7 @@ def test_a_failure_in_a_group_of_replacements_leaves_every_file_of_it_as_it_was(
 
 
 def test_a_graph_reset_skips_reading_the_graph_rows_it_updates(tmp_path, monkeypatch):
-    from cairnmind.journal import Journal
+    from cairnmind.storage.journal import Journal
     store = Store(tmp_path / "memory")
     pid = store.add_project("p", tmp_path)["id"]
     for identifier in ("a", "b"):

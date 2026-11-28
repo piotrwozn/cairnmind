@@ -42,7 +42,6 @@ import glob
 import json
 import math
 import os
-from pathlib import Path
 import re
 import shutil
 import signal
@@ -53,6 +52,7 @@ import tempfile
 import threading
 import time
 import warnings
+from pathlib import Path
 
 import pytest
 
@@ -378,13 +378,13 @@ def stop_engines(funcargs) -> list[str]:
             # A record a test wrote by hand may name any process, this one too: never stopped here.
             if pid <= 0 or pid == os.getpid() or not data_dir.resolve().is_relative_to(root.resolve()):
                 continue
-            from cairnmind import process_identity
+            from cairnmind.pal import process_identity
             if not process_identity.alive(pid):
                 continue
         except (OSError, ValueError, KeyError, TypeError):
             continue  # no such process (or not ours): nothing is left running
         from cairnmind.config import Settings
-        from cairnmind.engine import stop_engine
+        from cairnmind.storage.engine import stop_engine
         try:
             stop_engine(Settings.load(data_dir))
             stopped.append(f"engine {pid} of {data_dir}")
@@ -473,7 +473,7 @@ def test_roots(node, directories: list[Path]) -> list[Path]:
 
 def socket_directories() -> set[str]:
     """The workspace and native-run socket directories now in the product's socket base (#235)."""
-    from cairnmind.runtime_sockets import KINDS, socket_directory
+    from cairnmind.pal.runtime_sockets import KINDS, socket_directory
     return {path for kind in KINDS for path in glob.glob(str(socket_directory(kind, "[0-9a-f]" * 16)))}
 
 
@@ -620,7 +620,7 @@ def leftover_processes_are_stopped(request):
     directories = SPAWNED.take_directories()
     stopped = SPAWNED.stop_all(request.node)
     if stopped:
-        warnings.warn(LeftRunning("The test left running, and it was stopped: " + "; ".join(stopped)))
+        warnings.warn(LeftRunning("The test left running, and it was stopped: " + "; ".join(stopped)), stacklevel=2)
     try:
         strays = stop_strays(test_roots(request.node, directories))
     except ProcessListFailed as exc:  # the same for every test: the run ends here, once, with the reason

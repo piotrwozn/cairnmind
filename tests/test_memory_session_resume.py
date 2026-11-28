@@ -4,12 +4,11 @@ from __future__ import annotations
 import subprocess
 
 import pytest
-
-from cairnmind.memory import MemoryManager
-from cairnmind.sessions import SessionManager
-from cairnmind.store import Store
-
 from conftest import as_person
+
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.store import Store
 
 
 def git(root, *args):

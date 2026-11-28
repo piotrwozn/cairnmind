@@ -4,25 +4,28 @@ import re
 from pathlib import Path
 
 import pytest
+from test_terminal_panels import settle, setup
 
-from cairnmind.terminal_commands import ask_summary
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_panels import SidebarApp
-from cairnmind.terminal_ui import ChoiceModal
-from test_terminal_panels import setup, settle
+from cairnmind.terminal.terminal_commands import ask_summary
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_panels import SidebarApp
+from cairnmind.terminal.terminal_ui import ChoiceModal
 
 SOURCE = Path(__file__).resolve().parents[1] / "src" / "cairnmind"
 POLISH = re.compile("[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]")
 
 
 def polish_literals(name):
-    tree = ast.parse((SOURCE / name).read_text(encoding="utf-8"))
+    matches = sorted(SOURCE.rglob(name))
+    assert len(matches) == 1, f"Expected unique module {name}, found {matches}"
+    tree = ast.parse(matches[0].read_text(encoding="utf-8"))
     return [node.value for node in ast.walk(tree)
             if isinstance(node, ast.Constant) and isinstance(node.value, str) and POLISH.search(node.value)]
 
 
 @pytest.mark.parametrize("name", [
-    "agent.py", "service.py", "cockpit.py", "terminal_client.py", "terminal_graph.py", "api_profiles.py",
+    "agent.py", "service.py", "service_routes.py", "service_workers.py", "cockpit.py", "cockpit_handlers.py",
+    "terminal_client.py", "terminal_graph.py", "api_profiles.py",
     "api_credentials.py", "api_runtime.py", "cockpit_state.py", "workspace_state.py", "workspace.py"])
 def test_backend_messages_are_written_in_english(name):
     # The one sentence kept as written: the catalog translates it to English, as a pinned test expects.
@@ -35,8 +38,8 @@ def test_backend_messages_are_written_in_english(name):
     ("en", "Broker 503: The memory service is unavailable. Restart cairnmind."),
     ("pl", "Broker 503: Usługa pamięci jest niedostępna. Uruchom ponownie cairnmind.")])
 def test_a_broker_error_reads_in_the_panel_language(language, line):
-    from cairnmind.terminal_client import BrokerError
-    from cairnmind.terminal_i18n_messages import broker_error_text
+    from cairnmind.terminal.terminal_client import BrokerError
+    from cairnmind.terminal.terminal_i18n_messages import broker_error_text
     translate = lambda text: tr(text, language)  # noqa: E731
     assert broker_error_text(BrokerError(503, "The memory service is unavailable. Restart cairnmind."),
                              translate) == line
@@ -51,9 +54,9 @@ def test_a_broker_error_reads_in_the_panel_language(language, line):
     ("en", "Broker 400: The chosen folders must exist and be unique."),
     ("pl", "Broker 400: Wybrane katalogi muszą istnieć i być unikalne.")])
 def test_a_check_relayed_by_the_broker_reads_in_the_panel_language(tmp_path, language, line):
-    from cairnmind.cockpit_state import ProjectDiscovery
-    from cairnmind.terminal_client import BrokerError
-    from cairnmind.terminal_i18n_messages import broker_error_text
+    from cairnmind.terminal.cockpit_state import ProjectDiscovery
+    from cairnmind.terminal.terminal_client import BrokerError
+    from cairnmind.terminal.terminal_i18n_messages import broker_error_text
     translate = lambda text: tr(text, language)  # noqa: E731
     # What the cockpit sends as the detail of a 400: the text of the check's ValueError.
     with pytest.raises(ValueError) as raised:
@@ -67,9 +70,9 @@ def test_a_check_relayed_by_the_broker_reads_in_the_panel_language(tmp_path, lan
 async def test_a_panel_notice_of_a_broker_error_is_translated(tmp_path, monkeypatch):
     from textual.widgets import Static
 
-    from cairnmind.terminal_client import BrokerError
+    from cairnmind.terminal.terminal_client import BrokerError
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: "en")
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: "en")
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(95, 42)) as pilot:
         await settle(app, pilot)
@@ -145,10 +148,10 @@ async def test_a_running_inspector_switches_every_label_to_the_new_language(tmp_
     from textual.widgets import DataTable, Select, Static
     from textual.widgets._select import SelectCurrent
 
-    from cairnmind.terminal_inspector import InspectorApp
+    from cairnmind.terminal.terminal_inspector import InspectorApp
     settings, broker, workspace = setup(tmp_path, monkeypatch)
     language = ["en"]
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language[0])
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language[0])
     app = InspectorApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(app, pilot)
@@ -170,14 +173,14 @@ async def test_a_running_inspector_switches_every_label_to_the_new_language(tmp_
 
 @pytest.mark.asyncio
 async def test_a_language_switch_redraws_the_impact_list_and_keeps_the_chosen_row(tmp_path, monkeypatch):
-    from textual.widgets import DataTable
-
-    from cairnmind.terminal_inspector import InspectorApp
     from test_terminal_impact import Impact
     from test_terminal_ux080 import setup_ui
+    from textual.widgets import DataTable
+
+    from cairnmind.terminal.terminal_inspector import InspectorApp
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     language = ["en"]
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language[0])
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language[0])
     impact = Impact(broker, workspace)
     app = InspectorApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -198,13 +201,13 @@ async def test_a_language_switch_redraws_the_impact_list_and_keeps_the_chosen_ro
 
 @pytest.mark.asyncio
 async def test_a_running_graph_lays_out_its_buttons_again_for_longer_labels(tmp_path):
+    from test_terminal_graph import ControlledBroker
     from textual.widgets import Button
 
-    from cairnmind.cockpit_state import CockpitState
-    from cairnmind.terminal_graph import GraphApp
-    from test_terminal_graph import ControlledBroker
     from cairnmind.config import Settings
-    from cairnmind.workspace_state import WorkspaceState
+    from cairnmind.terminal.cockpit_state import CockpitState
+    from cairnmind.terminal.terminal_graph import GraphApp
+    from cairnmind.terminal.workspace_state import WorkspaceState
     settings = Settings(tmp_path / "data")
     project = {"id": "alpha", "name": "Alpha", "root": str(tmp_path / "alpha")}
     (tmp_path / "alpha").mkdir()
@@ -241,12 +244,12 @@ def test_the_copilot_sign_in_terminal_prints_its_errors_in_the_ui_language(
         tmp_path, monkeypatch, capsys, language, failure, line):
     import sys
 
-    from cairnmind import copilot_adapter
+    from cairnmind.agents import copilot_adapter
 
     async def fail(settings):
         raise copilot_adapter.CopilotError("copilot_auth_required") if failure == "auth" else RuntimeError("SECRET")
     monkeypatch.setattr(copilot_adapter, "_login", fail)
-    monkeypatch.setattr("cairnmind.terminal_i18n.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_i18n.language_for", lambda settings: language)
     monkeypatch.setattr(sys, "argv", ["copilot_adapter", "--data-dir", str(tmp_path / "data"), "--login"])
     with pytest.raises(SystemExit):
         copilot_adapter.main()
@@ -259,14 +262,14 @@ def test_the_copilot_sign_in_terminal_prints_its_errors_in_the_ui_language(
     ("en", "The request exceeds the context limit.", "Żądanie"),
     ("pl", "Żądanie przekracza limit kontekstu.", "The request exceeds")])
 async def test_a_provider_error_reads_in_the_panel_language(tmp_path, language, shown, hidden):
-    from textual.widgets import RichLog, Static
-
-    from cairnmind.api_providers import ProviderError
-    from cairnmind.api_worker import AgentApp
-    from cairnmind.cockpit_state import CockpitState
-    from cairnmind.config import Settings
     from test_api_worker import Engine
     from test_api_worker import settle as settle_agent
+    from textual.widgets import RichLog, Static
+
+    from cairnmind.agents.api_providers import ProviderError
+    from cairnmind.agents.api_worker import AgentApp
+    from cairnmind.config import Settings
+    from cairnmind.terminal.cockpit_state import CockpitState
 
     class Overflow(Engine):
         async def turn(self, text):
@@ -295,12 +298,12 @@ async def test_a_provider_error_reads_in_the_panel_language(tmp_path, language, 
 @pytest.mark.asyncio
 async def test_the_finding_form_offers_kinds_and_statuses_in_polish_and_saves_the_stored_word(
         tmp_path, monkeypatch):
+    from test_quick_finding import FakeBroker, selected_workspace
     from textual.widgets import Select
     from textual.widgets._select import SelectCurrent
 
-    from cairnmind.workspace_finding import FindingApp
-    from test_quick_finding import FakeBroker, selected_workspace
-    monkeypatch.setattr("cairnmind.terminal_i18n.language_for", lambda settings: "pl")
+    from cairnmind.terminal.workspace_finding import FindingApp
+    monkeypatch.setattr("cairnmind.terminal.terminal_i18n.language_for", lambda settings: "pl")
     settings, state = selected_workspace(tmp_path)
     broker = FakeBroker()
     app = FindingApp(settings, broker=broker, workspace=state)
@@ -316,8 +319,8 @@ async def test_the_finding_form_offers_kinds_and_statuses_in_polish_and_saves_th
 
 
 def test_a_stage_and_its_check_result_name_states_and_outcomes_in_polish():
-    from cairnmind.stages import describe
-    from cairnmind.workspace_stage import check_summary
+    from cairnmind.terminal.stages import describe
+    from cairnmind.terminal.workspace_stage import check_summary
     polish = lambda text: tr(text, "pl")  # noqa: E731
     step = describe({"task": {"content": "Add a comment", "state": "needs_test", "version": 7}}, polish)
     assert step == "Krok: Add a comment [do testu, v7]"
@@ -329,8 +332,9 @@ def test_a_stage_and_its_check_result_name_states_and_outcomes_in_polish():
 
 def test_an_acknowledged_memory_reads_the_same_in_the_sessions_rows_and_the_agent_pane():
     # #153/#157 review: the agent pane said "Pamięć potwierdzona (ACK)" where Sessions said "Pamięć potwierdzona".
-    from cairnmind.terminal_activity_data import session_label
-    from cairnmind.terminal_agent_i18n import STATUS, tr as agent_tr
+    from cairnmind.terminal.terminal_activity_data import session_label
+    from cairnmind.terminal.terminal_agent_i18n import STATUS
+    from cairnmind.terminal.terminal_agent_i18n import tr as agent_tr
     row = session_label({"client": "api", "id": "run1234", "lifecycle": "running", "memory": {"acknowledged": True},
                          "worktree": "/src/shop"}, lambda text: tr(text, "pl"))
     assert agent_tr(STATUS["acknowledged"], "pl") == "Pamięć potwierdzona"
@@ -346,8 +350,8 @@ async def test_command_menu_descriptions_wrap_instead_of_being_cut_at_80x24(tmp_
     from textual.widgets import DataTable
 
     from cairnmind.config import Settings
-    from cairnmind.terminal_commands import COMMANDS, CommandPaletteApp
-    monkeypatch.setattr("cairnmind.terminal_i18n.language_for", lambda settings: language)
+    from cairnmind.terminal.terminal_commands import COMMANDS, CommandPaletteApp
+    monkeypatch.setattr("cairnmind.terminal.terminal_i18n.language_for", lambda settings: language)
     app = CommandPaletteApp(SimpleNamespace(settings=Settings(data_dir=tmp_path / "data")))
 
     def cells(table):
@@ -367,7 +371,7 @@ async def test_command_menu_descriptions_wrap_instead_of_being_cut_at_80x24(tmp_
             shown, chosen = cells(table), table.cursor_row
             # The chosen command always shows every word of its description.
             assert shown[chosen] == tr(COMMANDS[chosen][1], language)
-            for text, row in zip(shown, COMMANDS):
+            for text, row in zip(shown, COMMANDS, strict=False):
                 full = tr(row[1], language)
                 assert text == full or (text.endswith("…") and full.startswith(text[:-1].rstrip()))
             if size == (90, 34):
@@ -380,7 +384,7 @@ async def test_command_menu_descriptions_wrap_instead_of_being_cut_at_80x24(tmp_
             assert table.cursor_row == target
 
 def test_the_palette_says_run_next_stage_only_moves_to_the_button():  # #169
-    from cairnmind.terminal_commands import COMMANDS
+    from cairnmind.terminal.terminal_commands import COMMANDS
     english = next(row[1] for row in COMMANDS if row[3] == "next_stage")
     assert "move to its Run next stage button" in english
     assert tr(english, "pl") != english

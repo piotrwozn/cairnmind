@@ -6,10 +6,11 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from conftest import own_time
 from typer.testing import CliRunner
 
-from conftest import own_time
-from cairnmind import cli, upgrade_mark
+from cairnmind import cli
+from cairnmind.cli_cmds import upgrade_mark
 from cairnmind.config import Settings
 
 runner = CliRunner()
@@ -49,7 +50,8 @@ def test_a_running_service_is_still_used_during_an_upgrade_so_stop_works(tmp_pat
 
 def test_a_coding_session_is_refused_during_an_upgrade_even_beside_a_running_service(tmp_path, monkeypatch, capsys):
     import typer
-    from cairnmind import integrations
+
+    from cairnmind.memory import integrations
     settings = Settings.load(tmp_path / "data")
     monkeypatch.setattr(cli, "service_alive", lambda settings: True)
     monkeypatch.setattr(upgrade_mark, "state", lambda: RUNNING)
@@ -139,7 +141,7 @@ def test_a_start_that_outlasts_the_wait_while_an_upgrade_began_is_ended_and_says
 
 
 def test_no_broker_starts_during_an_upgrade_even_beside_a_running_service(tmp_path, monkeypatch):
-    from cairnmind import cockpit
+    from cairnmind.terminal import cockpit
     settings = Settings.load(tmp_path / "data", create=True)
     monkeypatch.setattr(cli, "service_alive", lambda settings: True)
     monkeypatch.setattr(upgrade_mark, "state", lambda: RUNNING)
@@ -152,7 +154,7 @@ def test_no_broker_starts_during_an_upgrade_even_beside_a_running_service(tmp_pa
 
 def broker_started_while_an_upgrade_began(tmp_path, monkeypatch):
     """No mark at the gate, a running installer once the broker answers."""
-    from cairnmind import cockpit
+    from cairnmind.terminal import cockpit
     settings = Settings.load(tmp_path / "data", create=True)
     marks = iter([None, upgrade_mark.NOTE_RUNNING.format(pid=4242)])
     monkeypatch.setattr(upgrade_mark, "refusal", lambda: next(marks, None))
@@ -192,8 +194,8 @@ def test_a_service_start_is_announced_once_the_broker_is_up_and_never_before_a_r
         tmp_path, monkeypatch, capsys, started):
     """A service the workspace started is stopped with its broker when an installer began meanwhile, and its start
     is not said; one that runs on is said (#287, #319)."""
-    from cairnmind import cockpit
-    from cairnmind.first_start import SERVICE_STARTED
+    from cairnmind.cli_cmds.first_start import SERVICE_STARTED
+    from cairnmind.terminal import cockpit
     _, settings = broker_started_while_an_upgrade_began(tmp_path, monkeypatch)
     monkeypatch.setattr(cli, "ensure_service", lambda settings, **kwargs: started)
     monkeypatch.setattr(cockpit, "stop_cockpit", lambda settings: None)
@@ -238,7 +240,7 @@ def test_status_during_an_upgrade_names_it_instead_of_cairnmind_serve(tmp_path, 
     (("none", None), None),
 ])
 def test_doctor_notes_the_upgrade_state(tmp_path, monkeypatch, state, note):
-    from cairnmind import integrations
+    from cairnmind.memory import integrations
     Settings.load(tmp_path / "data", create=True)
     monkeypatch.setattr(integrations, "doctor", lambda settings: {})
     monkeypatch.setattr(upgrade_mark, "state", lambda: state)

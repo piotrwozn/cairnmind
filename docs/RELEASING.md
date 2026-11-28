@@ -6,7 +6,7 @@ One gate, then a short list of steps. Nothing here is automated except CI; every
 
 A release needs all six conditions below on the release commit. Conditions 5 and 6 (together with the three-run rule in condition 1 and the upgrade trial in condition 4) were adopted for `0.13.0` (#454) and **stay permanently for every subsequent release**.
 
-1. **Green CI: three consecutive green runs on `main` (#454).** The required checks are `lint`, `fast-tests`, `macos-fast-tests`, `full-tests`, `windows-fast-tests` and `windows-arcade-tests` (`.github/workflows/ci.yml`), plus `contract-declaration` (`.github/workflows/contract-check.yml`) on pull requests that touch [STABLE_CONTRACT.md](STABLE_CONTRACT.md) or `tests/fixtures/contracts/`. `macos-fast-tests` runs the fast tier on an Apple silicon macOS runner. `windows-fast-tests` and `windows-arcade-tests` run the fast tier and the full ArcadeDB tier (excluding POSIX-only `tmux` tests) on `windows-latest` with Java 21 and without `PYTHONUTF8`. `full-tests` runs the whole suite against the pinned ArcadeDB on Java 21 with tmux, on Linux only. The `coverage` job is informational and is not part of the required checks. To run the same checks yourself: `uv run ruff check src tests`, `uv run pytest -m "not arcade and not tmux"` and `uv run pytest` (see [CONTRIBUTING.md](../CONTRIBUTING.md#running-checks)). `server-tests` and `restore-size` run only on `main` and by hand, never on a pull request: before a release, `main` must record **three consecutive green runs in a row across every job** (`server-tests` and `restore-size` included), with **no single job re-run** (#417, #454). A branch that touches the store, the engine's errors or the graph write has both started on it by hand (`gh workflow run ci.yml --ref BRANCH`) and green before its pull request is merged (#455).
+1. **Green CI: three consecutive green runs on `main` (#454).** The required checks are `lint` (Ruff + Pyright), `ui-tests-and-wheel` (frontend typecheck, Vitest, Vite build, and wheel `ui_dist` packaging), `fast-tests`, `macos-fast-tests`, `full-tests`, `windows-fast-tests` and `windows-arcade-tests` (`.github/workflows/ci.yml`), plus `contract-declaration` (`.github/workflows/contract-check.yml`) on pull requests that touch [STABLE_CONTRACT.md](STABLE_CONTRACT.md) or `tests/fixtures/contracts/`. `macos-fast-tests` runs the fast tier on an Apple silicon macOS runner. `windows-fast-tests` and `windows-arcade-tests` run the fast tier and the full ArcadeDB tier (excluding POSIX-only `tmux` tests) on `windows-latest` with Java 21 and without `PYTHONUTF8`. `full-tests` runs the whole suite against the pinned ArcadeDB on Java 21 with tmux, on Linux only. The `coverage` job is informational and is not part of the required checks. To run the same checks yourself: `uv run ruff check src tests hatch_build.py`, `uv run pyright`, `uv run pytest -m "not arcade and not tmux"` and `uv run pytest` (see [CONTRIBUTING.md](../CONTRIBUTING.md#running-checks)). `server-tests` and `restore-size` run only on `main` and by hand, never on a pull request: before a release, `main` must record **three consecutive green runs in a row across every job** (`server-tests` and `restore-size` included), with **no single job re-run** (#417, #454). A branch that touches the store, the engine's errors or the graph write has both started on it by hand (`gh workflow run ci.yml --ref BRANCH`) and green before its pull request is merged (#455).
 2. **Evaluations, when the release changes the knowledge agent, retrieval or extraction.** Run by hand with the local models; they are not part of CI ([EVALUATION.md](EVALUATION.md)):
 
    ```bash
@@ -45,6 +45,8 @@ In addition to the standard gate above, a major release (`1.0.0` and later `X.0.
 
 ## Release candidate and freeze (1.0.0, #250)
 
+Before tagging `1.0.0-rc1`, observe a **consolidation freeze** on new product surfaces (storage backends, UI surfaces, agent providers, and code-graph indexers) until live model evaluations, the Codex → Claude Code → Codex hand-off pilot, and clean wheel installations with bundled `cairnmind/ui_dist/` (`CAIRNMIND_BUILD_UI=1`) complete cleanly on the consolidated baseline.
+
 A major release is never published straight from a passing build. It goes through a release candidate and a freeze:
 
 1. **Publish `X.0.0-rc1`** as a GitHub pre-release, installable via the documented installation steps.
@@ -58,7 +60,7 @@ A major release is never published straight from a passing build. It goes throug
 As done for 0.9.0 (#66, which changed `pyproject.toml`, `src/cairnmind/__init__.py`, `uv.lock`, `CHANGELOG.md` and the docs).
 
 1. **Release pull request.** Set the version in `pyproject.toml`, `src/cairnmind/__init__.py` and the `cairnmind` entry of `uv.lock`. Turn the `Unreleased` heading of `CHANGELOG.md` into the version heading. Update the docs that name the version (README, INSTALL, UPGRADING), and the supported versions in `SECURITY.md`: the new minor version `Yes`, the one before it `Security fixes only`, older `No`. Check the gate on the pull request. The owner merges it.
-2. **Build from the merge commit.** Only tracked files go into the artifacts, so build from an archive, not from the working directory. In WSL, in a clone with the merge commit checked out:
+2. **Build from the merge commit.** Only tracked files go into the artifacts, so build from an archive, not from the working directory. Node.js 22+ is used at build time (`CAIRNMIND_BUILD_UI=1`) so the wheel bundles `cairnmind/ui_dist/` and end users never need Node.js. In WSL, in a clone with the merge commit checked out:
 
    ```bash
    VERSION=X.Y.Z
@@ -66,7 +68,8 @@ As done for 0.9.0 (#66, which changed `pyproject.toml`, `src/cairnmind/__init__.
    rm -rf /tmp/cairnmind-$VERSION && mkdir /tmp/cairnmind-$VERSION
    git archive "$COMMIT" | tar -x -C /tmp/cairnmind-$VERSION
    cd /tmp/cairnmind-$VERSION
-   uv build        # dist/cairnmind-$VERSION-py3-none-any.whl and dist/cairnmind-$VERSION.tar.gz
+   CAIRNMIND_BUILD_UI=1 uv build   # dist/cairnmind-$VERSION-py3-none-any.whl (with cairnmind/ui_dist/) and .tar.gz
+   python3 -c "import zipfile; z=zipfile.ZipFile('dist/cairnmind-$VERSION-py3-none-any.whl'); assert 'cairnmind/ui_dist/index.html' in z.namelist()"
    cd dist
    sha256sum cairnmind-$VERSION-py3-none-any.whl cairnmind-$VERSION.tar.gz > SHA256SUMS
    ```

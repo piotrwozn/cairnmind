@@ -3,17 +3,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cairnmind.code_decisions import is_adr_path, parse_adr_document, parse_commit_trailers
-from cairnmind.parsing import analyze_code
-from cairnmind.symbol_anchor import (
+from cairnmind.memory.code_decisions import is_adr_path, parse_adr_document, parse_commit_trailers
+from cairnmind.memory.symbol_anchor import (
     find_symbol_in_analysis,
     make_symbol_anchor,
     posix_path,
     resolve_symbol_anchor,
     validate_symbol_anchor,
 )
-from cairnmind.terminal_detail import joined, record_parts, symbol_parts
-from cairnmind.terminal_i18n import tr
+from cairnmind.scip.parsing import analyze_code
+from cairnmind.terminal.terminal_detail import joined, record_parts, symbol_parts
+from cairnmind.terminal.terminal_i18n import tr
 
 
 def _sym(path: str, code: str, name: str, kind: str | None = None) -> dict:

@@ -2,15 +2,17 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
 import tomllib
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, ingest, mcp_presets, mcp_probe
+from cairnmind import cli
 from cairnmind.config import Settings
+from cairnmind.mcp import mcp_presets, mcp_probe
+from cairnmind.scip import ingest
 
 runner = CliRunner()
 
@@ -289,7 +291,7 @@ def test_mcp_probe_live_clean_stdio_handshake(tmp_path):
     assert data["ok"] is True
     assert data["stdout_clean"] is True
     assert data["tools_count"] >= 8
-    assert mcp_probe.EXPECTED_CORE_TOOLS <= set(data["tools"])
+    assert set(data["tools"]) >= mcp_probe.EXPECTED_CORE_TOOLS
     assert data["latency_ms"] > 0
 
 

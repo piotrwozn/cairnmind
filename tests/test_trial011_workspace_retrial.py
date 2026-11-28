@@ -6,19 +6,19 @@ import json
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from textual.widgets import Button
-from typer.testing import CliRunner
-
-from cairnmind import cli
-from cairnmind.cockpit import create_cockpit_app
-from cairnmind.cockpit_state import CockpitState
-from cairnmind.config import Settings
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_panels import SidebarApp
 from test_cockpit_server import ORIGIN, Runtime, login
 from test_stage_router import move, planned  # noqa: F401  (planned is a fixture)
 from test_terminal_panels import settle, setup
 from test_trial011_workspace import MISSING_KEY, SIZES, inspector, notice_of, wait_until
+from textual.widgets import Button
+from typer.testing import CliRunner
+
+from cairnmind import cli
+from cairnmind.config import Settings
+from cairnmind.terminal.cockpit import create_cockpit_app
+from cairnmind.terminal.cockpit_state import CockpitState
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_panels import SidebarApp
 
 CHECKS = '[checks.unit]\nargv = ["python", "-c", "pass"]\n'
 
@@ -31,7 +31,7 @@ CHECKS = '[checks.unit]\nargv = ["python", "-c", "pass"]\n'
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_opening_a_project_with_a_launch_problem_records_it_once(tmp_path, monkeypatch, size, language):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=size) as pilot:
         await settle(app, pilot)
@@ -53,7 +53,7 @@ async def test_opening_a_project_with_a_launch_problem_records_it_once(tmp_path,
 async def test_a_workspace_write_during_the_hold_does_not_count_the_launch_problem_again(
         tmp_path, monkeypatch, size, language):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     errors = [{"slot_id": "codex", "client": "api", "code": "credential_missing"}]
     async with app.run_test(size=size) as pilot:
@@ -75,7 +75,7 @@ async def test_a_workspace_write_during_the_hold_does_not_count_the_launch_probl
 
 @pytest.mark.parametrize("language", ["en", "pl"])
 def test_a_status_with_a_sentence_keeps_its_code_out_of_the_summary(language):
-    from cairnmind.terminal_ui import summary_text
+    from cairnmind.terminal.terminal_ui import summary_text
     sentence = tr("Operation completed.", language)
     text = summary_text({"message": sentence, "code": "credential_missing", "configured": False}, language)
     assert text == sentence
@@ -86,7 +86,7 @@ def test_a_status_with_a_sentence_keeps_its_code_out_of_the_summary(language):
 # stage next offers a check run for a check profile the worktree does not declare.
 
 def test_a_test_stage_with_an_undeclared_profile_offers_no_check_run():
-    from cairnmind.stages import check_declared, describe, next_command
+    from cairnmind.terminal.stages import check_declared, describe, next_command
     decision = {"stage": "test", "action": "run_check", "problem": None, "check_profile": "nope",
                 "task": {"id": "task-1", "version": 2, "state": "needs_test", "content": "Build it"},
                 "plan": None, "required_profiles": []}
@@ -212,7 +212,7 @@ async def test_run_next_stage_records_a_launch_problem_once_per_press(tmp_path, 
     def refused(*args, **kwargs):
         workspace.update({"last_error": "Start work again explicitly after the workspace resumes."})
         return workspace.read()
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", refused)
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", refused)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 35)) as pilot:
         await settle(app, pilot)
@@ -229,7 +229,7 @@ async def test_run_next_stage_records_a_launch_problem_once_per_press(tmp_path, 
 @pytest.mark.parametrize("language", ["en", "pl"])
 def test_a_partial_resume_is_said_as_such_not_as_a_general_problem(tmp_path, monkeypatch, language):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     text = app.launch_notice({"launch_errors": [{"slot_id": "slot", "client": "claude", "code": "resume_partial"}]})
     assert tr("The memory of this project is partial. `cairnmind run` names what is missing.", language) in text
@@ -248,7 +248,7 @@ async def test_run_next_stage_says_what_to_do_about_a_key_the_launch_refused(tmp
     def refused(*args, **kwargs):
         workspace.update({"launch_errors": [{"slot_id": "slot-api", "client": "api", "code": "credential_invalid"}]})
         return workspace.read()
-    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", refused)
+    monkeypatch.setattr("cairnmind.terminal.workspace.refresh_workspace", refused)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 35)) as pilot:
         await settle(app, pilot)

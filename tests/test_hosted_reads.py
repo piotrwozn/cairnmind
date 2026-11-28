@@ -8,28 +8,28 @@ every test runs as on Linux (the store tests use the same temporary ArcadeDB dat
 """
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from dataclasses import replace
-import json
 from uuid import uuid4
 
-from fastapi.testclient import TestClient
 import pytest
-
-from cairnmind import memory_egress
-from cairnmind.agent import KnowledgeAgent
-from cairnmind.agent_memory import AgentMemoryClient
-from cairnmind.api_agent import AgentEngine
-from cairnmind.config import Settings
-from cairnmind.knowledge_mode import text_matches
-from cairnmind.service import create_app
-from cairnmind.terminal_i18n_messages import AGENT_MESSAGES, ASK_MESSAGES
-
-from test_agent_memory import ack, workspace as workspace  # noqa: F401 - a fixture
+from fastapi.testclient import TestClient
+from test_agent_memory import ack  # noqa: F401 - a fixture
+from test_agent_memory import workspace as workspace
 from test_api_agent import Memory, ScriptedProvider, call, reply, tools_results
 from test_api_agent import setup as setup  # noqa: F401 - a fixture
 from test_deterministic_mode import Untouched
-from test_remote_classes import FakeModels, TRANSCRIPT, answer, chunked, DOCUMENT
+from test_remote_classes import DOCUMENT, TRANSCRIPT, FakeModels, answer, chunked
+
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.agents.agent_memory import AgentMemoryClient
+from cairnmind.agents.api_agent import AgentEngine
+from cairnmind.agents.knowledge_mode import text_matches
+from cairnmind.config import Settings
+from cairnmind.memory import memory_egress
+from cairnmind.service import create_app
+from cairnmind.terminal.terminal_i18n_messages import AGENT_MESSAGES, ASK_MESSAGES
 
 HOSTED = {"provider": "openai", "base_url": "https://api.openai.com/v1"}
 LOCAL = {"provider": "ollama", "base_url": "http://127.0.0.1:11434"}

@@ -10,24 +10,23 @@ the heap is the one a person's engine has.
 import hashlib
 import json
 import os
-from pathlib import Path
 import random
 import time
+from pathlib import Path
 
 import pytest
-
-from cairnmind import process_identity
-from cairnmind.config import env_names
-from cairnmind.engine import stop_engine
-from cairnmind.store import Store
-
 from conftest import prepare_engine
+
+from cairnmind.config import env_names
+from cairnmind.pal import process_identity
+from cairnmind.storage.engine import stop_engine
+from cairnmind.store import Store
 
 SOURCES, CHUNKS = 550, 2942
 # The trial's size, and (#377) four times this repository's graph: 330,660 vertices and 412,830 edges ran the engine
 # out of memory when indexed in one transaction, and the index of nodes.id misses just-committed vertices on this engine.
 SIZES = [pytest.param(81488, 101428, id="this-repository"), pytest.param(330660, 412830, id="four-times-the-graph")]
-WORDS = "def class return import self value store graph node edge restore backup engine heap memory".split()
+WORDS = ["def", "class", "return", "import", "self", "value", "store", "graph", "node", "edge", "restore", "backup", "engine", "heap", "memory"]
 
 
 def _text(rng, length):
@@ -104,8 +103,9 @@ def _restore_through_a_slow_link(store, backup, engine, monkeypatch, NODES, EDGE
     """The same restore again, as a connect-only installation through a relay that delays each request by 20 ms (the
     trial's network: 18.5 ms). The trial's clients gave up with a read timeout on ONE request that the server was still
     working on; here no request of the restore comes near the client's wait, a commit included."""
-    from cairnmind import arcade
     from database_relay import Relay
+
+    from cairnmind.storage import arcade
     monkeypatch.delenv("CAIRNMIND_ARCADE_URL")
     monkeypatch.setenv("CAIRNMIND_ARCADE_DATABASE", store.settings.arcade_database)
     with Relay(int(engine.arcade_url.rsplit(":", 1)[1]), delay=0.02) as relay:
@@ -182,7 +182,7 @@ def test_a_store_the_size_of_this_repository_restores_on_the_default_heap(tmp_pa
         assert not store.query("SELECT FROM devbrain_meta WHERE name='restore_unfinished'")
         log = Path(engine.data_dir / "arcade" / "engine.log").read_text(errors="replace")
         assert "OutOfMemoryError" not in log and "critically low" not in log
-        if NODES == SIZES[0].values[0]:  # the slow link is measured at the trial's size only
+        if SIZES[0].values[0] == NODES:  # the slow link is measured at the trial's size only
             _restore_through_a_slow_link(store, backup, engine, monkeypatch, NODES, EDGES)
     finally:
         stop_engine(engine)

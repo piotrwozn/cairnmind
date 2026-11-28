@@ -55,7 +55,57 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
-      - run: uv run ruff check src tests
+      - run: uv run ruff check src tests hatch_build.py
+      - run: uv run pyright
+      - run: uv run pyright -p pyrightconfig.standard.json
+
+  ui-tests-and-wheel:
+    # Type-checks, tests, and builds the React Engineer Cockpit (`ui/`) and verifies the wheel bundles `cairnmind/ui_dist/`.
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - run: test "${{ needs.changes.result }}" = success
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: "ui/package-lock.json"
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Install, type-check, test, and build UI
+        working-directory: ui
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Run Playwright E2E against live cairnmind ui server
+        run: |
+          uv sync --locked --extra dev
+          cd ui
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+      - name: Build wheel with bundled ui_dist and verify contents
+        env:
+          CAIRNMIND_BUILD_UI: "1"
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/wheel-out"
+          uv run python - <<'PY'
+          from pathlib import Path
+          import zipfile, os
+          wheels = list(Path(os.environ["RUNNER_TEMP"], "wheel-out").glob("cairnmind-*.whl"))
+          assert len(wheels) == 1, f"Expected 1 wheel, found {wheels}"
+          with zipfile.ZipFile(wheels[0]) as zf:
+              names = set(zf.namelist())
+          assert "cairnmind/ui_dist/index.html" in names, "Missing cairnmind/ui_dist/index.html in wheel"
+          assert any(n.startswith("cairnmind/ui_dist/assets/") for n in names), "Missing UI assets in wheel"
+          print(f"Verified wheel {wheels[0].name} bundles cairnmind/ui_dist ({sum(n.startswith('cairnmind/ui_dist/') for n in names)} files).")
+          PY
 
   fast-tests:
     # Modules that need neither ArcadeDB/Java nor a real tmux server.
@@ -77,6 +127,59 @@ jobs:
           else
             uv run pytest -n 4 -m "not arcade and not tmux" -q
           fi
+
+  sqlite-tests:
+    # Dedicated SQLite backend CI: cross-cutting integration suites under CAIRNMIND_STORAGE_BACKEND=sqlite
+    # plus optional `cairnmind[vec]` (sqlite-vec vec0 ANN) and exact-cosine fallback verification.
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - run: test "${{ needs.changes.result }}" = success
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: SQLite core + cross-cutting integration suite (without vec extra)
+        env:
+          CAIRNMIND_STORAGE_BACKEND: sqlite
+        run: |
+          uv sync --locked --extra dev
+          uv run pytest tests/test_sqlite_vec_ann.py tests/test_phase4b_sqlite_try.py tests/test_phase5_scale_telemetry.py -q
+          uv run pytest tests/test_storage_contract.py -k "sqlite or temp_table" -q
+          uv run pytest -n 4 -q \
+            tests/test_brief.py \
+            tests/test_workflow.py \
+            tests/test_stages.py \
+            tests/test_memory_session_resume.py \
+            tests/test_published_memory_acts.py \
+            tests/test_published_memory_service.py \
+            tests/test_published_conflict_decision.py \
+            tests/test_project_clone_store.py \
+            tests/test_project_add_jobs.py \
+            tests/test_agent_reads.py \
+            tests/test_agent_write_guard.py \
+            tests/test_agent_own_extraction.py \
+            tests/test_extraction_input.py \
+            tests/test_extractor_stamp.py \
+            tests/test_context_selection.py \
+            tests/test_code_fingerprint.py \
+            tests/test_graph_parts.py \
+            tests/test_source_sensitivity.py \
+            tests/test_store_growth.py \
+            tests/test_quick_finding.py \
+            tests/test_acts_after_project_switch.py \
+            tests/test_reload_after_saved_act.py
+      - name: SQLite optional cairnmind[vec] (sqlite-vec vec0 ANN)
+        env:
+          CAIRNMIND_STORAGE_BACKEND: sqlite
+        run: |
+          uv sync --locked --extra dev --extra vec
+          uv run python -c "import sqlite_vec; print('sqlite_vec installed:', sqlite_vec.__file__)"
+          uv run pytest tests/test_sqlite_vec_ann.py -q
+          uv run pytest tests/test_storage_contract.py -k "sqlite or temp_table" -q
 
   eval-replay:
     # Deterministic VCR replay of evaluation suites without live Ollama/GPU (ADR-10).
@@ -152,7 +255,9 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
-      - run: uv run ruff check src tests
+      - run: uv run ruff check src tests hatch_build.py
+      - run: uv run pyright
+      - run: uv run pyright -p pyrightconfig.standard.json
       - name: Fast tier
         shell: pwsh
         timeout-minutes: 25
@@ -215,7 +320,7 @@ jobs:
           import os
           from pathlib import Path
           from cairnmind.config import Settings
-          from cairnmind.engine import install_engine
+          from cairnmind.storage.engine import install_engine
           settings = Settings.load(Path.home() / ".cache/devbrain-arcade", create=True)
           path = install_engine(settings)
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
@@ -274,7 +379,7 @@ jobs:
           import os
           from pathlib import Path
           from cairnmind.config import Settings
-          from cairnmind.engine import install_engine
+          from cairnmind.storage.engine import install_engine
           settings = Settings.load(Path.home() / ".cache/devbrain-arcade", create=True)
           path = install_engine(settings)
           with open(os.environ["GITHUB_ENV"], "a") as env:
@@ -336,7 +441,7 @@ jobs:
           import os
           from pathlib import Path
           from cairnmind.config import Settings
-          from cairnmind.engine import install_engine
+          from cairnmind.storage.engine import install_engine
           settings = Settings.load(Path.home() / ".cache/devbrain-arcade", create=True)
           path = install_engine(settings)
           with open(os.environ["GITHUB_ENV"], "a") as env:
@@ -537,7 +642,7 @@ jobs:
           import os
           from pathlib import Path
           from cairnmind.config import Settings
-          from cairnmind.engine import install_engine
+          from cairnmind.storage.engine import install_engine
           settings = Settings.load(Path.home() / ".cache/devbrain-arcade", create=True)
           path = install_engine(settings)
           with open(os.environ["GITHUB_ENV"], "a") as env:

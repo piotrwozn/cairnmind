@@ -2,28 +2,32 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import re
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
+from conftest import make_symlink_or_skip
+from consent_steps import form_ready
+from fastapi.testclient import TestClient
+from test_terminal_panels import settle
+from test_terminal_panels import setup as setup_panel
 from textual.widgets import Input, Static
 from typer.testing import CliRunner
 
-from cairnmind import cli, first_start, ingest, knowledge_mode, project_clone, project_removal
-from cairnmind.cockpit import create_cockpit_app
+from cairnmind import cli
+from cairnmind.agents import knowledge_mode
+from cairnmind.cli_cmds import first_start
 from cairnmind.config import Settings
-from cairnmind.store_writer import StoreNotWriter
-from cairnmind.terminal_commands import COMMANDS, CommandPaletteApp, dispatch_command
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_panels import SidebarApp
-from consent_steps import form_ready
-from conftest import make_symlink_or_skip
-from test_terminal_panels import settle, setup as setup_panel
-
+from cairnmind.memory import project_clone, project_removal
+from cairnmind.scip import ingest
+from cairnmind.storage.store_writer import StoreNotWriter
+from cairnmind.terminal.cockpit import create_cockpit_app
+from cairnmind.terminal.terminal_commands import COMMANDS, CommandPaletteApp, dispatch_command
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_panels import SidebarApp
 
 # --- Repository parsing and safety ----------------------------------------------------------------------------------
 
@@ -509,7 +513,7 @@ async def test_tui_clone_repository_form_validates_clones_and_hands_off_to_regis
 
 @pytest.mark.asyncio
 async def test_tui_clone_repository_hands_snapshot_to_existing_import_choice(tmp_path, monkeypatch):
-    from cairnmind.terminal_ui import ChoiceModal
+    from cairnmind.terminal.terminal_ui import ChoiceModal
     settings, broker, workspace = setup_panel(tmp_path, monkeypatch)
     parent = tmp_path / "src"
     parent.mkdir()
@@ -611,7 +615,7 @@ def test_clone_edge_cases_parser_auth_preflight_interactive_and_errors(tmp_path,
             return str(Path(root).expanduser().resolve(strict=False))
 
         def query(self, sql, params=None):
-            return [{"project_id": "p1"}] if params and params.get("path") == str(extra_root.resolve()) else []
+            return [{"project_id": "p1"}] if params and str(extra_root.resolve()) in params.values() else []
 
     qstore = QueryStore(tmp_path / "data", [{"id": "p1", "name": "one", "root": str(existing_root)}])
     with pytest.raises(ValueError, match="must not be empty"):
@@ -631,11 +635,13 @@ def test_clone_edge_cases_parser_auth_preflight_interactive_and_errors(tmp_path,
         which=lambda n: f"/usr/bin/{n}", runner=lambda argv, **k: subprocess.CompletedProcess(argv, 0, "", ""))
     assert ok["tool"] == "git" and "Cloning owner/demo" in buf.getvalue()
 
-    with (tmp_path / "stream.log").open("w+", encoding="utf-8") as handle:
-        with pytest.raises(project_clone.CloneError, match="its output is above"):
-            project_clone.clone_repository(
-                src, tmp_path / "i2", via="gh", interactive=True, status_out=handle,
-                which=lambda n: f"/usr/bin/{n}", runner=lambda argv, **k: subprocess.CompletedProcess(argv, 1, None, None))
+    with (
+        (tmp_path / "stream.log").open("w+", encoding="utf-8") as handle,
+        pytest.raises(project_clone.CloneError, match="its output is above"),
+    ):
+        project_clone.clone_repository(
+            src, tmp_path / "i2", via="gh", interactive=True, status_out=handle,
+            which=lambda n: f"/usr/bin/{n}", runner=lambda argv, **k: subprocess.CompletedProcess(argv, 1, None, None))
 
     # Auth hint when gh is NOT installed
     with pytest.raises(project_clone.CloneError, match="install and sign in to `gh`"):

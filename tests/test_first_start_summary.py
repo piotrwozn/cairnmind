@@ -3,7 +3,8 @@ import json
 
 import pytest
 
-from cairnmind import cli, doctor_attention, first_start
+from cairnmind import cli
+from cairnmind.cli_cmds import doctor_attention, first_start
 
 SUMMARY = doctor_attention.summary
 
@@ -25,7 +26,7 @@ def healthy(**changes):
 
 
 def test_a_healthy_deterministic_report_lists_required_then_optional_then_the_next_step(monkeypatch):
-    from cairnmind import platform_hints
+    from cairnmind.pal import platform_hints
     monkeypatch.setattr(platform_hints, "host_system", lambda *a, **k: "linux")
     lines = SUMMARY(healthy())
     assert lines[0] == "Memory is kept in /home/me/.local/share/cairnmind."
@@ -44,7 +45,7 @@ def test_a_healthy_deterministic_report_lists_required_then_optional_then_the_ne
 
 
 def test_a_missing_java_is_required_and_missing_and_the_next_step_is_to_fix_it(monkeypatch):
-    from cairnmind import platform_hints
+    from cairnmind.pal import platform_hints
     monkeypatch.setattr(platform_hints, "host_system", lambda *a, **k: "linux")
     broken = healthy(java={"on_path": False, "compatible": False},
                      arcadedb={"mode": "managed", "engine": "native", "available": False, "url": "http://x:1",
@@ -122,7 +123,7 @@ def test_where_things_run_is_the_topology_lines_and_a_server_that_is_down_names_
 
 
 def test_a_mac_names_its_chip_and_unified_memory_once_and_linux_says_what_it_said():
-    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal.terminal_i18n import tr
     mac = healthy(gpu={"chip": "Apple M3 Pro", "memory_gib": 18, "note": "Apple M3 Pro, 18 GiB unified memory shared "
                                                                          "with the models"})
     lines = SUMMARY(mac)
@@ -212,9 +213,12 @@ def test_the_installer_pipe_prints_the_same_summary(monkeypatch, capsys):
 
 @pytest.fixture
 def quiet(monkeypatch, tmp_path):
-    from cairnmind import api_runtime, database_credentials, engine, integrations, store_writer
     import httpx
+
+    from cairnmind.agents import api_runtime
     from cairnmind.config import Settings
+    from cairnmind.memory import integrations
+    from cairnmind.storage import database_credentials, engine, store_writer
     directory = tmp_path / "memory"
     directory.mkdir()
     (directory / "config.json").write_text(json.dumps({"port": 1, "arcade_url": "http://127.0.0.1:1"}))

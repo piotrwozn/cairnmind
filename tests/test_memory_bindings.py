@@ -2,19 +2,24 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
-from cairnmind.ingest import current_source, index_project
-from cairnmind.memory_paths import (MEMORY_RELATIVE, bound_metadata, is_memory_path,
-                                  is_reserved_memory, memory_bindings)
-from cairnmind.retrieval import Retriever
+from cairnmind.agents.retrieval import Retriever
+from cairnmind.memory.memory_paths import (
+    MEMORY_RELATIVE,
+    bound_metadata,
+    is_memory_path,
+    is_reserved_memory,
+    memory_bindings,
+)
+from cairnmind.memory.verification import capture_code_state, run_check, verification_status
+from cairnmind.scip.ingest import current_source, index_project
 from cairnmind.store import Store
-from cairnmind.verification import capture_code_state, run_check, verification_status
 
 
 def git(root, *args):
@@ -215,7 +220,7 @@ def test_imported_check_is_historical_even_with_matching_code(workspace, same_pa
 
 
 def test_return_import_preserves_original_local_file_authority(workspace, tmp_path):
-    from cairnmind.memory import MemoryManager
+    from cairnmind.memory.memory import MemoryManager
 
     store, project, root = workspace
     checks = root / ".devbrain" / "checks.toml"

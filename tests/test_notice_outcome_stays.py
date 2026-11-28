@@ -16,17 +16,17 @@ import pytest
 from consent_steps import consent_drawn
 from test_person_acts_consent import ACTS
 from test_terminal_panels import setup
+from test_workspace_setup_screen import without_the_poll
 from test_workspace_stage_scope import wait_until
-
 from textual.widgets import Button
 
-from cairnmind import terminal_ui
-from cairnmind.terminal_client import BrokerError
-from cairnmind.terminal_i18n import tr
-from cairnmind.terminal_i18n_messages import broker_error_text
-from cairnmind.terminal_inspector import InspectorApp
-from cairnmind.terminal_panels import SidebarApp
-from cairnmind.terminal_ui import BACKGROUND, OUTCOME_HOLD
+from cairnmind.terminal import terminal_ui
+from cairnmind.terminal.terminal_client import BrokerError
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_i18n_messages import broker_error_text
+from cairnmind.terminal.terminal_inspector import InspectorApp
+from cairnmind.terminal.terminal_panels import SidebarApp
+from cairnmind.terminal.terminal_ui import BACKGROUND, OUTCOME_HOLD
 
 DOWN = "refresh-is-down-marker"
 # act, language; the inspector acts get their refresh error from the journal, the first one also from a reload
@@ -69,6 +69,13 @@ def line(app):
 async def journal_down(*args, **kwargs):
     raise OSError(DOWN)
     yield
+
+
+@pytest.fixture(autouse=True)
+def only_the_tests_own_refreshes(monkeypatch):
+    """The sidebar's own 3 s refresh starts paused: these tests count what their own refreshes tell, and on a
+    slow run a tick of the panel's timer was counted with them (#459 had the same cause)."""
+    without_the_poll(monkeypatch)
 
 
 def refresh(app, how):
@@ -197,7 +204,7 @@ async def test_the_outcome_of_a_verdict_stays_too(tmp_path, monkeypatch, languag
 @pytest.mark.parametrize("panel", ["sidebar", "inspector"])
 async def test_a_key_releases_the_hold_and_a_second_outcome_replaces_the_first(tmp_path, monkeypatch, panel):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: "en")
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: "en")
     app = (SidebarApp if panel == "sidebar" else InspectorApp)(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 40)) as pilot:
         await app.workers.wait_for_complete()
@@ -372,7 +379,7 @@ async def test_the_workspace_poll_and_a_dying_refresh_worker_yield_too(tmp_path,
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_the_workspaces_own_unavailable_state_yields_to_the_outcome(tmp_path, monkeypatch, language, order):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     down = {"broker_available": False, "last_error": "The client service is unavailable; running sessions are kept."}
     async with app.run_test(size=(120, 40)):
@@ -483,8 +490,8 @@ async def test_the_sidebars_mcp_start_failure_is_told_once_and_shows_when_the_ho
 @pytest.mark.asyncio
 async def test_the_graphs_interrupted_connection_is_told_once_and_shows_when_the_hold_ends(tmp_path, monkeypatch):
     from cairnmind.config import Settings
-    from cairnmind.terminal_graph import GraphApp
-    from cairnmind.workspace_state import WorkspaceState
+    from cairnmind.terminal.terminal_graph import GraphApp
+    from cairnmind.terminal.workspace_state import WorkspaceState
     gate, down = asyncio.Event(), []
 
     class Broker:
@@ -507,8 +514,8 @@ async def test_the_graphs_interrupted_connection_is_told_once_and_shows_when_the
     workspace = WorkspaceState(settings, "outcome-graph")
     workspace.select_project({"id": "graph-project", "name": "Graph", "root": str(root)}, intent="inspect")
     workspace.update({"focus": "graph"})
-    monkeypatch.setattr("cairnmind.terminal_graph.tmux_visible", lambda *args: True)
-    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: "en")
+    monkeypatch.setattr("cairnmind.terminal.terminal_graph.tmux_visible", lambda *args: True)
+    monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: "en")
     now = [0.0]
     monkeypatch.setattr(terminal_ui, "_clock", lambda: now[0])
     app = GraphApp(settings, broker=Broker(), workspace=workspace, motion=False)
@@ -600,7 +607,7 @@ async def test_an_older_waiting_notice_is_not_shown_after_a_newer_background_not
 
 @pytest.mark.asyncio
 async def test_the_record_kinds_check_run_by_the_poll_yields_to_the_outcome(tmp_path, monkeypatch):
-    from cairnmind.terminal_record_kinds import _announce
+    from cairnmind.terminal.terminal_record_kinds import _announce
     settings, broker, workspace = setup(tmp_path, monkeypatch)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     now = [0.0]

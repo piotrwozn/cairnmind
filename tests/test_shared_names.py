@@ -12,13 +12,13 @@ import subprocess
 
 import pytest
 
-from cairnmind import memory as portable
-from cairnmind.agent_tools import ToolError, _parts
-from cairnmind.ingest import index_project
-from cairnmind.memory import MemoryManager, inspect_snapshot
-from cairnmind.memory_paths import is_reserved_memory, snapshot_directory
+from cairnmind.agents.agent_tools import ToolError, _parts
+from cairnmind.memory import memory as portable
+from cairnmind.memory.memory import MemoryManager, inspect_snapshot
+from cairnmind.memory.memory_paths import is_reserved_memory, snapshot_directory
+from cairnmind.memory.verification import capture_code_state, load_profiles
+from cairnmind.scip.ingest import index_project
 from cairnmind.store import Store
-from cairnmind.verification import capture_code_state, load_profiles
 
 
 def git(root, *args):
@@ -242,7 +242,7 @@ def test_status_reads_the_manifest_and_not_every_object(workspace, monkeypatch):
 
 
 def test_two_profile_files_are_named_as_the_reason_a_task_cannot_be_verified(workspace):
-    from cairnmind.verification import verification_status
+    from cairnmind.memory.verification import verification_status
 
     store, pid, root, manager = workspace
     checks(root, ".devbrain")

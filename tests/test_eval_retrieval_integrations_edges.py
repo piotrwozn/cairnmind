@@ -1,17 +1,18 @@
 """Fast-tier edge-case tests for evaluation.py, retrieval.py, and integrations.py."""
 from __future__ import annotations
 
-from dataclasses import replace
 import json
 import sys
+from dataclasses import replace
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
-from cairnmind import evaluation, integrations, retrieval
-from cairnmind.arcade import ArcadeError
+from cairnmind.agents import evaluation, retrieval
 from cairnmind.config import Settings
+from cairnmind.memory import integrations
+from cairnmind.storage.arcade import ArcadeError
 
 
 def test_evaluation_schema_measured_ollama_and_fixture_mcp_edges(tmp_path, monkeypatch):
@@ -40,7 +41,7 @@ def test_evaluation_schema_measured_ollama_and_fixture_mcp_edges(tmp_path, monke
         evaluation.fixture_mcp(settings.data_dir, session_id="s1")
 
     eval_settings = replace(settings, arcade_database="cairnmind_eval_test")
-    monkeypatch.setattr("cairnmind.evaluation.Settings.load", lambda d: eval_settings)
+    monkeypatch.setattr("cairnmind.agents.evaluation.Settings.load", lambda d: eval_settings)
 
     tools_by_name = {}
 
@@ -70,8 +71,8 @@ def test_evaluation_schema_measured_ollama_and_fixture_mcp_edges(tmp_path, monke
         require_ack=lambda sid: None,
     )
     monkeypatch.setattr("mcp.server.fastmcp.FastMCP", _FakeMCP)
-    monkeypatch.setattr("cairnmind.evaluation.Store", lambda d, settings=None: fake_store)
-    monkeypatch.setattr("cairnmind.sessions.SessionManager", lambda s, st: fake_sessions)
+    monkeypatch.setattr("cairnmind.agents.evaluation.Store", lambda d, settings=None: fake_store)
+    monkeypatch.setattr("cairnmind.memory.sessions.SessionManager", lambda s, st: fake_sessions)
 
     # First run with session_id=None to verify binding guards
     evaluation.fixture_mcp(settings.data_dir, session_id=None)
@@ -145,13 +146,13 @@ def test_retrieval_and_integrations_edge_branches(tmp_path, monkeypatch):
     # doctor with failing java probe, failing /api/ps, failing nvidia-smi
     settings = Settings.load(tmp_path / "data", create=True)
     monkeypatch.setattr(
-        "cairnmind.platform_hints.host_system",
+        "cairnmind.pal.platform_hints.host_system",
         lambda: "windows" if sys.platform == "win32" else "linux",
     )
-    monkeypatch.setattr("cairnmind.engine.resolve_java", lambda s: (_ for _ in ()).throw(ArcadeError("no java")))
-    monkeypatch.setattr("cairnmind.engine.managed_java_executable", lambda s: None)
-    monkeypatch.setattr("cairnmind.integrations.shutil.which", lambda name: "/usr/bin/nvidia-smi" if name == "nvidia-smi" else None)
-    monkeypatch.setattr("cairnmind.integrations.subprocess.run", lambda *a, **k: (_ for _ in ()).throw(OSError("exec err")))
+    monkeypatch.setattr("cairnmind.storage.engine.resolve_java", lambda s: (_ for _ in ()).throw(ArcadeError("no java")))
+    monkeypatch.setattr("cairnmind.storage.engine.managed_java_executable", lambda s: None)
+    monkeypatch.setattr("cairnmind.memory.integrations.shutil.which", lambda name: "/usr/bin/nvidia-smi" if name == "nvidia-smi" else None)
+    monkeypatch.setattr("cairnmind.memory.integrations.subprocess.run", lambda *a, **k: (_ for _ in ()).throw(OSError("exec err")))
 
     def handler(req: httpx.Request) -> httpx.Response:
         if req.url.path.endswith("/api/tags"):
@@ -162,9 +163,9 @@ def test_retrieval_and_integrations_edge_branches(tmp_path, monkeypatch):
 
     real_client = integrations.httpx.Client
     monkeypatch.setattr(integrations.httpx, "Client", lambda *a, **k: real_client(transport=httpx.MockTransport(handler)))
-    monkeypatch.setattr("cairnmind.database_credentials.doctor_block", lambda s: {"available": False})
-    monkeypatch.setattr("cairnmind.memory_models.doctor_models", lambda s, c: {"ok": True})
-    monkeypatch.setattr("cairnmind.scip_manager.scip_status", lambda s: {"mode": "off"})
+    monkeypatch.setattr("cairnmind.storage.database_credentials.doctor_block", lambda s: {"available": False})
+    monkeypatch.setattr("cairnmind.memory.memory_models.doctor_models", lambda s, c: {"ok": True})
+    monkeypatch.setattr("cairnmind.scip.scip_manager.scip_status", lambda s: {"mode": "off"})
     report = integrations.doctor(settings)
     assert report["java"]["compatible"] is False and report["ollama"]["available"] is True
     assert report["gpu"]["available"] is False and "error" in report["gpu"]

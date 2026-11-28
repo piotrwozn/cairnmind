@@ -4,19 +4,19 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
 import shlex
+import shutil
 import subprocess
 import sys
 from uuid import uuid4
 
 import pytest
-
-from cairnmind import client_auth, integrations
-from cairnmind.client_runtime import NativeRuntime
-from cairnmind.config import Settings
 from json_wait import read_json_when_complete
 
+from cairnmind.agents import client_auth
+from cairnmind.agents.client_runtime import NativeRuntime
+from cairnmind.config import Settings
+from cairnmind.memory import integrations
 
 FAKE = r'''
 import fcntl, json, os, signal, struct, sys, termios, tty
@@ -454,8 +454,8 @@ def test_explicit_resume_uses_scoped_native_id_and_new_verified_prompt(native,tm
 
 
 def test_generated_mcp_and_hook_commands_ignore_project_python_shadow(native,monkeypatch):
-    from pathlib import Path
     import tomllib
+    from pathlib import Path
     runtime,project,_=native
     root=Path(project['root'])
     marker=root/'shadow-executed'

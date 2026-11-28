@@ -2,24 +2,26 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import re
 import subprocess
+from pathlib import Path
 
 import pytest
+from test_store_readonly import BOOKKEEPING, changes, files, forbid_starting, record_requests
 from typer.testing import CliRunner
 
-from cairnmind import cli, setup_mark, upgrade_mark
-from cairnmind.code_decisions import get_decision_source, set_decision_source
-from cairnmind.evidence import evidence_states, orphans_report, unanchored
-from cairnmind.ingest import index_project
-from cairnmind.inspector import Inspector
-from cairnmind.journal import TABLE_TYPES
-from cairnmind.memory import MemoryManager
+from cairnmind import cli
+from cairnmind.cli_cmds import upgrade_mark
+from cairnmind.memory.code_decisions import get_decision_source, set_decision_source
+from cairnmind.memory.evidence import evidence_states, orphans_report, unanchored
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.scip.ingest import index_project
+from cairnmind.storage.journal import TABLE_TYPES
+from cairnmind.storage.store_readonly import ReadOnlyStoreError
+from cairnmind.storage.store_writer import StoreNotWriter
 from cairnmind.store import Store
-from cairnmind.store_readonly import ReadOnlyStoreError
-from cairnmind.store_writer import StoreNotWriter
-from test_store_readonly import BOOKKEEPING, changes, files, forbid_starting, record_requests
+from cairnmind.terminal import setup_mark
+from cairnmind.terminal.inspector import Inspector
 
 
 def git(root: Path, *args: str) -> str:
@@ -335,7 +337,7 @@ def test_code_decisions_respect_all_write_guards(tmp_path, monkeypatch):
                                                          "installation": "inst-1", "before_installation": "inst-1"}}},
     )
     try:
-        from cairnmind.restore_staged import RestoreUnfinished
+        from cairnmind.storage.restore_staged import RestoreUnfinished
         with pytest.raises(RestoreUnfinished):
             Store(store.data_dir)
         res = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "scan", "demo", "--diff", "HEAD"])
@@ -380,7 +382,7 @@ def test_cli_scan_diff_is_strictly_readonly_and_enforces_exit_codes(tmp_path, mo
     )
 
     before = files(store.data_dir)
-    for name in ("cairnmind.engine.start_engine", "cairnmind.engine.ensure_engine", "cairnmind.cli.ensure_service"):
+    for name in ("cairnmind.storage.engine.start_engine", "cairnmind.storage.engine.ensure_engine", "cairnmind.cli.ensure_service"):
         monkeypatch.setattr(name, lambda *a, **k: pytest.fail("scan started engine or service"))
     monkeypatch.setattr(Store, "__init__", lambda *a, **k: pytest.fail("scan opened writable Store"))
     sent = record_requests(monkeypatch)

@@ -4,12 +4,13 @@ Not collected (no test_ prefix). Never call settle() while a dialog is open: the
 """
 from __future__ import annotations
 
-from textual import _time as textual_time, events
+from textual import _time as textual_time
+from textual import events
 from textual.css.query import NoMatches
 from textual.widgets import Button
 
-from cairnmind.terminal_panels import ConfirmModal
-from cairnmind.terminal_ui import FormModal
+from cairnmind.terminal.terminal_panels import ConfirmModal
+from cairnmind.terminal.terminal_ui import FormModal
 
 
 async def consent_drawn(app, pilot, seconds=6.0):

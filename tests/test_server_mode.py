@@ -7,9 +7,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from cairnmind.arcade import ArcadeError
 from conftest import LEFT_OUT_ON_A_SERVER, created_as_root, left_out_reason, server_under_test
+
+from cairnmind.storage.arcade import ArcadeError
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
@@ -38,8 +38,9 @@ def test_server_mode_needs_the_address_and_the_password_file_together(monkeypatc
     monkeypatch.setenv("CAIRNMIND_TEST_ARCADE_SERVER_URL", "http://127.0.0.1:1")
     with pytest.raises(pytest.UsageError):
         server_under_test()
-    from cairnmind import private_files
     from conftest import make_world_readable
+
+    from cairnmind.pal import private_files
     secret = tmp_path / "root-password"
     secret.write_text("a-long-enough-secret\n", encoding="utf-8")
     private_files.make_private(secret)
@@ -51,7 +52,7 @@ def test_server_mode_needs_the_address_and_the_password_file_together(monkeypatc
 
 
 def test_the_default_ports_of_an_installation_are_never_a_server_of_the_tests(monkeypatch, tmp_path):
-    from cairnmind import private_files
+    from cairnmind.pal import private_files
     secret = tmp_path / "root-password"
     secret.write_text("a-long-enough-secret\n", encoding="utf-8")
     private_files.make_private(secret)

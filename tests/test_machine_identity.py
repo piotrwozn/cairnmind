@@ -5,13 +5,13 @@ No Mac runs these tests here: the Darwin path is selected by setting ``sys.platf
 """
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
-from cairnmind import store_writer
+from cairnmind.storage import store_writer
 
 UUID = "1A2B3C4D-5E6F-4A1B-8C2D-3E4F5A6B7C8D"
 

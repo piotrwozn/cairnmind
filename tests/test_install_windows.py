@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -73,7 +73,7 @@ def test_install_windows_upgrade_mark_path_agrees_with_python(tmp_path):
     assert res.returncode == 0, res.stderr
     ps_path = Path(res.stdout.strip())
     py = subprocess.run(
-        [sys.executable, "-c", "from cairnmind import upgrade_mark; print(upgrade_mark.mark_path())"],
+        [sys.executable, "-c", "from cairnmind.cli_cmds import upgrade_mark; print(upgrade_mark.mark_path())"],
         env=env, capture_output=True, text=True, timeout=30,
     )
     assert py.returncode == 0, py.stderr

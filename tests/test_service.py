@@ -9,10 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from fastapi.testclient import TestClient
 
+from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 from cairnmind.config import Settings
 from cairnmind.service import InferenceQueue, create_app
 from cairnmind.store import Store
-from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 
 
 class LocalModelFixture:
@@ -89,7 +89,7 @@ def test_private_endpoints_require_local_bearer(workspace):
 
 @pytest.mark.parametrize("expected_field", ["packet_id", "expected_packet_id"])
 def test_exact_startup_context_does_not_refresh_a_stale_packet(workspace, expected_field):
-    from cairnmind.sessions import SessionManager
+    from cairnmind.memory.sessions import SessionManager
 
     settings, store, project, root = workspace
     initial = SessionManager(store, settings).prepare(project["id"], "codex", timeout=0)
@@ -124,7 +124,7 @@ def test_exact_startup_context_does_not_refresh_a_stale_packet(workspace, expect
                                  {"packet_id": ""}, {"expected_packet_id": ""},
                                  {"packet_id": "one", "expected_packet_id": "another"}])
 def test_wrong_expected_context_identity_cannot_replace_current_packet(workspace, body):
-    from cairnmind.sessions import SessionManager
+    from cairnmind.memory.sessions import SessionManager
 
     settings, store, project, root = workspace
     manager = SessionManager(store, settings)
@@ -283,7 +283,7 @@ def test_a_cached_answer_of_a_local_run_is_not_served_to_a_hosted_run(workspace)
 
 
 def test_embedding_digest_rebuild_preserves_sources(workspace):
-    from cairnmind.ingest import index_project
+    from cairnmind.scip.ingest import index_project
     from cairnmind.service import schedule_embeddings
     settings, store, project, root = workspace
     index_project(store, project["id"])
@@ -306,7 +306,7 @@ def test_embedding_digest_rebuild_preserves_sources(workspace):
 
 
 def test_a_failed_embed_job_gets_a_fresh_job_on_repair_and_on_a_new_namespace(workspace):
-    from cairnmind.ingest import index_project
+    from cairnmind.scip.ingest import index_project
     from cairnmind.service import schedule_embeddings
     settings, store, project, root = workspace
     index_project(store, project["id"])
@@ -325,8 +325,8 @@ def test_a_failed_embed_job_gets_a_fresh_job_on_repair_and_on_a_new_namespace(wo
 @pytest.mark.asyncio
 async def test_jobs_of_the_earlier_embedding_key_embed_nothing_twice(workspace):
     """An installation upgraded from 0.12.0 may hold both keys per chunk: neither is lost, one embeds."""
-    from cairnmind.ingest import index_project
-    from cairnmind.retrieval import Retriever
+    from cairnmind.agents.retrieval import Retriever
+    from cairnmind.scip.ingest import index_project
     settings, store, project, root = workspace
     index_project(store, project["id"])
     chunk = store.query("SELECT id FROM chunks LIMIT 1")[0]["id"]

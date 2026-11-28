@@ -10,7 +10,7 @@ from cairnmind.cli import app
 
 
 def cockpit_stub(monkeypatch, calls):
-    module = ModuleType("cairnmind.cockpit")
+    module = ModuleType("cairnmind.terminal.cockpit")
 
     def status(settings):
         assert not (settings.data_dir / "config.json").exists()
@@ -24,7 +24,7 @@ def cockpit_stub(monkeypatch, calls):
 
     module.cockpit_status = status
     module.stop_cockpit = stop
-    monkeypatch.setitem(sys.modules, "cairnmind.cockpit", module)
+    monkeypatch.setitem(sys.modules, "cairnmind.terminal.cockpit", module)
 
 
 def test_browser_open_command_was_removed(tmp_path):

@@ -1,14 +1,14 @@
-"""Fast-tier edge-case and error-handling coverage tests for cairnmind.api_providers."""
+"""Fast-tier edge-case and error-handling coverage tests for cairnmind.agents.api_providers."""
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
+from contextlib import contextmanager
 
 import httpx
 import pytest
 
-from cairnmind import api_providers as ap
-from cairnmind.api_providers import ProviderError, make_provider
+from cairnmind.agents import api_providers as ap
+from cairnmind.agents.api_providers import ProviderError, make_provider
 
 
 @contextmanager
@@ -43,7 +43,7 @@ def _resp(chunks: list[bytes], *, status: int = 200, content_type: str = "text/e
 
 
 def _sse(obj) -> bytes:
-    return f"data: {json.dumps(obj)}\n\n".encode("utf-8")
+    return f"data: {json.dumps(obj)}\n\n".encode()
 
 
 def test_low_level_validators_and_usage_helpers(monkeypatch):

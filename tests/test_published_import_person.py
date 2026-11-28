@@ -8,17 +8,16 @@ from __future__ import annotations
 import re
 
 import pytest
-
-from cairnmind import person_proof
-from cairnmind.confirmation import REPLACED_CHANGED
-from cairnmind.inspector import Inspector
-from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
-from cairnmind.memory_published_import import PublishedImporter
-from cairnmind.store import Store
-
 from test_confirmed_by_person import fixture  # noqa: F401 (the fixture)
 from test_confirmed_elsewhere import rows
 from test_published_memory import commit, edited, folder_of, git, identify, reviewed
+
+from cairnmind.memory.confirmation import REPLACED_CHANGED
+from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
+from cairnmind.memory.memory_published_import import PublishedImporter
+from cairnmind.store import Store
+from cairnmind.terminal import person_proof
+from cairnmind.terminal.inspector import Inspector
 
 FULL_PATH = "The published memory folder must be given as a full path. Nothing was imported."
 

@@ -14,15 +14,26 @@ import time
 from pathlib import Path
 
 import pytest
-
-from cairnmind.agent import NAMES_TIMEOUT, KnowledgeAgent
-from cairnmind.repository_evaluation import load_questions
-from cairnmind.ollama import OllamaUnavailable
-from cairnmind.support import NAMES_SYSTEM
-from cairnmind.subject import (NAMES_GAP, SUBJECT_GAP, _matcher, found_names, inflecting, mentions, missing_subject,
-                               name_in, names_directory, subject_terms, unnamed_answer_names, unnamed_subject)
-
 from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401 - workspace is a fixture
+
+from cairnmind.agents.agent import NAMES_TIMEOUT, KnowledgeAgent
+from cairnmind.agents.ollama import OllamaUnavailable
+from cairnmind.agents.repository_evaluation import load_questions
+from cairnmind.agents.subject import (
+    NAMES_GAP,
+    SUBJECT_GAP,
+    _matcher,
+    found_names,
+    inflecting,
+    mentions,
+    missing_subject,
+    name_in,
+    names_directory,
+    subject_terms,
+    unnamed_answer_names,
+    unnamed_subject,
+)
+from cairnmind.agents.support import NAMES_SYSTEM
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 
@@ -303,8 +314,8 @@ async def test_a_question_asked_with_an_answer_schema_is_a_caller_s_instruction_
 
 
 def test_the_gap_of_a_refused_subject_is_translated_and_the_names_are_kept():
-    from cairnmind.terminal_i18n import tr
-    from cairnmind.terminal_i18n_messages import ASK_SUBJECT_PREFIX, fixed_message
+    from cairnmind.terminal.terminal_i18n import tr
+    from cairnmind.terminal.terminal_i18n_messages import ASK_SUBJECT_PREFIX, fixed_message
     assert ASK_SUBJECT_PREFIX == SUBJECT_GAP
     polish = fixed_message(SUBJECT_GAP + "Zookeeper, [bold]Consul", lambda text: tr(text, "pl"))
     assert polish == "Cytowane źródła nie wymieniają tego, czego dotyczy pytanie: Zookeeper, [bold]Consul"
@@ -312,8 +323,8 @@ def test_the_gap_of_a_refused_subject_is_translated_and_the_names_are_kept():
 
 
 def test_the_gaps_of_the_names_checks_are_translated_and_the_names_are_kept():
-    from cairnmind.terminal_i18n import tr
-    from cairnmind.terminal_i18n_messages import ASK_NAMES_PREFIX, fixed_message
+    from cairnmind.terminal.terminal_i18n import tr
+    from cairnmind.terminal.terminal_i18n_messages import ASK_NAMES_PREFIX, fixed_message
     assert ASK_NAMES_PREFIX == NAMES_GAP
     polish = fixed_message(NAMES_GAP + "nginx, [bold]Redis", lambda text: tr(text, "pl"))
     assert polish == "Cytowane źródła nie podają nazw, które podaje odpowiedź: nginx, [bold]Redis"
@@ -445,7 +456,7 @@ async def test_the_names_call_is_made_only_for_a_complete_answer_the_judge_accep
 async def test_the_names_an_answer_introduces_must_be_in_a_quote_or_a_path_once_the_check_is_on(
         workspace, monkeypatch):  # noqa: F811
     store, project, settings = workspace
-    monkeypatch.setattr("cairnmind.subject.CHECK_ANSWER_NAMES", True)
+    monkeypatch.setattr("cairnmind.agents.subject.CHECK_ANSWER_NAMES", True)
     for answer, status in (("The project uses Zookeeper on 8765.", "partial"), ("The port is 8765.", "complete")):
         result, model = await _asked(store, project, settings, "On which port does the local service listen by default?",
                                      answer=answer)
@@ -456,7 +467,7 @@ async def test_the_names_an_answer_introduces_must_be_in_a_quote_or_a_path_once_
             assert len(model.support_calls) == 1 and not model.names_calls
             assert result["diagnostics"]["support_check"] == "names_missing" and "8765" not in result["answer"]
     # The same answer with the check off (the default until the replay) is left to the two model calls.
-    monkeypatch.setattr("cairnmind.subject.CHECK_ANSWER_NAMES", False)
+    monkeypatch.setattr("cairnmind.agents.subject.CHECK_ANSWER_NAMES", False)
     result, _ = await _asked(store, project, settings, "On which port does the local service listen by default?",
                              answer="The project uses Zookeeper on 8765.")
     assert result["status"] == "complete"
@@ -496,9 +507,9 @@ def _repository_source(path, quote_pattern):
     ("Which Java version does Cairnmind need?", "docs/INSTALL.md", r"^\| Java \|", "Java 21"),
     ("Which Python version does this project require?", "pyproject.toml", r"^requires-python", "Python 3.12"),
     ("Which Python version does this project require?", "pyproject.toml", r"^requires-python", "python"),
-    ("How much Java heap does the database engine get?", "src/cairnmind/engine.py", r"-Xmx", "-Xmx"),
-    ("How much Java heap does the database engine get?", "src/cairnmind/engine.py", r"-Xmx", "Xmx1024m"),
-    ("How much Java heap does the database engine get?", "src/cairnmind/engine.py", r"-Xmx", "engine.py"),
+    ("How much Java heap does the database engine get?", "src/cairnmind/storage/engine.py", r"-Xmx", "-Xmx"),
+    ("How much Java heap does the database engine get?", "src/cairnmind/storage/engine.py", r"-Xmx", "Xmx1024m"),
+    ("How much Java heap does the database engine get?", "src/cairnmind/storage/engine.py", r"-Xmx", "engine.py"),
 ])
 def test_a_name_the_question_or_a_cited_source_has_is_found_as_the_model_wrote_it(question, path, pattern, name):
     source, evidence = _repository_source(path, pattern)

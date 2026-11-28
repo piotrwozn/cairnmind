@@ -3,24 +3,23 @@ from __future__ import annotations
 
 import asyncio
 import copy
-from contextlib import contextmanager
 import hashlib
 import json
 import time
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
-import cairnmind.agent as agent_module
-import cairnmind.ollama as ollama_module
-from cairnmind.agent import KnowledgeAgent
-from cairnmind.arcade import ArcadeError
+import cairnmind.agents.agent as agent_module
+import cairnmind.agents.ollama as ollama_module
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.agents.ollama import Ollama, OllamaUnavailable
 from cairnmind.config import Settings
-from cairnmind.memory_openai import OpenAICompatible
-from cairnmind.ollama import Ollama, OllamaUnavailable
-from cairnmind.store import Store, TASK_STATES
-
+from cairnmind.memory.memory_openai import OpenAICompatible
+from cairnmind.storage.arcade import ArcadeError
+from cairnmind.store import TASK_STATES, Store
 
 QUOTE = "Use auth.py for explicit authentication."
 

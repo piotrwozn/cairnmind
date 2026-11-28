@@ -6,14 +6,18 @@ from pathlib import Path
 
 import pytest
 
-from cairnmind import terminal_theme as theme
-from cairnmind.terminal_i18n import CATALOG, tr
+from cairnmind.terminal import terminal_theme as theme
+from cairnmind.terminal.terminal_i18n import CATALOG, tr
 
-SOURCE = Path(theme.__file__).parent
+SOURCE = Path(theme.__file__).parents[1]
 # Modules whose colours have moved to the theme. The list grows as panels are converted.
-THEMED = ["terminal_ui.py", "terminal_panels.py", "workspace.py", "api_worker.py", "terminal_inspector.py",
-          "terminal_impact.py", "terminal_detail.py", "terminal_commands.py", "workspace_finding.py",
-          "terminal_activity.py", "terminal_activity_data.py", "terminal_notice_feed.py", "workspace_activity.py"]
+THEMED = [
+    "terminal/terminal_ui.py", "terminal/terminal_panels.py", "terminal/workspace.py",
+    "agents/api_worker.py", "terminal/terminal_inspector.py", "terminal/terminal_impact.py",
+    "terminal/terminal_detail.py", "terminal/terminal_commands.py", "terminal/workspace_finding.py",
+    "terminal/terminal_activity.py", "terminal/terminal_activity_data.py",
+    "terminal/terminal_notice_feed.py", "terminal/workspace_activity.py",
+]
 # terminal_graph.py is not listed: its node colours are the graph's own data colours, not chrome.
 GREENS = {theme.TOKENS["ok"], f"colour{theme.XTERM['ok']}"}
 
@@ -117,9 +121,9 @@ BORDER_WORDS = {
 
 @pytest.mark.parametrize("language", ["en", "pl"])
 def test_tmux_pane_badge_is_green_only_for_ack(language):
-    from cairnmind.workspace import tmux_chrome
-    from cairnmind.terminal_bridge import CONTROL_STATES
-    from cairnmind.workspace_border import CONTROL_LABELS, MEMORY_LABELS, ROLE_LABELS
+    from cairnmind.terminal.terminal_bridge import CONTROL_STATES
+    from cairnmind.terminal.workspace import tmux_chrome
+    from cairnmind.terminal.workspace_border import CONTROL_LABELS, MEMORY_LABELS, ROLE_LABELS
     options = dict(tmux_chrome(language))
     border = options["pane-border-format"]
     ok, warn, danger = (f"colour{theme.TMUX[name]}" for name in ("ok", "warn", "danger"))
@@ -152,7 +156,7 @@ def test_tmux_pane_badge_is_green_only_for_ack(language):
 
 
 def test_status_rows_read_the_same_without_styles():
-    from cairnmind.workspace import workspace_status_lines
+    from cairnmind.terminal.workspace import workspace_status_lines
     cached = {"profiles": [{"id": "codex", "client": "codex"}],
               "auth": {"codex": {"auth": "reported_signed_in", "ready_to_launch": True}}}
     slot = {"run_id": "run-7f3a91c2", "client": "codex", "profile_id": "codex", "lifecycle": "running",
@@ -167,7 +171,7 @@ def test_status_rows_read_the_same_without_styles():
 
 
 def test_keyboard_help_keeps_its_text_when_the_keys_are_set_apart():
-    from cairnmind.terminal_commands import help_text
+    from cairnmind.terminal.terminal_commands import help_text
     value = "Ctrl+B, then n: save a finding (Ctrl+S: saves)\n\nNo keys on this line.\nGraph: [ / ] select"
     shown = help_text(value)
     assert shown.plain == value

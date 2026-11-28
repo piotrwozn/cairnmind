@@ -3,18 +3,17 @@ import gzip
 import hashlib
 import json
 import os
-from pathlib import Path
 import tracemalloc
+from pathlib import Path
 
 import pytest
-
-from cairnmind import backup_reader
-from cairnmind.backup_reader import opened_backup
-from cairnmind.restore_staged import RestoreFailed
-from cairnmind.sql import json_text
-from cairnmind.store import EXPORT_TYPES, RESTORE_TYPES, Store
-
 from conftest import as_person
+
+from cairnmind.storage import backup_reader
+from cairnmind.storage.backup_reader import opened_backup
+from cairnmind.storage.restore_staged import RestoreFailed
+from cairnmind.storage.sql import json_text
+from cairnmind.store import EXPORT_TYPES, RESTORE_TYPES, Store
 
 FIXTURE_0_10_0 = Path(__file__).parent / "fixtures" / "backup-0.10.0.cairnmind.json.gz"
 MEMORY_LIMIT = 12 * 2**20
@@ -260,9 +259,11 @@ def test_a_file_changed_between_the_two_checking_passes_says_it_changed(store, t
         return check_index(index, canonical)
 
     monkeypatch.setattr(backup_reader, "_check_index", swap_after_first_pass)
-    with pytest.raises(ValueError, match="^The backup file changed while it was being read"):
-        with opened_backup(path, lambda p: pytest.fail("a written backup is read as a stream"), RESTORE_TYPES):
-            pass
+    with (
+        pytest.raises(ValueError, match="^The backup file changed while it was being read"),
+        opened_backup(path, lambda p: pytest.fail("a written backup is read as a stream"), RESTORE_TYPES),
+    ):
+        pass
 
 
 def test_restore_that_fails_midway_changes_nothing(store, tmp_path, monkeypatch):

@@ -1,4 +1,9 @@
-import { ApiConflictError, ApiReadOnlyError, type CockpitApiAdapter } from '@/api/adapter';
+import {
+  ApiAuthError,
+  ApiConflictError,
+  ApiReadOnlyError,
+  type CockpitApiAdapter,
+} from '@/api/adapter';
 import type {
   AskRequest,
   AskResponse,
@@ -26,12 +31,38 @@ import type {
   VersionHistoryResponse,
 } from '@/types/contracts';
 
+export const UI_CSRF_COOKIE = 'cairnmind_ui_csrf';
+export const UI_CSRF_HEADER = 'X-Cairnmind-UI-Token';
+
 export interface HttpAdapterConfig {
-  /** Base API prefix. Defaults to `/api/ui`; can be set to `/api` for Rust manager backends. */
+  /** Base API prefix. Defaults to `/api/ui`. */
   apiBase?: string;
   /** Optional multi-project identifier; when `useProjectPathPrefix` is true, routes use `/projects/{projectId}/...`. */
   projectId?: string | null;
   useProjectPathPrefix?: boolean;
+}
+
+export function readCookie(name: string): string | null {
+  if (typeof document === 'undefined' || !document.cookie) {
+    return null;
+  }
+  const prefix = `${name}=`;
+  for (const part of document.cookie.split(';')) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(prefix)) {
+      const value = trimmed.slice(prefix.length);
+      try {
+        return decodeURIComponent(value);
+      } catch {
+        return value;
+      }
+    }
+  }
+  return null;
+}
+
+export function readCsrfToken(): string | null {
+  return readCookie(UI_CSRF_COOKIE);
 }
 
 async function parseJson<T>(response: Response): Promise<T> {
@@ -45,8 +76,11 @@ async function parseJson<T>(response: Response): Promise<T> {
 
     if (response.status === 409) {
       const candidate =
-        rawBody && typeof rawBody === 'object' && 'detail' in rawBody && typeof (rawBody as { detail: unknown }).detail === 'object'
-          ? ((rawBody as { detail: ConflictErrorDetail }).detail)
+        rawBody &&
+        typeof rawBody === 'object' &&
+        'detail' in rawBody &&
+        typeof (rawBody as { detail: unknown }).detail === 'object'
+          ? (rawBody as { detail: ConflictErrorDetail }).detail
           : (rawBody as ConflictErrorDetail | null);
       if (candidate && typeof candidate === 'object' && 'expected_version' in candidate) {
         throw new ApiConflictError(candidate);
@@ -54,7 +88,10 @@ async function parseJson<T>(response: Response): Promise<T> {
       throw new ApiConflictError({
         code: 'stale_plan_version',
         detail:
-          rawBody && typeof rawBody === 'object' && 'detail' in rawBody && typeof (rawBody as { detail: unknown }).detail === 'string'
+          rawBody &&
+          typeof rawBody === 'object' &&
+          'detail' in rawBody &&
+          typeof (rawBody as { detail: unknown }).detail === 'string'
             ? (rawBody as { detail: string }).detail
             : 'Version conflict (409)',
         entity_kind: 'plan',
@@ -66,9 +103,16 @@ async function parseJson<T>(response: Response): Promise<T> {
     }
 
     const detail =
-      rawBody && typeof rawBody === 'object' && 'detail' in rawBody && typeof (rawBody as { detail: unknown }).detail === 'string'
+      rawBody &&
+      typeof rawBody === 'object' &&
+      'detail' in rawBody &&
+      typeof (rawBody as { detail: unknown }).detail === 'string'
         ? (rawBody as { detail: string }).detail
         : `${response.status} ${response.statusText}`;
+
+    if (response.status === 401) {
+      throw new ApiAuthError(detail);
+    }
 
     if (response.status === 403) {
       throw new ApiReadOnlyError(detail);
@@ -89,6 +133,23 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
     this.apiBase = (config.apiBase ?? '/api/ui').replace(/\/+$/, '');
     this.projectId = config.projectId ?? null;
     this.useProjectPathPrefix = Boolean(config.useProjectPathPrefix && this.projectId);
+  }
+
+  private buildHeaders(
+    extra: Record<string, string> = {},
+    includeCsrf = false,
+  ): Record<string, string> {
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      ...extra,
+    };
+    if (includeCsrf) {
+      const token = readCsrfToken();
+      if (token) {
+        headers[UI_CSRF_HEADER] = token;
+      }
+    }
+    return headers;
   }
 
   buildEndpointUrl(
@@ -118,7 +179,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
 
   async fetchSnapshot(): Promise<UiSnapshot> {
     const res = await fetch(this.buildEndpointUrl('/snapshot'), {
-      headers: { Accept: 'application/json' },
+      headers: this.buildHeaders(),
+      credentials: 'same-origin',
       cache: 'no-store',
     });
     return parseJson<UiSnapshot>(res);
@@ -132,7 +194,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
     const res = await fetch(
       this.buildEndpointUrl('/file-context', { path, lineStart, lineEnd }),
       {
-        headers: { Accept: 'application/json' },
+        headers: this.buildHeaders({}, true),
+        credentials: 'same-origin',
         cache: 'no-store',
       },
     );
@@ -142,7 +205,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
   async triggerReverify(): Promise<ReverifyResponse> {
     const res = await fetch(this.buildEndpointUrl('/actions/reverify'), {
       method: 'POST',
-      headers: { Accept: 'application/json' },
+      headers: this.buildHeaders({}, true),
+      credentials: 'same-origin',
     });
     return parseJson<ReverifyResponse>(res);
   }
@@ -152,7 +216,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
       this.buildEndpointUrl(`/actions/sessions/${encodeURIComponent(sessionId)}/drop`),
       {
         method: 'POST',
-        headers: { Accept: 'application/json' },
+        headers: this.buildHeaders({}, true),
+        credentials: 'same-origin',
       },
     );
     return parseJson<DropSessionResponse>(res);
@@ -161,7 +226,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
   async ask(request: AskRequest, signal?: AbortSignal): Promise<AskResponse> {
     const res = await fetch(this.buildEndpointUrl('/ask'), {
       method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      headers: this.buildHeaders({ 'Content-Type': 'application/json' }, true),
+      credentials: 'same-origin',
       body: JSON.stringify(request),
       signal,
     });
@@ -178,7 +244,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
         page_size: query.page_size,
       }),
       {
-        headers: { Accept: 'application/json' },
+        headers: this.buildHeaders(),
+        credentials: 'same-origin',
         cache: 'no-store',
       },
     );
@@ -193,7 +260,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
       this.buildEndpointUrl(`/detected-decisions/${encodeURIComponent(decisionId)}/decide`),
       {
         method: 'POST',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        headers: this.buildHeaders({ 'Content-Type': 'application/json' }, true),
+        credentials: 'same-origin',
         body: JSON.stringify({ action }),
       },
     );
@@ -205,7 +273,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
   ): Promise<{ ok: boolean; plan: PlanSummary; state_rev: number }> {
     const res = await fetch(this.buildEndpointUrl('/plans'), {
       method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      headers: this.buildHeaders({ 'Content-Type': 'application/json' }, true),
+      credentials: 'same-origin',
       body: JSON.stringify(input),
     });
     return parseJson<{ ok: boolean; plan: PlanSummary; state_rev: number }>(res);
@@ -217,7 +286,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
   ): Promise<{ ok: boolean; plan: PlanSummary; state_rev: number }> {
     const res = await fetch(this.buildEndpointUrl(`/plans/${encodeURIComponent(planId)}`), {
       method: 'PATCH',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      headers: this.buildHeaders({ 'Content-Type': 'application/json' }, true),
+      credentials: 'same-origin',
       body: JSON.stringify(input),
     });
     return parseJson<{ ok: boolean; plan: PlanSummary; state_rev: number }>(res);
@@ -232,7 +302,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
       this.buildEndpointUrl(`/plans/${encodeURIComponent(planId)}/promote`),
       {
         method: 'POST',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        headers: this.buildHeaders({ 'Content-Type': 'application/json' }, true),
+        credentials: 'same-origin',
         body: JSON.stringify({ expected_version: expectedVersion, force }),
       },
     );
@@ -244,7 +315,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
   ): Promise<{ ok: boolean; task: PlanTask; state_rev: number }> {
     const res = await fetch(this.buildEndpointUrl('/tasks'), {
       method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      headers: this.buildHeaders({ 'Content-Type': 'application/json' }, true),
+      credentials: 'same-origin',
       body: JSON.stringify(input),
     });
     return parseJson<{ ok: boolean; task: PlanTask; state_rev: number }>(res);
@@ -255,7 +327,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
   ): Promise<{ ok: boolean; claim: EvidenceClaim; state_rev: number }> {
     const res = await fetch(this.buildEndpointUrl('/facts'), {
       method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      headers: this.buildHeaders({ 'Content-Type': 'application/json' }, true),
+      credentials: 'same-origin',
       body: JSON.stringify(input),
     });
     return parseJson<{ ok: boolean; claim: EvidenceClaim; state_rev: number }>(res);
@@ -273,7 +346,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
         to_version: toVersion,
       }),
       {
-        headers: { Accept: 'application/json' },
+        headers: this.buildHeaders(),
+        credentials: 'same-origin',
         cache: 'no-store',
       },
     );
@@ -292,7 +366,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
       ),
       {
         method: 'POST',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        headers: this.buildHeaders({ 'Content-Type': 'application/json' }, true),
+        credentials: 'same-origin',
         body: JSON.stringify({ source_version: sourceVersion, title_suffix: titleSuffix }),
       },
     );
@@ -302,14 +377,16 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
   async triggerReindex(): Promise<ReindexResponse> {
     const res = await fetch(this.buildEndpointUrl('/actions/reindex'), {
       method: 'POST',
-      headers: { Accept: 'application/json' },
+      headers: this.buildHeaders({}, true),
+      credentials: 'same-origin',
     });
     return parseJson<ReindexResponse>(res);
   }
 
   async fetchDoctor(): Promise<DoctorResponse> {
     const res = await fetch(this.buildEndpointUrl('/doctor'), {
-      headers: { Accept: 'application/json' },
+      headers: this.buildHeaders(),
+      credentials: 'same-origin',
       cache: 'no-store',
     });
     return parseJson<DoctorResponse>(res);
@@ -318,7 +395,8 @@ export class HttpCockpitAdapter implements CockpitApiAdapter {
   async exportTeamSnapshot(preview = false): Promise<ExportSnapshotResponse> {
     const res = await fetch(this.buildEndpointUrl('/actions/export-snapshot'), {
       method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      headers: this.buildHeaders({ 'Content-Type': 'application/json' }, true),
+      credentials: 'same-origin',
       body: JSON.stringify({ mode: 'team', preview }),
     });
     return parseJson<ExportSnapshotResponse>(res);

@@ -8,31 +8,30 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
 import shutil
 import socket
 import subprocess
 import threading
 import time
+from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 import pytest
 import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from websockets.sync.client import connect
 
 from cairnmind import __version__
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.api_credentials import CredentialStore
-from cairnmind.api_runtime import RuntimeSupervisor
-from cairnmind.cockpit import _birth, create_cockpit_app, instance_id
-from cairnmind.cockpit_state import CockpitState, _atomic
+from cairnmind.agents.agent_journal import AgentJournal
+from cairnmind.agents.api_credentials import CredentialStore
+from cairnmind.agents.api_runtime import RuntimeSupervisor
 from cairnmind.config import Settings
 from cairnmind.service import create_app
 from cairnmind.store import Store
-
+from cairnmind.terminal.cockpit import _birth, create_cockpit_app, instance_id
+from cairnmind.terminal.cockpit_state import CockpitState, _atomic
 
 CANARY = "E2E070_PRIVATE_PROFILE_KEY_MUST_NOT_ENTER_HISTORY"
 

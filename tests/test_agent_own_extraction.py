@@ -10,19 +10,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
-from cairnmind import memory as portable
-from cairnmind.agent import KnowledgeAgent
-from cairnmind.agent_journal import AgentJournal
-from cairnmind.memory import MemoryManager
-from cairnmind.sessions import SessionManager
-from cairnmind.inspector import Inspector
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.agents.agent_journal import AgentJournal
+from cairnmind.memory import memory as portable
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import EXTRACTION_MARK, Store
+from cairnmind.terminal.inspector import Inspector
 
 PROMPT = ("In inventory.txt change only line 250. We decided that inventory.txt stays sorted by item name, "
           "and the file must keep exactly 400 lines.")
