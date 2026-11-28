@@ -3,6 +3,7 @@ sends it for a person's POST only, and the broker passes it on. Nothing here is 
 from __future__ import annotations
 
 import json
+import sys
 
 from fastapi.testclient import TestClient
 import httpx
@@ -15,6 +16,8 @@ from cairnmind.terminal_client import BrokerClient
 from cairnmind.workspace import WorkspaceManager
 from test_cockpit_server import ORIGIN, Runtime, login
 from test_person_proof import KEY, fake_tmux, workspace_socket  # noqa: F401 (the fixture)
+
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX tmux person-key delivery")
 
 SOCKET = "/tmp/cairnmind-ui-1-x/tmux.sock"
 

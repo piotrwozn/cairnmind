@@ -154,8 +154,8 @@ def test_the_service_of_a_machine_without_the_folder_changes_nothing_of_the_proj
 
 @pytest.mark.parametrize("state", ["missing", "unreadable"])
 def test_a_missing_or_unreadable_root_changes_nothing_and_is_named(tmp_path, state):
-    if state == "unreadable" and os.geteuid() == 0:
-        pytest.skip("root reads every folder")
+    if state == "unreadable" and (not hasattr(os, "geteuid") or os.geteuid() == 0):
+        pytest.skip("requires POSIX chmod(0) enforcement")
     store, pid, root, record = indexed(tmp_path)
     before = counts(store, pid, [record])
     if state == "missing":
@@ -179,8 +179,8 @@ def test_a_missing_or_unreadable_root_changes_nothing_and_is_named(tmp_path, sta
 
 
 def test_a_subfolder_that_cannot_be_listed_keeps_its_files_in_the_graph(tmp_path):
-    if os.geteuid() == 0:
-        pytest.skip("root lists every folder")
+    if not hasattr(os, "geteuid") or os.geteuid() == 0:
+        pytest.skip("requires POSIX chmod(0) enforcement")
     store, pid, root, record = indexed(tmp_path)
     before = counts(store, pid, [record])
     (root / "pkg").chmod(0)
@@ -417,7 +417,7 @@ def test_a_folder_without_a_machine_is_stamped_by_its_first_complete_index_here(
     index_project(store, pid)  # the folder is not here: not claimed
     assert stamped(store, pid) == [(None, None)]
     away.rename(root)
-    if os.geteuid() != 0:
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
         (root / "pkg").chmod(0)
         try:
             index_project(store, pid)  # a walk that could not list everything is not complete: not claimed
@@ -551,8 +551,8 @@ def test_an_acknowledgement_holds_while_another_machine_scans_the_project(tmp_pa
 
 @pytest.mark.parametrize("state", ["elsewhere", "unreadable"])
 def test_a_folder_reached_through_a_symlink_keeps_its_sources_when_it_is_away(tmp_path, monkeypatch, state):
-    if state == "unreadable" and os.geteuid() == 0:
-        pytest.skip("root reads every folder")
+    if state == "unreadable" and (not hasattr(os, "geteuid") or os.geteuid() == 0):
+        pytest.skip("requires POSIX chmod(0) enforcement")
     store, pid, root, record = indexed(tmp_path)
     before = counts(store, pid, [record])
     real = tmp_path / "mac.real"
@@ -580,7 +580,7 @@ def test_project_add_of_a_folder_of_another_machine_names_it_and_fails(tmp_path,
     monkeypatch.setattr(cli, "store_for", lambda settings: store)
     added = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "project", "add", "cairnmind", str(root)])
     assert added.exit_code == 1
-    assert "belongs to" in added.output and str(root) in added.output and "checked again" not in added.output
+    assert "belongs to" in added.output and (str(root) in added.output or json.dumps(str(root)) in added.output) and "checked again" not in added.output
     monkeypatch.setattr(cli, "_stdout_is_terminal", lambda: True)  # the sentences a person reads, not the JSON
     added = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "project", "add", "cairnmind", str(root)])
     assert added.exit_code == 1 and "belongs to" in added.output and "checked again" not in added.output

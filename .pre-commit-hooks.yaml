@@ -1,0 +1,7 @@
+- id: cairnmind-memory-audit
+  name: Cairnmind memory audit
+  description: Audit .memory/cairnmind/ and .memory/cairnmind-published/ for secrets, transcripts, uncommitted refs, and ignore violations.
+  entry: cairnmind memory audit
+  language: system
+  pass_filenames: false
+  files: (^|/)\.memory/(cairnmind|cairnmind-published|devbrain)/

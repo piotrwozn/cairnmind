@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import uuid
 
 import pytest
@@ -349,6 +350,7 @@ def test_a_revert_of_a_memory_merge_is_reported_and_passes(tmp_path):
 
 
 def test_a_linked_published_directory_in_a_commit_is_refused_not_read_as_empty(tmp_path):
+    from conftest import make_symlink_or_skip
     root = tmp_path / "repository"
     start = repository(root)
     elsewhere = root / "elsewhere"
@@ -356,7 +358,7 @@ def test_a_linked_published_directory_in_a_commit_is_refused_not_read_as_empty(t
         (elsewhere / path).parent.mkdir(parents=True, exist_ok=True)
         (elsewhere / path).write_bytes(data)
     (root / ".memory").mkdir()
-    os.symlink("../elsewhere", root / ".memory" / "cairnmind-published")
+    make_symlink_or_skip(root / ".memory" / "cairnmind-published", Path("../elsewhere"))
     git(root, "add", "-A", ".")
     git(root, "commit", "-qm", "A linked directory")
     commit, files, errors = published_files(root, "HEAD")
@@ -419,6 +421,7 @@ def run_comment_script(tmp_path, body, ids=""):
     return result, log.read_text().splitlines()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX bash script scripts/memory_pr_comment.sh")
 def test_the_comment_is_posted_once_then_updated_and_never_posted_for_no_memory(tmp_path):
     changed = render_markdown(compare({}, files_of([record("decision", "Use cookies.", "auth")])), "1" * 40, "2" * 40)
     unchanged = render_markdown(compare({}, {}), "1" * 40, "2" * 40)

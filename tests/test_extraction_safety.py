@@ -571,8 +571,8 @@ def slow_model(elapsed, call_seconds):
 
 
 def fake_clock(monkeypatch):
-    real_monotonic, elapsed = time.monotonic, [0.0]
-    monkeypatch.setattr(agent_module, "time", SimpleNamespace(monotonic=lambda: real_monotonic() + elapsed[0]))
+    base, elapsed = time.monotonic(), [0.0]
+    monkeypatch.setattr(agent_module, "time", SimpleNamespace(monotonic=lambda: base + elapsed[0]))
     return elapsed
 
 

@@ -97,10 +97,11 @@ def test_preferences_v1_read_is_nonmutating_and_migration_has_exact_backup(tmp_p
     state = CockpitState(settings)
     assert state.load()["version"] == 2
     assert not settings.data_dir.exists()
-    state.root.mkdir(parents=True, mode=0o700)
+    from cairnmind import private_files
+    private_files.ensure_private_dir(state.root)
     original = b'{"version":1,"profiles":[{"id":"codex","client":"codex","label":"Code"},{"id":"claude","client":"claude","label":"Review"}]}\n'
     state.path.write_bytes(original)
-    state.path.chmod(0o600)
+    private_files.make_private(state.path)
     assert state.load()["version"] == 1
     assert state.path.read_bytes() == original
     assert not list(state.root.glob("*backup*"))
@@ -110,9 +111,10 @@ def test_preferences_v1_read_is_nonmutating_and_migration_has_exact_backup(tmp_p
     native = state.load()["profiles"]
     saved = state.update({"profiles": native + [api(), {"id": "local", "client": "api", "provider": "ollama",
                                                          "model": "qwen3.5:9b", "label": "Local"}]})
+    from conftest import assert_private
     backups = list(state.root.glob("preferences-v1-backup-*.json"))
     assert len(backups) == 1 and backups[0].read_bytes() == original
-    assert backups[0].stat().st_mode & 0o777 == 0o600
+    assert_private(backups[0])
     assert saved == state.load()
     assert saved["version"] == 2
     assert saved["profiles"][:2] == native
@@ -122,10 +124,12 @@ def test_preferences_v1_read_is_nonmutating_and_migration_has_exact_backup(tmp_p
 
 
 def test_preferences_reject_embedded_keys_on_read_without_rewriting(tmp_path):
+    from cairnmind import private_files
     state = CockpitState(Settings.load(tmp_path / "data"))
-    state.root.mkdir(parents=True, mode=0o700)
+    private_files.ensure_private_dir(state.root)
     raw = json.dumps({"version": 2, "profiles": [api(api_key="PRIVATE_KEY_MARKER")]}).encode()
     state.path.write_bytes(raw)
+    private_files.make_private(state.path)
     with pytest.raises(ValueError):
         state.load()
     assert state.path.read_bytes() == raw

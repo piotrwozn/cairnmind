@@ -1,0 +1,101 @@
+---
+---
+
+<figure class="glass-elevated p-5 sm:p-8 m-0">
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+    <div>
+      <p class="eyebrow">Honest System Architecture</p>
+      <h3 class="mt-1 text-lg sm:text-xl font-semibold">
+        One local service outside every coding assistant
+      </h3>
+    </div>
+    <span class="glass-pill">Zero in-process plugins · Local-first</span>
+  </div>
+
+  <div class="overflow-x-auto">
+    <svg
+      viewBox="0 0 980 444"
+      class="w-full min-w-[680px] h-auto block"
+      role="img"
+      aria-labelledby="arch-diagram-title arch-diagram-desc"
+    >
+      <title id="arch-diagram-title">Cairnmind Local Architecture Diagram</title>
+      <desc id="arch-diagram-desc">
+        Top row: Terminal Workspace (tmux + Textual or native Windows standalone) and Local Web Cockpit beside Coding Assistants (Codex CLI, Claude Code, Copilot SDK, API agents, and Direct MCP Mode for Cursor, VS Code, Windsurf, Zed, Cline, and Gemini CLI). Middle layer: Local Cairnmind Service enforcing Resume/ACK gate, OCC versioned plans, verbatim quote and subject/support/names checks, person confirmation key, secrets gate, and priority queue. Bottom layer: Optional Local or HTTPS Models (Ollama qwen3.5:9b and qwen3-embedding:0.6b, or deterministic-only mode) beside Multi-Language Code Graph (Tree-sitter + 9 SCIP indexers) and ArcadeDB 26.11.1 hybrid storage (or SQLite preview).
+      </desc>
+
+      <defs>
+        <marker id="cm-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--accent)" />
+        </marker>
+        <marker id="cm-arrow-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--warn)" />
+        </marker>
+      </defs>
+
+      <!-- Tier 1 Left: Workspaces & Person Boundary -->
+      <rect x="16" y="16" width="384" height="106" rx="12" fill="var(--glass-bg-subtle)" stroke="var(--warn-border)" stroke-width="1.25" />
+      <text x="34" y="42" fill="var(--warn)" font-family="var(--font-mono)" font-size="11" font-weight="600">HUMAN WORKSPACE · PERSON-CONFIRMED KEY</text>
+      <text x="34" y="66" fill="var(--text-strong)" font-family="var(--font-sans)" font-size="15" font-weight="600">Terminal Workspace &amp; Local Web Cockpit</text>
+      <text x="34" y="88" fill="var(--text-muted)" font-family="var(--font-mono)" font-size="10.8">tmux + Textual (POSIX) · Standalone (Windows)</text>
+      <text x="34" y="106" fill="var(--text-muted)" font-family="var(--font-mono)" font-size="10.8">cairnmind ui (:4310) · Only a person confirms</text>
+
+      <!-- Tier 1 Right: Coding Assistants -->
+      <rect x="424" y="16" width="540" height="106" rx="12" fill="var(--glass-bg-subtle)" stroke="var(--accent-border)" stroke-width="1.25" />
+      <text x="442" y="42" fill="var(--accent)" font-family="var(--font-mono)" font-size="11" font-weight="600">CODING ASSISTANTS &amp; DIRECT MCP CLIENTS</text>
+      <text x="442" y="66" fill="var(--text-strong)" font-family="var(--font-sans)" font-size="15" font-weight="600">Codex CLI · Claude Code · Copilot SDK · API Agents</text>
+      <text x="442" y="88" fill="var(--text-muted)" font-family="var(--font-mono)" font-size="10.8">Direct MCP: Cursor · VS Code · Windsurf · Zed · Cline · Gemini</text>
+      <text x="442" y="106" fill="var(--text-muted)" font-family="var(--font-mono)" font-size="10.8">Protocol: 8 MCP tools + CLI --json · Propose only, never confirm</text>
+
+      <!-- Arrows Tier 1 -> Tier 2 -->
+      <line x1="202" y1="122" x2="202" y2="162" stroke="var(--warn)" stroke-width="1.5" marker-end="url(#cm-arrow-warn)" />
+      <text x="212" y="147" fill="var(--warn)" font-family="var(--font-mono)" font-size="10.5">tmux / Named Pipe key</text>
+
+      <line x1="690" y1="122" x2="690" y2="162" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#cm-arrow)" />
+      <text x="700" y="147" fill="var(--accent)" font-family="var(--font-mono)" font-size="10.5">MCP stdio (resume / ACK / ask / plans)</text>
+
+      <!-- Tier 2: Local Cairnmind Service -->
+      <rect x="16" y="166" width="948" height="114" rx="14" fill="var(--bg-code)" stroke="var(--glass-border-hi)" stroke-width="1.4" />
+      <text x="34" y="191" fill="var(--ok)" font-family="var(--font-mono)" font-size="11" font-weight="600">LOCAL CAIRNMIND SERVICE (127.0.0.1:8765 · PRIORITY QUEUE · INDEPENDENT ARCHIVING)</text>
+
+      <!-- Four internal enforcement pills (generous width, zero text clipping!) -->
+      <rect x="34" y="206" width="218" height="58" rx="8" fill="var(--glass-bg-subtle)" stroke="var(--glass-border)" />
+      <text x="46" y="227" fill="var(--text-strong)" font-family="var(--font-sans)" font-size="12.5" font-weight="600">Quote &amp; Support Gate</text>
+      <text x="46" y="246" fill="var(--text-muted)" font-family="var(--font-mono)" font-size="10.2">Verbatim · Subject · Names · NLI</text>
+
+      <rect x="266" y="206" width="218" height="58" rx="8" fill="var(--glass-bg-subtle)" stroke="var(--glass-border)" />
+      <text x="278" y="227" fill="var(--text-strong)" font-family="var(--font-sans)" font-size="12.5" font-weight="600">Resume ACK &amp; OCC Plans</text>
+      <text x="278" y="246" fill="var(--text-muted)" font-family="var(--font-mono)" font-size="10.2">Packet v2 · state_hash · CAS</text>
+
+      <rect x="498" y="206" width="218" height="58" rx="8" fill="var(--glass-bg-subtle)" stroke="var(--glass-border)" />
+      <text x="510" y="227" fill="var(--text-strong)" font-family="var(--font-sans)" font-size="12.5" font-weight="600">Fingerprint Check Gates</text>
+      <text x="510" y="246" fill="var(--text-muted)" font-family="var(--font-mono)" font-size="10.2">checks.toml · pulse · CI scan</text>
+
+      <rect x="730" y="206" width="218" height="58" rx="8" fill="var(--glass-bg-subtle)" stroke="var(--glass-border)" />
+      <text x="742" y="227" fill="var(--text-strong)" font-family="var(--font-sans)" font-size="12.5" font-weight="600">Secrets &amp; Egress Gate</text>
+      <text x="742" y="246" fill="var(--text-muted)" font-family="var(--font-mono)" font-size="10.2">Masking · Egress · Git publish</text>
+
+      <!-- Arrows Tier 2 -> Tier 3 -->
+      <line x1="210" y1="280" x2="210" y2="318" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#cm-arrow)" />
+      <line x1="660" y1="280" x2="660" y2="318" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#cm-arrow)" />
+
+      <!-- Tier 3 Left: Optional Knowledge Models -->
+      <rect x="16" y="322" width="390" height="102" rx="12" fill="var(--glass-bg-subtle)" stroke="var(--glass-border-hi)" stroke-width="1.2" />
+      <text x="34" y="347" fill="var(--accent)" font-family="var(--font-mono)" font-size="11" font-weight="600">KNOWLEDGE MODELS (OPTIONAL)</text>
+      <text x="34" y="371" fill="var(--text-strong)" font-family="var(--font-sans)" font-size="14.5" font-weight="600">Ollama Local or HTTPS OpenAI-Compatible</text>
+      <text x="34" y="392" fill="var(--text-muted)" font-family="var(--font-mono)" font-size="10.8">Default: qwen3.5:9b (16k ctx) + qwen3-embedding:0.6b</text>
+      <text x="34" y="410" fill="var(--text-muted)" font-family="var(--font-mono)" font-size="10.8">No models? Deterministic-only mode works with 0 GPU</text>
+
+      <!-- Tier 3 Right: Code Graph & Storage -->
+      <rect x="424" y="322" width="540" height="102" rx="12" fill="var(--glass-bg-subtle)" stroke="var(--ok-border)" stroke-width="1.25" />
+      <text x="442" y="347" fill="var(--ok)" font-family="var(--font-mono)" font-size="11" font-weight="600">CODE GRAPH &amp; HYBRID STORAGE (SINGLE-WRITER LOCK)</text>
+      <text x="442" y="371" fill="var(--text-strong)" font-family="var(--font-sans)" font-size="14.5" font-weight="600">ArcadeDB 26.11.1 (Java 21 / Docker / Remote) · SQLite Preview</text>
+      <text x="442" y="392" fill="var(--text-muted)" font-family="var(--font-mono)" font-size="10.8">Tree-sitter (Py/JS/TS) + Auto SCIP (Go/Rust/Java/Kotlin/C/C++/C#/PHP/Ruby)</text>
+      <text x="442" y="410" fill="var(--text-muted)" font-family="var(--font-mono)" font-size="10.8">Hybrid BM25 + HNSW Vectors + GraphRAG · Checksummed .cairnmind.json.gz</text>
+    </svg>
+  </div>
+
+  <figcaption class="mt-4 text-xs font-mono text-[var(--text-dim)]">
+    Source: <a href="/docs/architecture/">docs/ARCHITECTURE.md</a> and <a href="/docs/contracts/">docs/CONTRACTS.md</a>. Direct MCP clients carry <code class="code-inline">origin_evidence: "degraded"</code> in JSON because the IDE session is not wrapped by Cairnmind’s launcher.
+  </figcaption>
+</figure>

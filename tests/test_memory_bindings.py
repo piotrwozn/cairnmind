@@ -28,7 +28,7 @@ def workspace(tmp_path):
     git(root, "init", "-q")
     git(root, "config", "user.name", "Memory fixture")
     git(root, "config", "user.email", "memory@example.invalid")
-    (root / "app.py").write_text("print('local checkout')\n")
+    (root / "app.py").write_text("print('local checkout')\n", encoding="utf-8", newline="\n")
     git(root, "add", ".")
     git(root, "commit", "-qm", "fixture")
     store = Store(tmp_path / "database")
@@ -182,7 +182,7 @@ def test_imported_file_is_historical_until_local_index(workspace, tmp_path, monk
     assert local["is_current"]
     assert local["content"] == "print('local checkout')\n"
     assert store.get_source(source["id"])["content"] == "foreign archived code"
-    (root / "app.py").write_text("print('changed after local indexing')\n")
+    (root / "app.py").write_text("print('changed after local indexing')\n", encoding="utf-8", newline="\n")
     refreshed = current_source(store, source["id"])
     assert refreshed["id"] != local["id"]
     assert refreshed["content"] == "print('changed after local indexing')\n"
@@ -248,7 +248,7 @@ def test_return_import_preserves_original_local_file_authority(workspace, tmp_pa
     assert current["id"] == original["id"]
     assert current["is_current"]
     assert not current.get("freshness_warning")
-    (root / "app.py").write_text("print('new local checkout')\n")
+    (root / "app.py").write_text("print('new local checkout')\n", encoding="utf-8", newline="\n")
     changed = current_source(store, original["id"])
     assert changed["id"] != original["id"]
     assert changed["is_current"]

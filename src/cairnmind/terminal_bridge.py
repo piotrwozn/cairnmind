@@ -9,14 +9,20 @@ import argparse
 import asyncio
 import base64
 from contextlib import contextmanager
-import fcntl
 import json
 import os
 import re
 import signal
 import subprocess
-import termios
-import tty
+
+try:
+    import fcntl
+    import termios
+    import tty
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
+    termios = None  # type: ignore[assignment]
+    tty = None  # type: ignore[assignment]
 
 from websockets.exceptions import WebSocketException
 

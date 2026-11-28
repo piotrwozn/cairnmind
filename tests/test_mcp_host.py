@@ -168,7 +168,12 @@ async def test_the_server_never_sees_the_worker_environment_or_the_worktree(tmp_
         # Set inside the server's own Python: LC_CTYPE by its locale coercion, __CF_USER_TEXT_ENCODING by macOS's
         # CoreFoundation in every process there, even one started with an empty environment.
         own = {"LC_CTYPE", *(["__CF_USER_TEXT_ENCODING"] if sys.platform == "darwin" else [])}
-        assert set(details["env"]) - own <= {"HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER", "LOG_LEVEL"}
+        allowed = set(mcp_host.INHERITED) | {"LOG_LEVEL"}
+        if sys.platform == "win32":
+            allowed = {name.upper() for name in allowed} | {"WINDIR", "SYSTEMDRIVE"}
+            assert {name.upper() for name in details["env"]} - own <= allowed
+        else:
+            assert set(details["env"]) - own <= allowed
         assert details["env"]["LOG_LEVEL"] == "quiet"
         assert not Path(details["cwd"]).is_relative_to(tmp_path / "worktree")
         workdir = details["cwd"]
@@ -185,9 +190,10 @@ async def test_close_leaves_no_process(tmp_path):
     assert all(alive(pid) for pid in pids)
     assert sorted(await host.close()) == ["files", "two"]
     assert not any(alive(pid) for pid in pids)
-    for pid in pids:
-        with pytest.raises(ProcessLookupError):
-            os.killpg(pid, 0)
+    if hasattr(os, "killpg"):
+        for pid in pids:
+            with pytest.raises(ProcessLookupError):
+                os.killpg(pid, 0)
 
 
 @pytest.mark.asyncio

@@ -32,8 +32,8 @@ def repository(root):
     git(root, "init", "-b", "main")
     git(root, "config", "user.email", "fixture@example.invalid")
     git(root, "config", "user.name", "Fixture")
-    (root / "errors.py").write_text(ORIGINAL)
-    (root / "app.py").write_text("VALUE = 1\n")
+    (root / "errors.py").write_text(ORIGINAL, encoding="utf-8", newline="\n")
+    (root / "app.py").write_text("VALUE = 1\n", encoding="utf-8", newline="\n")
     git(root, "add", ".")
     git(root, "commit", "-m", "initial")
     return root
@@ -94,7 +94,7 @@ def test_deleting_the_only_supporting_file_orphans_the_record_and_restoring_the_
     (root / "errors.py").write_text("# the mapping moved to another service\n")
     index_project(store, project["id"])
     assert state(store, project, record) == verdict("evidence_replaced", False, replaced=1)
-    (root / "errors.py").write_text(ORIGINAL)
+    (root / "errors.py").write_text(ORIGINAL, encoding="utf-8", newline="\n")
     index_project(store, project["id"])
     # The supporting version is current again, although it is a new snapshot row.
     assert state(store, project, record) == verdict("anchored", current=1)
@@ -134,7 +134,7 @@ def test_one_standing_source_anchors_a_record_and_the_others_are_counted(workspa
     (root / "app.py").write_text("VALUE = 2\n")
     index_project(store, project["id"])
     assert state(store, project, record) == verdict("evidence_replaced", replaced=1, gone=1)
-    (root / "app.py").write_text("VALUE = 1\n")
+    (root / "app.py").write_text("VALUE = 1\n", encoding="utf-8", newline="\n")
     index_project(store, project["id"])
     assert state(store, project, record) == verdict("anchored", current=1, gone=1)
 

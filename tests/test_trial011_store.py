@@ -1,6 +1,8 @@
 """Findings of the 0.11.0 release trial in the store and its upkeep (#238)."""
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from cairnmind.store import Store
@@ -24,8 +26,8 @@ def test_a_backup_into_a_folder_that_cannot_be_written_says_so_plainly(tmp_path,
         (tmp_path / "plain-file").write_text("")
         destination = tmp_path / "plain-file" / "dir" / "x.json.gz"
     else:
-        if os.geteuid() == 0:
-            pytest.skip("root writes into a read-only folder")
+        if not hasattr(os, "geteuid") or os.geteuid() == 0:
+            pytest.skip("requires POSIX chmod(0o500) enforcement")
         (tmp_path / "locked").mkdir(mode=0o500)
         destination = tmp_path / "locked" / "x.json.gz"
     with pytest.raises(ValueError) as refused:
@@ -54,7 +56,8 @@ def test_engine_log_is_private_whatever_the_umask(tmp_path, monkeypatch, existin
             engine.start_engine(settings)
     finally:
         os.umask(previous)
-    assert log.stat().st_mode & 0o777 == 0o600
+    from conftest import assert_private
+    assert_private(log)
 
 
 @pytest.mark.parametrize("name,value", [("engine_log_bytes", "2000"), ("engine_log_bytes", 0),
@@ -229,11 +232,14 @@ def test_rotated_engine_log_copies_are_private_too(tmp_path):
     target.write_bytes(b"not a log")
     target.chmod(0o644)
     (tmp_path / "engine.log.2").symlink_to(target)
+    from conftest import assert_private
     assert engine.rotate_log(log, 100, 3)
     for name in ("engine.log.1", "engine.log.2"):
-        assert (tmp_path / name).stat().st_mode & 0o777 == 0o600, name
+        assert_private(tmp_path / name)
     # A link is moved as it is: neither followed nor its target's mode changed.
-    assert (tmp_path / "engine.log.3").is_symlink() and target.stat().st_mode & 0o777 == 0o644
+    assert (tmp_path / "engine.log.3").is_symlink()
+    if sys.platform != "win32":
+        assert target.stat().st_mode & 0o777 == 0o644
     assert not os.path.lexists(log)
 
 
@@ -250,9 +256,14 @@ def test_a_log_or_copy_the_owner_cannot_open_or_chmod_is_still_rotated(tmp_path,
         log.chmod(0o200)
         (tmp_path / "engine.log.1").chmod(0o000)
     else:
-        def refuse(fd, mode):
+        def refuse(*args, **kwargs):
             raise PermissionError(1, "Operation not permitted")
-        monkeypatch.setattr(engine.os, "fchmod", refuse)
+        if hasattr(engine.os, "fchmod"):
+            monkeypatch.setattr(engine.os, "fchmod", refuse)
+        else:
+            from cairnmind import private_files
+            monkeypatch.setattr(private_files, "make_private_fd", refuse)
+            monkeypatch.setattr(private_files, "make_private", refuse)
     try:
         assert engine.rotate_log(log, 100, 3)
     finally:

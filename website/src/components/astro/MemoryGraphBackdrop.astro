@@ -1,0 +1,285 @@
+---
+---
+
+<!--
+  Cairnmind-inside-Cairnmind Hero Memory Graph (Calm, Hero-Scoped, Zero Text Collisions)
+  - Lives strictly behind the Hero band (never bleeds behind lower sections, tables, or footer)
+  - Whisper-quiet opacity (~0.24), zero permanent labels overlapping prose (labels appear softly ONLY near cursor!)
+  - Automatically pauses via IntersectionObserver when scrolled out of Hero viewport and under prefers-reduced-motion
+-->
+<div class="cm-hero-graph-wrap" aria-hidden="true" data-cm-hero-graph>
+  <canvas id="cm-memory-graph-canvas" class="cm-hero-graph-canvas"></canvas>
+  <div class="cm-hero-graph-fade"></div>
+</div>
+
+<script>
+  (() => {
+    const wrap = document.querySelector<HTMLElement>('[data-cm-hero-graph]');
+    const canvas = document.getElementById('cm-memory-graph-canvas') as HTMLCanvasElement | null;
+    if (!wrap || !canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    type NodeKind = 'code' | 'decision' | 'verified' | 'mcp';
+
+    interface GraphNode {
+      id: string;
+      label: string;
+      kind: NodeKind;
+      ax: number;
+      ay: number;
+      x: number;
+      y: number;
+      phase: number;
+      ampX: number;
+      ampY: number;
+      speed: number;
+      radius: number;
+    }
+
+    const RAW_NODES: Omit<GraphNode, 'x' | 'y'>[] = [
+      { id: 'sessions', label: 'sessions.py', kind: 'code', ax: 0.06, ay: 0.14, phase: 0.2, ampX: 12, ampY: 10, speed: 0.00024, radius: 3.6 },
+      { id: 'mcp', label: 'mcp_server.py', kind: 'mcp', ax: 0.24, ay: 0.09, phase: 1.1, ampX: 10, ampY: 10, speed: 0.00021, radius: 3.8 },
+      { id: 'evidence', label: 'evidence.py', kind: 'code', ax: 0.48, ay: 0.11, phase: 2.3, ampX: 12, ampY: 9, speed: 0.00023, radius: 3.8 },
+      { id: 'adr_person', label: 'ADR · Human key', kind: 'decision', ax: 0.72, ay: 0.10, phase: 3.0, ampX: 11, ampY: 11, speed: 0.00020, radius: 4.0 },
+      { id: 'person_proof', label: 'person_proof.py', kind: 'code', ax: 0.92, ay: 0.19, phase: 4.1, ampX: 10, ampY: 12, speed: 0.00022, radius: 3.5 },
+
+      { id: 'verification', label: 'verification.py', kind: 'verified', ax: 0.05, ay: 0.48, phase: 0.9, ampX: 11, ampY: 11, speed: 0.00020, radius: 4.0 },
+      { id: 'plans', label: 'plans.py', kind: 'code', ax: 0.34, ay: 0.36, phase: 2.0, ampX: 12, ampY: 10, speed: 0.00023, radius: 3.6 },
+      { id: 'code_graph', label: 'code_graph.py', kind: 'code', ax: 0.56, ay: 0.44, phase: 3.4, ampX: 12, ampY: 10, speed: 0.00019, radius: 4.2 },
+      { id: 'scip', label: 'scip_ingest.py', kind: 'mcp', ax: 0.79, ay: 0.38, phase: 4.7, ampX: 11, ampY: 10, speed: 0.00022, radius: 3.8 },
+      { id: 'quote_heal', label: 'quote_healing.py', kind: 'verified', ax: 0.94, ay: 0.56, phase: 5.4, ampX: 10, ampY: 10, speed: 0.00021, radius: 3.6 },
+
+      { id: 'pulse', label: 'pulse.py', kind: 'verified', ax: 0.09, ay: 0.80, phase: 1.7, ampX: 12, ampY: 10, speed: 0.00023, radius: 3.8 },
+      { id: 'store', label: 'store.py', kind: 'code', ax: 0.32, ay: 0.84, phase: 2.9, ampX: 11, ampY: 10, speed: 0.00020, radius: 4.0 },
+      { id: 'contract', label: 'STABLE_CONTRACT.md', kind: 'decision', ax: 0.56, ay: 0.82, phase: 4.0, ampX: 11, ampY: 9, speed: 0.00022, radius: 3.8 },
+      { id: 'pub_mem', label: 'memory_published.py', kind: 'code', ax: 0.80, ay: 0.84, phase: 5.1, ampX: 11, ampY: 10, speed: 0.00020, radius: 3.6 },
+      { id: 'checks', label: 'checks.toml', kind: 'verified', ax: 0.95, ay: 0.86, phase: 0.5, ampX: 9, ampY: 9, speed: 0.00021, radius: 3.5 },
+    ];
+
+    const IDX = Object.fromEntries(RAW_NODES.map((n, i) => [n.id, i]));
+    const EDGES = [
+      [IDX.sessions, IDX.mcp],
+      [IDX.sessions, IDX.plans],
+      [IDX.mcp, IDX.evidence],
+      [IDX.evidence, IDX.code_graph],
+      [IDX.evidence, IDX.quote_heal],
+      [IDX.adr_person, IDX.person_proof],
+      [IDX.adr_person, IDX.mcp],
+      [IDX.verification, IDX.plans],
+      [IDX.verification, IDX.pulse],
+      [IDX.plans, IDX.store],
+      [IDX.code_graph, IDX.scip],
+      [IDX.code_graph, IDX.store],
+      [IDX.scip, IDX.quote_heal],
+      [IDX.pulse, IDX.store],
+      [IDX.store, IDX.contract],
+      [IDX.contract, IDX.pub_mem],
+      [IDX.pub_mem, IDX.checks],
+      [IDX.person_proof, IDX.scip],
+      [IDX.quote_heal, IDX.checks],
+    ];
+
+    const nodes: GraphNode[] = RAW_NODES.map((n) => ({ ...n, x: 0, y: 0 }));
+    const pulses = [
+      { edgeIdx: 0, t: 0.1, speed: 0.00016 },
+      { edgeIdx: 3, t: 0.45, speed: 0.00014 },
+      { edgeIdx: 7, t: 0.25, speed: 0.00015 },
+      { edgeIdx: 11, t: 0.7, speed: 0.00013 },
+      { edgeIdx: 15, t: 0.55, speed: 0.00015 },
+    ];
+
+    let width = 0;
+    let height = 0;
+    let dpr = 1;
+    let pointerX = -9999;
+    let pointerY = -9999;
+    let userPaused = false;
+    let inViewport = true;
+    let rafId = 0;
+    let lastTime = performance.now();
+
+    const prefersReduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function isLightTheme(): boolean {
+      const attr = document.documentElement.getAttribute('data-theme');
+      if (attr === 'mineral') return true;
+      if (attr === 'obsidian') return false;
+      return window.matchMedia('(prefers-color-scheme: light)').matches;
+    }
+
+    function palette() {
+      if (isLightTheme()) {
+        return {
+          edge: 'rgba(27, 75, 124, 0.11)',
+          edgeHi: 'rgba(27, 75, 124, 0.28)',
+          labelHi: 'rgba(15, 23, 42, 0.68)',
+          code: 'rgba(27, 75, 124, 0.42)',
+          mcp: 'rgba(42, 100, 158, 0.40)',
+          decision: 'rgba(133, 86, 0, 0.42)',
+          verified: 'rgba(29, 107, 56, 0.45)',
+          pulse: 'rgba(27, 75, 124, 0.65)',
+        };
+      }
+      return {
+        edge: 'rgba(135, 175, 215, 0.09)',
+        edgeHi: 'rgba(169, 203, 233, 0.28)',
+        labelHi: 'rgba(226, 232, 240, 0.72)',
+        code: 'rgba(135, 175, 215, 0.42)',
+        mcp: 'rgba(169, 203, 233, 0.40)',
+        decision: 'rgba(240, 207, 135, 0.42)',
+        verified: 'rgba(143, 208, 138, 0.46)',
+        pulse: 'rgba(143, 208, 138, 0.72)',
+      };
+    }
+
+    function resize() {
+      const rect = wrap!.getBoundingClientRect();
+      width = Math.max(1, Math.round(rect.width));
+      height = Math.max(1, Math.round(rect.height));
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas!.width = Math.round(width * dpr);
+      canvas!.height = Math.round(height * dpr);
+      canvas!.style.width = `${width}px`;
+      canvas!.style.height = `${height}px`;
+      ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function drawFrame(now: number, dt: number) {
+      ctx!.clearRect(0, 0, width, height);
+      const pal = palette();
+      const compact = width < 768;
+
+      for (let i = 0; i < nodes.length; i += 1) {
+        const n = nodes[i];
+        const t = prefersReduced() || userPaused ? n.phase : now * n.speed + n.phase;
+        n.x = n.ax * width + Math.sin(t) * (compact ? n.ampX * 0.4 : n.ampX);
+        n.y = n.ay * height + Math.cos(t * 0.85) * (compact ? n.ampY * 0.4 : n.ampY);
+      }
+
+      ctx!.lineWidth = 1;
+      for (let i = 0; i < EDGES.length; i += 1) {
+        const [fi, ti] = EDGES[i];
+        const a = nodes[fi];
+        const b = nodes[ti];
+        const midX = (a.x + b.x) * 0.5;
+        const midY = (a.y + b.y) * 0.5;
+        const nearPtr = Math.hypot(midX - pointerX, midY - pointerY) < 150;
+        ctx!.strokeStyle = nearPtr ? pal.edgeHi : pal.edge;
+        ctx!.beginPath();
+        ctx!.moveTo(a.x, a.y);
+        ctx!.lineTo(b.x, b.y);
+        ctx!.stroke();
+      }
+
+      if (!prefersReduced() && !userPaused) {
+        for (let i = 0; i < pulses.length; i += 1) {
+          const p = pulses[i];
+          p.t += dt * p.speed;
+          if (p.t > 1) {
+            p.t = 0;
+            p.edgeIdx = (p.edgeIdx + 4) % EDGES.length;
+          }
+          const [fi, ti] = EDGES[p.edgeIdx];
+          const a = nodes[fi];
+          const b = nodes[ti];
+          const px = a.x + (b.x - a.x) * p.t;
+          const py = a.y + (b.y - a.y) * p.t;
+
+          ctx!.beginPath();
+          ctx!.arc(px, py, 2.0, 0, Math.PI * 2);
+          ctx!.fillStyle = pal.pulse;
+          ctx!.fill();
+        }
+      }
+
+      ctx!.font = '500 10px "JetBrains Mono Variable", ui-monospace, monospace';
+      ctx!.textBaseline = 'middle';
+
+      for (let i = 0; i < nodes.length; i += 1) {
+        const n = nodes[i];
+        const near = Math.hypot(n.x - pointerX, n.y - pointerY) < 125;
+        ctx!.beginPath();
+        ctx!.arc(n.x, n.y, near ? n.radius * 2.8 : n.radius * 1.9, 0, Math.PI * 2);
+        ctx!.fillStyle = near ? pal.edgeHi : pal.edge;
+        ctx!.fill();
+
+        ctx!.beginPath();
+        ctx!.arc(n.x, n.y, near ? n.radius * 1.2 : n.radius, 0, Math.PI * 2);
+        ctx!.fillStyle = pal[n.kind];
+        ctx!.fill();
+
+        // Only reveal node label softly near pointer (zero clutter over body copy!)
+        if (near && !compact) {
+          ctx!.fillStyle = pal.labelHi;
+          ctx!.fillText(n.label, n.x + n.radius + 7, n.y);
+        }
+      }
+    }
+
+    function tick(now: number) {
+      const dt = Math.min(now - lastTime, 64);
+      lastTime = now;
+      drawFrame(now, dt);
+      if (!prefersReduced() && !userPaused && !document.hidden && inViewport) {
+        rafId = window.requestAnimationFrame(tick);
+      } else {
+        rafId = 0;
+      }
+    }
+
+    function startOrDrawOnce() {
+      if (rafId) window.cancelAnimationFrame(rafId);
+      lastTime = performance.now();
+      if (prefersReduced() || userPaused || !inViewport) {
+        drawFrame(lastTime, 0);
+      } else {
+        rafId = window.requestAnimationFrame(tick);
+      }
+    }
+
+    resize();
+    startOrDrawOnce();
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        inViewport = Boolean(entries[0]?.isIntersecting);
+        if (inViewport) startOrDrawOnce();
+      },
+      { threshold: 0.01 }
+    );
+    io.observe(wrap);
+
+    window.addEventListener('resize', () => {
+      resize();
+      drawFrame(performance.now(), 0);
+    }, { passive: true });
+
+    window.addEventListener(
+      'pointermove',
+      (e) => {
+        if (!inViewport) return;
+        const rect = wrap.getBoundingClientRect();
+        pointerX = e.clientX - rect.left;
+        pointerY = e.clientY - rect.top;
+        if (prefersReduced() || userPaused) drawFrame(performance.now(), 0);
+      },
+      { passive: true }
+    );
+
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && inViewport) startOrDrawOnce();
+    });
+
+    new MutationObserver(() => drawFrame(performance.now(), 0)).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+
+    window.addEventListener('cm-graph-toggle', () => {
+      userPaused = !userPaused;
+      startOrDrawOnce();
+      window.dispatchEvent(new CustomEvent('cm-graph-state', { detail: { paused: userPaused } }));
+    });
+  })();
+</script>

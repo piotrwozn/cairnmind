@@ -131,6 +131,9 @@ async def _evaluate(stores: list[Store], roots: list[Path], settings: list[Setti
         try:
             await extractor.extract(job)
         except Exception as exc:
+            from .vcr import CassetteMissError
+            if isinstance(exc, CassetteMissError):
+                raise
             error = measured._error(exc)
         source_store.finish_job(job_id, "Synthetic extraction failed" if error else None,
                                 worker=job["worker"], expected_attempts=job["attempts"])
@@ -274,18 +277,21 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
         for field, model in (("chat", settings.chat_model), ("embedding", settings.embedding_model)):
             report["model_identities"][field] = await measured.model_identity(model)
 
+    from contextlib import nullcontext
+    from .vcr import CassetteMissError, VcrOllama, deterministic_uuid4
+
     try:
         asyncio.run(preflight())
         preflight_complete = True
         with tempfile.TemporaryDirectory(prefix="cairnmind-memory-eval-") as name:
-            temporary = Path(name)
+            temporary = Path(name).resolve()
             roots = [temporary / "computer-a" / "project", temporary / "computer-b" / "project",
                      temporary / "computer-b" / "neighbor"]
             for root in roots:
                 root.mkdir(parents=True)
             for root in roots[:2]:
                 _git(root, "init", "--quiet")
-                (root / "README.md").write_text("Portable memory synthetic fixture.\n")
+                (root / "README.md").write_text("Portable memory synthetic fixture.\n", encoding="utf-8")
                 _git(root, "add", "README.md")
                 _git(root, "-c", "user.name=Cairnmind Evaluation", "-c", "user.email=eval@localhost",
                      "commit", "--quiet", "-m", "Portable memory fixture")
@@ -294,7 +300,11 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
                 isolated = _fixture_settings(settings, temporary / f"data-{index}")
                 owned_settings.append(isolated)
                 stores.append(Store(isolated.data_dir, settings=isolated))
-            asyncio.run(_evaluate(stores, roots, owned_settings, measured, report))
+            seed_ctx = deterministic_uuid4("cairnmind-eval-memory-v1") if isinstance(ollama, VcrOllama) else nullcontext()
+            with seed_ctx:
+                asyncio.run(_evaluate(stores, roots, owned_settings, measured, report))
+    except CassetteMissError:
+        raise
     except OllamaUnavailable as exc:
         # An absent runtime is not evidence that extraction or transfer passed.
         report.update(status="failed" if preflight_complete else "not_run",
@@ -313,10 +323,11 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
         if cleanup_errors:
             report.update(status="failed", cleanup_errors=cleanup_errors)
     report["elapsed_seconds"] = round(time.monotonic() - started, 4)
+    from .private_files import ensure_private_dir, open_no_follow
     output = Path(report_dir or settings.data_dir / "evaluations").expanduser().resolve()
-    output.mkdir(parents=True, exist_ok=True, mode=0o700)
+    ensure_private_dir(output)
     path = output / ("memory-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid4().hex[:8] + ".json")
-    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
+    with os.fdopen(open_no_follow(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
     report["report_path"] = str(path)

@@ -53,8 +53,9 @@ def test_launch_and_immutable_config_never_contain_key(runtime, monkeypatch):
     profile['model'] = 'changed'
     assert runner.agent_configuration(run['id'], run['generation'])['profile']['model'] == 'model-a'
     assert runner.agent_credential(run['id'], run['generation']) == secret
+    from conftest import assert_private
     for path in (runner.directory / 'agent-configs').iterdir():
-        assert path.stat().st_mode & 0o777 == 0o600
+        assert_private(path)
         assert secret not in path.read_text()
     with pytest.raises(ValueError, match='generation'):
         runner.agent_configuration(run['id'], run['generation'] + 1)
@@ -140,10 +141,11 @@ def test_invalid_private_configuration_refuses_identity_and_symlink(runtime, tmp
     path.write_text(json.dumps(content))
     with pytest.raises(ValueError, match='configuration_invalid'):
         runner.agent_configuration(run['id'], run['generation'])
+    from conftest import make_symlink_or_skip
     path.unlink()
     foreign = tmp_path / 'foreign.json'
     foreign.write_text('{}')
-    path.symlink_to(foreign)
+    make_symlink_or_skip(path, foreign)
     with pytest.raises(OSError):
         runner.agent_configuration(run['id'], run['generation'])
 

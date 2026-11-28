@@ -11,6 +11,7 @@ import mmap
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 
 import pytest
@@ -102,10 +103,11 @@ def test_every_kind_of_edit_changes_the_fingerprint(workspace):
     replacement = root / "pkg" / "util.tmp"
     replacement.write_text("LIMIT = 5\n")
     os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
-    replacement.rename(target)  # another inode, the same size and modification time
+    replacement.replace(target)  # another inode, the same size and modification time
     changed()
-    target.chmod(0o755)
-    changed()
+    if sys.platform != "win32":
+        target.chmod(0o755)
+        changed()
     (root / "untracked.txt").write_text("still not committed\n")
     changed()
     (root / "new.py").write_text("NEW = 1\n")

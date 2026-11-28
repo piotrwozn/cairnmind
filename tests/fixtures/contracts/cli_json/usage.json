@@ -1,0 +1,39 @@
+{
+  "by": "day",
+  "cost_note": "Cost is an estimate from the rates stored with each turn, not an invoice; unknown means it was not reported. Subscription usage and remaining quota are never converted into money.",
+  "data": {
+    "codex_covered": true,
+    "codex_records": 0,
+    "codex_unreadable": 0,
+    "codex_waiting": 0,
+    "lines_skipped": 0,
+    "registry": "missing",
+    "sessions_not_api": 0,
+    "sessions_read": 0,
+    "sessions_skipped": 0,
+    "turns_complete": 0,
+    "turns_seen": 0
+  },
+  "from": "<TIMESTAMP>",
+  "groups": [],
+  "partial": true,
+  "project": {
+    "id": "<UUID_1>",
+    "name": "contract-app"
+  },
+  "since": "7d",
+  "text": "Usage of the built-in API agent for contract-app, last 7d (from <TIMESTAMP>); days are UTC\nCost is an estimate from the rates stored with each turn, not an invoice; unknown means it was not reported. Subscription usage and remaining quota are never converted into money.\nCodex rows are read from the transcript lines that history import stored for this project, one \"turn\" being one model response; rollouts that were not imported yet are not seen. Codex is a subscription client, so its cost is always unknown. Claude Code is not covered.\nPARTIAL REPORT: the run registry is missing, so usage of this project may be missing.\nNo turns of the built-in API agent or Codex were found in this period.\nData: 0 of 0 turns had complete usage; 0 journal lines skipped as unreadable; 0 sessions skipped because their project is unknown; 0 sessions of other clients not counted; 0 Codex usage records, 0 unreadable, 0 waiting in the ingestion inbox.",
+  "timezone": "UTC",
+  "to": "<TIMESTAMP>",
+  "totals": {
+    "complete": false,
+    "complete_turns": 0,
+    "cost_currency": null,
+    "estimated_cost": null,
+    "input_tokens": null,
+    "output_tokens": null,
+    "tokens_are_lower_bound": true,
+    "turns": 0
+  },
+  "totals_by_client": {}
+}

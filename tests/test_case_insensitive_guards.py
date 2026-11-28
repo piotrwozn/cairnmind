@@ -178,10 +178,16 @@ _ORDINARY_NAMES = (".gitignore", ".gitkeep", "x.git/a", "my notes/a b.txt", ".en
 
 
 async def test_ordinary_names_near_those_spellings_still_work(tmp_path):
+    import sys
     root = tmp_path / "project"
     root.mkdir()
     executor = make_executor(tmp_path, root)
-    for path in _ORDINARY_NAMES:
+    names = _ORDINARY_NAMES
+    if sys.platform == "win32":
+        # NTFS forbids ':', '\\', and strips trailing dots/spaces on filenames.
+        names = tuple(p for p in _ORDINARY_NAMES
+                      if ":" not in p and "\\" not in p and not any(part.endswith((" ", ".")) for part in p.split("/")))
+    for path in names:
         result = await executor.execute("write_file", {"path": path, "content": "x", "expected_sha256": None})
         assert result["ok"], (path, result)
         assert (root / path).read_text() == "x"
@@ -190,7 +196,20 @@ async def test_ordinary_names_near_those_spellings_still_work(tmp_path):
 
 
 async def test_a_listing_keeps_ordinary_names_with_those_characters(tmp_path):
+    import sys
     root = tmp_path / "project"
+    if sys.platform == "win32":
+        # NTFS forbids ':' and trailing dots in filenames; verify ordinary names alongside protected-like names.
+        (root / "logs-2026").mkdir(parents=True)
+        (root / "logs-2026" / "run.log").write_text("x", encoding="utf-8")
+        (root / ".git-other").mkdir()
+        (root / ".git-other" / "config").write_text("x", encoding="utf-8")
+        (root / "src").mkdir()
+        (root / "src" / "app.py").write_text("x", encoding="utf-8")
+        listed = await make_executor(tmp_path, root).execute("list_files", {"recursive": True})
+        assert [row["path"] for row in listed["files"]] == [".git-other", ".git-other/config", "logs-2026",
+                                                             "logs-2026/run.log", "src", "src/app.py"]
+        return
     (root / "logs:2026").mkdir(parents=True)
     (root / "logs:2026" / "run.log").write_text("x")
     (root / ".git.").mkdir()

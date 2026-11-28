@@ -35,7 +35,8 @@ def workspace(tmp_path):
     (root / "pkg" / "__init__.py").write_text("")
     (root / "pkg" / "auth.py").write_text(
         "from pkg.limits import LIMIT, allowed\n\n\ndef authenticate(token):\n    return allowed(token) and LIMIT > 0\n")
-    (root / "pkg" / "limits.py").write_text("LIMIT = 3\n\n\ndef allowed(token):\n    return token == 'valid'\n")
+    (root / "pkg" / "limits.py").write_text("LIMIT = 3\n\n\ndef allowed(token):\n    return token == 'valid'\n",
+                                            encoding="utf-8", newline="\n")
     (root / "app.py").write_text(
         "import missing_module\nfrom pkg.auth import authenticate\n\n\ndef main():\n    return authenticate('valid')\n")
     (root / "test_app.py").write_text("from app import main\n\n\ndef test_main():\n    assert main()\n")
@@ -444,15 +445,15 @@ def test_a_walk_made_before_waiting_for_another_indexing_is_not_used(workspace, 
     listing = {}
     walk = (0, time.time_ns(), ingest._tree_state(store, pid, listing), listing)
     (root / "pkg" / "fresh.py").write_text("FRESH = 1\n")
-    blocked, real, results = threading.Event(), ingest.fcntl.flock, []
+    blocked, real, results = threading.Event(), ingest.lock_exclusive, []
 
-    def flock(descriptor, operation):
+    def lock_exclusive(file_or_fd, *, blocking=True):
         try:
-            return real(descriptor, operation)
+            return real(file_or_fd, blocking=blocking)
         except BlockingIOError:
             blocked.set()
             raise
-    monkeypatch.setattr(ingest.fcntl, "flock", flock)
+    monkeypatch.setattr(ingest, "lock_exclusive", lock_exclusive)
     with ingest._ingestion_lock(store, "project", pid):
         waiting = threading.Thread(target=lambda: results.append(index_project(store, pid, walk)))
         waiting.start()

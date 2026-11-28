@@ -37,11 +37,17 @@ def workspace_namespace(data_dir: Path, workspace_id: str = "default") -> str:
     return hashlib.sha256((str(data_dir.resolve()) + ":" + workspace_id).encode()).hexdigest()[:16]
 
 
+def _uid(uid: int | None) -> int:
+    if uid is not None:
+        return uid
+    return os.getuid() if hasattr(os, "getuid") else 0
+
+
 def socket_base(*, platform: str | None = None, uid: int | None = None, system_temp: str | None = None) -> Path:
     """The directory under which the socket directories are made: per user on macOS, the temporary one on Linux."""
     if not _darwin(platform):
         return Path(tempfile.gettempdir())
-    uid = os.getuid() if uid is None else uid
+    uid = _uid(uid)
     return Path(os.path.realpath(system_temp or SYSTEM_TEMP)) / f"cairnmind-{uid}"
 
 
@@ -50,7 +56,7 @@ def socket_directory(kind: str, namespace: str, *, platform: str | None = None, 
     """The private directory that holds the one ``tmux.sock`` of a workspace (``ui``) or of native runs."""
     if kind not in KINDS:
         raise ValueError(f"Unknown socket kind: {kind!r}")
-    uid = os.getuid() if uid is None else uid
+    uid = _uid(uid)
     base = socket_base(platform=platform, uid=uid, system_temp=system_temp)
     return base / (f"{kind}-{namespace}" if _darwin(platform) else f"cairnmind-{kind}-{uid}-{namespace}")
 

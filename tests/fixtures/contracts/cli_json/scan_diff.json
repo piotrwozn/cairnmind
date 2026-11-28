@@ -1,0 +1,20 @@
+{
+  "base_commit": "<GIT_SHA_SHORT>828475baa1899a45ef503e5c6fa1",
+  "changed_files": [],
+  "counts": {
+    "symbol_changed": 0,
+    "symbol_gone": 0,
+    "total": 0,
+    "unchanged": 0
+  },
+  "diff": "HEAD",
+  "exit_code": 0,
+  "project": {
+    "id": "<UUID_1>",
+    "name": "contract-app"
+  },
+  "records": [],
+  "target_commit": null,
+  "text": "Cairnmind scan for contract-app (<WORKTREE>)\nDiff: HEAD (<GIT_SHA_SHORT> -> working tree); 0 changed file(s)\nClean: 0 drifted records (0 anchored symbol(s) unchanged in this diff).",
+  "worktree": "<WORKTREE>"
+}

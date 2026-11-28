@@ -12,7 +12,7 @@ Cairnmind is built around one promise: memory that coding agents can trust. Chan
 
 ## Development environment
 
-Cairnmind runs on Linux or WSL2 Ubuntu. You need Python 3.12, [uv](https://docs.astral.sh/uv/), Java 21+ and tmux 3.4+.
+Cairnmind runs on Linux, native Windows 10/11, WSL2 Ubuntu and macOS. You need Python 3.12, [uv](https://docs.astral.sh/uv/), Java 21+ (and tmux 3.4+ on POSIX for the tmux workspace tests).
 
 ```bash
 git clone https://github.com/piotrwozn/cairnmind.git

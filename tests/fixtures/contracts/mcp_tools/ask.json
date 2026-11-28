@@ -1,0 +1,67 @@
+{
+  "answer": "Without models (deterministic-only mode) ask is a full-text search of the project's memory and makes no answer. The passages listed match words of the question: they are search results, not verified evidence.",
+  "cached": false,
+  "diagnostics": {
+    "code": "models_not_configured",
+    "stage": "ask"
+  },
+  "elapsed_seconds": 0.0,
+  "freshness": {
+    "warnings": []
+  },
+  "full_text_matches": [
+    {
+      "excerpt": "Keep compute_total synchronous and deterministic.",
+      "id": "record:<UUID_1>",
+      "kind": "decision",
+      "match": "full_text",
+      "metadata": {
+        "evidence": "def compute_total",
+        "evidence_basis": "observed",
+        "evidence_earliest": "<TIMESTAMP>",
+        "evidence_latest": "<TIMESTAMP>",
+        "omitted_fields": 2,
+        "truncated": true
+      },
+      "source_id": "<UUID_2>",
+      "status": "proposed",
+      "uri": "workspace://finding/contract-baseline"
+    },
+    {
+      "excerpt": "Contract importer note about compute_total",
+      "id": "<SHA256_1>",
+      "kind": "converted_transcript",
+      "line_end": 1,
+      "line_start": 1,
+      "match": "full_text",
+      "metadata": {
+        "omitted_fields": 1,
+        "origin_client": "importer:cli-conv",
+        "origin_evidence": "degraded",
+        "origin_history": "converted",
+        "role": "user",
+        "truncated": true
+      },
+      "source_id": "<UUID_3>",
+      "uri": "transcript://importer/cli-conv/<SHA256_2>/1/<SHA256_3>"
+    },
+    {
+      "excerpt": "def compute_total(a: int, b: int) -> int:\n    \"\"\"Return deterministic sum.\"\"\"\n    return a + b",
+      "id": "<SHA256_4>",
+      "kind": "code",
+      "line_end": 3,
+      "line_start": 1,
+      "match": "full_text",
+      "metadata": {
+        "language": "python"
+      },
+      "source_id": "<UUID_4>",
+      "uri": "<WORKTREE>/src/app.py"
+    }
+  ],
+  "sources": [],
+  "status": "unavailable",
+  "unknowns": [
+    "To use models: `cairnmind models pull` downloads the local models into Ollama (about 7 GB); `cairnmind models set` chooses a model server."
+  ]
+}

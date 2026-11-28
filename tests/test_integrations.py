@@ -30,6 +30,7 @@ def settings(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     for name in ("DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID", "DEVBRAIN_PROJECT", "DEVBRAIN_CLIENT",
                  "DEVBRAIN_CONTEXT_FILE"):
         monkeypatch.delenv(name, raising=False)
@@ -131,7 +132,7 @@ def test_unmarked_owned_codex_config_without_live_binding_is_refused(settings, p
     path.parent.mkdir()
     original = ('model = "keep"\n[mcp_servers.devbrain]\ncommand = ' + json.dumps(sys.executable)
                 + '\nargs = ' + json.dumps(integrations._command(settings, "mcp")[1:]) + '\n' + extra)
-    path.write_text(original)
+    path.write_text(original, encoding="utf-8", newline="\n")
     result = integrations.install_integrations(settings, project, clients=("codex",))
     assert path.read_text() == original
     assert result["clients"]["codex"]["mcp_configured"] is False
@@ -145,7 +146,7 @@ def test_unmarked_owned_codex_config_with_live_binding_preserves_user_options(se
                 + '\nargs = ' + json.dumps(integrations._command(settings, "mcp")[1:])
                 + '\nenv_vars = ["MY_OTHER_SETTING", "DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID"]\n'
                 'tool_timeout_sec = 99\n')
-    path.write_text(original)
+    path.write_text(original, encoding="utf-8", newline="\n")
     result = integrations.install_integrations(settings, project, clients=("codex",))
     assert result["clients"]["codex"]["mcp_configured"] is True
     assert path.read_text() == original
@@ -182,12 +183,13 @@ def test_legacy_native_approval_fixture_upgrades_isolation_once_preserving_permi
     expected["mcp_servers"]["cairnmind"]["args"].insert(0, "-I")
     assert expected["mcp_servers"]["cairnmind"]["args"][2] == "devbrain"
     expected["mcp_servers"]["cairnmind"]["args"][2] = "cairnmind"
+    expected["mcp_servers"]["cairnmind"]["args"][4] = str(settings.data_dir)
     expected["mcp_servers"]["cairnmind"]["env_vars"] = [*integrations.EARLIER_SESSION_ENV_VARS,
                                                          *integrations.CURRENT_SESSION_ENV_VARS]
-    assert tomllib.loads(path.read_text()) == expected
+    assert tomllib.loads(path.read_text(encoding="utf-8")) == expected
     assert set(expected["mcp_servers"]["cairnmind"]["tools"]) == {"resume_context", "ack_resume", "checkpoint"}
-    assert path.read_text().startswith("# BEGIN CAIRNMIND\n[mcp_servers.cairnmind]\n")
-    assert path.read_text().rstrip().endswith("# END CAIRNMIND") and "DEVBRAIN --" not in path.read_text()
+    assert path.read_text(encoding="utf-8").startswith("# BEGIN CAIRNMIND\n[mcp_servers.cairnmind]\n")
+    assert path.read_text(encoding="utf-8").rstrip().endswith("# END CAIRNMIND") and "DEVBRAIN --" not in path.read_text(encoding="utf-8")
     backups = list(path.parent.glob("config.toml.cairnmind-backup-*"))
     assert len(backups) == 1 and backups[0].read_bytes() == raw
     upgraded = path.read_bytes()
@@ -195,8 +197,9 @@ def test_legacy_native_approval_fixture_upgrades_isolation_once_preserving_permi
     assert integrations.install_integrations(settings, project, clients=("codex",))["changed"] == []
     after = path.stat()
     assert path.read_bytes() == upgraded
-    assert (after.st_ino, after.st_mtime_ns, after.st_ctime_ns, stat.S_IMODE(after.st_mode)) == (
-        before.st_ino, before.st_mtime_ns, before.st_ctime_ns, 0o600)
+    assert (after.st_ino, after.st_mtime_ns, after.st_ctime_ns) == (before.st_ino, before.st_mtime_ns, before.st_ctime_ns)
+    if sys.platform != "win32":
+        assert stat.S_IMODE(after.st_mode) == 0o600
     assert list(path.parent.glob("config.toml.cairnmind-backup-*")) == backups
 
 
@@ -210,7 +213,7 @@ def test_managed_mcp_update_preserves_native_approvals_options_and_permissions(s
         '[mcp_servers.devbrain]\n',
         '[mcp_servers.devbrain]\nenabled = false\nnotes = """keep \'quotes\'\nand lines"""\n')
         + '\n[mcp_servers.devbrain.env]\nEXTRA_SETTING = "keep"\n' + unrelated)
-    path.write_text(original)
+    path.write_text(original, encoding="utf-8", newline="\n")
     path.chmod(mode)
     previous = tomllib.loads(original)
     executable = '/new folder/py"thon\nnext-line'
@@ -225,11 +228,12 @@ def test_managed_mcp_update_preserves_native_approvals_options_and_permissions(s
         command=executable, args=integrations._command(settings, "mcp")[1:],
         env_vars=[*integrations.EARLIER_SESSION_ENV_VARS, *integrations.CURRENT_SESSION_ENV_VARS])
     assert updated == expected
-    assert unrelated in path.read_text()
-    assert stat.S_IMODE(path.stat().st_mode) == mode
+    assert unrelated in path.read_text(encoding="utf-8")
     backups = list(path.parent.glob("config.toml.cairnmind-backup-*"))
     assert len(backups) == 1 and backups[0].read_bytes() == original.encode()
-    assert stat.S_IMODE(backups[0].stat().st_mode) == mode
+    if sys.platform != "win32":
+        assert stat.S_IMODE(path.stat().st_mode) == mode
+        assert stat.S_IMODE(backups[0].stat().st_mode) == mode
     before = path.stat()
     assert not integrations._merge_toml_mcp(path, settings)
     assert path.stat().st_ino == before.st_ino
@@ -246,7 +250,7 @@ def test_managed_mcp_quoted_keys_multiline_arrays_and_extra_forwarded_environmen
                 'env_vars = ["NATIVE_EXTRA", "DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID"]\n'
                 'startup_timeout_sec = 15\ntool_timeout_sec = 75\n'
                 '[mcp_servers.devbrain.tools."checkpoint"]\napproval_mode = "approve"\n# END DEVBRAIN\n')
-    path.write_text(original)
+    path.write_text(original, encoding="utf-8", newline="\n")
     assert integrations._merge_toml_mcp(path, settings)
     assert "devbrain" not in tomllib.loads(path.read_text())["mcp_servers"]
     assert '["mcp_servers"."cairnmind"]' in path.read_text()  # the quoting of the header is kept
@@ -264,12 +268,13 @@ def test_managed_mcp_literal_session_override_is_refused_without_changing_native
     path = Path(project["root"]) / ".codex/config.toml"
     path.parent.mkdir()
     original = _native_approved_codex_config() + f'\n[mcp_servers.devbrain.env]\n{name} = "stale"\n'
-    path.write_text(original)
+    path.write_text(original, encoding="utf-8", newline="\n")
     path.chmod(0o600)
     with pytest.raises(ValueError, match="must forward the launch environment"):
         integrations._merge_toml_mcp(path, settings)
-    assert path.read_text() == original
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert path.read_text(encoding="utf-8") == original
+    if sys.platform != "win32":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert not list(path.parent.glob("config.toml.cairnmind-backup-*"))
 
 
@@ -288,7 +293,7 @@ def test_managed_mcp_literal_session_override_is_refused_without_changing_native
 def test_invalid_managed_mcp_shapes_are_not_overwritten(settings, project, original):
     path = Path(project["root"]) / ".codex/config.toml"
     path.parent.mkdir()
-    path.write_text(original)
+    path.write_text(original, encoding="utf-8", newline="\n")
     with pytest.raises(ValueError):
         integrations._merge_toml_mcp(path, settings)
     assert path.read_text() == original
@@ -303,7 +308,7 @@ def test_toml_marker_strings_cannot_claim_an_unrelated_mcp_server(settings, proj
     original = fake_markers + '[mcp_servers.cairnmind]\ncommand = "unrelated"\nargs = ["other"]\n'
     if marked:
         original = '# BEGIN CAIRNMIND\n' + original + '# END CAIRNMIND\n'
-    path.write_text(original)
+    path.write_text(original, encoding="utf-8", newline="\n")
     with pytest.raises(ValueError, match="unrelated server"):
         integrations._merge_toml_mcp(path, settings)
     assert path.read_text() == original
@@ -317,10 +322,12 @@ def test_new_native_configuration_is_private_while_new_instructions_follow_umask
     finally:
         os.umask(previous_umask)
     root = Path(project["root"])
+    from conftest import assert_private
     for relative in (".codex/config.toml", ".codex/hooks.json", ".mcp.json", ".claude/settings.local.json"):
-        assert stat.S_IMODE((root / relative).stat().st_mode) == 0o600
-    for relative in ("AGENTS.md", "CLAUDE.md"):
-        assert stat.S_IMODE((root / relative).stat().st_mode) == 0o644
+        assert_private(root / relative)
+    if sys.platform != "win32":
+        for relative in ("AGENTS.md", "CLAUDE.md"):
+            assert stat.S_IMODE((root / relative).stat().st_mode) == 0o644
 
 
 def test_new_empty_scope_recognizes_exact_session_forwarding_config(settings, project, installed):
@@ -654,7 +661,8 @@ def test_saved_packet_is_exact_immutable_and_session_scoped(settings, project, p
     path = integrations._packet_file(settings, prepared, project, "codex", Path(project["root"]))
     assert json.loads(path.read_text()) == prepared["packet"]
     assert path.parent.name == prepared["session_id"]
-    assert path.stat().st_mode & 0o777 == 0o600
+    from conftest import assert_private
+    assert_private(path)
     assert integrations._packet_file(settings, prepared, project, "codex", Path(project["root"])) == path
     changed = copy.deepcopy(prepared)
     changed["packet"]["hash"] = "different-hash"

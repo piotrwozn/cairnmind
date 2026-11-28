@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -231,8 +232,8 @@ def test_native_registry_does_not_enable_future_api_runtime_or_guess_verified_ca
 
 
 def test_actual_profile_executable_runs_only_read_only_native_commands(tmp_path):
-    binary, calls = tmp_path / "codex", tmp_path / "calls.jsonl"
-    binary.write_text(f"#!{sys.executable}\n" + '''import json, os, sys
+    calls = tmp_path / "calls.jsonl"
+    script = '''import json, os, sys
 with open(os.environ["PROBE_CALLS"], "a") as out:
     out.write(json.dumps(sys.argv[1:]) + "\\n")
 if sys.argv[1:] == ["--version"]:
@@ -246,12 +247,22 @@ elif sys.argv[1:] == ["login", "status"]:
     print(os.environ["OUTPUT_CANARY"], file=sys.stderr)
 else:
     raise SystemExit(97)
-''')
-    binary.chmod(0o700)
+'''
+    if sys.platform == "win32":
+        py_script = tmp_path / "codex_impl.py"
+        py_script.write_text(script, encoding="utf-8")
+        binary = tmp_path / "codex.cmd"
+        binary.write_text(f'@"{sys.executable}" "{py_script}" %*\r\n', encoding="utf-8")
+    else:
+        binary = tmp_path / "codex"
+        binary.write_text(f"#!{sys.executable}\n" + script)
+        binary.chmod(0o700)
     result = auth.probe_client("codex", env={
+        **({"PATHEXT": os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD"),
+            "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows")} if sys.platform == "win32" else {}),
         "PATH": str(tmp_path), "PROBE_CALLS": str(calls), "OUTPUT_CANARY": CANARY,
     })
-    assert result["path"] == str(binary)
+    assert os.path.normcase(result["path"]) == os.path.normcase(str(binary))
     assert result["ready_to_launch"] is True
     assert CANARY not in json.dumps(result)
     assert [json.loads(line) for line in calls.read_text().splitlines()] == [

@@ -117,17 +117,21 @@ def _runtime_root(settings):
 
 
 def _private(path):
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    info = path.lstat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
-        raise CopilotError("copilot_runtime_invalid")
+    from .private_files import ensure_private_dir
+    try:
+        ensure_private_dir(path, error="copilot_runtime_invalid")
+    except ValueError:
+        raise CopilotError("copilot_runtime_invalid") from None
 
 
 def _tree_manifest(root):
+    from .private_files import IS_WINDOWS, is_reparse_point
     rows = []
     for path in sorted(root.rglob("*")):
         info = path.lstat()
-        if info.st_uid != os.getuid():
+        if is_reparse_point(path):
+            raise CopilotError("copilot_runtime_invalid")
+        if not IS_WINDOWS and info.st_uid != os.getuid():
             raise CopilotError("copilot_runtime_invalid")
         if stat.S_ISDIR(info.st_mode):
             continue
@@ -146,11 +150,11 @@ def _runtime_path(settings):
     if not receipt.exists():
         raise CopilotError("copilot_runtime_missing")
     try:
+        from .private_files import is_private_stat
         info = receipt.lstat()
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 2 * 1024 * 1024):
+        if not is_private_stat(info, receipt, directory=False) or info.st_size > 2 * 1024 * 1024:
             raise ValueError
-        value = json.loads(receipt.read_text())
+        value = json.loads(receipt.read_text(encoding="utf-8"))
         bundle = directory / RUNTIME_VERSION
         # Timestamps can collide for consecutive writes (including on WSL).
         # Matching metadata is not proof that executable bytes are unchanged;
@@ -257,10 +261,12 @@ def _prepare_worker(settings):
             relative = entrypoint.relative_to(staged).as_posix()
             files = _tree_manifest(staged)
             if bundle.exists():
-                if bundle.is_symlink() or bundle.lstat().st_uid != os.getuid():
+                from .private_files import IS_WINDOWS, atomic_replace, is_reparse_point
+                if is_reparse_point(bundle) or (not IS_WINDOWS and bundle.lstat().st_uid != os.getuid()):
                     raise CopilotError("copilot_runtime_invalid")
-                os.replace(bundle, previous)
-            os.replace(staged, bundle)
+                atomic_replace(bundle, previous)
+            from .private_files import atomic_replace
+            atomic_replace(staged, bundle)
             _atomic(root / "receipt.json", {"sdk_version": SDK_VERSION, "runtime_version": RUNTIME_VERSION,
                                            "entrypoint": relative, "files": files})
         finally:

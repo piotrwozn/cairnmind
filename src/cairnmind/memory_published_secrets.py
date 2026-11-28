@@ -62,8 +62,11 @@ _KEY_BODY = re.compile(r"(?:(?:\r?\n|\\n)[ \t]*(?:(?:Proc-Type|DEK-Info|Comment)
 _URL_PASSWORD = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]{1,30}://[^\s/:@'\"<>]{1,256}:([^\s/@'\"<>]{1,256})@[^\s/'\"<>]+")
 _PAIR_PASSWORD = re.compile(r"(?i)(?:^|[;\s\"'])(?:password|pwd)\s*=\s*([^;\s\"']{4,})")
 _PAIR_CONTEXT = re.compile(r"(?i)(?:^|[;\s\"'])(?:server|host|data source|user id|uid|database)\s*=")
-_PLACEHOLDER = re.compile(r"(?i)^(?:[$<{%\[].*|\*+|x+|\.+|password|passwd|pass|pwd|secret|redacted|\[redacted\])$")
+_PLACEHOLDER = re.compile(
+    r"(?i)^(?:[$<{%\[].*|\*+|x+|\.+|password|passwd|pass|pwd|secret|redacted|\[redacted(?::[a-z0-9_]+)?\])$"
+)
 _CANDIDATE = re.compile(r"[A-Za-z0-9+/_\-]{32,}={0,2}")
+_SRI_DIGEST = re.compile(r"(?:sha256|sha384|sha512)-[A-Za-z0-9+/]{43,88}={0,2}$")
 _HEXISH = re.compile(r"[0-9a-fA-F]+")
 # Words, identifiers and paths are pieces between separators that are short, hex (a digest or a commit),
 # or runs of at least two letters of one case (or a capitalised word) and numbers. The pieces of a
@@ -74,6 +77,21 @@ SHORT_PIECE = 6
 ENTROPY_BITS = 4.0
 _NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_PRIVATE_IP = re.compile(
+    r"(?<![\d.])(?:10(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}"
+    r"|172\.(?:1[6-9]|2\d|3[01])(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){2}"
+    r"|192\.168(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){2})(?![\d.])"
+)
+MAX_ALLOWLIST_VALUES = 200
+MAX_ALLOWLIST_PATTERNS = 50
+MAX_INTERNAL_DOMAINS = 50
+_REDACT_TAGS = {
+    "jwt": "[REDACTED:JWT]",
+    "email": "[REDACTED:EMAIL]",
+    "phone": "[REDACTED:PHONE]",
+    "private_ip": "[REDACTED:IP]",
+    "internal_domain": "[REDACTED:DOMAIN]",
+}
 
 
 class SecretRulesError(ValueError):
@@ -91,31 +109,78 @@ def _entropy(text):
     return -sum(n / len(text) * math.log2(n / len(text)) for n in counts.values())
 
 
-def random_looking(token: str) -> bool:
+def random_looking(token: str, entropy_bits: float = ENTROPY_BITS) -> bool:
     """A long string that looks random: never a hex digest, a commit hash, a UUID, a path or an identifier.
 
     At least 32 characters; not made only of word-like pieces (see _WORDS: this is what keeps SHA-256
     digests, commit hashes, UUIDs, `objects/<digest>` paths and snake_case or CamelCase names out); at
-    least two of lower case, upper case and digits; and at least 4 bits of entropy per character."""
+    least two of lower case, upper case and digits; and at least `entropy_bits` bits of entropy per character."""
+    if _SRI_DIGEST.fullmatch(token):
+        return False
     core = token.strip("=")
     if len(core) < 32 or all(len(piece) <= SHORT_PIECE or _HEXISH.fullmatch(piece) or _WORDS.fullmatch(piece)
                              for piece in _SEPARATORS.split(core)):
         return False
     classes = sum((any(c.islower() for c in core), any(c.isupper() for c in core), any(c.isdigit() for c in core)))
-    return classes >= 2 and _entropy(core) >= ENTROPY_BITS
+    return classes >= 2 and _entropy(core) >= entropy_bits
+
+
+def _compile_domain_patterns(domains):
+    compiled = []
+    for raw in domains:
+        suffix = raw.lstrip(".").lower()
+        escaped = re.escape(suffix)
+        compiled.append(re.compile(rf"(?<![A-Za-z0-9._-])(?:[A-Za-z0-9-]+\.)+{escaped}\b", re.IGNORECASE))
+    return tuple(compiled)
 
 
 class Rules:
     """What a scan looks for. Registered secrets exist only on the publishing machine; CI has none."""
 
-    def __init__(self, registered=(), personal=(), patterns=()):
+    def __init__(self, registered=(), personal=(), patterns=(), *,
+                 entropy_bits: float = ENTROPY_BITS,
+                 detect_private_ip: bool = False,
+                 internal_domains=(),
+                 allowlist_values=(),
+                 allowlist_sha256=(),
+                 allowlist_patterns=()):
         self.registered = sorted({value for value in registered if isinstance(value, str) and len(value) >= MIN_REGISTERED},
                                  key=len, reverse=True)
         self.personal = tuple(kind for kind in PERSONAL_KINDS if kind in personal)
         self.patterns = tuple(patterns)
+        self.entropy_bits = float(entropy_bits)
+        self.detect_private_ip = bool(detect_private_ip)
+        self.internal_domains = tuple(internal_domains)
+        self._domain_patterns = _compile_domain_patterns(self.internal_domains)
+        self.allowlist_values = frozenset(allowlist_values)
+        self.allowlist_sha256 = frozenset(s.lower() for s in allowlist_sha256)
+        self.allowlist_patterns = tuple(allowlist_patterns)
 
     def without_registered(self):
-        return Rules((), self.personal, self.patterns)
+        return Rules((), self.personal, self.patterns,
+                     entropy_bits=self.entropy_bits,
+                     detect_private_ip=self.detect_private_ip,
+                     internal_domains=self.internal_domains,
+                     allowlist_values=self.allowlist_values,
+                     allowlist_sha256=self.allowlist_sha256,
+                     allowlist_patterns=self.allowlist_patterns)
+
+    def with_registered(self, registered):
+        return Rules(registered, self.personal, self.patterns,
+                     entropy_bits=self.entropy_bits,
+                     detect_private_ip=self.detect_private_ip,
+                     internal_domains=self.internal_domains,
+                     allowlist_values=self.allowlist_values,
+                     allowlist_sha256=self.allowlist_sha256,
+                     allowlist_patterns=self.allowlist_patterns)
+
+    def is_allowlisted(self, kind: str, value: str) -> bool:
+        """Registered secrets are NEVER allowlisted."""
+        if kind == REGISTERED:
+            return False
+        if value in self.allowlist_values or value_sha256(value) in self.allowlist_sha256:
+            return True
+        return any(pattern.fullmatch(value) or pattern.search(value) for pattern in self.allowlist_patterns)
 
 
 def load_rules(text: str | None, registered=()) -> Rules:
@@ -124,6 +189,16 @@ def load_rules(text: str | None, registered=()) -> Rules:
     [personal]
     detect = ["email", "phone"]
     patterns = [{name = "employee-id", regex = "EMP-[0-9]{6}"}]
+
+    [secrets]
+    entropy_bits = 4.0
+    detect_private_ip = false
+    internal_domains = [".corp.local"]
+
+    [allowlist]
+    values = ["example-token-placeholder"]
+    sha256 = ["..."]
+    patterns = ["^TEST_[A-Z0-9]+$"]
     """
     if text is None:
         return Rules(registered)
@@ -131,8 +206,9 @@ def load_rules(text: str | None, registered=()) -> Rules:
         value = tomllib.loads(text)
     except (tomllib.TOMLDecodeError, RecursionError):
         raise SecretRulesError("publication.toml is not valid TOML") from None
-    if set(value) - {"personal"} or not isinstance(value.get("personal", {}), dict):
-        raise SecretRulesError("publication.toml may hold only a [personal] table")
+    allowed_tables = {"personal", "secrets", "allowlist"}
+    if set(value) - allowed_tables or any(not isinstance(value.get(t, {}), dict) for t in allowed_tables):
+        raise SecretRulesError("publication.toml may hold only [personal], [secrets] and [allowlist] tables")
     personal = value.get("personal", {})
     if set(personal) - {"detect", "patterns"}:
         raise SecretRulesError("[personal] takes only detect and patterns")
@@ -153,19 +229,78 @@ def load_rules(text: str | None, registered=()) -> Rules:
         except re.error:
             raise SecretRulesError(f"the personal pattern {item['name']} is not a valid regular expression") from None
         names.add(item["name"])
-    return Rules(registered, detect, compiled)
+
+    secrets_cfg = value.get("secrets", {})
+    if set(secrets_cfg) - {"entropy_bits", "detect_private_ip", "internal_domains"}:
+        raise SecretRulesError("[secrets] takes only entropy_bits, detect_private_ip and internal_domains")
+    entropy_bits = secrets_cfg.get("entropy_bits", ENTROPY_BITS)
+    if isinstance(entropy_bits, bool) or not isinstance(entropy_bits, (int, float)) or not (2.0 <= float(entropy_bits) <= 8.0):
+        raise SecretRulesError("[secrets] entropy_bits must be a number between 2.0 and 8.0")
+    detect_private_ip = secrets_cfg.get("detect_private_ip", False)
+    if type(detect_private_ip) is not bool:
+        raise SecretRulesError("[secrets] detect_private_ip must be a boolean")
+    internal_domains = secrets_cfg.get("internal_domains", [])
+    if (not isinstance(internal_domains, list) or len(internal_domains) > MAX_INTERNAL_DOMAINS
+            or any(not isinstance(d, str) or not d.strip().lstrip(".") or len(d) > 120
+                   or any(ch.isspace() for ch in d) for d in internal_domains)):
+        raise SecretRulesError(f"[secrets] internal_domains is a list of at most {MAX_INTERNAL_DOMAINS} domain suffixes")
+
+    allow_cfg = value.get("allowlist", {})
+    if set(allow_cfg) - {"values", "sha256", "patterns"}:
+        raise SecretRulesError("[allowlist] takes only values, sha256 and patterns")
+    allow_values = allow_cfg.get("values", [])
+    if (not isinstance(allow_values, list) or len(allow_values) > MAX_ALLOWLIST_VALUES
+            or any(not isinstance(v, str) or not v for v in allow_values)):
+        raise SecretRulesError(f"[allowlist] values is a list of at most {MAX_ALLOWLIST_VALUES} non-empty strings")
+    allow_sha = allow_cfg.get("sha256", [])
+    if (not isinstance(allow_sha, list) or len(allow_sha) > MAX_ALLOWLIST_VALUES
+            or any(not isinstance(s, str) or not _SHA256.fullmatch(s.lower()) for s in allow_sha)):
+        raise SecretRulesError(f"[allowlist] sha256 is a list of at most {MAX_ALLOWLIST_VALUES} 64-character hex digests")
+    raw_allow_patterns = allow_cfg.get("patterns", [])
+    if (not isinstance(raw_allow_patterns, list) or len(raw_allow_patterns) > MAX_ALLOWLIST_PATTERNS
+            or any(not isinstance(p, str) or not 0 < len(p) <= 200 for p in raw_allow_patterns)):
+        raise SecretRulesError(f"[allowlist] patterns is a list of at most {MAX_ALLOWLIST_PATTERNS} regexes")
+    allow_patterns = []
+    for raw_pat in raw_allow_patterns:
+        try:
+            allow_patterns.append(re.compile(raw_pat))
+        except re.error:
+            raise SecretRulesError("invalid regular expression in [allowlist] patterns") from None
+
+    return Rules(
+        registered, detect, compiled,
+        entropy_bits=float(entropy_bits),
+        detect_private_ip=detect_private_ip,
+        internal_domains=internal_domains,
+        allowlist_values=allow_values,
+        allowlist_sha256=allow_sha,
+        allowlist_patterns=allow_patterns,
+    )
 
 
 def _overlaps(span, taken):
     return any(span[0] < end and start < span[1] for start, end in taken)
 
 
+def _visible_with_map(text: str) -> tuple[str, list[int] | None]:
+    """Return (visible_text, index_map) stripping Unicode Cf characters.
+
+    `index_map[i]` is the index in `text` of `visible_text[i]`, or None when `text` is pure ASCII.
+    """
+    if text.isascii():
+        return text, None
+    chars, positions = [], []
+    for idx, character in enumerate(text):
+        if unicodedata.category(character) != "Cf":
+            chars.append(character)
+            positions.append(idx)
+    return "".join(chars), positions
+
+
 def _visible(text: str) -> str:
     """The text without format characters (Unicode category Cf: zero-width spaces and joiners, soft hyphens,
     word joiners), which pass the published format's character rule but cannot be seen in a diff."""
-    if text.isascii():
-        return text
-    return "".join(character for character in text if unicodedata.category(character) != "Cf")
+    return _visible_with_map(text)[0]
 
 
 def well_known_spans(text: str, bounded: bool = False):
@@ -186,42 +321,91 @@ def well_known_spans(text: str, bounded: bool = False):
             yield kind, match.start(), match.end()
 
 
+def _scan_spans(text: str, rules: Rules) -> list[tuple[str, int, int, str]]:
+    """[(kind, orig_start, orig_end, visible_value)] found in `text`, respecting allowlists."""
+    visible, pos_map = _visible_with_map(text)
+    found: list[tuple[str, int, int, str]] = []
+    taken: list[tuple[int, int]] = []
+
+    def claim(kind: str, start: int, end: int):
+        if end <= start or _overlaps((start, end), taken):
+            return
+        matched = visible[start:end]
+        if rules.is_allowlisted(kind, matched):
+            return
+        taken.append((start, end))
+        if pos_map is None:
+            orig_start, orig_end = start, end
+        else:
+            orig_start = pos_map[start]
+            orig_end = pos_map[end - 1] + 1
+        found.append((kind, orig_start, orig_end, matched))
+
+    for secret in rules.registered:
+        start = visible.find(secret)
+        while start >= 0:
+            claim(REGISTERED, start, start + len(secret))
+            start = visible.find(secret, start + 1)
+    for kind, start, end in well_known_spans(visible):
+        claim(kind, start, end)
+    for match in _URL_PASSWORD.finditer(visible):
+        if not _PLACEHOLDER.fullmatch(match.group(1)):
+            claim("connection_password", match.start(), match.end())
+    if _PAIR_CONTEXT.search(visible):
+        for match in _PAIR_PASSWORD.finditer(visible):
+            if not _PLACEHOLDER.fullmatch(match.group(1)):
+                claim("connection_password", match.start(1), match.end(1))
+    for match in _CANDIDATE.finditer(visible):
+        if random_looking(match.group(0), entropy_bits=rules.entropy_bits):
+            claim(HIGH_ENTROPY, match.start(), match.end())
+    if rules.detect_private_ip:
+        for match in _PRIVATE_IP.finditer(visible):
+            claim("private_ip", match.start(), match.end())
+    for pattern in rules._domain_patterns:
+        for match in pattern.finditer(visible):
+            claim("internal_domain", match.start(), match.end())
+    for kind in rules.personal:
+        for match in _PERSONAL[kind].finditer(visible):
+            claim(kind, match.start(), match.end())
+    for kind, pattern in rules.patterns:
+        for match in pattern.finditer(visible):
+            claim(kind, match.start(), match.end())
+    return found
+
+
 def scan_text(text: str, rules: Rules):
     """[(kind, value)] found in one text. Each span is claimed by the first kind that finds it.
 
     The scan reads the text as a reader sees it: a secret split by an invisible character is still found."""
-    text = _visible(text)
-    found, taken = [], []
+    return [(kind, value) for kind, _, _, value in _scan_spans(text, rules)]
 
-    def claim(kind, start, end):
-        if end > start and not _overlaps((start, end), taken):
-            taken.append((start, end))
-            found.append((kind, text[start:end]))
 
-    for secret in rules.registered:
-        start = text.find(secret)
-        while start >= 0:
-            claim(REGISTERED, start, start + len(secret))
-            start = text.find(secret, start + 1)
-    for kind, start, end in well_known_spans(text):
-        claim(kind, start, end)
-    for match in _URL_PASSWORD.finditer(text):
-        if not _PLACEHOLDER.fullmatch(match.group(1)):
-            claim("connection_password", match.start(), match.end())
-    if _PAIR_CONTEXT.search(text):
-        for match in _PAIR_PASSWORD.finditer(text):
-            if not _PLACEHOLDER.fullmatch(match.group(1)):
-                claim("connection_password", match.start(1), match.end(1))
-    for match in _CANDIDATE.finditer(text):
-        if random_looking(match.group(0)):
-            claim(HIGH_ENTROPY, match.start(), match.end())
-    for kind in rules.personal:
-        for match in _PERSONAL[kind].finditer(text):
-            claim(kind, match.start(), match.end())
-    for kind, pattern in rules.patterns:
-        for match in pattern.finditer(text):
-            claim(kind, match.start(), match.end())
-    return found
+def redaction_tag(kind: str) -> str:
+    return _REDACT_TAGS.get(kind, "[REDACTED:SECRET]")
+
+
+def redact_text(text: str, rules: Rules) -> tuple[str, dict[str, int]]:
+    """Mask every detected secret/PII span in `text` with `[REDACTED:...]` tags.
+
+    Strictly for opt-in `cairnmind memory snapshot --redact`; NEVER used by `memory publish`.
+    Returns `(redacted_text, counts_by_tag)`.
+    """
+    spans = sorted(_scan_spans(text, rules), key=lambda item: item[1])
+    if not spans:
+        return text, {}
+    parts: list[str] = []
+    counts: dict[str, int] = {}
+    cursor = 0
+    for kind, start, end, _ in spans:
+        if start < cursor:
+            continue
+        tag = redaction_tag(kind)
+        parts.append(text[cursor:start])
+        parts.append(tag)
+        counts[tag] = counts.get(tag, 0) + 1
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts), counts
 
 
 def _strings(value):

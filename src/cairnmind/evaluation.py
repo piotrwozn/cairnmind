@@ -26,6 +26,7 @@ from .config import Settings, env_names, set_env
 from .ingest import index_pending_sources
 from .memory_models import from_settings
 from .ollama import OllamaUnavailable
+from .private_files import ensure_private_dir, make_private
 from .retrieval import Retriever
 from .store import Store
 
@@ -513,8 +514,8 @@ def _native_client(client: str, root: Path, settings: Settings, project_id: str,
                     "-c", 'approval_policy="never"', "-c", configuration, prompt]
         else:
             config_path = settings.data_dir / "native-mcp.json"
-            config_path.write_text(json.dumps({"mcpServers": {"cairnmind_eval": server}}))
-            config_path.chmod(0o600)
+            config_path.write_text(json.dumps({"mcpServers": {"cairnmind_eval": server}}), encoding="utf-8")
+            make_private(config_path)
             argv = [executable, "--strict-mcp-config", "--mcp-config", str(config_path), "--tools", "",
                     "--allowedTools", "mcp__cairnmind_eval__memory", "mcp__cairnmind_eval__read_source",
                     "mcp__cairnmind_eval__resume_context", "mcp__cairnmind_eval__ack_resume",
@@ -645,7 +646,8 @@ def run_evaluation(settings: Settings, *, clients: bool = False, skip_claude: bo
     if skip_claude and not clients:
         raise ValueError("skip_claude requires clients=True")
     output = Path(report_dir or settings.data_dir / "evaluations").expanduser().resolve()
-    output.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not output.exists():
+        ensure_private_dir(output)
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="cairnmind-eval-") as name:
         temporary = Path(name)
@@ -653,7 +655,7 @@ def run_evaluation(settings: Settings, *, clients: bool = False, skip_claude: bo
         seed_root.mkdir()
         other.mkdir()
         _git(seed_root, "init", "--quiet")
-        (seed_root / "README.md").write_text("Synthetic recall fixture. Never a user project.\n")
+        (seed_root / "README.md").write_text("Synthetic recall fixture. Never a user project.\n", encoding="utf-8")
         _git(seed_root, "add", "README.md")
         _git(seed_root, "-c", "user.name=Cairnmind Evaluation", "-c", "user.email=eval@localhost",
              "commit", "--quiet", "-m", "Isolated fixture")
@@ -661,7 +663,11 @@ def run_evaluation(settings: Settings, *, clients: bool = False, skip_claude: bo
         isolated = _fixture_settings(settings, temporary / "data")
         store = Store(isolated.data_dir, settings=isolated)
         try:
-            project, cases, canonical = _seed(store, worktree, other)
+            from contextlib import nullcontext
+            from .vcr import VcrOllama, deterministic_uuid4
+            seed_ctx = deterministic_uuid4("cairnmind-eval-recall-v1") if isinstance(ollama, VcrOllama) else nullcontext()
+            with seed_ctx:
+                project, cases, canonical = _seed(store, worktree, other)
             results = asyncio.run(_local_cases(store, isolated, project, cases, canonical,
                                                 ollama or from_settings(isolated, credentials=settings)))
             # Deterministic checks are scored independently of model availability.
@@ -707,8 +713,8 @@ def run_evaluation(settings: Settings, *, clients: bool = False, skip_claude: bo
             # loaded back from environment or supplied by a model/client.
             store.client.server_command("drop database " + isolated.arcade_database)
     path = output / ("recall-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid4().hex[:8] + ".json")
-    path.write_text(json.dumps(report, ensure_ascii=False, indent=2))
-    path.chmod(0o600)
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    make_private(path)
     report["report_path"] = str(path)
     return report
 

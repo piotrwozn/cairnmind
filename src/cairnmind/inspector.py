@@ -442,7 +442,7 @@ class Inspector:
                 node(row["id"], row["kind"], row.get("label", row["id"]), "native:" + row["kind"],
                      source_id=row.get("source_id"), historical=not row.get("is_current", True), entity_type="node")
             for row in rows["sources"]:
-                message = row["kind"] in {"transcript", "transcript_unknown"}
+                message = row["kind"] in {"transcript", "transcript_unknown", "converted_transcript"}
                 role = row.get("role", "unknown")
                 bucket = ("session:" + str(row.get("client") or "unknown") + ":" + str(row.get("session_id") or "unknown")) if message else "sources:" + row["kind"]
                 node("source:" + row["id"], "message" if message and role in {"user", "assistant", "tool"} else "technical" if message else "source",

@@ -305,7 +305,7 @@ async def test_known_token_counts_with_rates_have_an_explicit_estimate(setup):
 @pytest.mark.asyncio
 async def test_large_tool_result_is_complete_in_archive_but_explicitly_bounded_for_model(setup):
     content = "A source line that must remain fully recoverable.\n" * 1000
-    setup[3].joinpath("large.txt").write_text(content)
+    setup[3].joinpath("large.txt").write_text(content, encoding="utf-8", newline="\n")
     memory = Memory()
     provider = ScriptedProvider(reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
                                 reply(call("read_file", {"path": "large.txt"})), reply(text="Odczytano fragment."))
@@ -553,6 +553,7 @@ async def test_copilot_uses_same_model_ack_gate_and_visible_tool_history(setup):
     run["client"] = profile["client"] = "copilot"
     memory = Memory()
 
+
     class Copilot:
         async def run_turn(self, prompt, tools, handler, *, system="", on_delta=None, on_event=None):
             blocked = await handler("write_file", {"path": "cp.txt", "content": "bad", "expected_sha256": None})
@@ -578,6 +579,7 @@ async def test_copilot_context_reset_preserves_checkpoint_and_demands_new_actual
     settings, run, profile, root = setup
     run["client"] = profile["client"] = "copilot"
     memory = Memory()
+
 
     class Copilot:
         turns = 0
@@ -631,6 +633,8 @@ async def test_parallel_copilot_tools_have_serial_approval_and_retired_callbacks
         approval_active = False
         return True
 
+    import sys
+
     class Copilot:
         saved_handler = None
 
@@ -638,8 +642,10 @@ async def test_parallel_copilot_tools_have_serial_approval_and_retired_callbacks
             self.saved_handler = handler
             await handler("resume_context", {})
             await handler("ack_resume", memory.ack_arguments())
-            first, second = await asyncio.gather(handler("run_command", {"command": "printf first"}),
-                                                 handler("run_command", {"command": "printf second"}))
+            cmd_first = "[Console]::Write('first')" if sys.platform == "win32" else "printf first"
+            cmd_second = "[Console]::Write('second')" if sys.platform == "win32" else "printf second"
+            first, second = await asyncio.gather(handler("run_command", {"command": cmd_first}),
+                                                 handler("run_command", {"command": cmd_second}))
             assert first["stdout"] == "first" and second["stdout"] == "second"
             return {"text": "Oba wyniki zapisane.", "usage": {}}
 
@@ -647,7 +653,9 @@ async def test_parallel_copilot_tools_have_serial_approval_and_retired_callbacks
     agent = AgentEngine(settings, run, profile, provider=provider, memory=memory, approve=approve)
     result = await agent.turn("Wykonaj dwa polecenia")
     assert result["status"] == "completed"
-    assert approved == ["printf first", "printf second"]
+    expected_cmds = (["[Console]::Write('first')", "[Console]::Write('second')"]
+                     if sys.platform == "win32" else ["printf first", "printf second"])
+    assert approved == expected_cmds
     stale = await provider.saved_handler("run_command", {"command": "printf forbidden"})
     assert stale["error_code"] == "turn_interrupted" and len(approved) == 2
     await agent.close()
@@ -679,6 +687,7 @@ async def test_copilot_incremental_usage_and_final_aggregate_are_not_double_coun
     run["client"] = profile["client"] = "copilot"
     memory = Memory()
 
+
     class Copilot:
         async def run_turn(self, prompt, tools, handler, *, system="", on_delta=None, on_event=None):
             await handler("resume_context", {})
@@ -704,7 +713,7 @@ async def test_production_memory_transport_and_model_orchestration_on_real_arcad
     for args in (("init", "-q"), ("config", "user.name", "Fixture"),
                  ("config", "user.email", "fixture@example.invalid")):
         subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
-    root.joinpath("app.py").write_text("VALUE = 1\n")
+    root.joinpath("app.py").write_text("VALUE = 1\n", encoding="utf-8", newline="\n")
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
     subprocess.run(["git", "-C", str(root), "commit", "-qm", "initial"], check=True)
     store = Store(tmp_path / "data")
@@ -805,7 +814,7 @@ async def test_a_refused_confirmation_reaches_the_model_with_what_to_do_on_real_
     for args in (("init", "-q"), ("config", "user.name", "Fixture"),
                  ("config", "user.email", "fixture@example.invalid")):
         subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
-    root.joinpath("app.py").write_text("VALUE = 1\n")
+    root.joinpath("app.py").write_text("VALUE = 1\n", encoding="utf-8", newline="\n")
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
     subprocess.run(["git", "-C", str(root), "commit", "-qm", "initial"], check=True)
     store = Store(tmp_path / "data")
@@ -903,7 +912,7 @@ async def test_a_wrong_record_field_and_an_unknown_source_reach_the_model_with_w
     for args in (("init", "-q"), ("config", "user.name", "Fixture"),
                  ("config", "user.email", "fixture@example.invalid")):
         subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
-    root.joinpath("app.py").write_text("VALUE = 1\n")
+    root.joinpath("app.py").write_text("VALUE = 1\n", encoding="utf-8", newline="\n")
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
     subprocess.run(["git", "-C", str(root), "commit", "-qm", "initial"], check=True)
     store = Store(tmp_path / "data")
@@ -999,7 +1008,7 @@ async def test_a_record_the_store_does_not_save_reaches_the_model_with_what_to_d
     for args in (("init", "-q"), ("config", "user.name", "Fixture"),
                  ("config", "user.email", "fixture@example.invalid")):
         subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
-    root.joinpath("app.py").write_text("VALUE = 1\n")
+    root.joinpath("app.py").write_text("VALUE = 1\n", encoding="utf-8", newline="\n")
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
     subprocess.run(["git", "-C", str(root), "commit", "-qm", "initial"], check=True)
     store = Store(tmp_path / "data")

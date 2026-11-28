@@ -83,8 +83,9 @@ def _registry(data_dir: Path):
 
 def _events(path: Path, counts: dict):
     """Yield (type, time, data) line by line; a damaged, oversized or truncated line is counted and skipped."""
+    from .private_files import open_no_follow
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+        fd = open_no_follow(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0), private_on_create=False)
     except OSError:
         return
     with os.fdopen(fd, "rb") as handle:

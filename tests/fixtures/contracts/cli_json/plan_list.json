@@ -1,0 +1,21 @@
+[
+  {
+    "constraints": [
+      "Preserve field names across minor releases"
+    ],
+    "context_hash": "<SHA256_1>",
+    "created_at": "<TIMESTAMP>",
+    "goal": "Freeze JSON/MCP shapes for 1.0.0",
+    "id": "<UUID_1>",
+    "project_id": "<UUID_2>",
+    "source_ids": [
+      "<UUID_3>"
+    ],
+    "step_ids": [
+      "<UUID_4>"
+    ],
+    "title": "Contract stabilization",
+    "updated_at": "<TIMESTAMP>",
+    "version": 1
+  }
+]

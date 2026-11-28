@@ -307,7 +307,7 @@ def test_every_label_of_the_view_has_a_polish_translation():
     import re
     from pathlib import Path
     import cairnmind.terminal_impact as view
-    source = Path(view.__file__).read_text()
+    source = Path(view.__file__).read_text(encoding="utf-8")
     # Every literal handed to the translator, with adjacent literals joined as Python joins them.
     found = re.findall(r'(?:self\.t|translate)\(\s*((?:"(?:[^"\\]|\\.)*"\s*)+)', source)
     labels = {ast.literal_eval("(" + literal + ")") for literal in found}

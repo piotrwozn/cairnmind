@@ -12,7 +12,7 @@ cairnmind memory status my-app
 cairnmind memory auto my-app --disable
 ```
 
-Auto-save is off by default. When enabled, it saves changed memory while the service is running, including after the terminal UI is closed. It keeps the five most recent snapshots and shares identical objects between them. It does not run models, make commits or push anything to GitHub. Full conversations may contain private information: review the export before adding `.memory/cairnmind/` to the repository. Machine configuration, authentication files and configured keys are not exported; the content of saved conversations is not automatically anonymized.
+Auto-save is off by default. When enabled, it saves changed memory while the service is running, including after the terminal UI is closed. It keeps the five most recent snapshots and shares identical objects between them. It does not run models, make commits or push anything to GitHub. Full conversations may contain private information: review the export before adding `.memory/cairnmind/` to the repository. Machine configuration, authentication files and configured keys are not exported; the content of saved conversations is not automatically anonymized. Measured snapshot timings at 1,000 and 10,000 synthetic records are recorded in [evaluation/RESULTS.md](evaluation/RESULTS.md#memory-snapshot-at-size-169).
 
 On a second machine, after installing Cairnmind and cloning the repository:
 
@@ -43,6 +43,8 @@ Each record also has an evidence state, derived whenever it is read and never st
 cairnmind memory orphans my-app
 ```
 
+When a record is anchored to a function, class or method (`metadata.symbol_anchor`), Cairnmind compares the symbol's cross-OS normalised AST body hash rather than the whole file: edits elsewhere in the file or formatting (`ruff format`, `prettier`, comments, CRLF/LF) leave `symbol_state: unchanged` and keep `evidence_state: anchored`. Real body changes report `symbol_changed` (with the commit or timestamp of change) and deletions report `symbol_gone`, without ever mutating `record.status`. Projects may also opt in to at most one repository decision source (`off` by default) via `cairnmind memory decisions my-app [off|comments|adr|trailers]`, creating only `proposed` records idempotently and reporting `tag_removed` instead of deleting records when a tagged comment disappears. For serverless CI drift checks against a Git diff, see [Symbol-anchored evidence, opt-in decisions and `cairnmind scan`](WORKFLOW.md#symbol-anchored-evidence).
+
 ## How extraction fares in review
 
 To see how automatic extraction fares in review, run `cairnmind memory extraction-stats my-app` (`--json` for the numbers, the same data as `GET /inspector/extraction-stats?project=...`). For every extractor version stamped on a record (`metadata.extractor`), it counts the extracted records that are still proposed, confirmed, disputed or superseded, and the share confirmed of those reviewed (confirmed or disputed). A record counts as confirmed only when a person confirmed it on this machine; one a memory package brought confirmed is listed apart as confirmed elsewhere and stays out of the share. It reads only record revisions in bounded pages, runs no model, changes nothing and prints numbers, never record text; a project with more than 50,000 extracted records is reported as truncated.
@@ -60,6 +62,21 @@ A proposed finding stays proposed until you confirm or dispute it, and old ones 
 ## Import
 
 Import keeps the project's identity and does not replace other projects in the database. Re-importing the same state duplicates nothing; diverging changes require conflict resolution. Search indexes are rebuilt locally. Historical `done` states are preserved, but checks carried over from another machine are not local `fresh` evidence. Logins, client configuration and new sessions are set up locally. See [MEMORY_CONTRACTS.md](MEMORY_CONTRACTS.md) for the format contract, limits and restore rules.
+
+## Self-healing quote references
+
+When importing a portable snapshot into a Git repository whose files have moved or been refactored since the snapshot was taken (or when running `cairnmind memory heal PROJECT`), Cairnmind scans Git diffs and uses tree-sitter AST scope/token analysis plus surrounding context matching to relocate moved quoted blocks automatically:
+
+- **SHA-256 content immutability:** a relocated quote is healed only when the SHA-256 checksum of the new location matches the original quote verbatim. Changing even a single character invalidates the reference (`stale_ref`).
+- **Partial modification guard:** if only a fragment of a quoted line was modified, Cairnmind never guesses the text; it rejects automatic repair and marks the evidence `validation_failed` (with `ref_status: stale_ref`), requiring human intervention.
+- **Ambiguity guard:** if multiple identical code blocks exist without unique surrounding or AST context, Cairnmind refuses to guess and reports `ambiguous_context`.
+- **Optimistic concurrency (CAS) and audit log:** every reference update rewrites `metadata.quote_ref` (new `commit_sha`, `line_start`, `line_end`, `path`), bumps the record version under CAS (`expected_version`), and records an immutable `heal://` audit entry readable via `cairnmind memory heal-audit PROJECT`.
+
+```bash
+cairnmind memory heal my-app --dry-run
+cairnmind memory heal my-app
+cairnmind memory heal-audit my-app
+```
 
 ## Team memory
 

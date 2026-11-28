@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 import pytest
@@ -20,6 +21,8 @@ from cairnmind import cli, cockpit, sessions
 from cairnmind.config import BACKUP_FORMATS, BACKUP_SUFFIXES, BROKER_NAMES, SERVICE_NAMES, Settings
 from cairnmind.service import instance_id
 from cairnmind.store import Store
+
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX bash installer scripts/install-wsl.sh and /tmp")
 
 
 class Reply:

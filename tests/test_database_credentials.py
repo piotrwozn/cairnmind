@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import ssl
 import subprocess
+import sys
 import threading
 
 import httpx
@@ -34,15 +35,28 @@ def no_database_environment(monkeypatch):
 
 
 def config(root: Path, **values) -> Path:
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    (root / "config.json").write_text(json.dumps({"token": "t" * 43, **values}))
-    os.chmod(root / "config.json", 0o600)
+    from cairnmind import private_files
+    if sys.platform == "win32":
+        if not root.exists():
+            private_files.ensure_private_dir(root)
+    else:
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    (root / "config.json").write_text(json.dumps({"token": "t" * 43, **values}), encoding="utf-8")
+    private_files.make_private(root / "config.json")
     return root
 
 
 def private_file(path: Path, text: str, mode: int = 0o600) -> Path:
-    path.write_text(text)
-    os.chmod(path, mode)
+    from cairnmind import private_files
+    from conftest import make_world_readable
+    path.write_text(text, encoding="utf-8")
+    if sys.platform == "win32":
+        if (mode & 0o077) == 0:
+            private_files.make_private(path)
+        else:
+            make_world_readable(path)
+    else:
+        os.chmod(path, mode)
     return path
 
 
@@ -139,12 +153,13 @@ def test_a_password_file_is_read_and_never_written_to_the_settings_file(tmp_path
 
 @pytest.mark.parametrize("problem", ["mode", "link", "missing", "relative", "empty", "spaces"])
 def test_a_password_file_that_breaks_a_rule_is_refused_and_named(tmp_path, problem):
+    from conftest import make_symlink_or_skip, make_world_readable
     target = private_file(tmp_path / "db-password", SECRET)
     named = str(target)
     if problem == "mode":
-        os.chmod(target, 0o644)
+        make_world_readable(target)
     elif problem == "link":
-        (tmp_path / "link").symlink_to(target)
+        make_symlink_or_skip(tmp_path / "link", target)
         named = str(tmp_path / "link")
     elif problem == "missing":
         named = str(tmp_path / "absent")
@@ -172,6 +187,8 @@ TIMESTAMP = "..2026_11_15_10_20_30.123456789"
 def mounted_secret(folder: Path, text: str = SECRET + "\n", mode: int = 0o400, key: str = "password") -> Path:
     """A folder laid out as the kubelet mounts a secret: the key is a link to ``..data/key``, ``..data``
     is a link to a folder named after the time of the update, and that folder holds the real file."""
+    if sys.platform == "win32":
+        pytest.skip("Kubernetes secret symlink mounts are POSIX-only")
     (folder / TIMESTAMP).mkdir(parents=True)
     private_file(folder / TIMESTAMP / key, text, mode)
     (folder / "..data").symlink_to(TIMESTAMP)
@@ -277,7 +294,8 @@ def test_a_mounted_secret_of_another_user_is_refused(tmp_path, monkeypatch):
     assert "of this user" in refused_secret(tmp_path, named)
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root opens any file")
+@pytest.mark.skipif(sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+                    reason="POSIX chmod 0000 permission test (skipped as root or on Windows)")
 @pytest.mark.parametrize("blocked", ["the file", "its folder"])
 def test_an_ordinary_file_that_cannot_be_opened_says_why_and_not_the_link_rule(tmp_path, blocked):
     folder = tmp_path / "private"
@@ -302,9 +320,10 @@ def test_a_password_file_that_is_a_directory_is_refused_with_the_rule_and_the_se
 
 
 def test_a_file_that_becomes_a_link_before_it_is_opened_is_refused_with_the_link_rule(tmp_path, monkeypatch):
+    from conftest import make_symlink_or_skip
     target = private_file(tmp_path / "db-password", SECRET)
     named = tmp_path / "link"
-    named.symlink_to(target)
+    make_symlink_or_skip(named, target)
     regular = os.lstat(target)
     real_lstat = os.lstat
 

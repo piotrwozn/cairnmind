@@ -97,16 +97,17 @@ def test_a_running_change_is_not_unchecked_for_doctor_and_its_own_copy_does_not_
 def test_the_holder_may_start_the_service_in_a_process_that_the_mark_identifies_as_the_change(data_dir, children):
     """A real helper-like process: its command line names the module, so its own mark reads as running, and
     only its own pid is exempt: the process that is not the holder is refused."""
-    code = ("import sys; from pathlib import Path; from cairnmind import setup_mark\n"
+    code = ("import os, sys; from pathlib import Path; from cairnmind import setup_mark\n"
             "d = Path(sys.argv[1])\n"
             "with setup_mark.held(d):\n"
-            "    print(setup_mark.state(d)[0], setup_mark.refusal(d), flush=True)\n"
+            "    print(setup_mark.state(d)[0], setup_mark.refusal(d), os.getpid(), flush=True)\n"
             "    sys.stdin.readline()\n")
     child = subprocess.Popen([sys.executable, "-c", code, str(data_dir), "cairnmind.setup_change"],
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     try:
-        assert child.stdout.readline().strip() == "running None"  # the holder is not refused by its own mark
-        assert setup_mark.state(data_dir) == ("running", child.pid)
+        line = child.stdout.readline().strip().split()
+        assert line[:2] == ["running", "None"]  # the holder is not refused by its own mark
+        assert setup_mark.state(data_dir) == ("running", int(line[2]))
         assert "is in progress" in str(setup_mark.refusal(data_dir))  # this process is
     finally:
         child.stdin.close()
@@ -169,9 +170,10 @@ def test_the_mark_is_per_data_directory(tmp_path, children):
 
 
 def test_held_writes_the_mark_and_removes_only_its_own(data_dir):
+    from conftest import assert_private
     with setup_mark.held(data_dir):
         assert setup_mark.mark_path(data_dir).read_text() == f"{os.getpid()}\n"
-        assert oct(setup_mark.mark_path(data_dir).stat().st_mode & 0o777) == "0o600"
+        assert_private(setup_mark.mark_path(data_dir))
     assert not setup_mark.mark_path(data_dir).exists()
     with setup_mark.held(data_dir):
         setup_mark.mark_path(data_dir).write_text("7\n")  # another holder's, put there meanwhile
@@ -188,16 +190,17 @@ def test_held_replaces_a_stale_mark(data_dir, children):
 
 
 def test_a_second_change_is_refused_while_the_first_holds_the_lock(data_dir):
-    import fcntl
+    from cairnmind import file_locks
     descriptor = os.open(data_dir / setup_mark.LOCK, os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)  # flock is per open file: a second open one refuses
+        file_locks.lock_exclusive(descriptor, blocking=False)
         with pytest.raises(setup_mark.ChangeBusy) as refused:
             with setup_mark.held(data_dir):
                 pytest.fail("a second change started")
         assert str(refused.value) == setup_mark.BUSY
         assert not setup_mark.mark_path(data_dir).exists()
     finally:
+        file_locks.unlock(descriptor)
         os.close(descriptor)
 
 

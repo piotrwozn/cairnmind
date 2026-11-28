@@ -21,7 +21,7 @@ CAIRNMIND_TEST_SCHEMA_TEMPLATE=0 builds every database from nothing instead.
 from __future__ import annotations
 
 import contextlib
-import fcntl
+from dataclasses import replace
 import json
 import os
 import re
@@ -31,7 +31,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-import termios
 import threading
 import time
 import types
@@ -39,13 +38,20 @@ from urllib.parse import quote, urlparse
 import uuid
 import zlib
 
+if sys.platform != "win32":
+    import fcntl
+    import termios
+
 import pytest
 
-from cairnmind import process_identity
+from cairnmind import file_locks, private_files, process_control, process_identity
 from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import SESSION_NAMES, Settings, env_names, env_value
 from cairnmind.engine import install_engine, start_engine, stop_engine
 import stall_watch
+
+# Keep existing test suites completely offline/deterministic unless a SCIP test opts in.
+os.environ.setdefault("CAIRNMIND_SCIP_MODE", "off")
 
 # A time limit for every test, and a stop for what a test left running (#236).
 pytest_plugins = ("run_guard",)
@@ -82,6 +88,23 @@ NO_ARCADE_MODULES = frozenset({
     "test_setup_mark", "test_setup_change", "test_terminal_setup_change", "test_project_forget_workspace",
     "test_server_mode", "test_restore_messages", "test_command_start",
     "test_model_client_kept", "test_no_process_wide_time_patch",
+    "test_phase1_cli_demo", "test_phase2_snapshot_privacy", "test_phase3a_cache_vcr", "test_phase3b_nli_cascade",
+    "test_phase4b_sqlite_try", "test_phase5_scale_telemetry",
+    "test_file_locks", "test_private_files", "test_process_control", "test_windows_guards",
+    "test_ci_windows_job", "test_install_windows", "test_person_pipe", "test_terminal_standalone",
+    "test_service_autostart", "test_scip_proto", "test_scip_manager", "test_symbol_anchor",
+    "test_api_providers_edges", "test_memory_published_parse_edges", "test_copilot_adapter_edges",
+    "test_agent_tools_edges", "test_api_runtime_edges", "test_terminal_preview_edges", "test_cockpit_edges",
+    "test_terminal_panels_edges", "test_terminal_inspector_edges", "test_terminal_graph_edges",
+    "test_api_worker_edges", "test_api_agent_edges", "test_workspace_edges", "test_cli_edges",
+    "test_agent_memory_edges", "test_engine_and_db_creds_edges", "test_verification_and_tools_edges",
+    "test_service_and_bridge_edges", "test_memory_validate_edges",
+    "test_inspector_and_process_control_edges", "test_client_runtime_and_scip_edges",
+    "test_cockpit_routes_edges", "test_memory_manifest_and_mcp_host_edges",
+    "test_ingest_and_service_routes_edges", "test_eval_retrieval_integrations_edges",
+    "test_sessions_and_published_edges", "test_published_ui_agent_edges", "test_ui_server",
+    "test_project_clone", "test_quote_healing",
+    "test_pulse", "test_mcp_presets", "test_doctor_preflight",
 })
 
 TMUX_MODULES = frozenset({
@@ -131,6 +154,10 @@ LEFT_OUT_ON_A_SERVER = {
         "`cairnmind eval memory` is refused on a connect-only installation",
     "test_graph_size":
         "starts an engine of its own with the default heap, which a run against a server does not own",
+    "test_release_contracts::test_upgrade_from_published_release_preserves_every_row_and_records_backup":
+        "loads a raw release database of its own name, which a connect-only installation never creates",
+    "test_release_contracts::test_frozen_cli_json_and_mcp_tool_examples_match_contract":
+        "checks the frozen status and doctor shapes of a managed installation, which a connect-only one reports as connect mode",
 }
 
 
@@ -197,6 +224,68 @@ def status_flags(fd: int) -> int:
     return flags & ~DARWIN_WRITTEN if sys.platform == "darwin" else flags
 
 
+def assert_private(path: Path, *, directory: bool = False) -> None:
+    """Assert owner-only permissions: exact 0600/0700 on POSIX, owner-only NTFS DACL on Windows."""
+    import stat as _stat
+    info = path.lstat()
+    if sys.platform == "win32":
+        assert private_files.is_private_stat(info, path, directory=directory), f"{path} is not private"
+    else:
+        assert _stat.S_IMODE(info.st_mode) == (0o700 if directory else 0o600)
+
+
+def make_world_readable(path: Path, *, directory: bool = False) -> None:
+    """Loosen permissions so fail-closed privacy checks reject ``path`` on both POSIX and Windows."""
+    if sys.platform != "win32":
+        path.chmod(0o755 if directory else 0o644)
+        return
+    import ctypes
+    from ctypes import wintypes
+    me = private_files.current_user_sid()
+    sddl = f"D:P(A;;GA;;;{me})(A;;GR;;;WD)"
+    sd = ctypes.c_void_p()
+    if not private_files._advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl, 1, ctypes.byref(sd), None):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        present = wintypes.BOOL()
+        dacl = ctypes.c_void_p()
+        defaulted = wintypes.BOOL()
+        if not private_files._advapi32.GetSecurityDescriptorDacl(
+                sd, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        err = private_files._advapi32.SetNamedSecurityInfoW(
+            str(path), private_files._SE_FILE_OBJECT,
+            private_files._DACL_SECURITY_INFORMATION | private_files._PROTECTED_DACL_SECURITY_INFORMATION,
+            None, None, dacl, None)
+        if err != 0:
+            raise ctypes.WinError(err)
+    finally:
+        private_files._kernel32.LocalFree(sd)
+    if private_files.is_private_stat(path.lstat(), path, directory=directory):
+        pytest.skip("Environment does not persist NTFS DACL changes (sandboxed or non-NTFS)")
+
+
+def make_private_again(path: Path, *, directory: bool = False) -> None:
+    """Restore owner-only permissions after ``make_world_readable``."""
+    private_files.make_private(path, directory=directory)
+
+
+def make_symlink_or_skip(link: Path, target: Path, *, target_is_directory: bool = False) -> None:
+    """Create a symlink, falling back to an NTFS junction for directories or skipping on WinError 1314."""
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            if target_is_directory and Path(target).is_dir():
+                done = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                                      capture_output=True, text=True, timeout=10)
+                if done.returncode == 0:
+                    return
+            pytest.skip("Windows symlink creation requires Developer Mode or elevated privileges")
+        raise
+
+
 @pytest.fixture
 def short_tmp_path():
     """A short private folder of its own, for a path that has a length limit (#236).
@@ -204,7 +293,8 @@ def short_tmp_path():
     tmp_path on macOS is under /private/var/folders/..., longer than a socket path may be and than some messages
     show a path in full. Resolved, so a path the product resolves (/tmp is /private/tmp there) compares equal.
     """
-    path = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp")).resolve()
+    base = None if sys.platform == "win32" else "/tmp"
+    path = Path(tempfile.mkdtemp(prefix="cm-", dir=base)).resolve()
     yield path
     shutil.rmtree(path, ignore_errors=True)
 
@@ -369,10 +459,22 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "no_schema_template: every database of the test is built from nothing")
     config.addinivalue_line("markers", "exclusive: under xdist, runs while no other test of the run runs")
     # A worker's base directory is its own (<run root>/popen-gwN); a serial run's is the run root.
-    copy = config._tmp_path_factory.getbasetemp() / "mcp-fixture" / MCP_FIXTURE_SOURCE.name
+    base = config._tmp_path_factory.getbasetemp()
+    if is_xdist_controller(config):
+        # On Windows, .venv\Scripts\python.exe is a uv launcher shim, so a worker's os.getppid() is its own
+        # execnet shim (`python.exe -u -c ...`), not the pytest controller. Record the real controller PID here.
+        (base / "xdist-controller.json").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    copy = base / "mcp-fixture" / MCP_FIXTURE_SOURCE.name
     copy.parent.mkdir(exist_ok=True)
     shutil.copyfile(MCP_FIXTURE_SOURCE, copy)
     MCP_FIXTURE = str(copy)
+    if sys.platform == "win32":
+        import textual._time as textual_clock
+        import textual._win_sleep as textual_win_sleep
+        # textual._win_sleep blocks default-executor threads in WaitForMultipleObjects(INFINITE) and cancels via a new
+        # task on the same bounded ThreadPoolExecutor, deadlocking for 10 minutes under parallel TUI load on Windows.
+        textual_win_sleep.sleep = textual_win_sleep.time_sleep_coro
+        textual_clock.win_sleep = textual_win_sleep.time_sleep_coro
 
 
 def pytest_addoption(parser):
@@ -432,8 +534,7 @@ def is_xdist_controller(config) -> bool:
 
 @contextlib.contextmanager
 def file_lock(path: Path):
-    with path.open("a") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
+    with file_locks.locked_path(path):
         yield
 
 
@@ -443,15 +544,17 @@ def _pytest_alive(pid: int) -> bool:
     return process_identity.alive(pid) if argv is None else any("pytest" in argument for argument in argv)
 
 
-def reap_orphan_engines(runs_root: Path) -> None:
+def reap_orphan_engines(runs_root: Path, *, current_run: Path | None = None) -> None:
     """Stop test engines whose owning pytest process is gone (killed, not torn down).
 
     Only engines this conftest started and recorded in owner.json are touched, and only when that
     process no longer runs pytest; stop_engine itself checks the process belongs to that directory.
     """
     for owner in runs_root.glob("pytest-*/arcade-engine*/owner.json"):
+        if current_run is not None and owner.parent.parent == current_run:
+            continue
         try:
-            pid = int(json.loads(owner.read_text())["pid"])
+            pid = int(json.loads(owner.read_text(encoding="utf-8"))["pid"])
         except (OSError, ValueError, KeyError, TypeError):
             continue
         if _pytest_alive(pid) or not (owner.parent / "arcade" / "process.json").exists():
@@ -461,11 +564,15 @@ def reap_orphan_engines(runs_root: Path) -> None:
 
 
 def record_owner(root: Path, pid: int) -> None:
-    (root / "owner.json").write_text(json.dumps({"pid": pid}))
+    (root / "owner.json").write_text(json.dumps({"pid": pid}), encoding="utf-8")
 
 
 def prepare_engine(root: Path, owner_pid: int) -> Settings:
     """Configure, install and start an owned test engine in ``root`` (idempotent)."""
+    if not root.exists():
+        private_files.ensure_private_dir(root)
+    else:
+        private_files.make_private(root, directory=True)
     settings = Settings.load(root, create=True)
     if not (root / "owner.json").exists():
         with socket.socket() as sock:
@@ -523,19 +630,19 @@ def run_slot(request, tmp_path_factory):
     with (run_root / "test-slot.gate").open("a") as gate, (run_root / "test-slot.lock").open("a") as lock:
         # Bounded (#236): a test that hangs elsewhere must not keep this one, and every one behind it, waiting.
         with run_guard.waiting(run_guard.slot_wait(), "waiting for the test slot"):
-            fcntl.flock(gate, fcntl.LOCK_EX)
+            file_locks.lock_exclusive(gate)
             if exclusive:
-                fcntl.flock(lock, fcntl.LOCK_EX)
+                file_locks.lock_exclusive(lock)
             else:
-                fcntl.flock(lock, fcntl.LOCK_SH)
-                fcntl.flock(gate, fcntl.LOCK_UN)
+                file_locks.lock_shared(lock)
+                file_locks.unlock(gate)
         _slot_held = True
         try:
             yield
         finally:
             _slot_held = False
-            fcntl.flock(lock, fcntl.LOCK_UN)
-            fcntl.flock(gate, fcntl.LOCK_UN)
+            file_locks.unlock(lock)
+            file_locks.unlock(gate)
 
 
 @pytest.fixture(autouse=True)
@@ -619,9 +726,43 @@ MCP_MODULES = frozenset({"test_mcp_host", "test_mcp_agent", "test_mcp_sources", 
 
 
 def process_ids() -> list[int]:
-    """Every process id of the machine: procfs on Linux, ps(1) where there is none (macOS)."""
+    """Every process id of the machine: procfs on Linux, Win32 snapshot on Windows, ps(1) on macOS."""
     if sys.platform.startswith("linux"):
         return [int(name) for name in os.listdir("/proc") if name.isdigit()]
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_void_p),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        snap = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+        if snap == wintypes.HANDLE(-1).value:
+            return []
+        pids = []
+        try:
+            entry = PROCESSENTRY32W()
+            entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+            if kernel32.Process32FirstW(snap, ctypes.byref(entry)):
+                while True:
+                    pids.append(int(entry.th32ProcessID))
+                    if not kernel32.Process32NextW(snap, ctypes.byref(entry)):
+                        break
+        finally:
+            kernel32.CloseHandle(snap)
+        return pids
     listed = subprocess.run(["ps", "-A", "-o", "pid="], capture_output=True, text=True, check=True, timeout=30)
     return [int(pid) for pid in listed.stdout.split()]
 
@@ -655,11 +796,14 @@ def no_mcp_server_outlives_its_test(request):
         time.sleep(.05)
         left = mcp_fixture_processes()
     for pid in left:
-        for kill in (lambda: os.killpg(pid, signal.SIGKILL), lambda: os.kill(pid, signal.SIGKILL)):
-            try:
-                kill()
-            except OSError:
-                pass
+        if sys.platform == "win32":
+            process_control.terminate_pid(pid, force=True)
+        else:
+            for kill in (lambda: os.killpg(pid, signal.SIGKILL), lambda: os.kill(pid, signal.SIGKILL)):
+                try:
+                    kill()
+                except OSError:
+                    pass
     if left:
         pytest.fail(f"A fixture MCP server outlived its test and was killed: {left}")
 
@@ -694,6 +838,8 @@ class SchemaTemplate:
     """
 
     def __init__(self, settings: Settings, prefix: str, scratch: Path):
+        self.settings = settings
+        self.admin_client = ArcadeClient(settings)
         self.databases = settings.data_dir / "arcade" / "databases"
         self.prefix = prefix
         self.name = None
@@ -709,12 +855,12 @@ class SchemaTemplate:
         finally:
             os.environ["CAIRNMIND_ARCADE_DB_PREFIX"] = prefix
         client = store.client
-        client.command("DELETE FROM devbrain_meta")
+        client.command("DELETE FROM devbrain_meta WHERE name NOT IN ['schema_version','lookup_indexes']")
         client.command("DELETE FROM journal_state")
         types = [row["name"] for row in client.query("SELECT name FROM schema:types")]
         rows = sum(client.query(f"SELECT count(*) AS n FROM `{name}`")[0]["n"] for name in types)
         client.server_command(f"close database {client.database}")
-        if rows:  # Store.init wrote more than the two rows above: build every database from nothing.
+        if rows != 2:  # expected only schema_version and lookup_indexes in devbrain_meta
             shutil.rmtree(self.databases / client.database, ignore_errors=True)
             return
         self.name = client.database
@@ -727,19 +873,29 @@ class SchemaTemplate:
             if template.name is None or template.paused or not name.startswith(template.prefix + "_"):
                 return original(client)
             with template.lock:
-                if client._request("GET", f"/api/v1/exists/{quote(name)}").json().get("result") is True:
+                if template.admin_client._request("GET", f"/api/v1/exists/{quote(name)}").json().get("result") is True:
                     return
                 staging = template.databases / f".copy-{name}"
                 shutil.copytree(template.databases / template.name, staging)
                 staging.rename(template.databases / name)
                 try:
-                    client.server_command(f"open database {name}")
+                    template.admin_client.server_command(f"open database {name}")
+                    db_client = ArcadeClient(
+                        replace(template.settings, arcade_database=name),
+                        transport=template.admin_client.transport,
+                        _connections=template.admin_client._connections,
+                    )
+                    db_client.command(
+                        "INSERT INTO journal_state CONTENT :row",
+                        {"row": {"id": "current", "epoch": str(uuid.uuid4()), "seq": 0, "first_seq": 1}},
+                    )
                 except ArcadeError:
                     shutil.rmtree(template.databases / name, ignore_errors=True)
                     return original(client)
         return ensure_database
 
     def remove(self):
+        self.admin_client.close()
         if self.name:
             shutil.rmtree(self.databases / self.name, ignore_errors=True)
 
@@ -785,8 +941,9 @@ def explained_when_unavailable(settings: Settings, original):
                         open_databases = f"no usable answer to the next request either ({probe!r})"
                     log = settings.data_dir / "arcade" / "engine.log"
                     tail = log.read_text(errors="replace").splitlines()[-15:] if log.exists() else []
+                    load_avg = os.getloadavg() if hasattr(os, "getloadavg") else "n/a"
                     print(f"ENGINE UNAVAILABLE after {waited:.1f}s: {method} {path} {statement!r}; "
-                          f"load average {os.getloadavg()}, databases of the engine: {open_databases}, "
+                          f"load average {load_avg}, databases of the engine: {open_databases}, "
                           f"engine.log ends:\n" + "\n".join(tail), file=sys.stderr)
                     if waited < stall_watch.STALL_AFTER:  # later, the watch has printed the threads, while it waited
                         print("engine threads:\n" + stall_watch.engine_threads(log), file=sys.stderr)
@@ -825,12 +982,17 @@ def arcade_test_engine(tmp_path_factory, request):
         if worker:
             # A worker's base directory is <run root>/popen-gwN; the run root is shared by all workers.
             run_root = run_root.parent
-        reap_orphan_engines(run_root.parent)
+        reap_orphan_engines(run_root.parent, current_run=run_root)
         if worker:
             root = run_root / SHARED_ENGINE
             root.mkdir(exist_ok=True)
+            controller_file = run_root / "xdist-controller.json"
+            try:
+                owner_pid = int(json.loads(controller_file.read_text(encoding="utf-8"))["pid"])
+            except (OSError, ValueError, KeyError, TypeError):
+                owner_pid = os.getppid()
             with file_lock(run_root / (SHARED_ENGINE + ".lock")):
-                settings = prepare_engine(root, os.getppid())
+                settings = prepare_engine(root, owner_pid)
         else:
             settings = prepare_engine(tmp_path_factory.mktemp("arcade-engine"), os.getpid())
     if not server:
@@ -907,7 +1069,7 @@ def release_test_databases(request, run_slot):
     finally:
         template.paused = False
     require_slot(request.config, "Dropping the test's databases")
-    client = ArcadeClient(settings)
+    client = template.admin_client
     try:
         names = client._request("GET", "/api/v1/databases").json().get("result", [])
         for name in names:

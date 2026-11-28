@@ -1,0 +1,89 @@
+name: Website build & sync check
+
+on:
+  release:
+    # Rebuild & optionally redeploy automatically whenever a new GitHub Release is published
+    types: [published]
+  schedule:
+    # Daily build refreshes build-time GitHub star count & release metadata
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'website/**'
+      - 'docs/**'
+      - 'CHANGELOG.md'
+      - 'README.md'
+      - 'src/cairnmind/try_demo.py'
+      - 'examples/sample-project/**'
+      - 'tests/fixtures/contracts/**'
+      - 'tests/test_website_sync.py'
+      - 'pyproject.toml'
+      - '.github/workflows/website.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'docs/**'
+      - 'CHANGELOG.md'
+      - 'README.md'
+      - 'src/cairnmind/try_demo.py'
+      - 'examples/sample-project/**'
+      - 'tests/fixtures/contracts/**'
+      - 'tests/test_website_sync.py'
+      - 'pyproject.toml'
+      - '.github/workflows/website.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  website-build-and-audit:
+    name: Website build, SEO & sync audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install website dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Build static website & /docs portal
+        working-directory: website
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run build
+
+      - name: Typecheck Astro & TypeScript
+        working-directory: website
+        run: npm run check
+
+      - name: Run SEO, JSON-LD, link & accessibility audit
+        working-directory: website
+        run: npm run verify
+
+      - name: Verify install/benchmark/try sync & package exclusions
+        run: |
+          python -m pip install --quiet -e . pytest
+          pytest -q tests/test_website_sync.py tests/test_doc_links.py
+
+      - name: Trigger Cloudflare Pages deploy hook (on release or daily schedule)
+        if: github.event_name == 'release' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          CLOUDFLARE_DEPLOY_HOOK: ${{ secrets.CLOUDFLARE_DEPLOY_HOOK }}
+        run: |
+          if [ -n "${CLOUDFLARE_DEPLOY_HOOK:-}" ]; then
+            curl -fsS -X POST "${CLOUDFLARE_DEPLOY_HOOK}"
+          else
+            echo "CLOUDFLARE_DEPLOY_HOOK secret not configured; skipping deploy hook."
+          fi

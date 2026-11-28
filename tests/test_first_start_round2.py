@@ -301,7 +301,8 @@ def test_project_add_of_a_missing_folder_says_how_to_go_on(monkeypatch, run, tmp
     result = run("project", "add", "x", str(missing))
     assert result.exit_code == 1
     text = str(result.exception)
-    assert text == first_start.PROJECT_FOLDER_MISSING.format(root=missing, quoted=f"'{missing}'")
+    from cairnmind.process_control import quote_arg
+    assert text == first_start.PROJECT_FOLDER_MISSING.format(root=missing, quoted=quote_arg(str(missing)))
     assert "mkdir -p" in text
 
 

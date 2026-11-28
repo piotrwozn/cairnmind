@@ -114,7 +114,7 @@ def test_a_transcript_line_with_the_service_token_is_indexed_and_extracted_maske
     history = tmp_path / "claude.jsonl"
     secret_line = user_line(root, f"Deploy with the service token {token} and keep the staging hook.")
     clean_line = user_line(root, "Keep the parser strict about CRLF lines.")
-    history.write_text(secret_line + clean_line)
+    history.write_text(secret_line + clean_line, encoding="utf-8", newline="\n")
     assert import_history(store, history, project["id"], "claude")["archived"] == 2
     secret, clean = sources_of(store, project)
     # The raw archived line is kept as received: its hash and identity do not change.

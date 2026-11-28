@@ -56,6 +56,8 @@ def _is_audit(source):
              and _metadata(source).get("origin") == "local_user_review")
             # The note of a command line confirmation, or of an evaluation's seed (#177): the same kind of note.
             or _metadata(source).get("origin") in ("cli_person", "evaluation_seed")
+            or (str(source.get("uri", "")).startswith("heal://")
+                and _metadata(source).get("origin") == "quote_self_healing")
             or (source.get("kind") == "published" and _metadata(source).get("origin") == "publication_review"))
 
 
@@ -119,6 +121,196 @@ def _file_verdicts(store, project_id, stale):
     return verdicts
 
 
+def _symbol_and_comment_states(store, project_id, records, cited_sources, verdicts):
+    """Derive symbol_state / symbol_change (#411) and comment_state (#412) in one bulk query."""
+    from pathlib import Path
+    from cairnmind.parsing import analyze_code
+    from cairnmind.symbol_anchor import find_symbol_in_analysis, posix_path, validate_symbol_anchor
+
+    anchors: dict[str, dict] = {}
+    comments: dict[str, dict] = {}
+    wanted_paths: set[str] = set()
+    replacement_ids: set[str] = set()
+
+    for record in records:
+        own = _metadata(record)
+        anchor = validate_symbol_anchor(own.get("symbol_anchor"))
+        if anchor is not None:
+            anchors[record["id"]] = anchor
+            wanted_paths.add(anchor["path"])
+        comment = own.get("comment_anchor")
+        if (isinstance(comment, dict) and isinstance(comment.get("tag"), str)
+                and isinstance(comment.get("path"), str) and isinstance(comment.get("text_sha256"), str)):
+            clean_comment = {**comment, "path": posix_path(comment["path"])}
+            comments[record["id"]] = clean_comment
+            if clean_comment["path"]:
+                wanted_paths.add(clean_comment["path"])
+        if record["id"] in anchors or record["id"] in comments:
+            for source_id in record.get("source_ids") or []:
+                if isinstance(source_id, str) and source_id in verdicts:
+                    _, repl = verdicts[source_id]
+                    if isinstance(repl, str):
+                        replacement_ids.add(repl)
+
+    if not anchors and not comments:
+        return {}
+
+    current_rows = store.query(
+        "SELECT id,uri,kind,sha256,created_at,metadata FROM sources "
+        "WHERE project_id=:project AND is_current=true AND kind IN :kinds AND metadata.relative_path IN :paths",
+        {"project": project_id, "kinds": list(_FILE_KINDS), "paths": sorted(wanted_paths)},
+    ) if wanted_paths else []
+
+    by_rel_root: dict[tuple[str, str], dict] = {}
+    by_rel: dict[str, dict] = {}
+    by_id: dict[str, dict] = {}
+
+    def register_current(row):
+        by_id[row["id"]] = row
+        meta = _metadata(row)
+        rel = meta.get("relative_path")
+        if isinstance(rel, str) and rel.strip():
+            norm = posix_path(rel)
+            by_rel.setdefault(norm, row)
+            root = meta.get("root")
+            if isinstance(root, str) and root:
+                by_rel_root[(norm, root)] = row
+
+    for row in current_rows:
+        register_current(row)
+    missing_repl = sorted(replacement_ids - set(by_id))
+    if missing_repl:
+        for row in store.query(
+                "SELECT id,uri,kind,sha256,created_at,metadata FROM sources WHERE id IN :ids AND is_current=true",
+                {"ids": missing_repl}):
+            if row.get("project_id", project_id) == project_id:
+                register_current(row)
+
+    parsed_cache: dict[str, dict] = {}
+
+    def analysis_for(source_row, fallback_rel: str) -> dict | None:
+        sid = source_row["id"]
+        if sid in parsed_cache:
+            return parsed_cache[sid]
+        meta = _metadata(source_row)
+        analysis = meta.get("analysis") if isinstance(meta.get("analysis"), dict) else None
+        has_hashes = bool(
+            analysis
+            and (
+                any(isinstance(sym.get("body_hash"), str) for sym in (analysis.get("symbols") or []))
+                or "tagged_comments" in analysis
+            )
+        )
+        if not has_hashes:
+            full = store.get_source(sid)
+            rel = meta.get("relative_path") or fallback_rel or source_row.get("uri") or ""
+            analysis = analyze_code(Path(str(rel)), str(full.get("content") or ""))
+        parsed_cache[sid] = analysis
+        return analysis
+
+    def current_for(record, target_path: str):
+        own = _metadata(record)
+        preferred_roots: list[str] = []
+        if isinstance(own.get("root"), str) and own["root"]:
+            preferred_roots.append(own["root"])
+        for source_id in record.get("source_ids") or []:
+            src = cited_sources.get(source_id)
+            if src is not None:
+                r = _metadata(src).get("root")
+                if isinstance(r, str) and r and r not in preferred_roots:
+                    preferred_roots.append(r)
+        for root in preferred_roots:
+            hit = by_rel_root.get((target_path, root))
+            if hit is not None:
+                return hit
+        # Fall back to the replacement source ID if the cited file was updated in place.
+        for source_id in record.get("source_ids") or []:
+            if source_id in verdicts:
+                _, repl = verdicts[source_id]
+                if isinstance(repl, str) and repl in by_id:
+                    return by_id[repl]
+            src = cited_sources.get(source_id)
+            if src is not None and src.get("is_current") and src.get("kind") in _FILE_KINDS:
+                meta = _metadata(src)
+                if posix_path(meta.get("relative_path") or "") == target_path:
+                    return src
+        return by_rel.get(target_path)
+
+    def cited_commit_for(record) -> str | None:
+        for source_id in record.get("source_ids") or []:
+            src = cited_sources.get(source_id)
+            if src is not None and src.get("kind") in _FILE_KINDS:
+                commit = _metadata(src).get("git_commit")
+                if isinstance(commit, str) and commit:
+                    return commit
+        return None
+
+    derived: dict[str, dict] = {}
+    for record in records:
+        rid = record["id"]
+        anchor = anchors.get(rid)
+        comment = comments.get(rid)
+        if anchor is None and comment is None:
+            continue
+        info: dict = {}
+        if anchor is not None:
+            cur = current_for(record, anchor["path"])
+            info["symbol_anchor"] = anchor
+            if cur is None:
+                info["symbol_state"] = "symbol_gone"
+                info["symbol_change"] = {
+                    "symbol": anchor["symbol"],
+                    "kind": anchor["kind"],
+                    "path": anchor["path"],
+                    "commit": None,
+                    "changed_at": None,
+                }
+            else:
+                analysis = analysis_for(cur, anchor["path"])
+                found = find_symbol_in_analysis(analysis, anchor["symbol"], anchor["kind"])
+                cur_meta = _metadata(cur)
+                cur_commit = cur_meta.get("git_commit") if isinstance(cur_meta.get("git_commit"), str) else None
+                cited_commit = cited_commit_for(record)
+                diff_commit = cur_commit if cur_commit and cur_commit != cited_commit else None
+                if found is None:
+                    info["symbol_state"] = "symbol_gone"
+                    info["symbol_change"] = {
+                        "symbol": anchor["symbol"],
+                        "kind": anchor["kind"],
+                        "path": anchor["path"],
+                        "commit": diff_commit,
+                        "changed_at": cur.get("created_at"),
+                    }
+                elif found.get("body_hash") == anchor["body_hash"]:
+                    info["symbol_state"] = "unchanged"
+                else:
+                    info["symbol_state"] = "symbol_changed"
+                    info["symbol_change"] = {
+                        "symbol": anchor["symbol"],
+                        "kind": anchor["kind"],
+                        "path": anchor["path"],
+                        "commit": diff_commit,
+                        "changed_at": cur.get("created_at"),
+                    }
+        if comment is not None:
+            cur = current_for(record, comment["path"])
+            info["comment_anchor"] = comment
+            if cur is None:
+                info["comment_state"] = "tag_removed"
+            else:
+                analysis = analysis_for(cur, comment["path"]) or {}
+                tagged = analysis.get("tagged_comments") or []
+                matched = any(
+                    isinstance(item, dict)
+                    and item.get("tag") == comment["tag"]
+                    and item.get("text_sha256") == comment["text_sha256"]
+                    for item in tagged
+                )
+                info["comment_state"] = "present" if matched else "tag_removed"
+        derived[rid] = info
+    return derived
+
+
 def evidence_states(store, project_id, records, *, quotes=True):
     """Return ``{record_id: state}``; reads sources in bulk and writes nothing.
 
@@ -128,12 +320,13 @@ def evidence_states(store, project_id, records, *, quotes=True):
     records = list(records)
     source_ids = sorted({source_id for record in records for source_id in record.get("source_ids") or []
                          if isinstance(source_id, str)})
-    rows = store.query("SELECT id,project_id,uri,kind,sha256,is_current,metadata FROM sources WHERE id IN :ids",
+    rows = store.query("SELECT id,project_id,uri,kind,sha256,is_current,created_at,metadata FROM sources WHERE id IN :ids",
                        {"ids": source_ids}) if source_ids else []
     sources = {row["id"]: row for row in rows if row.get("project_id") == project_id}
     stale = {source_id: source for source_id, source in sources.items()
              if not source.get("is_current") and source.get("kind") in _FILE_KINDS}
     verdicts = _file_verdicts(store, project_id, stale) if stale else {}
+    anchored = _symbol_and_comment_states(store, project_id, records, sources, verdicts)
     bodies = {}
 
     def body(source_id):
@@ -174,6 +367,18 @@ def evidence_states(store, project_id, records, *, quotes=True):
         state = ("degraded" if degraded_origin(_metadata(record))
                  else "anchored" if counts["current"] else "evidence_replaced" if counts["replaced"]
                  else "unverified" if pending else "degraded" if external else "orphaned")
+        extra = anchored.get(record["id"])
+        if extra and state not in ("degraded", "unverified"):
+            sym_state = extra.get("symbol_state")
+            com_state = extra.get("comment_state")
+            if sym_state == "unchanged" and com_state != "tag_removed":
+                state = "anchored"
+            elif sym_state == "symbol_changed":
+                state = "evidence_replaced"
+            elif sym_state == "symbol_gone":
+                state = "orphaned"
+            elif com_state == "tag_removed" and state != "orphaned":
+                state = "evidence_replaced"
         quote = _metadata(record).get("evidence")
         survives = None
         if quotes and state == "evidence_replaced" and isinstance(quote, str) and quote.strip():
@@ -183,12 +388,26 @@ def evidence_states(store, project_id, records, *, quotes=True):
             verified = [replacement for original, replacement in replaced if quote in body(original)]
             if verified:
                 survives = any(quote in body(replacement) for replacement in verified)
-        result[record["id"]] = {"evidence_state": state, "quote_survives": survives,
-                                "sources_current": counts["current"], "sources_replaced": counts["replaced"],
-                                "sources_gone": counts["gone"], "sources_unverified": counts["pending"]}
+        own = _metadata(record)
+        quote_ref = own.get("quote_ref") if isinstance(own.get("quote_ref"), dict) else None
+        ref_failure = quote_ref.get("status") if (quote_ref and quote_ref.get("status") in (
+            "stale_ref", "validation_failed", "ambiguous_context")) else None
+        if ref_failure and state != "degraded" and counts["current"] == 0:
+            state = ref_failure
+            if ref_failure in ("stale_ref", "validation_failed"):
+                survives = False
+        entry = {"evidence_state": state, "quote_survives": survives,
+                 "sources_current": counts["current"], "sources_replaced": counts["replaced"],
+                 "sources_gone": counts["gone"], "sources_unverified": counts["pending"]}
+        if extra:
+            entry.update(extra)
+        if ref_failure and state == ref_failure:
+            entry["quote_ref_status"] = ref_failure
+            entry["ref_status"] = quote_ref.get("ref_status", ref_failure)
+            entry["requires_intervention"] = bool(quote_ref.get("requires_intervention", True))
+        result[record["id"]] = entry
         if state == "unverified" and published:
             result[record["id"]]["unverified_by"] = "published_elsewhere"
-        own = _metadata(record)
         if state == "degraded" and (third_party_origin(own) if degraded_origin(own) else external == third_party):
             # Only for this cause, so every other result stays exactly what it was.
             result[record["id"]]["degraded_by"] = "third_party_tool"
@@ -232,10 +451,11 @@ def unanchored(store, project_id, records, *, quotes=True):
     """Records whose evidence does not stand, each with its state; orphaned first."""
     records = [record for record in records if record.get("status") != "superseded"]
     states = evidence_states(store, project_id, records, quotes=quotes)
-    order = {"orphaned": 0, "evidence_replaced": 1, "unverified": 2, "degraded": 3}
+    order = {"orphaned": 0, "stale_ref": 1, "validation_failed": 2, "ambiguous_context": 3,
+             "evidence_replaced": 4, "unverified": 5, "degraded": 6}
     found = [{"record": record, **states[record["id"]]} for record in records
              if states[record["id"]]["evidence_state"] != "anchored"]
-    found.sort(key=lambda row: (order[row["evidence_state"]], row["record"]["kind"], row["record"]["id"]))
+    found.sort(key=lambda row: (order.get(row["evidence_state"], 99), row["record"]["kind"], row["record"]["id"]))
     return found
 
 
@@ -264,12 +484,43 @@ def orphans_report(store, project, root, records):
     def entry(row):
         return f"  [{row['kind']}] {row['status']}, version {row['version']}: {row['title']} ({clean(row['id'])})"
 
+    def symbol_note(row):
+        notes = []
+        sym_state = row.get("symbol_state")
+        change = row.get("symbol_change") if isinstance(row.get("symbol_change"), dict) else {}
+        if sym_state == "symbol_changed":
+            sym = clean(change.get("symbol") or "", 80)
+            path = clean(change.get("path") or "", 120)
+            commit = clean(str(change.get("commit") or "")[:12], 12)
+            day = clean(str(change.get("changed_at") or "")[:19], 19)
+            when = f"commit {commit}" if commit else (day if day else "code edited")
+            notes.append(f"symbol {sym} in {path} changed ({when})")
+        elif sym_state == "symbol_gone":
+            sym = clean(change.get("symbol") or "", 80)
+            path = clean(change.get("path") or "", 120)
+            notes.append(f"symbol {sym} is gone from {path}")
+        if row.get("comment_state") == "tag_removed":
+            ca = row.get("comment_anchor") if isinstance(row.get("comment_anchor"), dict) else {}
+            tag = clean(ca.get("tag") or "comment", 20)
+            path = clean(ca.get("path") or "", 120)
+            notes.append(f"{tag}: comment removed from {path}")
+        return ("; " + "; ".join(notes)) if notes else ""
+
     if groups["orphaned"]:
         lines += ["", f"Orphaned: no supporting source has a current version ({len(groups['orphaned'])})"]
-        lines += [entry(row) for row in groups["orphaned"]]
+        lines += [entry(row) + symbol_note(row) for row in groups["orphaned"]]
+    for heal_state, heading in (
+        ("stale_ref", "Stale quote references: quoted content changed and checksum failed"),
+        ("validation_failed", "Quote validation failed: partial line modification rejected; intervention required"),
+        ("ambiguous_context", "Ambiguous quote context: multiple identical blocks found without unique context"),
+    ):
+        matched = [row for row in rows if row["evidence_state"] == heal_state]
+        if matched:
+            lines += ["", f"{heading} ({len(matched)})"]
+            lines += [entry(row) for row in matched]
     if groups["evidence_replaced"]:
         lines += ["", f"No supporting version is current and a supporting file changed ({len(groups['evidence_replaced'])})"]
-        lines += [entry(row) + f"; {_QUOTE[row['quote_survives']]}"
+        lines += [entry(row) + f"; {_QUOTE[row['quote_survives']]}" + symbol_note(row)
                   + (f"; {row['sources_gone']} other supporting source{'' if row['sources_gone'] == 1 else 's'} gone"
                      if row["sources_gone"] else "") for row in groups["evidence_replaced"]]
     if groups["unverified"]:

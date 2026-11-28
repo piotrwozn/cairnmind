@@ -120,11 +120,13 @@ async def test_choosing_a_project_cancels_a_running_check_stage_and_blocks_a_sec
     project = broker.projects[0]
     answer_stage(broker, decision("run_check", project, stage="test", check_profile="unit"))
     started, release, calls = threading.Event(), threading.Event(), []
+    reconciling = threading.Event()
     opening = threading.Event()  # the sidebar's reconcile; held, the open ends after the other project opens
     if not opened_late:
         opening.set()
 
     def reconcile(*args, **kwargs):
+        reconciling.set()
         opening.wait(10)
         return workspace.read()
     monkeypatch.setattr("cairnmind.workspace.refresh_workspace", reconcile)
@@ -147,6 +149,7 @@ async def test_choosing_a_project_cancels_a_running_check_stage_and_blocks_a_sec
         app.action_inspect()
         await wait_until(pilot, lambda: any(workspace_stage.CHECK_CONTINUES in entry.text
                                             for entry in app.notice_history.entries))
+        await wait_until(pilot, reconciling.is_set)
         said = [entry.text for entry in app.notice_history.entries if workspace_stage.CHECK_CONTINUES in entry.text]
         assert said == ["The check keeps running: unit · Its result will appear in Notices when it ends."]
         workspace.update({"project_id": "project-other", "worktree": "/elsewhere"})  # Then another project opens.
@@ -155,6 +158,8 @@ async def test_choosing_a_project_cancels_a_running_check_stage_and_blocks_a_sec
         # the switch): let it end first, so the count below changes only by the check's outcome.
         opening.set()
         await wait_until(pilot, lambda: "Project opened" in notice_of(app))
+        await app._poll_workspace()
+        await wait_until(pilot, lambda: app.workspace_data.get("project_id") == "project-other")
         shown, unseen = app.notice_history.on_line(), app.notice_history.replaced_unseen()
         release.set()
         await wait_until(pilot, lambda: any("Check finished" in entry.text for entry in app.notice_history.entries))
@@ -237,7 +242,7 @@ async def test_new_entries_do_not_move_existing_menu_positions(tmp_path, monkeyp
     from cairnmind.terminal_ui import ChoiceModal
     assert [row[3] for row in COMMANDS] == [
         "search", "client1", "client2", "inspector", "ask", "brief", "graph", "search", "add_project", "start_work",
-        "connections", "sessions", "more", "settings", "focus", "cockpit", "", "next_stage", "notices"]
+        "connections", "sessions", "more", "settings", "focus", "cockpit", "", "next_stage", "notices", "clone_project"]
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 35)) as pilot:
@@ -246,7 +251,7 @@ async def test_new_entries_do_not_move_existing_menu_positions(tmp_path, monkeyp
         await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
         assert [value for _, value in app.screen.choices] == [
             "sessions", "assistants", "scan", "queue", "snapshot", "import", "settings", "details", "stages", "mcp",
-            "record_kinds", "notices", "legacy_groups", "forget_project"]
+            "record_kinds", "notices", "legacy_groups", "forget_project", "clone_project"]
         await pilot.press("escape")
         buttons = [button.id for button in app.query("#project-page Button")]
     assert buttons == ["project-back", "assistant-select", "project-work", "memory-open", "assistant-add", "stage-next"]

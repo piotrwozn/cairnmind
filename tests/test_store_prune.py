@@ -250,7 +250,10 @@ def test_store_size_lists_each_safety_backup(workspace):
     directory = store.data_dir / "backups"
     directory.mkdir(exist_ok=True)
     (directory / "before-restore-abc.cairnmind.json.gz").write_bytes(b"r" * 300)
-    (directory / "before-schema-3-to-4-\x1b[31mabc.cairnmind.json.gz").write_bytes(b"s" * 200)
+    # NTFS forbids ESC (0x1b) in filenames; use a plain schema safety name on Windows.
+    schema_name = ("before-schema-3-to-4-abc.cairnmind.json.gz" if sys.platform == "win32"
+                   else "before-schema-3-to-4-\x1b[31mabc.cairnmind.json.gz")
+    (directory / schema_name).write_bytes(b"s" * 200)
     report = measure(Store.open_readonly(store.settings))
     safety = report["disk"]["backups"]["safety"]
     assert sorted((entry["kind"], entry["bytes"]) for entry in safety) == [("before_restore", 300),
@@ -387,12 +390,36 @@ def test_engine_log_stays_under_the_limit_after_repeated_starts(tmp_path, monkey
     """Each start of a (fake) engine writes 600 bytes. With a limit of 1000 the engine always starts on a log
     under the limit, and the log never holds more than the limit plus what one run writes."""
     at_launch = tmp_path / "sizes"
-    java = tmp_path / "fake-jdk" / "bin" / "java"
-    java.parent.mkdir(parents=True)
-    java.write_text("#!/bin/sh\ncase \"$1\" in -version) echo 'openjdk version \"21.0.13\"' >&2; exit 0;; esac\n"
-                    f"wc -c < engine.log >> '{at_launch}'\n"  # not GNU stat -c, which macOS lacks
-                    "head -c 600 /dev/zero | tr '\\0' x\nexit 1\n")
-    java.chmod(0o700)
+    if sys.platform == "win32":
+        java = tmp_path / "fake-jdk" / "bin" / "java.cmd"
+        java.parent.mkdir(parents=True)
+        script = (
+            "import os, sys\n"
+            f"with open({str(at_launch)!r}, 'a', encoding='utf-8') as f:\n"
+            "    f.write(str(os.path.getsize('engine.log')) + '\\n')\n"
+            "sys.stdout.buffer.write(b'x' * 600)\n"
+            "sys.stdout.buffer.flush()\n"
+            "sys.exit(1)\n"
+        )
+        helper = tmp_path / "fake-jdk" / "bin" / "fake_java.py"
+        helper.write_text(script, encoding="utf-8")
+        java.write_text(
+            "@echo off\r\n"
+            'if "%~1"=="-version" (\r\n'
+            '  echo openjdk version "21.0.13" 1>&2\r\n'
+            "  exit /b 0\r\n"
+            ")\r\n"
+            f'"{sys.executable}" "{helper}"\r\n'
+            "exit /b %ERRORLEVEL%\r\n",
+            encoding="utf-8",
+        )
+    else:
+        java = tmp_path / "fake-jdk" / "bin" / "java"
+        java.parent.mkdir(parents=True)
+        java.write_text("#!/bin/sh\ncase \"$1\" in -version) echo 'openjdk version \"21.0.13\"' >&2; exit 0;; esac\n"
+                        f"wc -c < engine.log >> '{at_launch}'\n"  # not GNU stat -c, which macOS lacks
+                        "head -c 600 /dev/zero | tr '\\0' x\nexit 1\n", encoding="utf-8")
+        java.chmod(0o700)
     settings = Settings(tmp_path / "data", java_executable=str(java), arcade_database="prune_test",
                         engine_log_bytes=1000, engine_log_copies=2)
     (engine.runtime_dir(settings) / "lib").mkdir(parents=True)
@@ -410,11 +437,28 @@ def test_engine_log_stays_under_the_limit_after_repeated_starts(tmp_path, monkey
 
 
 def fake_engine(tmp_path, monkeypatch, **settings):
-    java = tmp_path / "fake-jdk" / "bin" / "java"
-    java.parent.mkdir(parents=True)
-    java.write_text("#!/bin/sh\ncase \"$1\" in -version) echo 'openjdk version \"21.0.13\"' >&2; exit 0;; esac\n"
-                    "head -c 600 /dev/zero | tr '\\0' x\nexit 1\n")
-    java.chmod(0o700)
+    if sys.platform == "win32":
+        java = tmp_path / "fake-jdk" / "bin" / "java.cmd"
+        java.parent.mkdir(parents=True)
+        helper = tmp_path / "fake-jdk" / "bin" / "fake_java.py"
+        helper.write_text("import sys\nsys.stdout.buffer.write(b'x' * 600)\nsys.stdout.buffer.flush()\nsys.exit(1)\n",
+                          encoding="utf-8")
+        java.write_text(
+            "@echo off\r\n"
+            'if "%~1"=="-version" (\r\n'
+            '  echo openjdk version "21.0.13" 1>&2\r\n'
+            "  exit /b 0\r\n"
+            ")\r\n"
+            f'"{sys.executable}" "{helper}"\r\n'
+            "exit /b %ERRORLEVEL%\r\n",
+            encoding="utf-8",
+        )
+    else:
+        java = tmp_path / "fake-jdk" / "bin" / "java"
+        java.parent.mkdir(parents=True)
+        java.write_text("#!/bin/sh\ncase \"$1\" in -version) echo 'openjdk version \"21.0.13\"' >&2; exit 0;; esac\n"
+                        "head -c 600 /dev/zero | tr '\\0' x\nexit 1\n", encoding="utf-8")
+        java.chmod(0o700)
     settings = Settings(tmp_path / "data", java_executable=str(java), arcade_database="prune_test", **settings)
     (engine.runtime_dir(settings) / "lib").mkdir(parents=True)
     monkeypatch.setattr(engine, "engine_status", lambda settings: {"available": False})

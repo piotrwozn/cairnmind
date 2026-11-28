@@ -146,6 +146,7 @@ def test_a_mark_that_cannot_be_read_blocks(mark, monkeypatch, content):
     assert upgrade_mark.refusal() == upgrade_mark.NOTE_UNREADABLE
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Tests bash scripts/install-wsl.sh upgrade mark")
 def test_the_installer_and_the_package_agree_on_the_mark(tmp_path):
     """The path, the format and the identity the installer writes are the ones the package reads: a real bash,
     named install-wsl.sh, writes the mark and a Python reads it, while it runs and after it removed the mark."""

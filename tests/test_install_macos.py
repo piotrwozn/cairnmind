@@ -17,6 +17,8 @@ import pytest
 
 from installer_script import installer_functions
 
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX bash scripts/install-wsl.sh")
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "install-wsl.sh"
 JAVA_HOME_TOOL = "/usr/libexec/java_home"

@@ -15,6 +15,13 @@ import subprocess
 import sys
 import time
 
+if hasattr(sys.stdin, "reconfigure"):
+    sys.stdin.reconfigure(encoding="utf-8", errors="surrogatepass")
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="surrogatepass")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 MODES = set(sys.argv[1:]) or {"normal"}
 ESC = "\x1b]0;owned\x07\x1b[2J\x1b[31m‮\x9b"
 
@@ -93,8 +100,9 @@ def result_for(name, arguments):
     if "hang_call" in MODES or name == "slow":
         time.sleep(3600)
     if name == "environment":
+        pgid = os.getpgid(0) if hasattr(os, "getpgid") else os.getpid()
         return {"content": [{"type": "text", "text": json.dumps({"env": dict(os.environ), "cwd": os.getcwd(),
-                                                                 "pgid": os.getpgid(0), "pid": os.getpid()})}]}
+                                                                 "pgid": pgid, "pid": os.getpid()})}]}
     if "huge_result" in MODES:
         return {"content": [{"type": "text", "text": "y" * (2 * 1024 * 1024)}]}
     if "giant_line" in MODES:

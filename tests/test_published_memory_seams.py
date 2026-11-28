@@ -171,7 +171,8 @@ def test_memory_diff_reads_a_package_in_a_separate_memory_repository(carried):
 
 def test_the_import_of_a_commit_refuses_clearly_for_a_checkout_carrier(carried):
     store, pid, memory = carried["store"], carried["pid"], carried["memory"]
-    with pytest.raises(ValueError, match=f"separate repository.*import-published {memory}/"):
+    import re
+    with pytest.raises(ValueError, match=f"separate repository.*{re.escape(f'import-published {memory}')}"):
         import_commit(store, pid, "HEAD")
 
 

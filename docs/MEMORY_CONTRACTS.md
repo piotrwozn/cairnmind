@@ -79,6 +79,37 @@ Text chunks are rebuilt from archived source views during import; semantic
 embeddings and current-code analysis rebuild locally. Original paths remain
 provenance, with local scope bindings kept separately.
 
+## Self-healing quote references
+
+When a portable snapshot is imported into a Git checkout (`MemoryManager.import_snapshot` with
+`heal_quotes=True`, or via `POST /memory/heal` / `cairnmind memory heal`), Cairnmind runs a
+three-phase deterministic self-healing pass (`cairnmind.quote_healing`) without calling any model:
+
+1. **Detection and change mapping (Phase 1):** outside the database writer lock, Cairnmind scans
+   Git diffs (`git diff --name-status -M`, `git diff -U0`) between each cited file source's
+   `git_commit` and the target commit (default `HEAD`). When a cited file changed or was renamed,
+   the engine projects line hunks and uses tree-sitter AST enclosing scopes, token streams and
+   surrounding context lines to locate the quoted block.
+2. **Content integrity validation (Phase 2):** a candidate location is accepted only if the SHA-256
+   checksum of its LF-normalized text equals the original quote's SHA-256 verbatim.
+   - Any character difference immediately invalidates the reference (`ref_status: stale_ref`).
+   - If a token-equivalent block has a SHA-256 mismatch or the block/file was replaced or removed,
+     the evidence is marked `stale_ref`.
+   - If only a fragment of a quoted line was edited (partial modification), automatic repair is
+     rejected without guessing and the evidence is marked `validation_failed` (with
+     `ref_status: stale_ref`, `requires_intervention: true`).
+   - If multiple identical blocks exist in the file without unique AST or surrounding context,
+     Cairnmind reports `ambiguous_context` with all candidate line ranges rather than risking a
+     wrong match.
+3. **Reference rewrite, CAS and audit (Phase 3):** inside a single store transaction, each updated
+   record is checked and written under optimistic concurrency CAS (`expected_version` and
+   `WHERE id=:id AND version=:version`, plus optional `expected_snapshot_id`). Concurrent
+   modifications by another agent raise `QuoteCASConflict` (HTTP 409) and write nothing. Each
+   operation writes an immutable `heal://<uuid>` audit source (`origin: quote_self_healing`, never
+   chunked and never anchoring evidence), updates `metadata.quote_ref` (store-derived and
+   confirmation-uncovered, preserving a person's confirmation when an unchanged quote moves), and
+   bumps the record version with a new immutable `record_revisions` entry.
+
 A record the archive brings as confirmed stays confirmed and is marked as
 confirmed elsewhere (see "Only a person confirms a record" below): the dry run
 and the import both report `confirmed_records` with the number of such records,
@@ -154,7 +185,7 @@ through, and it holds for every route:
   metadata field. A field is covered unless it is named as not covered, so a
   summary, a next step or any other text a writer puts beside a confirmed record
   counts like a changed text does. Not covered are the fields the
-  store derives, the bookkeeping of conflict decisions, and on a task its
+  store derives (including `symbol_anchor`, `comment_anchor`, `adr_anchor` and `trailer_anchor`, which use POSIX relative paths and cross-OS normalised hashes so they travel unchanged in portable packages), the bookkeeping of conflict decisions, and on a task its
   progress: `metadata.state`, reported evidence, check runs, a declared scope, a
   proposed command and its placement in a plan. Of these only the path patterns
   of a task's scope are text a writer chooses.
@@ -348,6 +379,19 @@ is not checked, because TMPDIR can differ between processes, on macOS it is),
 reads the key from that tmux server and compares it in constant
 time; only then does the request count as a person's, for that request alone.
 
+On native Windows (where there is no tmux), the open standalone Textual
+workspace creates a single-instance Windows Named Pipe
+(`\\.\pipe\cairnmind-person-<namespace>`) with `FILE_FLAG_FIRST_PIPE_INSTANCE`
+and a Protected DACL restricted to the current user SID (`D:P(A;;GA;;;<user_sid>)`,
+plus the process's AppContainer SID when running inside an AppContainer). The
+random 64-hex key lives only in the standalone workspace's memory; the local
+service verifies the pipe name, confirms via `GetNamedPipeServerProcessId` that
+the pipe server process belongs to the current user SID, reads the key over the
+pipe and compares it in constant time. `cairnmind restore` queries the same
+Named Pipe (`restore_proof`), and closing the standalone workspace closes the
+pipe and discards the key. Other processes (CLI commands, MCP servers, coding
+agents) never attach `X-Cairnmind-Person` / `X-Cairnmind-Workspace`.
+
 The service keeps no state about the key. A service started by `cairnmind
 serve`, by the MCP bridge or before the workspace works with a workspace opened
 later, and a broker that restarts changes nothing. Closing the workspace ends
@@ -375,13 +419,16 @@ Cairnmind runs as the user, and so does every program a coding session starts.
 Such a program can still act as the person, by going through the workspace or
 around Cairnmind:
 
-- use the workspace's tmux server, whose socket belongs to the user: read the
-  key from it, run a program inside it, or type into the inspector (`tmux
-  send-keys`); or start a workspace of its own in a pseudo-terminal and type
-  into that;
-- run a tmux server of its own in a directory named like the workspace's socket
-  directory and put a key of its choosing into it (the service cannot tell that
-  directory from the workspace's on Linux and WSL);
+- use the workspace's tmux server (on POSIX) or Named Pipe (on native Windows),
+  whose socket or pipe belongs to the same user: read the key from it, run a
+  program inside it, or type into the inspector (`tmux send-keys`); or start a
+  workspace of its own in a pseudo-terminal and type into that;
+- on POSIX, run a tmux server of its own in a directory named like the
+  workspace's socket directory and put a key of its choosing into it (the
+  service cannot tell that directory from the workspace's on Linux and WSL); on
+  native Windows, create `\\.\pipe\cairnmind-person-<namespace>` itself when no
+  workspace is open and answer with a key of its choosing (while a workspace is
+  open, `FILE_FLAG_FIRST_PIPE_INSTANCE` blocks a second server on that pipe);
 - use Cairnmind's library code, or the database engine with the password the
   user can read, and write any row, marks and audit notes included;
 - restore a backup while a key answers at this installation's workspace socket: `cairnmind restore` keeps the
