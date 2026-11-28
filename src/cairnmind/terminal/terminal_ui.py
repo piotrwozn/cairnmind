@@ -9,11 +9,13 @@ import subprocess
 import threading
 from collections.abc import Callable
 from contextlib import suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rich.cells import cell_len
+from textual import _time as textual_time
 from textual import on, work
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -402,6 +404,15 @@ def drop_unseen_key(app, event) -> None:
         event.stop()
 
 
+BACKGROUND = ContextVar("cairnmind_background_notice", default=False)  # set in a worker that refreshes by itself
+REFRESH_GROUPS = {"sidebar-refresh", "inspector-journal", "graph-fetch", "graph-events"}  # workers that refresh by themselves
+OUTCOME_HOLD = 12.0  # seconds: ~35 words at 3 words a second plus the tick of a 3 s refresh to pass, a dozen as in #430
+
+
+def _clock() -> float:
+    return textual_time.get_time()  # a test replaces this, not time.sleep of the process (#417)
+
+
 class BasePanel(App):
     ENABLE_COMMAND_PALETTE = False
     run_start_request = False  # set by `--run-request`: the request found at start is for this start
@@ -422,6 +433,9 @@ class BasePanel(App):
         self.notice_history = NoticeHistory()  # memory only, for the life of this panel (#130)
         self._feed_lock, self._feed_rows, self._feed_sent = threading.Lock(), None, None
         self._notice_about, self._mark_text = None, ""
+        self._outcome = None  # (history seq, hold ends) of the notice a person's act left on the line
+        self._held = None  # the newest background notice kept in the history during the hold
+        self._failed = None  # the one of them that a failed refresh left
         self._line_scope = None  # (project id, worktree) the workspace state held when the line got its notice
         self._scope_version = 0
         self._workspace_revision = None
@@ -434,6 +448,65 @@ class BasePanel(App):
 
     def on_key(self, event) -> None:
         drop_unseen_key(self, event)
+        self._release_outcome()  # a key, a mouse press, a button or typing in a field is the person moving on (#430)
+
+    def on_mouse_down(self, event) -> None:  # a Button stops the Click, not the MouseDown
+        self._release_outcome()
+
+    def on_button_pressed(self, event) -> None:
+        self._release_outcome()
+
+    def on_input_changed(self, event) -> None:  # an Input stops the printable keys
+        self._release_outcome()
+
+    def _outcome_holds(self) -> bool:
+        entry = self.notice_history.on_line()
+        # the line shows the outcome while one is set: every other way onto the line (a notice, a release) resets
+        # _outcome, so only a cleared line (no entry) can part them
+        return bool(self._outcome and entry is not None and _clock() < self._outcome[1])
+
+    def _hold_over(self) -> None:  # the timer set with the outcome; an earlier outcome's timer finds a later deadline
+        if self._outcome is not None and _clock() >= self._outcome[1]:
+            self._release_outcome()
+
+    def _release_outcome(self) -> None:
+        """The hold is over. The newest background notice that waited shows if the outcome is still on the line:
+        a source that tells once (a journal that ended) would otherwise never reach the person."""
+        held, self._held = self._held, None
+        entry = self.notice_history.on_line()
+        stands = self._outcome is not None and entry is not None
+        self._outcome = None
+        if held is None or not stands:
+            return
+        with suppress(Exception):
+            self._paint(plain(held.text), held.kind)
+            self._line_scope = self._workspace_scope()
+            self.notice_history.put_on_line(held)
+            self.show_notice_mark()
+
+    def refresh_failed(self, exc, kind="info") -> None:
+        self.notice(exc, kind)
+        self._failed = self._held  # what this failure left waiting, if the hold kept it off the line
+
+    def refresh_recovered(self) -> None:
+        """The refresh worked: an error of its own that still waits is over. What another source told once stays."""
+        if self._held is not None and self._held is self._failed:
+            self._held = None
+
+    def _paint(self, shown, kind) -> None:
+        line = self.query_one("#panel-notice", Static)
+        line.update(shown)
+        line.display = bool(shown.plain)  # an empty notice line takes no row from the list
+        line.set_class(kind == "warn", "-warn")
+        line.set_class(kind == "error", "-error")
+
+    def notice_background(self, value, kind="info") -> None:
+        """A notice of something that runs by itself (a timer, a refresh): it yields to the outcome of an act."""
+        token = BACKGROUND.set(True)
+        try:
+            self.notice(value, kind)
+        finally:
+            BACKGROUND.reset(token)
 
     def open_command(self, action):
         """Only known UI actions can be dispatched; never evaluate command text."""
@@ -455,22 +528,44 @@ class BasePanel(App):
         return await asyncio.to_thread(self.broker.request, method, path, params=params, json=json)
 
     def notice(self, value, kind="info") -> None:
-        """Show one line. `kind` ("info", "warn", "error") only picks a style; the text is exactly `value`."""
+        """Show one line. `kind` ("info", "warn", "error") only picks a style; the text is exactly `value`.
+
+        A notice has a source (#430): a background refresh (a worker that set BACKGROUND) or anything else, which
+        is what a person's act told. The outcome of an act stays on the line for OUTCOME_HOLD seconds or until the
+        person acts (see _release_outcome); a background notice meanwhile goes to the history only (counted when it
+        repeats), and the newest one shows when the hold ends. An outcome replaces whatever stood there at once."""
         shown = None
         if isinstance(value, BaseException):
             value = broker_error_text(value, self.t)  # "Broker 503: …" with a fixed detail translated
+        background = BACKGROUND.get()
+        if background and self._outcome_holds():
+            with suppress(Exception):
+                text = plain(self.t(value)).plain
+                self.notice_history.add(text, self._notice_about or self.workspace_data, kind, on_line=False)
+                # the newest one waits for the end of the hold; an empty one (the failure is over) cancels it
+                self._held = self.notice_history.entries[-1] if text.strip() else None
+                self.show_notice_mark()
+            self.publish_notices(later=True)
+            return
+        if background:  # an outcome keeps what waits: it shows when the last hold ends
+            self._held = None
         with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, KeyError):
             shown = plain(self.t(value))
-            line = self.query_one("#panel-notice", Static)
-            line.update(shown)
-            line.display = bool(shown.plain)  # an empty notice line takes no row from the list
-            line.set_class(kind == "warn", "-warn")
-            line.set_class(kind == "error", "-error")
+            self._paint(shown, kind)
         if shown is not None:
+            if not shown.plain:
+                self._held = None  # a cleared line: what waited was recorded before and is no longer news
             self._line_scope = self._workspace_scope() if shown.plain else None
             with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, KeyError):
-                self.notice_history.add(shown.plain, self._notice_about or self.workspace_data, kind)
+                waiting = self._held if not background else None
+                self.notice_history.add(shown.plain, self._notice_about or self.workspace_data, kind, waiting=waiting)
+                entry = self.notice_history.on_line()
+                if waiting is not None and entry is waiting:
+                    self._held = None  # what waited is on the line now
+                self._outcome = None if background or entry is None else (entry.seq, _clock() + OUTCOME_HOLD)
                 self.show_notice_mark()
+                if self._outcome:
+                    self.set_timer(OUTCOME_HOLD, self._hold_over)
             self.publish_notices(later=True)
 
     def publish_notices(self, *, later=False) -> None:
@@ -616,7 +711,7 @@ class BasePanel(App):
                     else:
                         self.open_command(command.get("action"))
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc)
+            self.notice_background(exc)
 
     @work(group="panel-startup", exclusive=True, exit_on_error=False)
     async def start_panel(self):
@@ -653,7 +748,7 @@ class BasePanel(App):
 
     def on_worker_state_changed(self, event):
         if event.state == WorkerState.ERROR:
-            self.notice(event.worker.error)
+            (self.notice_background if event.worker.group in REFRESH_GROUPS else self.notice)(event.worker.error)
 
     def header_footer(self):
         yield Header()
@@ -687,6 +782,8 @@ class BasePanel(App):
     def view_hint(self, text) -> None:
         """What the view shows or how to use it (a count, the keys of an open entry), not an event:
         on the notice line like a key hint, never kept in Notices or copied to the activity feed."""
+        if BACKGROUND.get() and self._outcome_holds():
+            return  # a reload's count does not end the hold; the next reload tells it again (#430)
         self.leave_hint(text)
 
 

@@ -3,7 +3,7 @@
 
     uv run --locked python scripts/measure_snapshot.py 10000
 
-Prints the seconds of a first snapshot, of a repeat with nothing changed, and of a repeat after one record
+Prints the rows, chunks and bytes of the package, and the seconds of a first snapshot, of a repeat with nothing changed, and of a repeat after one record
 was added (#161: a repeat reads the previous package and compares every object; the cost was never measured
 at size). The records are made up for this run. The project, its worktree and its own database engine live
 in a temporary directory with ports of their own, so no installation is touched, and all of it is removed
@@ -44,6 +44,14 @@ def timed(label, action):
     return result
 
 
+def describe_package(result: dict, chunks: int) -> str:
+    """What the timed package holds: the rows of each kind, the chunks of the store, and the bytes on disk."""
+    folder = Path(result["path"]).parent
+    size = sum(entry.stat().st_size for entry in folder.rglob("*") if entry.is_file())
+    counts = ", ".join(f"{name} {number}" for name, number in result["counts"].items())
+    return f"package: {counts}; store chunks {chunks}; {size} bytes in {len(list(folder.rglob('*.json')))} files"
+
+
 def measure(store, worktree: Path, records: int):
     from cairnmind.memory.memory import MemoryManager
 
@@ -55,7 +63,8 @@ def measure(store, worktree: Path, records: int):
         store.remember(project, {"kind": "fact", "key": f"fact-{number}", "content": lines[number]}, [source["id"]])
     print(f"made {records} records: {time.perf_counter() - started:.2f} s", flush=True)
     manager = MemoryManager(store)
-    timed("first snapshot", lambda: manager.snapshot(project, worktree=str(worktree)))
+    first = timed("first snapshot", lambda: manager.snapshot(project, worktree=str(worktree)))
+    print(describe_package(first, len(store.query("SELECT id FROM chunks WHERE project_id=:project", {"project": project}))), flush=True)
     timed("repeat, nothing changed", lambda: manager.snapshot(project, worktree=str(worktree)))
     store.remember(project, {"kind": "fact", "key": "fact-new", "content": lines[records]}, [source["id"]])
     timed("repeat after one record was added", lambda: manager.snapshot(project, worktree=str(worktree)))

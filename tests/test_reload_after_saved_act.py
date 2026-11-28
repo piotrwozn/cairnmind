@@ -15,7 +15,6 @@ from consent_steps import consent_drawn
 from test_acts_after_project_switch import REFUSAL, SAYS
 from test_person_acts_consent import ACTS
 from test_workspace_stage_scope import wait_until
-from textual.worker import NoActiveWorker, get_current_worker
 
 from cairnmind.terminal.terminal_client import BrokerError, BrokerUnreachable
 from cairnmind.terminal.terminal_i18n import tr
@@ -26,6 +25,7 @@ from cairnmind.terminal.terminal_record_kinds import (
     NOT_WITHDRAWN,
     WITHDRAW_UNCLEAR,
 )
+from cairnmind.terminal.terminal_ui import BACKGROUND
 
 TEAM = ("Team memory imported: {written} records written, {replaced} of them in place of a verdict given on this "
         "computer. Nothing imported is verified here.")
@@ -50,8 +50,8 @@ class Told(list):
 def after_the_request(app, path, how, gate=None):
     """Every read after the act's request fails (`how` is a key of READ_FAILS) or, for "refused", the request itself
     is refused and then the reads fail. Returns the sentences the act told after the request: the panel's own
-    refresh (every 3 s, its own worker) tells its failure too, a different line that may land before or after the
-    act's (#418), so it is not counted here. `gate` holds the act's answer until it is set."""
+    refresh tells its failure too, but a background notice never takes the line from an outcome (#430): the act's own
+    sentences are what the spy keeps. `gate` holds the act's answer until it is set."""
     told, state, original, notice = Told(), {"posted": False}, app.request, app.notice
 
     async def request(method, route, *, params=None, json=None, **kwargs):
@@ -69,11 +69,7 @@ def after_the_request(app, path, how, gate=None):
         return await original(method, route, params=params, json=json, **kwargs)
 
     def spy(value, kind="info"):
-        try:
-            refresh = get_current_worker().group == "sidebar-refresh"
-        except NoActiveWorker:
-            refresh = False
-        if state["posted"] and not refresh:
+        if state["posted"] and not BACKGROUND.get():
             told.append(str(getattr(value, "plain", value)))
         return notice(value, kind)
 
@@ -169,17 +165,18 @@ async def test_a_refused_or_lost_request_of_these_acts_says_not_done_or_may_have
 @pytest.mark.parametrize("language", ["en", "pl"])
 @pytest.mark.parametrize("how", ["refused", "lost"])
 @pytest.mark.parametrize("order", ["refresh-error-first", "refresh-error-last"])
-async def test_the_sentence_of_a_refused_or_lost_accept_is_told_whichever_order_the_panels_refresh_error_lands(
+async def test_the_sentence_of_a_refused_or_lost_accept_is_what_the_person_reads_whichever_order_the_refresh_error_lands(
         tmp_path, monkeypatch, order, how, language):
-    """The sidebar's 3 s refresh fails after the request too and puts "Broker 503: ..." on the line; CI saw it
-    land after the act's sentence (#418). Both orders are forced; the sentence is told in each, and the refresh
-    error is told by no one but the panel's own worker."""
+    """The sidebar's 3 s refresh fails after the request too (#418). Both orders are forced; the line the person
+    sees after the act is the act's sentence in each, never the refresh's "Broker 503: ..." (#430)."""
     act = next(a for a in ACTS if a.id == "kind-accept")
     app, workspace, sent = act.make(tmp_path, monkeypatch, language)
-    gate, lines = asyncio.Event(), []
+    gate = asyncio.Event()
     told = after_the_request(app, act.expected(workspace)[0][0], how, gate)
-    notice = app.notice
-    app.notice = lambda value, kind="info": (lines.append(str(getattr(value, "plain", value))), notice(value, kind))[1]
+
+    def refresh_errors():
+        return [e for e in app.notice_history.entries if e.text == f"Broker 503: {LOST}"]
+
     async with app.run_test(size=(120, 40)) as pilot:
         await act.reach(app, pilot, act.text)
         await consent_drawn(app, pilot)
@@ -187,17 +184,17 @@ async def test_the_sentence_of_a_refused_or_lost_accept_is_told_whichever_order_
         await wait_until(pilot, lambda: told.posts)
         if order == "refresh-error-first":
             app.refresh_sidebar()
-            await wait_until(pilot, lambda: any(LOST in line for line in lines))
+            await wait_until(pilot, lambda: LOST in str(app.query_one("#panel-notice").render()))
             assert not told
         gate.set()
         await wait_until(pilot, lambda: told)
         if order == "refresh-error-last":
-            seen = len(lines)
             app.refresh_sidebar()
-            await wait_until(pilot, lambda: len(lines) > seen)
+            await wait_until(pilot, refresh_errors)
+        await app.workers.wait_for_complete()
         sentence = NOT_ACCEPTED if how == "refused" else ACCEPT_UNCLEAR
         assert tr(sentence, language) in told[-1] and (how == "lost" or REFUSAL in told[-1])
-        assert any(tr(sentence, language) in line for line in lines)
+        assert str(app.query_one("#panel-notice").render()) == told[-1]
         assert told.posts == 1
 
 

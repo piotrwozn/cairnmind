@@ -279,6 +279,21 @@ def test_a_repeated_question_does_not_index_again_and_is_served_from_the_cache(w
         assert answer["cached"] is False and len(indexed) == 1 and model.calls == 2
 
 
+def test_the_answer_cache_holds_at_most_128_answers(workspace):
+    settings, store, project, root = workspace
+    headers = {"Authorization": f"Bearer {settings.token}"}
+    with TestClient(create_app(settings, start_worker=False, ollama=LocalModel())) as client:
+        for number in range(130):
+            assert client.post("/ask", json={"project": "demo", "question": f"Where is authenticate {number}?"},
+                               headers=headers).json()["cached"] is False
+        assert client.get("/status", headers=headers).json()["cached_answers"] == 128
+        # The oldest went first: the newest question is still served from the cache, the first is not.
+        assert client.post("/ask", json={"project": "demo", "question": "Where is authenticate 129?"},
+                           headers=headers).json()["cached"] is True
+        assert client.post("/ask", json={"project": "demo", "question": "Where is authenticate 0?"},
+                           headers=headers).json()["cached"] is False
+
+
 def test_files_touched_just_before_indexing_are_indexed_once_more(workspace, monkeypatch):
     _, store, project, root = workspace
     pid = project["id"]

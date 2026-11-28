@@ -431,7 +431,10 @@ def _validate(payload, project_id, active_plan_id=None, *, graph=True):
             if (len(versions) != current["version"] or not versions or min(versions) != 1
                     or max(versions) != current["version"] or versions[current["version"]] != current):
                 raise ValueError("Incomplete or inconsistent immutable memory revision history")
-    for node in maps["nodes"].values():
+    for identifier, node in maps["nodes"].items():
+        for prefix, owners in (("record:", "records"), ("plan:", "plans"), ("source:", "sources")):
+            if identifier.startswith(prefix) and identifier[len(prefix):] not in maps[owners]:  # the inspector shows the row, not the vertex (#450)
+                raise ValueError("Logical memory graph node without its record, plan or source")
         _text(node.get("kind"), "node kind")
         if not isinstance(node.get("label"), str) or not isinstance(node.get("metadata", {}), dict):
             raise ValueError("Invalid logical memory graph node")

@@ -193,6 +193,8 @@ def check_partial(app, value) -> None:
 
 
 async def _announce(app, project, value):
+    from cairnmind.terminal.terminal_ui import BACKGROUND  # not at the top: terminal_ui reaches this module through terminal_i18n
+    BACKGROUND.set(True)  # a check that runs by itself yields to the outcome of a person's act (#430)
     try:
         view = await app.request("GET", "/api/inspector/record-kinds", params={"project": project})
     except (OSError, ValueError, RuntimeError):

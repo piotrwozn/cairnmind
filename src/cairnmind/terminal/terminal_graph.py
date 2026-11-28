@@ -39,7 +39,7 @@ from cairnmind.terminal.runtime_selection import resolve_tmux
 from cairnmind.terminal.terminal_client import BrokerError
 from cairnmind.terminal.terminal_i18n import localize_bindings
 from cairnmind.terminal.terminal_i18n_messages import display_word
-from cairnmind.terminal.terminal_ui import BasePanel
+from cairnmind.terminal.terminal_ui import BACKGROUND, BasePanel
 from cairnmind.ui.graph_raster import render_scene
 
 NODE_LIMIT = 300
@@ -653,6 +653,7 @@ class GraphApp(BasePanel):
 
     @work(group="graph-fetch", exclusive=True)
     async def load_graph(self):
+        BACKGROUND.set(True)  # an event-driven reload (#430)
         scope, generation = self.model.scope, self.model.generation
         try:
             params = {
@@ -680,6 +681,7 @@ class GraphApp(BasePanel):
 
     @work(group="graph-events", exclusive=True)
     async def listen_events(self):
+        BACKGROUND.set(True)
         async for event in self.broker.events(after=self.model.cursor):
             data = event.get("data") or {}
             if not isinstance(data, dict):

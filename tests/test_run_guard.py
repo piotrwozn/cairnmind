@@ -216,6 +216,182 @@ def test_what_a_failed_test_left_running_is_stopped_after_it(tmp_path):
                 kill(pid, signal.SIGKILL)
 
 
+def test_a_process_with_no_parent_that_names_the_tests_directory_fails_the_test_and_is_stopped(tmp_path):
+    """Started by a shell that ends, so it is nobody's child: only its command line says whose it is (#457)."""
+    marker = tmp_path / "pid"
+    result, _ = inner_run(tmp_path, """
+        import os
+        from pathlib import Path
+        import subprocess
+        import sys
+        import time
+        import run_guard
+
+        def test_leaves_an_orphan(tmp_path):
+            data = tmp_path / "data"
+            data.mkdir()
+            command = f'{sys.executable} -c "import time; time.sleep(3600)" --data-dir {data} >/dev/null 2>&1 &'
+            subprocess.run(["sh", "-c", command], check=True)
+            for _ in range(100):
+                found = run_guard.processes_under(tmp_path)
+                if found:
+                    break
+                time.sleep(.05)
+            Path(os.environ["GUARD_PID"]).write_text(str(found[0][0]))
+
+        def test_after_it_passes(tmp_path):
+            pass
+    """, env={"GUARD_PID": str(marker)})
+    pid = int(marker.read_text())
+    try:
+        assert "2 passed, 1 error" in result.stdout, result.stdout  # the error is the teardown of the first
+        assert "left a process of its own data directory" in result.stdout and str(pid) in result.stdout
+        assert gone(pid), result.stdout
+    finally:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+
+
+ORPHAN = '''
+    import os
+    from pathlib import Path
+    import subprocess
+    import sys
+    import tempfile
+    import time
+    import pytest
+    import run_guard
+
+    def leave_an_orphan(folder):
+        command = f'{sys.executable} -c "import time; time.sleep(3600)" --data-dir {folder} >/dev/null 2>&1 &'
+        subprocess.run(["sh", "-c", command], check=True)
+        for _ in range(100):
+            found = run_guard.processes_under(folder)
+            if found:
+                Path(os.environ["GUARD_PID"]).write_text(str(found[0][0]))
+                return
+            time.sleep(.05)
+'''
+
+
+@pytest.mark.parametrize("form", ["short_tmp_path", "mkdtemp"])
+def test_a_process_naming_a_folder_the_test_made_outside_its_tmp_path_fails_the_test_and_is_stopped(tmp_path, form):
+    marker = tmp_path / "pid"
+    body = "short_tmp_path / 'data'" if form == "short_tmp_path" else "Path(tempfile.mkdtemp(prefix='cm457-')) / 'data'"
+    result, _ = inner_run(tmp_path, ORPHAN + f"""
+    def test_leaves_an_orphan(request{', short_tmp_path' if form == 'short_tmp_path' else ''}):
+        folder = {body}
+        request.addfinalizer(lambda: __import__("shutil").rmtree(folder.parent, ignore_errors=True))
+        folder.mkdir()
+        leave_an_orphan(folder)
+
+    def test_after_it_passes():
+        pass
+    """, env={"GUARD_PID": str(marker)})
+    pid = int(marker.read_text())
+    try:
+        assert "2 passed, 1 error" in result.stdout, result.stdout
+        assert "left a process of its own data directory" in result.stdout and str(pid) in result.stdout
+        assert gone(pid), result.stdout
+    finally:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+
+
+def test_a_process_left_by_a_fixture_of_the_session_names_the_runs_folder_and_fails_the_run(tmp_path):
+    marker = tmp_path / "pid"
+    result, _ = inner_run(tmp_path, ORPHAN + """
+    @pytest.fixture(scope="session")
+    def session_service(tmp_path_factory):
+        folder = tmp_path_factory.mktemp("service") / "data"
+        folder.mkdir()
+        leave_an_orphan(folder)  # nobody stops it at the end of the session
+
+    def test_uses_it(session_service):
+        pass
+    """, env={"GUARD_PID": str(marker)})
+    pid = int(marker.read_text())
+    try:
+        assert "1 passed" in result.stdout and result.returncode == 1, result.stdout
+        assert "left a process of its own folder running" in result.stdout and str(pid) in result.stdout
+        assert gone(pid), result.stdout
+    finally:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+def test_a_ps_that_fails_ends_the_run_once_with_its_reason(tmp_path, workers):
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "ps").write_text("#!/bin/sh\necho 'ps: illegal option' >&2\nexit 1\n")
+    (fake / "ps").chmod(0o755)
+    result, _ = inner_run(tmp_path, """
+    def test_first(tmp_path):
+        pass
+
+    def test_second(tmp_path):
+        pass
+    """, *(["-n", str(workers)] if workers else []), env={"PATH": f"{fake}{os.pathsep}{os.environ['PATH']}"})
+    assert result.returncode == 3, result.stdout
+    assert "cannot list processes (ps exited 1): ps: illegal option" in result.stdout
+    assert "INTERNALERROR" not in result.stdout, result.stdout
+    if not workers:
+        assert "test_second" not in result.stdout, result.stdout  # the second test was never run
+
+
+LINUX_PS = """    1     0     0 /sbin/init splash
+ 1234     1  1000 python -I -m cairnmind --data-dir /tmp/pytest-of-u/pytest-3/t/data cockpit serve
+99999  1234  1000 sh -c  echo   two  spaces
+ 4321     1  1001 other user's process
+"""
+MACOS_PS = """\
+  501     1   501 /usr/sbin/cfprefsd agent
+12345   400   501 /Users/runner/work/uv run pytest -n 3 -m "not arcade"
+    1     0     0 /sbin/launchd
+ 7777     1   501 /private/var/folders/x/T/pytest-of-runner/pytest-0/t/python -I -m cairnmind cockpit serve
+"""
+
+
+def test_the_listing_of_ps_is_read_the_same_from_procps_and_from_the_ps_of_macos():
+    assert run_guard.parse_processes(LINUX_PS, 1000) == [
+        (1234, 1, "python -I -m cairnmind --data-dir /tmp/pytest-of-u/pytest-3/t/data cockpit serve"),
+        (99999, 1234, "sh -c  echo   two  spaces")]
+    assert run_guard.parse_processes(MACOS_PS, 501) == [
+        (501, 1, "/usr/sbin/cfprefsd agent"), (12345, 400, '/Users/runner/work/uv run pytest -n 3 -m "not arcade"'),
+        (7777, 1, "/private/var/folders/x/T/pytest-of-runner/pytest-0/t/python -I -m cairnmind cockpit serve")]
+    assert run_guard.parse_processes("", 501) == [] == run_guard.parse_processes("garbage\n  x y z\n", 501)
+
+
+def test_a_wrapper_above_the_run_that_names_the_folder_is_not_a_stray_but_a_sibling_is(tmp_path):
+    """`timeout 600 sh -c 'pytest --basetemp X'` has X in its command line and is an ancestor of the run."""
+    code = ("import sys; sys.path.insert(0, sys.argv[1]); import run_guard; from pathlib import Path; "
+            "print([pid for pid, _ in run_guard.processes_under(Path(sys.argv[2]))])")
+    sibling = subprocess.Popen(["sh", "-c", "sleep 30; true", "sibling", str(tmp_path)])
+    try:
+        # two wrappers: the python process is a grandchild of the outer one, which names the folder in its arguments
+        done = subprocess.run(["sh", "-c", 'sh -c \'"$@"; true\' inner "$@"; true', "outer", sys.executable, "-c", code,
+                               str(HERE), str(tmp_path)], capture_output=True, text=True, timeout=30)
+    finally:
+        sibling.kill()
+        sibling.wait()
+    assert done.stdout.strip() == str([sibling.pid]), done.stdout + done.stderr
+
+
+def test_a_guard_that_cannot_list_processes_says_so_instead_of_finding_none(tmp_path, monkeypatch):
+    real = subprocess.run
+    for broken in (FileNotFoundError("ps"), subprocess.CompletedProcess([], 1, "", "bad option")):
+        def fake(*args, _broken=broken, **kwargs):
+            if isinstance(_broken, Exception):
+                raise _broken
+            return _broken
+        monkeypatch.setattr(subprocess, "run", fake)
+        with pytest.raises(RuntimeError, match="cannot list processes"):
+            run_guard.processes_under(tmp_path)
+    monkeypatch.setattr(subprocess, "run", real)
+    assert run_guard.processes_under(tmp_path) == []
+
+
 def test_a_limit_is_a_number_of_seconds():
     assert run_guard.read_limit("2.5") == 2.5 and run_guard.read_limit("0") == 0 and run_guard.read_limit(7) == 7
     for wrong in ("", "abc", "-1", "nan", "inf", None):

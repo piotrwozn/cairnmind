@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from cairnmind.memory import conflicts, impact_verdicts, project_forget
 from cairnmind.memory import stale_proposed as proposed
 from cairnmind.memory.findings import MAX_FINDING_CHARS
+from cairnmind.pal import memory_release
 from cairnmind.storage.arcade import ArcadeError
 from cairnmind.terminal import person_proof
 from cairnmind.terminal.inspector import Inspector, InspectorNotFound
@@ -155,6 +156,14 @@ def create_inspector_router(store, settings):
         except ArcadeError:
             raise HTTPException(status_code=503, detail="Memory storage is unavailable") from None
 
+    async def whole_graph(method, *args, **kwargs):
+        # These ask the database for a page, and read the whole graph only for a scope that holds back more than
+        # inspector_graph.HELD_LIMIT rows (#450). What a read took goes back to the system either way (#410).
+        try:
+            return await call(method, *args, **kwargs)
+        finally:
+            await asyncio.to_thread(memory_release.release_freed)
+
     @router.get("/inspector/summary")
     async def summary(project: str | None = None):
         return await call(inspector.summary, project)
@@ -233,15 +242,15 @@ def create_inspector_router(store, settings):
     @router.get("/inspector/graph")
     async def graph(project: str | None = None, worktree: str | None = None, group: str | None = None,
                     limit: int = 2000, page_cursor: str | None = None):
-        return await call(inspector.graph, project, worktree=worktree, group=group, limit=limit, page_cursor=page_cursor)
+        return await whole_graph(inspector.graph, project, worktree=worktree, group=group, limit=limit, page_cursor=page_cursor)
 
     @router.get("/inspector/graph/groups")
     async def groups(project: str, worktree: str | None = None, cursor: str | None = None, limit: int = 100):
-        return await call(inspector.groups, project, worktree=worktree, cursor=cursor, limit=limit)
+        return await whole_graph(inspector.groups, project, worktree=worktree, cursor=cursor, limit=limit)
 
     @router.get("/inspector/graph/{node_id:path}/neighbors")
     async def neighbors(node_id: str, project: str, worktree: str | None = None, cursor: str | None = None, limit: int = 100):
-        return await call(inspector.neighbors, project, node_id, worktree=worktree, cursor=cursor, limit=limit)
+        return await whole_graph(inspector.neighbors, project, node_id, worktree=worktree, cursor=cursor, limit=limit)
 
     @router.get("/inspector/conflicts")
     async def conflict_inbox(project: str, worktree: str | None = None):

@@ -20,6 +20,7 @@ from cairnmind.memory.memory_paths import (
     memory_bindings,
 )
 from cairnmind.memory.secret_mask import ingest_masker, masked_metadata  # noqa: F401
+from cairnmind.pal import memory_release
 from cairnmind.pal.file_locks import lock_exclusive, unlock  # noqa: F401
 from cairnmind.pal.path_spelling import has_alias, lies_in, path_identity, same_or_below
 from cairnmind.pal.terminal_safe import safe_text
@@ -396,7 +397,8 @@ def index_project(store, project_id: str, walk: tuple | None = None) -> dict:
             if (len(result.get("errors", [])) == len(result.get("unavailable", [])) + bool(state.get("graph_kept")) and complete
                     and newest < started - RACY_WINDOW_NS):
                 _INDEXED[key] = signature
-        return result
+    memory_release.release_freed()  # the pass built the whole graph and let it go: its pages go back (#410)
+    return result
 
 
 def index_project_if_changed(store, project_id: str) -> dict:

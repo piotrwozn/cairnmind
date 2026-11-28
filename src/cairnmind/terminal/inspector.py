@@ -29,6 +29,7 @@ from cairnmind.storage.storage_query import (
     gt,
     is_in,
 )
+from cairnmind.terminal import inspector_graph
 
 TABLES = {"records", "sources", "plans", "check_runs", "jobs"}
 NODE_LIMIT = 2000
@@ -70,6 +71,7 @@ def _decode_cursor(value):
 class Inspector:
     def __init__(self, store):
         self.store = store
+        self._held = {}  # the scopes of graph requests at a watermark (inspector_graph.held)
 
     def _project(self, project):
         from cairnmind.memory.project_removal import ProjectRemoved
@@ -428,47 +430,14 @@ class Inspector:
                 saved = self.store.remember(pid, update, [*old["source_ids"], source["id"]])
             return {"record": saved, "audit_source_id": source["id"], "cursor": _cursor(reader, self.store)}
 
-    def _graph_rows(self, project, worktree=None):
-        scope = self._scope(project, worktree)
+    def _graph_rows(self, scope):
+        """Every row of the project's graph in the worktree's scope: read only when a page cannot be (#450)."""
         pid = scope[0]["id"]
         result = {}
-        fields = {
-            "sources": [
-                "id", "kind", "uri", "is_current", "created_at",
-                col("metadata.root", "root"),
-                col("metadata.worktree", "worktree"),
-                col("metadata.path", "path"),
-                col("metadata.role", "role"),
-                col("metadata.client", "client"),
-                col("metadata.session_id", "session_id"),
-                col("metadata.origin_client", "origin_client"),
-                col("metadata.origin_evidence", "origin_evidence"),
-                col("metadata.source_timestamp", "source_timestamp"),
-                col("metadata.byte_offset", "byte_offset"),
-            ],
-            "records": [
-                "id", "kind", "status", "version",
-                col("metadata.root", "root"),
-                col("metadata.worktree", "worktree"),
-                col("metadata.path", "path"),
-            ],
-            "plans": ["id", "title", "version"],
-            "record_revisions": [
-                "id", "record_id", "version",
-                col("snapshot.metadata.root", "root"),
-                col("snapshot.metadata.worktree", "worktree"),
-            ],
-            "plan_revisions": ["id", "plan_id", "version"],
-            "nodes": [
-                "id", "kind", "label", "source_id", "is_current",
-                col("metadata.root", "root"),
-                col("metadata.worktree", "worktree"),
-                col("metadata.path", "path"),
-            ],
-            "edges": ["id", "from_id", "to_id", "kind", "source_id", "is_current", "status"],
-        }
-        for table, selected in fields.items():
-            rows = db_find(self.store, table, {"project_id": pid}, columns=selected, order_by=[asc("id")])
+        for table, selected in inspector_graph.FIELDS.items():
+            # one list of fields (inspector_graph.FIELDS), read through the backend-neutral query
+            columns = [col(*part.split(" AS ")) if " AS " in part else part for part in selected.split(",")]
+            rows = db_find(self.store, table, {"project_id": pid}, columns=columns, order_by=[asc("id")])
             result[table] = [row for row in rows if self._matches(scope, {"kind": row.get("kind"),
                 "metadata": {key: row.get(key) for key in ("root", "worktree", "path")}}, source=table == "sources")]
         if scope[1] is not None:
@@ -477,7 +446,7 @@ class Inspector:
             result["nodes"] = [row for row in result["nodes"] if not row.get("source_id") or row["source_id"] in source_ids]
             result["edges"] = [row for row in result["edges"] if not row.get("source_id") or row["source_id"] in source_ids]
             result["record_revisions"] = [row for row in result["record_revisions"] if row["record_id"] in record_ids]
-        return scope, result
+        return result
 
     def graph(self, project=None, *, worktree=None, group=None, limit=NODE_LIMIT, page_cursor=None, _full=False):
         _limit(limit, NODE_LIMIT)
@@ -506,67 +475,42 @@ class Inspector:
                     nodes.append(inbox_group)
                 return {"nodes": nodes[:limit], "edges": [], "groups": nodes, "counts": summary["totals"],
                         "truncated": len(nodes) > limit, "cursor": watermark, "node_budget": limit, "edge_budget": EDGE_LIMIT}
-            scope, rows = self._graph_rows(project, worktree)
+            scope = self._scope(project, worktree)
             pid = scope[0]["id"]
             warnings = [CODE_GRAPH_NOT_BUILT] if code_graph_pending(scope[0]) else []  # a graph being written is partial (#377)
-            nodes, edges, buckets = {}, {}, {}
-
-            def node(identifier, kind, label, bucket, **extra):
-                nodes[identifier] = {"id": identifier, "project_id": pid, "kind": kind, "label": str(label)[:200], **extra}
-                buckets[identifier] = bucket
-
-            def edge(identifier, first, second, kind, **extra):
-                edges[identifier] = {"id": identifier, "project_id": pid, "from_id": first, "to_id": second,
-                                     "kind": kind, **extra}
-
-            for row in rows["nodes"]:
-                node(row["id"], row["kind"], row.get("label", row["id"]), "native:" + row["kind"],
-                     source_id=row.get("source_id"), historical=not row.get("is_current", True), entity_type="node")
-            for row in rows["sources"]:
-                message = row["kind"] in {"transcript", "transcript_unknown", "converted_transcript"}
-                role = row.get("role", "unknown")
-                bucket = ("session:" + str(row.get("client") or "unknown") + ":" + str(row.get("session_id") or "unknown")) if message else "sources:" + row["kind"]
-                node("source:" + row["id"], "message" if message and role in {"user", "assistant", "tool"} else "technical" if message else "source",
-                     f"{role}: {row['uri']}" if message else row["uri"], bucket, source_id=row["id"],
-                     role=role, client=row.get("client"), session_id=row.get("session_id"), historical=not row.get("is_current", True), entity_type="source")
-                nodes["source:" + row["id"]].update(timestamp=row.get("source_timestamp") or row.get("created_at"),
-                                                      byte_offset=row.get("byte_offset"))
-            for row in rows["records"]:
-                node("record:" + row["id"], row["kind"], f"{row['kind']} · v{row['version']}", "records:" + row["kind"],
-                     record_id=row["id"], version=row["version"], status=row["status"], historical=row["status"] == "superseded", entity_type="record")
-            for row in rows["plans"]:
-                node("plan:" + row["id"], "plan", row["title"], "plans", plan_id=row["id"], version=row["version"], entity_type="plan")
-            for table, owner, prefix in (("record_revisions", "record_id", "record"), ("plan_revisions", "plan_id", "plan")):
-                for row in rows[table]:
-                    identifier = f"revision:{prefix}:{row['id']}"
-                    node(identifier, "revision", f"{prefix} v{row['version']}", "history:" + prefix,
-                         entity_type="revision", owner_type=prefix, owner_id=row[owner], revision_id=row["id"], version=row["version"], historical=True)
-                    edge("history:" + identifier, identifier, prefix + ":" + row[owner], "version_of", structural=True)
-            for row in rows["edges"]:
-                edge(row["id"], row["from_id"], row["to_id"], row["kind"], source_id=row.get("source_id"),
-                     status=row.get("status"), historical=not row.get("is_current", True))
-            edges = {identifier: item for identifier, item in edges.items() if item["from_id"] in nodes and item["to_id"] in nodes}
-            counts = {table: len(items) for table, items in rows.items()}
-            counts.update(display_nodes=len(nodes), display_edges=len(edges))
-            bucket_counts = Counter(buckets.values())
-            groups = [{"id": "group:" + key, "group": key, "kind": "group", "label": key,
-                       "project_id": pid, "count": count, "expandable": True} for key, count in sorted(bucket_counts.items())]
-            structural = [{"id": "contains:" + identifier, "project_id": pid, "from_id": "group:" + buckets[identifier],
-                           "to_id": identifier, "kind": "contains", "structural": True} for identifier in nodes]
-            if _full:
-                return {"nodes": [*groups, *nodes.values()], "edges": [*edges.values(), *structural],
-                        "groups": groups, "counts": counts, "warnings": warnings, "cursor": watermark}
-            selected = sorted(identifier for identifier in nodes if group is None or buckets[identifier] == group.removeprefix("group:"))
             query_key = hashlib.sha256(json_text([pid, str(scope[1]), group]).encode()).hexdigest()
+            after = None
             if page_cursor:
                 decoded = _decode_cursor(page_cursor)
                 if decoded.get("query") != query_key:
                     raise ValueError("Graph page cursor belongs to another scope")
-                selected = [identifier for identifier in selected if identifier > decoded["after"]]
-            remaining = len(selected)
-            visible_groups = [] if group else groups[:max(1, min(500, limit // 4))]
-            available = max(0, limit - len(visible_groups))
-            selected = selected[:available]
+                after = decoded["after"]
+            held = None if _full else inspector_graph.held(self, scope, watermark)
+            paged = held is not None
+            if paged:  # the database counts and returns the rows of the page only, the scope's held rows left out (#450)
+                counts, bucket_counts, sessions = inspector_graph.totals(self.store, pid, True, held)
+                groups = inspector_graph.group_rows(pid, bucket_counts)
+                visible_groups = [] if group else groups[:max(1, min(500, limit // 4))]
+                selected, more = inspector_graph.select(self.store, pid, group, after, max(0, limit - len(visible_groups)), sessions, held)
+                nodes, edges, buckets = inspector_graph.build(pid, inspector_graph.page_rows(self.store, pid, selected, held))
+            else:
+                rows = self._graph_rows(scope)
+                nodes, edges, buckets = inspector_graph.build(pid, rows)
+                counts = {table: len(items) for table, items in rows.items()}
+                counts.update(display_nodes=len(nodes), display_edges=len(edges))
+                groups = inspector_graph.group_rows(pid, Counter(buckets.values()))
+            structural = [{"id": "contains:" + identifier, "project_id": pid, "from_id": "group:" + buckets[identifier],
+                           "to_id": identifier, "kind": "contains", "structural": True} for identifier in nodes]
+            if not paged:
+                if _full:
+                    return {"nodes": [*groups, *nodes.values()], "edges": [*edges.values(), *structural],
+                            "groups": groups, "counts": counts, "warnings": warnings, "cursor": watermark}
+                selected = sorted(identifier for identifier in nodes if group is None or buckets[identifier] == group.removeprefix("group:"))
+                if after is not None:
+                    selected = [identifier for identifier in selected if identifier > after]
+                visible_groups = [] if group else groups[:max(1, min(500, limit // 4))]
+                remaining, selected = len(selected), selected[:max(0, limit - len(visible_groups))]
+                more = remaining > len(selected)
             selected_ids = set(selected)
             visible_edges = [item for item in edges.values() if item["from_id"] in selected_ids and item["to_id"] in selected_ids]
             if not group:
@@ -575,14 +519,21 @@ class Inspector:
                 "edges": [item for item in visible_edges if not item.get("structural") or
                           item["from_id"] in {row["id"] for row in visible_groups}][:EDGE_LIMIT],
                 "groups": groups[:500], "groups_total": len(groups), "counts": counts, "warnings": warnings,
-                "truncated": len(selected_ids) < remaining
-                             or len(visible_edges) > EDGE_LIMIT or len(visible_groups) > limit,
-                "next_cursor": _encode_cursor({"query": query_key, "after": selected[-1]}) if selected and remaining > len(selected) else None,
+                "truncated": more or len(visible_edges) > EDGE_LIMIT or len(visible_groups) > limit,
+                "next_cursor": _encode_cursor({"query": query_key, "after": selected[-1]}) if selected and more else None,
                 "cursor": watermark, "node_budget": limit, "edge_budget": EDGE_LIMIT}
 
     def groups(self, project, *, worktree=None, cursor=None, limit=100):
         _limit(limit)
-        projection = self.graph(project, worktree=worktree, _full=True)
+        with self.store.transaction() as reader:
+            scope = self._scope(project, worktree)
+            watermark = _cursor(reader, self.store)
+            held = inspector_graph.held(self, scope, watermark)
+            if held is not None:  # the database sums the groups (#450)
+                projection = {"cursor": watermark, "warnings": [CODE_GRAPH_NOT_BUILT] if code_graph_pending(scope[0]) else [],
+                              "groups": inspector_graph.group_rows(scope[0]["id"], inspector_graph.totals(self.store, scope[0]["id"], False, held)[1])}
+            else:
+                projection = self.graph(project, worktree=worktree, _full=True)
         rows = projection["groups"]
         query_key = hashlib.sha256(json_text([project, str(worktree), "groups"]).encode()).hexdigest()
         total = len(rows)
@@ -595,9 +546,31 @@ class Inspector:
                 "after": rows[limit - 1]["id"]}) if len(rows) > limit else None, "warnings": projection["warnings"],
                 "cursor": projection["cursor"]}
 
+    def _neighbors_page(self, watermark, scope, held, project, node_id, worktree, limit, cursor):
+        pid, query_key, after = scope[0]["id"], hashlib.sha256(json_text([project, str(worktree), node_id]).encode()).hexdigest(), None
+        if cursor:
+            decoded = _decode_cursor(cursor)
+            if decoded.get("query") != query_key:
+                raise ValueError("Neighbor cursor belongs to another node")
+            after = decoded["after"]
+        _, buckets, sessions = inspector_graph.totals(self.store, pid, False, held)
+        found = inspector_graph.neighbors(self.store, pid, node_id, after, limit, inspector_graph.group_rows(pid, buckets), sessions, held)
+        if found is None:
+            raise InspectorNotFound("Unknown graph node in requested scope")
+        nodes, selected, total, more = found
+        return {"nodes": nodes, "edges": selected, "total": total, "truncated": more,
+            "next_cursor": _encode_cursor({"query": query_key, "after": selected[-1]["id"]}) if more and selected else None,
+            "warnings": [CODE_GRAPH_NOT_BUILT] if code_graph_pending(scope[0]) else [], "cursor": watermark}
+
     def neighbors(self, project, node_id, *, worktree=None, limit=100, cursor=None):
         _limit(limit, 500)
-        projection = self.graph(project, worktree=worktree, _full=True)
+        with self.store.transaction() as reader:
+            scope = self._scope(project, worktree)
+            watermark = _cursor(reader, self.store)
+            held = inspector_graph.held(self, scope, watermark)
+            if held is not None:  # the database returns the node's edges of one page (#450)
+                return self._neighbors_page(watermark, scope, held, project, node_id, worktree, limit, cursor)
+            projection = self.graph(project, worktree=worktree, _full=True)
         nodes = {row["id"]: row for row in projection["nodes"]}
         if node_id not in nodes:
             raise InspectorNotFound("Unknown graph node in requested scope")

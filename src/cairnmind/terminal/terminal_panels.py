@@ -29,7 +29,7 @@ from cairnmind.terminal.terminal_panels_modals import (
     profile_fields,
     profile_from_form,
 )
-from cairnmind.terminal.terminal_ui import BasePanel, ChoiceModal
+from cairnmind.terminal.terminal_ui import BACKGROUND, BasePanel, ChoiceModal
 
 __all__ = [
     "ConfirmModal",
@@ -161,7 +161,11 @@ class SidebarApp(_SidebarActionsMixin, BasePanel):
     async def workspace_changed(self, value):
         self.render_project()
         if value.get("launch_errors") or value.get("last_error"):
-            self.post_launch_notice(value)
+            token = BACKGROUND.set(True)  # the state poll's notice yields to the outcome of an act (#430)
+            try:
+                self.post_launch_notice(value)
+            finally:
+                BACKGROUND.reset(token)
         else:
             self._update_launch_feedback(value)
         from cairnmind.terminal.terminal_record_kinds import check_partial
@@ -173,6 +177,8 @@ class SidebarApp(_SidebarActionsMixin, BasePanel):
         next stage all report it, and a change of the state that does not change the text adds nothing
         to Notices. `about` is the project a press was for (see notice_for)."""
         text = self.launch_notice(value)
+        if BACKGROUND.get() and self._held is not None and self._held.text == plain(self.t(text)).plain:
+            return  # the poll tells what already waits behind an outcome: one event (#430)
         if str(self.query_one("#panel-notice", Static).render()) != self.t(text):
             self.notice_for(about, text) if about else self.notice(text)
 
@@ -439,10 +445,12 @@ class SidebarApp(_SidebarActionsMixin, BasePanel):
 
     @work(group="sidebar-refresh", exclusive=True, exit_on_error=False)
     async def refresh_sidebar(self):
+        BACKGROUND.set(True)  # its notices yield to the outcome of a person's act (#430)
         try:
             await self.load_state()
+            self.refresh_recovered()
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc)
+            self.refresh_failed(exc)
 
     async def load_state(self):
         value = await self.request("GET", "/api/state")

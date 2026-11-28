@@ -272,6 +272,25 @@ def test_unassigned_inbox_is_visible_only_in_global_views_without_assignment(wor
     assert normalized_export(store) == before
 
 
+def test_a_read_of_the_whole_graph_gives_its_freed_memory_back_and_a_light_read_does_not(workspace, monkeypatch):
+    store, project, root, private, private_record, source, record, client, headers = workspace
+    from cairnmind.pal import memory_release
+    released = []
+    monkeypatch.setattr(memory_release, "release_freed", lambda: released.append(1))
+    assert client.get("/inspector/graph", params={"project": project["id"]}, headers=headers).status_code == 200
+    assert client.get("/inspector/graph/groups", params={"project": project["id"]}, headers=headers).status_code == 200
+    assert len(released) == 2
+    node = client.get("/inspector/graph", params={"project": project["id"]}, headers=headers).json()["nodes"][0]["id"]
+    assert len(released) == 3
+    assert client.get(f"/inspector/graph/{node}/neighbors", params={"project": project["id"]}, headers=headers).status_code == 200
+    assert len(released) == 4
+    released.clear()
+    assert client.get("/inspector/graph", params={"project": "no-such-project"}, headers=headers).status_code in (400, 404)
+    assert len(released) == 1  # a refusal also ends the read
+    assert client.get("/inspector/records", params={"project": project["id"]}, headers=headers).status_code == 200
+    assert len(released) == 1
+
+
 def test_graph_watermark_is_read_in_the_same_database_transaction(workspace, monkeypatch):
     from cairnmind.storage.journal import Journal
 
