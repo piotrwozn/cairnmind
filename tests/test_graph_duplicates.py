@@ -261,4 +261,28 @@ def test_a_graph_without_a_duplicate_is_not_changed_by_the_check(tmp_path):
     project, indexed = synthetic(store, tmp_path)
     ingest._build_graph(store, project, indexed)
     before = graph(store, project)
-    assert graph_duplicates.repair(store, project) == 0 and graph(store, project) == before
+    assert graph_duplicates.repair(store, project) == (0, 0) and graph(store, project) == before
+
+def test_a_sqlite_store_cannot_hold_an_id_twice_so_the_check_finds_nothing_and_repairs_nothing(tmp_path):
+    """The schema of the embedded backend makes `id` the primary key of every collection: a second row of an id is refused
+    by the database itself, so the lag of ArcadeDB's index (#456) has no counterpart, and the check is a plain count."""
+    store = Store.open_memory(tmp_path / "mem")
+    try:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        project = store.add_project("p", repo)["id"]
+        source = store.snapshot(project, f"file://{repo / 'a.py'}", "x=1\n", "code")
+        node = {"id": "n:a", "project_id": project, "kind": "file", "label": "a.py", "source_id": source["id"], "is_current": True, "metadata": {}}
+        edge = {"id": "e:aa", "project_id": project, "from_id": "n:a", "to_id": "n:a", "kind": "imports", "source_id": source["id"],
+                "is_current": True, "status": "observed"}
+        with store.transaction() as tx:
+            store.upsert_node(node, tx)
+            store.upsert_edge(edge, tx)
+        for collection, row in (("nodes", node), ("edges", edge)):
+            with pytest.raises(ValueError, match="Duplicate key"):
+                with store.transaction() as tx:
+                    store.backend.insert_document(tx, collection, row)
+        assert graph_duplicates.surplus(store, project) == graph_duplicates.surplus(store, project, "edges") == 0
+        assert graph_duplicates.by_project(store) == [] and graph_duplicates.repair(store, project) == (0, 0)
+    finally:
+        store.close()

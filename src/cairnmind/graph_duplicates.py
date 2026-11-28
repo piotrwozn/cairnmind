@@ -74,7 +74,8 @@ def _edges_of(tx, rids: list[str]) -> list[dict]:
     """The edges of the vertices at `rids`, with their ends, read from the vertices themselves and not by an index."""
     edges = []
     for offset in range(0, len(rids), 500):
-        edges += tx.query("SELECT expand(bothE()) FROM nodes WHERE @rid IN :rids", {"rids": rids[offset:offset + 500]})
+        edges += tx.query("SELECT *, @out AS out_rid, @in AS in_rid FROM (SELECT expand(bothE()) FROM nodes WHERE @rid IN :rids)",
+                         {"rids": rids[offset:offset + 500]})
     return edges
 
 
@@ -104,8 +105,8 @@ def repair(store, project_id: str, written=()) -> tuple[int, int]:
         held = {edge["id"] for edge in _edges_of(batches.tx, sorted(set(survivor.values())))}
         for identifier, edge in lost.items():
             if identifier not in held:
-                ends = [survivor.get(str(edge[side]), str(edge[side])) for side in ("out", "in")]
-                row = {key: value for key, value in edge.items() if not key.startswith("@") and key not in {"in", "out"}}
+                ends = [survivor.get(str(edge[side]), str(edge[side])) for side in ("out_rid", "in_rid")]
+                row = {key: value for key, value in edge.items() if not key.startswith("@") and key not in {"in", "out", "in_rid", "out_rid"}}
                 store.write_edge_between(batches.tx, ends[0], ends[1], row)
                 batches.wrote(1)
         extra_edges = [rid for rids in _copies(batches.tx, "edges", project_id).values() for rid in rids[1:]]
