@@ -413,6 +413,8 @@ def processes_under(*roots: Path, leave: str = "") -> list[tuple[int, str]]:
     it, whatever its parent or session: a service the product started for the test's data directory is nobody's
     child (#457). `ps -A -ww -o pid=,ppid=,uid=,command=` is understood by procps and by the BSD ps of macOS
     (`-U` and the keyword `args` are not on both)."""
+    if sys.platform == "win32":  # shortcut: no ps and no uid there, so no stray is looked for; upgrade when a Windows test leaves a process
+        return []
     names = {name for root in roots for name in (str(root), str(root.resolve()))}
     pattern = re.compile("(?:" + "|".join(re.escape(name) for name in names) + r")(?=[/\s]|$)")
     try:
