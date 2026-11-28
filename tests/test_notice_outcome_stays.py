@@ -303,6 +303,21 @@ async def test_the_hold_ends_on_its_own_timer(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_the_hold_ends_though_its_timer_fires_before_a_coarse_clock_says_so(tmp_path, monkeypatch):
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    monkeypatch.setattr(terminal_ui, "OUTCOME_HOLD", 0.3)
+    real = terminal_ui._clock
+    monkeypatch.setattr(terminal_ui, "_clock", lambda: float(int(real())))  # a clock that moves once a second (#485)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.workers.wait_for_complete()
+        app.notice("outcome")
+        background(app, "the journal ended")
+        assert line(app) == "outcome"
+        await wait_until(pilot, lambda: line(app) == "the journal ended")  # before: 7 times in 10 it never showed
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("how", ["mouse", "typing", "button"])
 async def test_what_a_person_does_in_a_field_or_on_a_button_ends_the_hold(tmp_path, monkeypatch, how):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
