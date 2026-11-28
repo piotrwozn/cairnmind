@@ -254,6 +254,7 @@ def remove_graph_nodes(
     # made it 80 times more scans for a replaced graph (#402). The count is vertices only.
     group = graph_transactions.ROWS_PER_TRANSACTION
     kept: list[str] = []  # returned: the caller counts the vertices the store still holds (#426)
+    tx.extra_copies = 0  # read by the caller: the copies deleted beyond the ids asked (#456)
     for offset in range(0, len(id_list), group):
         part = id_list[offset:offset + group]
         named: set[Any] = set()
@@ -271,8 +272,10 @@ def remove_graph_nodes(
         # The project names the graph a reset transaction reports, so the journal reads nothing for this statement.
         deleted = store.backend.delete_graph_nodes(tx, project_id, unlinked)
         count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
-        if type(count) is not int or count != len(unlinked):
+        # More than asked: an id stored twice (#456) goes with every copy, and the pass says how many extra went.
+        if type(count) is not int or count < len(unlinked):
             raise RuntimeError("The database did not delete every graph vertex of a group")
+        tx.extra_copies += count - len(unlinked)
     return kept
 
 

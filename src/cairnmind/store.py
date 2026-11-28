@@ -783,6 +783,17 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
         """Delete the project's vertices among `identifiers` that no edge names, one group per request."""
         return store_graph.remove_graph_nodes(self, tx, project_id, identifiers)
 
+    def write_node_at(self, tx: Any, rid: str, node: GraphNodeRecord | Mapping[str, Any]) -> None:
+        """Write a graph vertex on the stored one at `rid`: for the repair of an id stored twice (#456), where the index of ids is not asked."""
+        from cairnmind.storage import graph_duplicates
+        graph_duplicates.write_node_at(self, tx, rid, node)
+
+    @staticmethod
+    def write_edge_between(tx: Any, out: str, into: str, edge: Mapping[str, Any]) -> None:
+        """Create a graph edge between the vertices at two record ids, for the same repair: its ends are not looked up by id."""
+        from cairnmind.storage import graph_duplicates
+        graph_duplicates.write_edge_between(tx, out, into, edge)
+
     @staticmethod
     def _load_checked_sources(tx: Any, project_id: str, sources: Any) -> dict[str, SourceRecord]:
         return store_graph.load_checked_sources(tx, project_id, sources)

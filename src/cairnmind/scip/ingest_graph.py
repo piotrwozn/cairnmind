@@ -9,7 +9,7 @@ from pathlib import Path
 from cairnmind.scip.code_graph import code_graph_pending
 from cairnmind.scip.ingest_walk import _identifier, _json, _metadata
 from cairnmind.scip.parsing import parser_identity
-from cairnmind.storage import graph_transactions
+from cairnmind.storage import graph_duplicates, graph_transactions
 from cairnmind.storage.graph_transactions import GraphTransactions, await_vertices
 from cairnmind.storage.storage_query import (
     col,
@@ -536,9 +536,10 @@ def _build_graph(
             doomed = [row["id"] for row in previous_nodes if row["id"] not in digests]
         # Knowledge-record relationships referencing a removed code node must not silently
         # become dangling: such a node is retained. The rest go in groups (issue #167).
-        kept_nodes = set(carried)
+        kept_nodes, extra_copies = set(carried), 0
         for offset in range(0, len(doomed), graph_transactions.ROWS_PER_TRANSACTION):
             kept_nodes.update(store.remove_graph_nodes(batches.tx, project_id, doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION]) or ())
+            extra_copies += getattr(batches.tx, "extra_copies", 0)  # copies of a doomed id that went with it (#456)
             batches.wrote(len(doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION]))
         # What the store holds is what was computed and what an edge keeps: the next pass counts exactly that.
         written.update(kept=frozenset(kept_nodes), code_nodes=_code_nodes(digests) + len(kept_nodes))
@@ -580,7 +581,11 @@ def _build_graph(
                 time_mod=time_mod,
             )
         return {**retry_result, "graph_written_again": True}
+    # The index that finds a row can let a second one of its id in (#456): counted by the project's own index, where a write happened.
+    vertices, edges_removed = graph_duplicates.repair(store, project_id, changed_nodes) if changed_nodes or new_edges else (0, 0)
     if state is not None:
         state.update(written)
     return {"nodes": len(digests), "edges": len(edge_ids), "graph_unchanged": False,
-            "graph_written": {"nodes": len(changed_nodes), "edges": len(new_edges)}}
+            "graph_written": {"nodes": len(changed_nodes), "edges": len(new_edges)},
+            **({"graph_duplicates_removed": vertices + extra_copies} if vertices + extra_copies else {}),
+            **({"graph_duplicate_edges_removed": edges_removed} if edges_removed else {})}

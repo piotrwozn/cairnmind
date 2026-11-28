@@ -111,6 +111,7 @@ POLISH_ALLOWED_MODULES = frozenset({
     "check_profile_messages.py",
     "engine_docker.py",
     "first_start.py",
+    "graph_duplicates.py",
     "mcp_failure_notice.py",
     "memory_models.py",
     "platform_hints.py",

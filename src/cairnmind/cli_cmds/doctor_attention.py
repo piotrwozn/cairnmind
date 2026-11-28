@@ -10,6 +10,7 @@ anything (#373): the summary says so and who writes.
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 
 from cairnmind.cli_cmds.first_start import (
@@ -50,6 +51,7 @@ from cairnmind.cli_cmds.first_start import (
 from cairnmind.pal import platform_hints
 from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.storage.engine_docker import DOCKER_ATTENTION
+from cairnmind.storage.graph_duplicates import IN_PROJECT
 
 # Keys every doctor report has; an object without all of them (`cairnmind init` prints one with data_dir alone)
 # is not a report that found nothing.
@@ -278,6 +280,8 @@ def summary(report: dict) -> list[str]:
     # A project folder this machine cannot read (#371): a note, never a fault; the exit code does not change.
     folders = [e["message"] for e in report.get("project_folders") or []
                if isinstance(e, dict) and isinstance(e.get("message"), str)]
+    twice = [IN_PROJECT.format(project=shlex.quote(safe_text(row["project"])), vertices=row.get("vertices", 0), edges=row.get("edges", 0))
+             for row in report.get("graphs_stored_twice") or [] if isinstance(row, dict) and isinstance(row.get("project"), str)]  # #456
     sqlite_warnings = [
         str(w) for w in ((report.get("sqlite") or {}).get("warnings") or []) if isinstance(w, str) and w
     ]
@@ -288,10 +292,10 @@ def summary(report: dict) -> list[str]:
     preflight_lines = _preflight_summary(report)
     for heading, items in ((OPTIONAL_BROKEN, broken), (OPTIONAL_OFF, off), (OPTIONAL_ON, on),
                            ("Pre-flight:", preflight_lines),
-                           (NOTES, [n for n in notes if n not in blockers] + folders + sqlite_warnings + preflight_warnings)):
+                           (NOTES, [n for n in notes if n not in blockers] + folders + twice + sqlite_warnings + preflight_warnings)):
         if items:
             lines.append(heading)
-            lines += [f"  - {_line(item, limit=900 if item in folders else 300)}" for item in items]
+            lines += [f"  - {_line(item, limit=900 if item in folders or item in twice else 300)}" for item in items]
     lines += [FULL_REPORT, NEXT_FIX if missing else NEXT_PROJECTS if report.get("projects") else NEXT_START]
     return lines
 

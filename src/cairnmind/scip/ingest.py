@@ -93,6 +93,7 @@ from cairnmind.scip.ingest_walk import (  # noqa: F401 - re-exported for callers
     excluded_directory,
 )
 from cairnmind.scip.parsing import analyze_code, parser_identity
+from cairnmind.storage import graph_duplicates
 from cairnmind.storage.graph_transactions import GraphTransactions, await_vertices  # noqa: F401
 from cairnmind.storage.journal import MAX_TRANSACTION_EVENTS
 from cairnmind.storage.storage_query import col, db_find, db_update_where
@@ -687,6 +688,15 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                 "root": Path(row.get("root") or project["root"])}
         counts.update(_build_graph(store, project_id, indexed, previous.get("graph") if previous else None, graph,
                                     False, tuple(links)))
+        if counts.get("graph_unchanged") and graph_duplicates.stored_twice(store, project_id):
+            # A pass that wrote nothing leaves a row stored twice where it is (#456): the graph is written once more, whole.
+            with store.transaction() as tx:
+                db_update_where(tx, "projects", set_fields={"graph_fingerprint": None}, where={"id": project_id})
+            counts.update(_build_graph(store, project_id, indexed, None, graph, False, tuple(links)))
+        for key, sentence in (("graph_duplicates_removed", graph_duplicates.REPAIRED),
+                              ("graph_duplicate_edges_removed", graph_duplicates.EDGES_REPAIRED)):
+            if counts.get(key):
+                counts["errors"].append(sentence.format(count=counts[key], project=safe_text(project["name"])))
     if away:
         counts["unavailable"] = [project_folders.entry(project, folder) for folder in folders
                                  if folder["root"] in away]

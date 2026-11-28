@@ -25,6 +25,7 @@ STORAGE_LAYER_FILES = frozenset({
     "arcade_backend.py",
     "arcade_graph.py",
     "arcade_measure.py",
+    "graph_duplicates.py",  # rows stored twice under one id (#456): ArcadeDB's counts and repair by record id; SQLite is not asked
     "inspector_graph.py",  # the inspector's page reads (#450): ArcadeDB queries; SQLite is read whole
     "sqlite_backend.py",
     "sqlite_crud.py",

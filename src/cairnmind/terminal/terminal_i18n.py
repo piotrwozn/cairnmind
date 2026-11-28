@@ -15,6 +15,7 @@ from cairnmind.memory.project_forget import MESSAGES as PROJECT_FORGET_MESSAGES
 from cairnmind.memory.project_removal import MESSAGES as PROJECT_REMOVAL_MESSAGES
 from cairnmind.pal.platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
 from cairnmind.storage.engine_docker import MESSAGES as ENGINE_DOCKER_MESSAGES
+from cairnmind.storage.graph_duplicates import MESSAGES as GRAPH_DUPLICATE_MESSAGES
 from cairnmind.storage.restore_claims import MESSAGES as RESTORE_CLAIM_MESSAGES
 from cairnmind.storage.restore_staged import MESSAGES as RESTORE_STAGED_MESSAGES
 from cairnmind.storage.store_prune import MESSAGES as PRUNE_MESSAGES
@@ -748,6 +749,7 @@ CATALOG.update(PROJECT_FORGET_MESSAGES)  # deleting a project's memory: the comm
 CATALOG.update(PROJECT_FORGET_VIEW_MESSAGES)  # deleting a project's memory in the workspace (#347)
 CATALOG.update(RECORDER_MESSAGES)  # the recorder subagent install writes for Claude Code (#376)
 CATALOG.update(PROJECT_FOLDER_MESSAGES)  # a project's folder this machine cannot read (#371)
+CATALOG.update(GRAPH_DUPLICATE_MESSAGES)  # a vertex stored twice under one id (#456)
 CATALOG.update(PROJECT_CLONE_MESSAGES)  # cloning a repository from GitHub or Git during project add
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)

@@ -74,12 +74,14 @@
     ]
   },
   "data_dir": "<DATA_DIR>",
+  "edges_stored_twice": 0,
   "environment_blockers": [],
   "environment_notes": [],
   "get_models": "To use models: `cairnmind models pull` downloads the local models into Ollama (about 7 GB); `cairnmind models set` chooses a model server.",
   "gpu": {
     "available": false
   },
+  "graphs_stored_twice": [],
   "java": {
     "compatible": true,
     "executable": "<HOST_PROBED>",
@@ -331,5 +333,6 @@
         "kind": "engine"
       }
     ]
-  }
+  },
+  "vertices_stored_twice": 0
 }
