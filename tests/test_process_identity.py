@@ -14,9 +14,9 @@ import struct
 import subprocess
 import sys
 import time
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
-import warnings
 
 import pytest
 

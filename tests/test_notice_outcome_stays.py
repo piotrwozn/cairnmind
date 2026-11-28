@@ -17,7 +17,6 @@ from consent_steps import consent_drawn
 from test_person_acts_consent import ACTS
 from test_terminal_panels import setup
 from test_workspace_stage_scope import wait_until
-
 from textual.widgets import Button
 
 from cairnmind.terminal import terminal_ui

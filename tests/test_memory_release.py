@@ -94,6 +94,7 @@ def test_a_libc_that_refuses_the_setting_or_the_trim_is_reported_as_doing_nothin
 
 def test_serve_limits_the_arenas_before_the_service_is_made(monkeypatch, tmp_path):
     from typer.testing import CliRunner
+
     from cairnmind import cli, service
     from cairnmind.config import Settings
     order = []
