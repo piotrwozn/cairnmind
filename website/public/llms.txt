@@ -1,0 +1,65 @@
+# Cairnmind
+
+> Cairnmind is an open-source, local-first verification and memory layer for coding agents. It grounds every answer in verbatim source quotes, binds task completion to fresh local test fingerprints, and preserves versioned plans across Codex CLI, Claude Code, Copilot, and MCP clients.
+
+## The Problem It Solves
+
+Coding agents hallucinate undocumented flags or settings, forget architectural decisions across sessions and tool switches, overwrite concurrent plans, and claim tasks are "done" after editing code without re-running tests. Static files like `CLAUDE.md` drift silently, and built-in assistant memory is opaque and vendor-locked.
+
+## Who It Is For
+
+Software engineers and teams using coding assistants (Codex CLI, Claude Code, GitHub Copilot, Cursor, Cline, Windsurf, VS Code, Zed, Gemini CLI, or API agents) who want verifiable, local-first engineering memory, code-graph blast-radius analysis, and machine-enforced test gates without cloud lock-in or telemetry.
+
+## Key Capabilities
+
+- **Verified Knowledge (`ask`):** Verbatim source quotes re-checked against live files plus deterministic subject, support, and product-names checks (24/24 absent-feature questions refused on main) -- or explicit `unknown`. Works in deterministic-only mode with zero LLMs or GPU.
+- **Cold Handoffs & OCC:** Checksummed resume packets (`schema_version: 2`, `state_hash`), mandatory read-before-write ACK, atomic versioned plans (`expected_version`), and `cairnmind mcp generate` presets for 11 MCP clients with unwrapped provenance attribution for direct IDE connections.
+- **Fresh Machine Proof for `done` & CI:** Named check profiles (`.cairnmind/checks.toml`) bound to live code fingerprints (a 1-line edit marks checks stale), `<500 ms` `cairnmind pulse --strict`, serverless CI `cairnmind scan`, and `cairnmind impact`.
+- **12-Language Code Graph & Hybrid RAG + GraphRAG:** Tree-sitter (Python, JavaScript, TypeScript) + automatic SCIP indexers (Go, Rust, Java, Kotlin, C, C++, C#, PHP, Ruby) stored in pinned ArcadeDB 26.11.1 (native Java 21, Docker, or remote/K8s) plus zero-setup SQLite preview (`uvx cairnmind try`, lossless `cairnmind migrate --to server`).
+- **Human Sovereignty & Local Security:** "Only a person confirms" enforced via OS workspace key (tmux server on POSIX; owner-only Windows Named Pipe on native Windows), secret masking and publication gates, `memory_remote_classes` egress gating, single-writer store locking, and zero in-process third-party plugins.
+- **Workspaces & 1.x Stable Contract:** Multi-pane tmux + Textual cockpit (Linux/WSL2/macOS), standalone Textual workspace (native Windows), optional loopback Obsidian Glass web inspector (`cairnmind ui`), Git-tracked team memory (`.memory/cairnmind-published/`), and 44 CI-frozen contract fixtures (35 CLI `--json` + 9 MCP captures across 8 MCP tools).
+
+## Primary Pages
+
+- [Product Overview](https://cairnmind.dev/)
+- [All Implemented Capabilities](https://cairnmind.dev/features/)
+- [Install & Topologies (Linux, WSL2, macOS, Native Windows, Docker)](https://cairnmind.dev/install/)
+- [Measured Evaluations & Benchmarks](https://cairnmind.dev/benchmarks/)
+- [Technical FAQ](https://cairnmind.dev/faq/)
+- [Compare Cairnmind](https://cairnmind.dev/compare/)
+- [vs. CLAUDE.md & AGENTS.md](https://cairnmind.dev/compare/vs-claude-md-and-agents-md/)
+- [vs. Built-in Assistant Memory](https://cairnmind.dev/compare/vs-builtin-assistant-memory/)
+- [vs. Vector & MCP Memory Layers](https://cairnmind.dev/compare/vs-mcp-memory-servers/)
+- [Use Cases Hub](https://cairnmind.dev/use-cases/)
+- [Cross-Agent Cold Handoffs](https://cairnmind.dev/use-cases/cross-agent-handoff/)
+- [Prevent Hallucinated Done](https://cairnmind.dev/use-cases/prevent-hallucinated-done/)
+- [Local Private Code Graph](https://cairnmind.dev/use-cases/local-private-code-intelligence/)
+- [Git Team Memory](https://cairnmind.dev/use-cases/git-team-memory/)
+
+## Documentation Sections
+
+- [Documentation Home](https://cairnmind.dev/docs/)
+- [Installing Cairnmind](https://cairnmind.dev/docs/install/)
+- [1.0.0 Stable Contract](https://cairnmind.dev/docs/stable-contract/)
+- [Implementation Contracts & Limits](https://cairnmind.dev/docs/contracts/)
+- [Workflow, Plans, Checks & CI Scan](https://cairnmind.dev/docs/workflow/)
+- [Portable & Team Memory](https://cairnmind.dev/docs/memory/)
+- [Memory & Security Contracts](https://cairnmind.dev/docs/memory-contracts/)
+- [External MCP Clients](https://cairnmind.dev/docs/external-clients/)
+- [Terminal Workspace & Inspector](https://cairnmind.dev/docs/terminal/)
+- [API, Models & Connections](https://cairnmind.dev/docs/api/)
+- [Architecture & Code Graph](https://cairnmind.dev/docs/architecture/)
+- [Storage, Backups & Maintenance](https://cairnmind.dev/docs/storage-and-maintenance/)
+- [Deployment, Docker & Kubernetes](https://cairnmind.dev/docs/deployment/)
+- [Explicit Evaluations](https://cairnmind.dev/docs/evaluation/)
+- [Measured Evaluation Results](https://cairnmind.dev/docs/evaluation/results/)
+- [Release Gate & Qualification](https://cairnmind.dev/docs/releasing/)
+- [Upgrading Cairnmind](https://cairnmind.dev/docs/upgrading/)
+- [Changelog](https://cairnmind.dev/docs/changelog/)
+
+## Source & License
+
+- [GitHub Repository](https://github.com/piotrwozn/cairnmind)
+- [Releases](https://github.com/piotrwozn/cairnmind/releases)
+- [Apache License 2.0](https://github.com/piotrwozn/cairnmind/blob/main/LICENSE)
+- [Extended Reference (llms-full.txt)](https://cairnmind.dev/llms-full.txt)

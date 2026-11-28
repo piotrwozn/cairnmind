@@ -1,13 +1,14 @@
 """Explicit Java selection stays local and diagnostics describe the actual binary."""
 import json
 import subprocess
+import sys
 import time
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
-from conftest import own_time
+from conftest import make_symlink_or_skip, own_time
 from cairnmind.arcade import ArcadeError
 from cairnmind.config import Settings
 from cairnmind import engine, integrations
@@ -26,7 +27,7 @@ def executable(tmp_path):
 def test_explicit_java_is_resolved_without_path_fallback(tmp_path, monkeypatch):
     binary = executable(tmp_path)
     alias = tmp_path / "java-alias"
-    alias.symlink_to(binary)
+    make_symlink_or_skip(alias, binary)
     settings = Settings(tmp_path, java_executable=str(alias))
     monkeypatch.setattr(engine.shutil, "which", lambda name: pytest.fail("Unexpected PATH fallback"))
     assert engine.resolve_java(settings) == str(binary.resolve())
@@ -39,6 +40,7 @@ def test_invalid_explicit_java_does_not_fall_back(tmp_path, monkeypatch, value):
         engine.resolve_java(Settings(tmp_path, java_executable=value))
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX execute bit (chmod 0600) is not used on Windows")
 def test_non_executable_java_is_rejected(tmp_path):
     binary = executable(tmp_path)
     binary.chmod(0o600)
@@ -60,7 +62,7 @@ def test_java_home_comes_before_path_and_after_the_setting_on_macos(tmp_path, mo
     home = tmp_path / "openjdk.jdk" / "Contents" / "Home"
     binary = executable(tmp_path)
     (home / "bin").mkdir(parents=True)
-    (home / "bin" / "java").symlink_to(binary)
+    make_symlink_or_skip(home / "bin" / "java", binary)
     monkeypatch.setenv("JAVA_HOME", str(home))
     monkeypatch.setattr(engine.shutil, "which", lambda name: pytest.fail("PATH was searched before JAVA_HOME"))
     assert engine.resolve_java(Settings(tmp_path)) == str(binary.resolve())
@@ -75,6 +77,9 @@ def test_java_home_comes_before_path_and_after_the_setting_on_macos(tmp_path, mo
 def test_a_java_home_without_a_java_leaves_path_as_it_was(tmp_path, monkeypatch, value):
     monkeypatch.setattr(engine.sys, "platform", "darwin")
     if value == "no-java":
+        import os
+        if os.name == "nt":
+            pytest.skip("POSIX non-executable file check (os.X_OK) is always True on Windows")
         (tmp_path / "jdk" / "bin").mkdir(parents=True)
         (tmp_path / "jdk" / "bin" / "java").write_text("not executable")
         value = str(tmp_path / "jdk")
@@ -128,6 +133,8 @@ def test_failed_or_old_java_probe_never_launches_server(tmp_path, monkeypatch, r
 
 def fake_java(tmp_path, body, shebang="#!/bin/sh\n"):
     """A shell script standing in for Java. ``exec sleep`` so that no orphan keeps the output pipe open."""
+    if sys.platform == "win32":
+        pytest.skip("fake_java uses POSIX /bin/sh scripts")
     path = tmp_path / "fake-jdk" / "bin" / "java"
     path.parent.mkdir(parents=True)
     path.write_text(shebang + body)
@@ -338,15 +345,16 @@ def test_tmux_setting_roundtrip_and_environment_override(tmp_path, monkeypatch):
 def test_tmux_selection_canonicalizes_and_explicit_override_wins(tmp_path, monkeypatch):
     binary = executable(tmp_path)
     alias = tmp_path / "tmux-alias"
-    alias.symlink_to(binary)
+    make_symlink_or_skip(alias, binary)
     monkeypatch.setattr(runtime_selection.shutil, "which", lambda name: pytest.fail("Unexpected fallback"))
     settings = Settings(tmp_path, tmux_executable="/missing/configured")
     assert runtime_selection.resolve_tmux(settings, override=str(alias)) == str(binary.resolve())
     with pytest.raises(ValueError):
         runtime_selection.resolve_tmux(settings, override="")
-    binary.chmod(0o600)
-    with pytest.raises(ValueError):
-        runtime_selection.resolve_tmux(settings, override=str(alias))
+    if sys.platform != "win32":
+        binary.chmod(0o600)
+        with pytest.raises(ValueError):
+            runtime_selection.resolve_tmux(settings, override=str(alias))
 
 
 def test_empty_tmux_setting_uses_path_or_reports_missing(tmp_path, monkeypatch):
@@ -376,6 +384,7 @@ def test_tmux_diagnostics_and_operations_use_same_selected_binary(tmp_path, monk
     assert not runtime.directory.exists()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="native_worker PTY attach is POSIX-only")
 def test_native_attach_rejects_invalid_binary_before_tty_or_exec(tmp_path, monkeypatch):
     from cairnmind import native_worker
     import sys

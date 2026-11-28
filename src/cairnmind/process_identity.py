@@ -50,12 +50,14 @@ def start(pid, *, running: bool = False) -> str | None:
     if system.startswith("linux"):
         try:
             # comm may contain spaces, closing parentheses and cut UTF-8; state follows it, starttime is field 22.
-            fields = Path(f"/proc/{pid}/stat").read_text(errors="replace").rsplit(")", 1)[1].split()
+            fields = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace").rsplit(")", 1)[1].split()
             return None if running and fields[0] == "Z" else fields[19]
         except (OSError, IndexError):
             return None
     if system == "darwin":
         return _darwin_birth(_darwin_kinfo(pid), pid, running)
+    if system == "win32":
+        return _win32_birth(pid, running)
     return None
 
 
@@ -77,6 +79,8 @@ def command_line(pid) -> list[str] | None:
         return [os.fsdecode(part) for part in (parts[:-1] if parts[-1] == b"" else parts)]
     if system == "darwin":
         return _darwin_arguments(_darwin_procargs(pid))
+    if system == "win32":
+        return _win32_command_line(pid)
     return None
 
 
@@ -93,6 +97,8 @@ def executable(pid) -> str | None:
             return None
     if system == "darwin":
         return _darwin_path(pid)
+    if system == "win32":
+        return _win32_executable(pid)
     return None
 
 
@@ -116,6 +122,9 @@ def alive(pid) -> bool:
     pid = _pid(pid)
     if pid is None:
         return False
+    # Never call os.kill(pid, 0) on Windows: signal 0 is CTRL_C_EVENT there and terminates processes.
+    if os.name == "nt" or _platform() == "win32":
+        return _win32_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -289,3 +298,189 @@ def _darwin_path(pid):
         return str(Path(os.fsdecode(buffer.raw[:length])).resolve(strict=True))
     except (OSError, RuntimeError):
         return None
+
+
+# --- Windows: Win32 API via ctypes (no external dependencies, fail-closed) ---------------------------------
+
+_WIN_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_WIN_STILL_ACTIVE = 259
+_WIN_ERROR_ACCESS_DENIED = 5
+_WIN_ERROR_INVALID_PARAMETER = 87
+_WIN_PROCESS_COMMAND_LINE_INFO = 60  # ProcessCommandLineInformation (Win 8.1+)
+_WIN_STATUS_INFO_LENGTH_MISMATCH = 0xC0000004
+_WIN_STATUS_BUFFER_TOO_SMALL = 0xC0000023
+_WIN_STATUS_BUFFER_OVERFLOW = 0x80000005
+
+
+@functools.cache
+def _win32_libs():
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.GetProcessTimes.argtypes = [
+        wintypes.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+    ]
+    kernel32.GetProcessTimes.restype = wintypes.BOOL
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+
+    ntdll = ctypes.WinDLL("ntdll")
+    ntdll.NtQueryInformationProcess.argtypes = [
+        wintypes.HANDLE, ctypes.c_ulong, ctypes.c_void_p,
+        ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong),
+    ]
+    ntdll.NtQueryInformationProcess.restype = ctypes.c_ulong
+
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    shell32.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    shell32.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
+
+    return kernel32, ntdll, shell32
+
+
+def _win32_open(pid: int):
+    kernel32, _, _ = _win32_libs()
+    return kernel32.OpenProcess(_WIN_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+
+
+def _win32_alive(pid: int) -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32, _, _ = _win32_libs()
+    handle = _win32_open(pid)
+    if not handle:
+        err = ctypes.get_last_error()
+        if err == _WIN_ERROR_ACCESS_DENIED:
+            return True
+        return False
+    try:
+        code = wintypes.DWORD(0)
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return False
+        return code.value == _WIN_STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _win32_birth(pid: int, running: bool) -> str | None:
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32, _, _ = _win32_libs()
+    handle = _win32_open(pid)
+    if not handle:
+        return None
+    try:
+        if running:
+            code = wintypes.DWORD(0)
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value != _WIN_STILL_ACTIVE:
+                return None
+        creation = ctypes.c_uint64(0)
+        exit_t = ctypes.c_uint64(0)
+        kernel_t = ctypes.c_uint64(0)
+        user_t = ctypes.c_uint64(0)
+        if not kernel32.GetProcessTimes(
+            handle, ctypes.byref(creation), ctypes.byref(exit_t),
+            ctypes.byref(kernel_t), ctypes.byref(user_t),
+        ):
+            return None
+        if creation.value <= 0:
+            return None
+        return str(creation.value)
+    except (OSError, AttributeError, ValueError, TypeError):
+        return None
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _win32_executable(pid: int) -> str | None:
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32, _, _ = _win32_libs()
+    handle = _win32_open(pid)
+    if not handle:
+        return None
+    try:
+        size = wintypes.DWORD(32768)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return None
+        raw = buf.value
+        if not raw:
+            return None
+        try:
+            return str(Path(raw).resolve(strict=True))
+        except (OSError, RuntimeError):
+            return None
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _win32_split_cmdline(cmdline: str) -> list[str] | None:
+    import ctypes
+
+    if not cmdline:
+        return None
+    kernel32, _, shell32 = _win32_libs()
+    argc = ctypes.c_int(0)
+    argv = shell32.CommandLineToArgvW(cmdline, ctypes.byref(argc))
+    if not argv:
+        return None
+    try:
+        return [argv[i] for i in range(argc.value)]
+    finally:
+        kernel32.LocalFree(argv)
+
+
+def _win32_command_line(pid: int) -> list[str] | None:
+    import ctypes
+
+    class _UNICODE_STRING(ctypes.Structure):
+        _fields_ = [
+            ("Length", ctypes.c_ushort),
+            ("MaximumLength", ctypes.c_ushort),
+            ("Buffer", ctypes.c_void_p),
+        ]
+
+    kernel32, ntdll, _ = _win32_libs()
+    handle = _win32_open(pid)
+    if not handle:
+        return None
+    try:
+        size = 4096
+        for _ in range(4):
+            buf = ctypes.create_string_buffer(size)
+            ret = ctypes.c_ulong(0)
+            status = ntdll.NtQueryInformationProcess(
+                handle, _WIN_PROCESS_COMMAND_LINE_INFO, buf, size, ctypes.byref(ret)
+            )
+            if status == 0:
+                ustr = _UNICODE_STRING.from_buffer(buf)
+                if not ustr.Buffer or ustr.Length == 0:
+                    return None
+                raw = ctypes.wstring_at(ustr.Buffer, ustr.Length // 2)
+                return _win32_split_cmdline(raw)
+            if status in (_WIN_STATUS_INFO_LENGTH_MISMATCH, _WIN_STATUS_BUFFER_TOO_SMALL, _WIN_STATUS_BUFFER_OVERFLOW):
+                size = max(ret.value + 64, size * 2)
+                if size > 2 * 1024 * 1024:
+                    return None
+                continue
+            return None
+        return None
+    except (OSError, AttributeError, ValueError, TypeError):
+        return None
+    finally:
+        kernel32.CloseHandle(handle)

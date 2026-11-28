@@ -369,7 +369,7 @@ def test_portable_snapshot_keeps_api_sources_done_and_no_session_authority(works
     archived = manager.archive_agent_journal(start["session_id"])
     task = store.remember(project["id"], {"kind": "task", "key": "parser", "content": "Implement parser",
         "metadata": {"state": "done"}}, archived["source_ids"])
-    snapshot = MemoryManager(store).snapshot(project["id"], worktree=str(root))
+    snapshot = MemoryManager(store).snapshot(project["id"], worktree=str(root), profile="full", include_transcripts=True)
     assert inspect_snapshot(snapshot["manifest_path"])["format_version"] == 1
     destination = tmp_path / "new-repo"
     subprocess.run(["git", "clone", "-q", str(root), str(destination)], check=True, capture_output=True)

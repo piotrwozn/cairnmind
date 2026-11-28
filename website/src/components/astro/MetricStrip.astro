@@ -1,0 +1,30 @@
+---
+import benchmarks from '@/data/benchmarks.json';
+---
+
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+  {benchmarks.headlineMetrics.map((m) => (
+    <div class="glass-surface glass-interactive p-5 flex flex-col justify-between gap-3">
+      <div>
+        <div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
+          <span
+            class:list={[
+              'font-mono text-2xl xl:text-[1.65rem] font-bold tabular whitespace-nowrap',
+              m.tone === 'ok' ? 'text-[var(--ok)]' : 'text-[var(--accent)]',
+            ]}
+          >
+            {m.value}
+          </span>
+          <span class="glass-pill tabular text-[10.5px] px-2 py-0.5 whitespace-nowrap shrink-0">
+            {m.unit}
+          </span>
+        </div>
+        <p class="mt-2.5 text-sm font-semibold text-[var(--text-strong)]">{m.label}</p>
+        <p class="mt-1.5 text-xs text-[var(--text-muted)] leading-relaxed">{m.detail}</p>
+      </div>
+      <div class="pt-3 border-t border-[var(--glass-border)] font-mono text-[10.5px] text-[var(--text-dim)] leading-snug break-words">
+        $ {m.command.replace(/--runs 3/g, '--runs\u00A03')}
+      </div>
+    </div>
+  ))}
+</div>

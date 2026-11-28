@@ -62,6 +62,7 @@ def test_ids_names_and_written_paths_still_resolve(store, project, monkeypatch):
     for written in (".", "..", "./", "../src"):
         assert store.resolve_project(written)["id"] == project["id"]
     monkeypatch.setenv("HOME", str(root))
+    monkeypatch.setenv("USERPROFILE", str(root))
     assert store.resolve_project("~/src")["id"] == project["id"]
 
 

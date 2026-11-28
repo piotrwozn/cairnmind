@@ -5,13 +5,18 @@ No source text, terminal output or credentials are logged by this process.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 from pathlib import Path
 import stat
-import termios
 import tempfile
+
+try:
+    import fcntl
+    import termios
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
+    termios = None  # type: ignore[assignment]
 
 from .config import Settings
 from .process_identity import start as process_start

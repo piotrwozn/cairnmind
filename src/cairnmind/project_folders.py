@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shlex
 import socket
 from pathlib import Path
 
@@ -112,8 +111,9 @@ def message(project: dict, folder: dict) -> str:
     text = FOLDER_UNAVAILABLE.format(root=safe_text(folder["root"]), project=safe_text(project["name"]),
                                      reason=reason.format(**values))
     if folder["state"] == "elsewhere":
-        text += " " + FOLDER_MOVE.format(project=shlex.quote(safe_text(project["name"])),
-                                         root=shlex.quote(safe_text(folder["root"])))
+        from .process_control import quote_arg
+        text += " " + FOLDER_MOVE.format(project=quote_arg(safe_text(project["name"])),
+                                         root=quote_arg(safe_text(folder["root"])))
     return text
 
 
@@ -153,7 +153,8 @@ def folder_notice(entries: list[dict], language: str = "en") -> str:
         text = tr(FOLDER_UNAVAILABLE, language, root=safe_text(item["root"]), project=safe_text(item["project"]),
                   reason=tr(reason, language, **values))
         if item["state"] == "elsewhere":
-            text += " " + tr(FOLDER_MOVE, language, project=shlex.quote(safe_text(item["project"])),
-                             root=shlex.quote(safe_text(item["root"])))
+            from .process_control import quote_arg
+            text += " " + tr(FOLDER_MOVE, language, project=quote_arg(safe_text(item["project"])),
+                             root=quote_arg(safe_text(item["root"])))
         parts.append(text)
     return " ".join(parts)

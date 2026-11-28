@@ -10,7 +10,8 @@ import re
 from typing import Any
 
 
-from .arcade import ArcadeError
+from .arcade import ArcadeError  # noqa: F401 - kept for callers importing ArcadeError from retrieval
+from .arcade_backend import ArcadeBackend, vector_type_name
 from .config import Settings
 from .confirmation import confirmation_text, confirmed_by as _confirmed_by
 from .conflicts import standing_marks
@@ -259,6 +260,7 @@ def validate_vector(vector: list[float]) -> list[float]:
 class Retriever:
     def __init__(self, store, settings: Settings, ollama=None):
         self.store = store
+        self.backend = getattr(store, "backend", None) or ArcadeBackend(store)
         self.settings = settings
         self.ollama = ollama or from_settings(settings)
         self.embedding_key = settings.embedding_model
@@ -380,43 +382,15 @@ class Retriever:
 
     @staticmethod
     def _vector_type(project_id: str, namespace: str, dimension: int) -> str:
-        identity = json.dumps([project_id, namespace, dimension], separators=(",", ":"))
-        return "vector_" + hashlib.sha256(identity.encode()).hexdigest()[:24]
+        return vector_type_name(project_id, namespace, dimension)
 
     def _ensure_vector_index(self, project_id: str, namespace: str, dimension: int) -> dict | None:
-        if not 1 <= dimension <= 8192:
-            raise ValueError("Unsupported embedding dimension")
-        if not self.store.query("SELECT id FROM projects WHERE id=:id", {"id": project_id}):
-            return None
         type_name = self._vector_type(project_id, namespace, dimension)
-        index_name = f"{type_name}[vector]"
         if type_name in self._vector_indexes:
             return self._vector_indexes[type_name]
-        self.store.command(f"CREATE DOCUMENT TYPE {type_name} IF NOT EXISTS")
-        self.store.command(f"CREATE PROPERTY {type_name}.id IF NOT EXISTS STRING")
-        self.store.command(f"CREATE PROPERTY {type_name}.vector IF NOT EXISTS ARRAY_OF_FLOATS")
-        self.store.command(f"CREATE INDEX IF NOT EXISTS ON {type_name}(id) UNIQUE")
-        self.store.command(
-            f"CREATE INDEX IF NOT EXISTS ON {type_name}(vector) LSM_VECTOR "
-            f"METADATA {{dimensions:{dimension}, similarity:'COSINE', idPropertyName:'id'}}"
-        )
-        values = {
-            "id": type_name, "project_id": project_id, "model": self.settings.embedding_model,
-            "namespace": namespace, "dimension": dimension, "type_name": type_name, "index_name": index_name,
-        }
-        # DDL may run outside a transaction, but metadata publication shares the
-        # same writer lock/transaction as forget_project. Empty derived types are
-        # harmless; an orphaned registry would corrupt a source-complete backup.
-        with self.store.transaction() as tx:
-            try:
-                self.store._require_project(tx, project_id)
-            except ValueError:
-                return None
-            tx.command(
-                "UPDATE vector_indexes SET project_id=:project_id, model=:model, namespace=:namespace, "
-                "dimension=:dimension, type_name=:type_name, index_name=:index_name UPSERT WHERE id=:id", values,
-            )
-        self._vector_indexes[type_name] = values
+        values = self.backend.ensure_vector_index(project_id, namespace, dimension, self.settings.embedding_model)
+        if values is not None:
+            self._vector_indexes[type_name] = values
         return values
 
     def _chunk_hit(self, chunk: dict) -> dict | None:
@@ -489,38 +463,20 @@ class Retriever:
         words = terms(query)
         ranks: list[list[dict]] = []
         if words:
-            expression = " OR ".join(words)
-            rows = self.store.query(
-                "SELECT *, $score AS search_score FROM chunks "
-                "WHERE SEARCH_INDEX('chunks[text]', :query)=true AND project_id=:project AND is_current=true "
-                "AND source_id IN :eligible_sources "
-                f"ORDER BY $score DESC LIMIT {limit * 3}",
-                {"query": expression, "project": project_id, "eligible_sources": eligible_sources},
-            )
+            rows = self.backend.search_chunks_fts(project_id, words, eligible_sources, limit * 3)
             lexical = [hit for row in rows if (hit := self._chunk_hit(row)) is not None]
             self._demote_secondary(lexical)
             ranks.append(lexical)
         if query_vector is not None:
             vector = validate_vector(query_vector)
             namespace = embedding_key or self.embedding_key
-            indexes = self.store.query(
-                "SELECT FROM vector_indexes WHERE project_id=:project AND namespace=:namespace AND dimension=:dimension",
-                {"project": project_id, "namespace": namespace, "dimension": len(vector)},
+            index_present, neighbors, warning = self.backend.search_vectors(
+                project_id, namespace, vector, eligible_sources, limit * 3
             )
-            if indexes:
-                expected = self._vector_type(project_id, namespace, len(vector))
-                index_name = f"{expected}[vector]"
-                try:
-                    neighbors = self.store.query(
-                        "SELECT expand(`vector.neighbors`(:index_name, :query_vector, :count, "
-                        "{efSearch: :ef_search,where: :scope,filter:(SELECT @rid FROM " + expected +
-                        " WHERE project_id=:project AND namespace=:namespace AND is_current=true "
-                        "AND source_id IN :eligible_sources)}))",
-                        {"index_name": index_name, "query_vector": vector, "count": limit * 3,
-                         "ef_search": max(200, limit * 3), "scope": {
-                             "project_id": project_id, "namespace": namespace, "is_current": True,
-                         }, "project": project_id, "namespace": namespace, "eligible_sources": eligible_sources},
-                    )
+            if index_present:
+                if warning:
+                    self.warnings.append(warning)
+                else:
                     ids = [row["chunk_id"] for row in neighbors]
                     chunks = self.store.query(
                         "SELECT FROM chunks WHERE project_id=:project AND id IN :ids AND is_current=true",
@@ -535,8 +491,6 @@ class Retriever:
                             semantic.append(hit)
                     self._demote_secondary(semantic)
                     ranks.append(semantic)
-                except ArcadeError as exc:
-                    self.warnings.append(f"Native vector search unavailable: {type(exc).__name__}")
                 # The registry row comes back with the first embedded chunk, long before the rebuild ends (#187).
                 left = self.store.query(
                     "SELECT count(*) AS n FROM jobs WHERE project_id=:project AND kind='embed' "
@@ -552,13 +506,7 @@ class Retriever:
             # Fetch enough extra rows that a status penalty cannot pull in a record
             # that was cut off before ranking.
             margin = max(RECORD_STATUS_PENALTY.values())
-            records = self.store.query(
-                "SELECT *, $score AS search_score FROM records "
-                "WHERE SEARCH_INDEX('records[content]', :query)=true AND project_id=:project AND status<>'superseded' "
-                "AND id IN :eligible_records "
-                f"ORDER BY $score DESC LIMIT {limit * 2 + margin}",
-                {"query": " OR ".join(words), "project": project_id, "eligible_records": eligible_records},
-            )
+            records = self.backend.search_records_fts(project_id, words, eligible_records, limit * 2 + margin)
             # Exact keys remain useful even when a short task key is absent from its body.
             keyed = self.store.query(
                 "SELECT FROM records WHERE project_id=:project AND status<>'superseded' "
@@ -628,31 +576,13 @@ class Retriever:
         limit = max(1, min(limit, 80))
         words = terms(query)
         seed_sources = list({hit["source_id"] for hit in self.search(project_id, query, 5, worktree=worktree)})
-        conditions = ["id=:exact", "source_id IN :sources"]
-        params: dict = {"project": project_id, "exact": query, "sources": seed_sources,
-                        "eligible_nodes": eligible_nodes, "eligible_edges": eligible_edges}
-        for index, word in enumerate(words):
-            conditions.append(f"label.toLowerCase() LIKE :term{index}")
-            params[f"term{index}"] = f"%{word}%"
-        seeds = self.store.query(
-            "SELECT id FROM nodes WHERE project_id=:project AND is_current=true "
-            "AND id IN :eligible_nodes "
-            "AND (metadata.status IS NULL OR metadata.status<>'superseded') "
-            "AND (" + " OR ".join(conditions) + ") LIMIT 7", params,
-        )
+        seeds = self.backend.search_graph_seeds(project_id, query, seed_sources, words, eligible_nodes, limit=7)
         seed_ids = [row["id"] for row in seeds[:6]]
         if not seed_ids:
             return {"nodes": [], "edges": [], "sources": [], "truncated": False,
                     "node_budget": limit, "max_depth": 4}
-        rows = self.store.query(
-            "SELECT *, $depth AS distance FROM ("
-            "TRAVERSE bothE('edges')[project_id=:project AND is_current=true AND status<>'superseded' "
-            "AND id IN :eligible_edges].bothV() "
-            "FROM (SELECT FROM nodes WHERE id IN :ids AND project_id=:project AND id IN :eligible_nodes) "
-            "WHILE $depth<=4 AND project_id=:project AND is_current=true "
-            "AND id IN :eligible_nodes "
-            "AND (metadata.status IS NULL OR metadata.status<>'superseded') "
-            f"LIMIT {limit + 1} STRATEGY BREADTH_FIRST)", {**params, "ids": seed_ids},
+        rows = self.backend.traverse_graph(
+            project_id, seed_ids, eligible_nodes, eligible_edges, max_depth=4, limit=limit + 1
         )
         truncated = len(seeds) > 6 or len(rows) > limit
         nodes, sources = [], {}
@@ -830,8 +760,8 @@ class Retriever:
         identifier = hashlib.sha256(json.dumps(
             [job["project_id"], namespace, chunk["id"]], separators=(",", ":"),
         ).encode()).hexdigest()
-        if canonical and self.store.query(
-            f"SELECT id FROM {index['type_name']} WHERE id=:id AND is_current=true", {"id": identifier},
+        if canonical and self.backend.has_vector_embedding(
+            job["project_id"], namespace, chunk["id"], len(vector), identifier
         ):
             self.embedding_key = namespace
             return
@@ -849,9 +779,5 @@ class Retriever:
                               {"id": source["id"], "project": job["project_id"]})
             if not active:
                 return
-            setters = ", ".join(f"{key}=:{key}" for key in values)
-            tx.command(f"UPDATE embeddings SET {setters} UPSERT WHERE id=:id", values)
-            tx.command(
-                f"UPDATE {index['type_name']} SET {setters}, is_current=true UPSERT WHERE id=:id", values,
-            )
+            self.backend.upsert_embedding(tx, values, index)
         self.embedding_key = namespace

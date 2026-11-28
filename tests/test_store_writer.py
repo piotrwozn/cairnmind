@@ -82,7 +82,8 @@ def test_the_first_installation_becomes_the_writer_and_reopening_changes_nothing
     assert not again.read_only and again.installation == first.installation
     assert (first.data_dir / "installation.json").read_bytes() == identity
     assert writer_row(again) == row
-    assert (first.data_dir / "installation.json").stat().st_mode & 0o777 == 0o600
+    from conftest import assert_private
+    assert_private(first.data_dir / "installation.json")
 
 
 def test_a_store_without_a_writer_row_is_claimed_by_the_first_installation_that_opens_it(tmp_path):

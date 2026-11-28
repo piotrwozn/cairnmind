@@ -23,6 +23,14 @@ EVIDENCE_LABELS = {
     ("unverified", None): "imported file evidence has not been compared with local files yet",
     ("degraded", None): "written by an external client's session, or resting only on one or on a third-party tool result; never verified",
 }
+QUOTE_HEALING_LABELS = {
+    ("stale_ref", False): "stale quote reference: the quoted content changed (SHA-256 mismatch)",
+    ("stale_ref", None): "stale quote reference: the quoted content changed (SHA-256 mismatch)",
+    ("validation_failed", False): "quote validation failed: partial line modification rejected; intervention required",
+    ("validation_failed", None): "quote validation failed: partial line modification rejected; intervention required",
+    ("ambiguous_context", True): "ambiguous quote context: multiple identical blocks found without unique context",
+    ("ambiguous_context", None): "ambiguous quote context: multiple identical blocks found without unique context",
+}
 _EVIDENCE_TIME = {"stated": "Stated", "observed": "Observed no later than", "mixed": "Mixed evidence"}
 BAR = ("quote-bar", "  | ")
 # The sensitivity class the inspector derives for a source or a record (sensitivity.py, #180).
@@ -62,10 +70,58 @@ def task_state(item):
 
 def evidence_parts(item, translate):
     """The `Evidence:` line of a record, or nothing when its state has no sentence."""
-    label = EVIDENCE_LABELS.get((item.get("evidence_state"), item.get("quote_survives")))
+    key = (item.get("evidence_state"), item.get("quote_survives"))
+    label = EVIDENCE_LABELS.get(key) or QUOTE_HEALING_LABELS.get(key)
     if not label:
         return []
     return [labelled(translate("Evidence"), translate(label), evidence_style(item.get("evidence_state")))]
+
+
+def symbol_parts(item, translate):
+    """The `Symbol:` and `Comment tag:` lines when a record has a symbol or comment anchor (#411, #412)."""
+    if not isinstance(item, dict):
+        return []
+    lines = []
+    sym_state = item.get("symbol_state")
+    anchor = item.get("symbol_anchor") if isinstance(item.get("symbol_anchor"), dict) else {}
+    change = item.get("symbol_change") if isinstance(item.get("symbol_change"), dict) else {}
+    sym = str(change.get("symbol") or anchor.get("symbol") or "")
+    path = str(change.get("path") or anchor.get("path") or "")
+    if sym_state == "unchanged" and sym:
+        lines.append(labelled(
+            translate("Symbol"),
+            translate("unchanged ({symbol} in {path})", symbol=sym, path=path),
+            "value",
+        ))
+    elif sym_state == "symbol_changed" and sym:
+        commit = str(change.get("commit") or "")[:12]
+        day = _evidence_date(change.get("changed_at"))
+        if commit and day:
+            text = translate("needs review: {symbol} changed in commit {commit} ({date})",
+                             symbol=sym, commit=commit, date=day)
+        elif commit:
+            text = translate("needs review: {symbol} changed in commit {commit}", symbol=sym, commit=commit)
+        elif day:
+            text = translate("needs review: {symbol} changed ({date})", symbol=sym, date=day)
+        else:
+            text = translate("needs review: {symbol} changed in {path}", symbol=sym, path=path)
+        lines.append(labelled(translate("Symbol"), text, "warn"))
+    elif sym_state == "symbol_gone" and sym:
+        lines.append(labelled(
+            translate("Symbol"),
+            translate("{symbol} is gone from {path}", symbol=sym, path=path),
+            "danger",
+        ))
+    if item.get("comment_state") == "tag_removed":
+        ca = item.get("comment_anchor") if isinstance(item.get("comment_anchor"), dict) else {}
+        tag = str(ca.get("tag") or "DECISION")
+        cpath = str(ca.get("path") or path)
+        lines.append(labelled(
+            translate("Comment tag"),
+            translate("the {tag}: comment was removed from {path}", tag=tag, path=cpath),
+            "warn",
+        ))
+    return lines
 
 
 def sensitivity_parts(value, translate):
@@ -151,6 +207,7 @@ def record_parts(value, translate):
 
     evidence = value.get("evidence") if isinstance(value.get("evidence"), dict) else {}
     lines += evidence_parts(evidence, translate)
+    lines += symbol_parts(evidence, translate)
     if not lines:
         return None
     return join_lines(lines, "\n\n")

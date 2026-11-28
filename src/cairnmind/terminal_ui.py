@@ -501,7 +501,8 @@ class BasePanel(App):
 
     def open_command(self, action):
         """Only known UI actions can be dispatched; never evaluate command text."""
-        actions = {"search": "action_search", "add_project": "add_project", "start_work": "action_prepare_work",
+        actions = {"search": "action_search", "add_project": "add_project", "clone_project": "clone_project",
+                   "start_work": "action_prepare_work",
                    "connections": "login", "sessions": "sessions", "memory": "action_memory", "ask": "action_ask",
                    "brief": "action_brief", "next_stage": "action_prepare_next_stage",
                    "more": "action_more", "settings": "action_settings", "notices": "action_notices"}

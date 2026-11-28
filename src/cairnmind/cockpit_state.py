@@ -3,20 +3,24 @@ from __future__ import annotations
 
 from copy import deepcopy
 from contextlib import contextmanager
-import fcntl
 import json
 import os
 from pathlib import Path
 import re
-import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 from uuid import uuid4
 
 from .api_profiles import normalize_profile
+from .file_locks import lock_exclusive
 from .mcp_servers import apply_project_edit, validate_project_mcp_servers
+from .private_files import (
+    atomic_replace, ensure_private_dir, fsync_directory,
+    is_private_stat, is_reparse_point, make_private, open_no_follow,
+)
 from .stages import validate_project_stages
 
 DEFAULT_PROFILES = [{"id": "codex", "client": "codex", "label": "Codex"},
@@ -35,11 +39,11 @@ def _snapshot(root: Path) -> str | None:
 
 
 def normalize_path(value: str | Path) -> Path:
-    """Translate an explicit Windows drive path, never invoke a shell."""
+    """Translate an explicit Windows drive path under WSL, never invoke a shell."""
     text = str(value).strip()
     if not text or "\0" in text or len(text) > 4096:
         raise ValueError("Give a valid folder path.")
-    if re.match(r"^[A-Za-z]:[\\/]", text):
+    if sys.platform != "win32" and re.match(r"^[A-Za-z]:[\\/]", text):
         try:
             result = subprocess.run(["wslpath", "-u", text], capture_output=True, text=True, timeout=3, check=True)
             text = result.stdout.strip()
@@ -49,22 +53,18 @@ def normalize_path(value: str | Path) -> Path:
 
 
 def _private_directory(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    info = path.lstat()
-    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
-            or stat.S_IMODE(info.st_mode) != 0o700):
-        raise ValueError("The cockpit folder must belong to the user and have permissions 0700.")
+    ensure_private_dir(path, error="The cockpit folder must belong to the user and have permissions 0700.")
 
 
 @contextmanager
 def _private_lock(path: Path, *, blocking=True):
     _private_directory(path.parent)
-    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    fd = open_no_follow(path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
+        if not is_private_stat(info, path, directory=False):
             raise ValueError("The cockpit lock must be a private file of the user.")
-        fcntl.flock(fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        lock_exclusive(fd, blocking=blocking)
         yield
     finally:
         os.close(fd)
@@ -74,17 +74,13 @@ def _atomic(path: Path, value: dict) -> None:
     _private_directory(path.parent)
     fd, name = tempfile.mkstemp(prefix=".cockpit-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w") as stream:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
             json.dump(value, stream, ensure_ascii=False, sort_keys=True)
             stream.flush()
             os.fsync(stream.fileno())
-        os.chmod(name, 0o600)
-        os.replace(name, path)
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        make_private(name)
+        atomic_replace(name, path)
+        fsync_directory(path.parent)
     finally:
         Path(name).unlink(missing_ok=True)
 
@@ -103,7 +99,7 @@ class CockpitState:
             return defaults
         if self.path.is_symlink():
             raise ValueError("The cockpit settings file must not be a link.")
-        value = json.loads(self.path.read_text())
+        value = json.loads(self.path.read_text(encoding="utf-8"))
         if not isinstance(value, dict) or value.get("version") not in {1, 2}:
             raise ValueError("Unsupported version of the cockpit settings.")
         defaults.update(value)
@@ -200,11 +196,12 @@ class CockpitState:
                 # bytes before the first successful v2 write, under the lock.
                 original = self.path.read_bytes()
                 backup = self.root / ("preferences-v1-backup-" + str(time.time_ns()) + ".json")
-                fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                fd = open_no_follow(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(fd, "wb") as stream:
                     stream.write(original)
                     stream.flush()
                     os.fsync(stream.fileno())
+                make_private(backup)
             value["version"] = 2
             _atomic(self.path, value)
             return value
@@ -279,7 +276,7 @@ class ProjectDiscovery:
                             "memory_snapshot": _snapshot(path)}
                     with self._lock:
                         self._state["projects"].append(item)
-                dirs[:] = [name for name in sorted(dirs) if name not in _EXCLUDED and not (path / name).is_symlink()]
+                dirs[:] = [name for name in sorted(dirs) if name not in _EXCLUDED and not is_reparse_point(path / name)]
             if self._cancel.is_set():
                 break
         with self._lock:

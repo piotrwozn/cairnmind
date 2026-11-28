@@ -16,6 +16,8 @@ from cairnmind.runtime_sockets import (KINDS, MAX_SOCKET_PATH, SUN_PATH, prepare
                                        socket_directory)
 from cairnmind.workspace import WorkspaceManager
 
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX Unix domain socket directories")
+
 # What a terminal app gets on macOS; ssh and launchd see another one, or none.
 MAC_TMPDIR = "/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T/"
 # Bytes every socket path the product creates by default keeps free under the system's limit.

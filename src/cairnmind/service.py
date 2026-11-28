@@ -79,6 +79,7 @@ class AskBody(BaseModel):
     log: bool | None = None
     # Classes a hosted built-in run must not receive (#183); they can only shrink what the answer reads.
     held_classes: list[Literal["project", "conversation", "third_party"]] | None = None
+    verifier: Literal["llm", "nli"] = "llm"
 
 
 class RememberBody(BaseModel):
@@ -115,6 +116,7 @@ class RegisterProjectBody(BaseModel):
     name: str = Field(min_length=1, max_length=256)
     root: str = Field(min_length=1, max_length=4096)
     fresh: bool = False  # a separate identity: a removed project of that name and folder is not brought back
+    no_scip: bool = False  # skip automatic background SCIP enqueue for this registration
 
 
 class PlanSaveBody(BaseModel):
@@ -206,6 +208,20 @@ class MemorySnapshotBody(MemoryScopeBody):
     packet_id: str | None = None
 
 
+class MemoryPreviewBody(MemoryScopeBody):
+    profile: str = Field(default="team")
+    include_transcripts: bool = Field(default=False, strict=True)
+    skip_uncommitted: bool = Field(default=False, strict=True)
+    redact: bool = Field(default=False, strict=True)
+
+
+class MemorySnapshotExportBody(MemorySnapshotBody):
+    profile: str = Field(default="team")
+    include_transcripts: bool = Field(default=False, strict=True)
+    skip_uncommitted: bool = Field(default=False, strict=True)
+    redact: bool = Field(default=False, strict=True)
+
+
 class BackgroundInferenceBody(MemorySnapshotBody):
     model_config = {"extra": "forbid"}
 
@@ -221,6 +237,20 @@ class MemoryImportBody(MemoryInspectBody):
     dry_run: bool = Field(default=False, strict=True)
     replace_confirmed: bool = Field(default=False, strict=True)
     expected_replaced: list[str] | None = Field(default=None, max_length=100_000)  # the list a person was shown (#333)
+    heal_quotes: bool = Field(default=True, strict=True)
+    packet_id: str | None = None
+
+
+class MemoryHealBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    project: str = Field(min_length=1)
+    worktree: str | None = Field(default=None, max_length=4096)
+    target_commit: str = Field(default="HEAD", min_length=1, max_length=256)
+    dry_run: bool = Field(default=False, strict=True)
+    expected_versions: dict[str, int] | None = None
+    expected_snapshot_id: str | None = Field(default=None, min_length=64, max_length=64)
+    record_ids: list[str] | None = Field(default=None, max_length=1000)
+    session_id: str | None = None
     packet_id: str | None = None
 
 
@@ -377,7 +407,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     sessions = SessionManager(store, settings)
     memory = MemoryManager(store)
     inference = InferenceQueue()
-    background_status: dict = {"scanner_error": None, "model_error": None, "memory_error": None}
+    background_status: dict = {"scanner_error": None, "model_error": None, "memory_error": None, "scip_error": None}
 
     async def writer_lost(exc) -> None:
         # Another installation took over writing: the background work pauses instead of failing on every turn.
@@ -478,6 +508,23 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                         log.exception("Indexing project %s failed", project["name"])
                         continue
                     scan_errors.extend(f"{project['name']}: {err}" for err in indexed.get("errors", []))
+                    if indexed.get("changed", 0) > 0 and settings.scip_mode == "auto":
+                        try:
+                            from cairnmind.ingest import tree_signature
+                            from cairnmind.scip_ingest import enqueue_project_scip
+                            sig = await asyncio.to_thread(tree_signature, store, project["id"])
+                            await asyncio.to_thread(
+                                enqueue_project_scip,
+                                store,
+                                settings,
+                                project["id"],
+                                Path(project["root"]),
+                                dedupe_suffix=f"tree:{sig[:16]}",
+                            )
+                        except (asyncio.CancelledError, StoreNotWriter):
+                            raise
+                        except Exception as exc:
+                            log.warning("Failed to enqueue SCIP refresh for %s: %s", project["name"], exc)
                 pending = await asyncio.to_thread(index_pending_sources, store)
                 scan_errors.extend(f"memory index: {err}" for err in pending.get("errors", []))
                 from cairnmind.verification import recover_interrupted_runs
@@ -508,6 +555,61 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 background_status["scanner_error"] = str(exc)
                 log.exception("Archive scan failed")
             await asyncio.sleep(settings.poll_seconds)
+
+    async def scip_worker() -> None:
+        """Dedicated background worker for multi-language SCIP indexing jobs (never blocks scanner or GPU)."""
+        if settings.scip_mode == "off":
+            return
+        from cairnmind.scip_ingest import index_project_scip
+        lease_seconds = max(120, int(settings.scip_timeout) + 60)
+        while True:
+            try:
+                job = await asyncio.to_thread(store.claim_job, "scip", lease_seconds, ["scip_index"])
+                writer_back()
+                if not job:
+                    await asyncio.sleep(min(10, max(1, settings.poll_seconds)))
+                    continue
+                try:
+                    payload = job.get("payload") or {}
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    result = await asyncio.to_thread(
+                        index_project_scip,
+                        store,
+                        settings,
+                        job["project_id"],
+                        languages=payload.get("languages"),
+                        worktree=payload.get("root"),
+                    )
+                    errors = result.get("errors") or []
+                    background_status["scip_error"] = "; ".join(errors[:5]) or None
+                    await asyncio.to_thread(
+                        finish_job_if_present,
+                        store,
+                        job["id"],
+                        "; ".join(map(str, errors))[:2000] if errors else None,
+                        worker=job["worker"],
+                        expected_attempts=job["attempts"],
+                    )
+                except Exception as exc:
+                    background_status["scip_error"] = str(exc) or type(exc).__name__
+                    await asyncio.to_thread(
+                        finish_job_if_present,
+                        store,
+                        job["id"],
+                        str(exc) or type(exc).__name__,
+                        worker=job["worker"],
+                        expected_attempts=job["attempts"],
+                    )
+            except asyncio.CancelledError:
+                raise
+            except StoreNotWriter as exc:
+                await writer_lost(exc)
+                continue
+            except Exception as exc:
+                background_status["scip_error"] = str(exc)
+                log.exception("SCIP worker failed")
+                await asyncio.sleep(10)
 
     async def fingerprint_start() -> None:
         """The fixed request to an OpenAI-compatible embedding role at start (#212), retried while it is down.
@@ -603,7 +705,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         if fingerprint_client is not None and models_on:
             tasks.append(asyncio.create_task(fingerprint_start()))
         if start_worker:
-            tasks += [asyncio.create_task(scanner()), asyncio.create_task(memory_snapshots())]
+            tasks += [
+                asyncio.create_task(scanner()),
+                asyncio.create_task(scip_worker()),
+                asyncio.create_task(memory_snapshots()),
+            ]
             if models_on:  # held: without models the embed and extract jobs stay pending, asked of nobody (#274)
                 tasks.append(asyncio.create_task(jobs()))
         try:
@@ -622,6 +728,27 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     app.state.sessions = sessions
     app.state.inference = inference
     app.state.memory = memory
+
+    @app.middleware("http")
+    async def migration_quiesce_middleware(request: Request, call_next):
+        from fastapi.responses import JSONResponse
+        from cairnmind.migration import is_migration_in_progress
+
+        if request.url.path not in {"/health", "/shutdown", "/internal/reload-store"} and is_migration_in_progress(
+            settings.data_dir
+        ):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": "Storage migration is currently in progress; retry after cutover.",
+                    "error_code": "migration_in_progress",
+                },
+            )
+        return await call_next(request)
+
+    def _active_backend_label() -> str:
+        kind = getattr(getattr(store, "backend", None), "backend_kind", "arcade")
+        return "sqlite" if kind == "sqlite" else "arcadedb"
 
     async def authorize(authorization: str | None = Header(default=None)) -> None:
         expected = f"Bearer {settings.token}"
@@ -715,7 +842,35 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     @app.get("/health")
     async def health():
         return {"service": SERVICE_NAMES[0], "version": __version__, "instance": instance_id(settings),
-                "backend": "arcadedb"}
+                "backend": _active_backend_label()}
+
+    @app.post("/internal/reload-store", dependencies=auth)
+    async def reload_store():
+        nonlocal settings, store
+        reloaded_settings = Settings.load(settings.data_dir, create=False)
+        new_store = await asyncio.to_thread(Store, reloaded_settings.data_dir, settings=reloaded_settings)
+        new_store.relative_paths = False
+        if new_store.not_writer:
+            new_store.close()
+            raise StoreNotWriter(new_store.not_writer)
+        old_store = store
+        settings = reloaded_settings
+        store = new_store
+        retriever.store = new_store
+        retriever.settings = reloaded_settings
+        agent.store = new_store
+        agent.settings = reloaded_settings
+        plans.store = new_store
+        sessions.store = new_store
+        sessions.settings = reloaded_settings
+        memory.store = new_store
+        app.state.store = new_store
+        cache.clear()
+        try:
+            await asyncio.to_thread(old_store.close)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"reloaded": True, "backend": _active_backend_label()}
 
     @app.get("/projects", dependencies=auth)
     async def projects():
@@ -734,9 +889,15 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         removed = await asyncio.to_thread(removed_rows, store)
         created = await asyncio.to_thread(store.add_project, body.name, root, not body.fresh)
         cache.clear()
+        if body.no_scip:
+            scip_info = {"mode": "skipped", "detected_languages": [], "queued": False, "job_id": None}
+        else:
+            from cairnmind.scip_ingest import enqueue_project_scip
+            scip_info = await asyncio.to_thread(enqueue_project_scip, store, settings, created["id"], root)
+        scip_extra = {"scip": scip_info} if (scip_info.get("queued") or scip_info.get("detected_languages")) else {}
         # Said, never silent (#327): a removed project that came back is not a new one, and one that keeps its
         # memory under this name or folder was not brought back.
-        return {"project": created, **add_outcome(removed, known, created)[2]}
+        return {"project": created, **scip_extra, **add_outcome(removed, known, created)[2]}
 
     @app.get("/project-roots", dependencies=auth)
     async def project_roots(project: str):
@@ -843,17 +1004,25 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         return require(), require
 
     @app.post("/memory/preview", dependencies=auth)
-    async def memory_preview(body: MemoryScopeBody):
+    async def memory_preview(body: MemoryPreviewBody):
         pid = project(body.project)["id"]
         scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
-        return await asyncio.to_thread(memory.preview, pid, scope)
+        return await asyncio.to_thread(
+            memory.preview, pid, scope,
+            profile=body.profile, include_transcripts=body.include_transcripts,
+            skip_uncommitted=body.skip_uncommitted, redact=body.redact,
+        )
 
     @app.post("/memory/snapshot", dependencies=auth)
-    async def memory_snapshot(body: MemorySnapshotBody):
+    async def memory_snapshot(body: MemorySnapshotExportBody):
         pid = project(body.project)["id"]
         scope, authorize = await asyncio.to_thread(
             memory_write_authorization, pid, body.worktree, body.session_id, body.packet_id)
-        return await asyncio.to_thread(memory.snapshot, pid, scope, authorize=authorize)
+        return await asyncio.to_thread(
+            memory.snapshot, pid, scope, authorize=authorize,
+            profile=body.profile, include_transcripts=body.include_transcripts,
+            skip_uncommitted=body.skip_uncommitted, redact=body.redact,
+        )
 
     @app.post("/memory/inspect", dependencies=auth)
     async def memory_inspect(body: MemoryInspectBody):
@@ -878,7 +1047,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             return memory.import_snapshot(
                 body.path, body.root, body.name, body.dry_run,
                 expected_snapshot_id=inspected["snapshot_id"], expected_project_id=pid, authorize=authorize,
-                replace_confirmed=body.replace_confirmed, expected_replaced=body.expected_replaced)
+                replace_confirmed=body.replace_confirmed, expected_replaced=body.expected_replaced,
+                heal_quotes=body.heal_quotes)
         if body.dry_run:
             scope = await asyncio.to_thread(read_scope, pid, body.root, body.session_id)
             return await asyncio.to_thread(restore, scope)
@@ -969,6 +1139,42 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         if not body.dry_run:
             cache.clear()
         return result
+
+    @app.post("/memory/heal", dependencies=auth)
+    async def memory_heal(body: MemoryHealBody):
+        from cairnmind.quote_healing import heal_project_quotes
+        pid = project(body.project)["id"]
+        if body.dry_run:
+            scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
+            return await asyncio.to_thread(
+                heal_project_quotes, store, pid, scope,
+                target_commit=body.target_commit, dry_run=True,
+                expected_versions=body.expected_versions, expected_snapshot_id=body.expected_snapshot_id,
+                record_ids=body.record_ids, actor=body.session_id or "service_api",
+            )
+        scope, authorize = await asyncio.to_thread(
+            memory_write_authorization, pid, body.worktree, body.session_id, body.packet_id)
+        if authorize is not None:
+            if hasattr(authorize, "refresh"):
+                await asyncio.to_thread(authorize.refresh)
+            await asyncio.to_thread(authorize)
+        result = await asyncio.to_thread(
+            heal_project_quotes, store, pid, scope,
+            target_commit=body.target_commit, dry_run=False,
+            expected_versions=body.expected_versions, expected_snapshot_id=body.expected_snapshot_id,
+            record_ids=body.record_ids, actor=body.session_id or "service_api",
+        )
+        cache.clear()
+        return result
+
+    @app.get("/memory/heal-audit", dependencies=auth)
+    async def memory_heal_audit(project: str, record_id: str | None = None, limit: int = 100,
+                                session_id: str | None = None):
+        from cairnmind.quote_healing import healing_audit_log
+        pid = store.resolve_project(project)["id"]
+        await asyncio.to_thread(read_scope, pid, None, session_id)
+        items = await asyncio.to_thread(healing_audit_log, store, pid, record_id=record_id, limit=limit)
+        return {"project_id": pid, "items": items, "total": len(items)}
 
     @app.get("/memory/status", dependencies=auth)
     async def memory_status(project: str, worktree: str | None = None, session_id: str | None = None):
@@ -1215,7 +1421,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pending = await asyncio.to_thread(index_pending_sources, store)
         index_errors.extend(pending.get("errors", []))
         stamp = await asyncio.to_thread(store.cache_stamp, pid)
-        key = (pid, body.question, scope, stamp, identity, contract_key, also_held)
+        key = (pid, body.question, scope, stamp, identity, contract_key, also_held, body.verifier)
         hit = cache.get(key)
         if hit and identity is not None and not index_errors and time.monotonic() - hit[0] < 60:
             if keep:
@@ -1224,7 +1430,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         try:
             result = await asyncio.wait_for(
                 inference.submit(lambda: agent.ask(pid, body.question, worktree=scope,
-                                                   answer_schema=answer_schema, also_held=also_held), priority=0),
+                                                   answer_schema=answer_schema, also_held=also_held,
+                                                   verifier=body.verifier), priority=0),
                 timeout=settings.ask_timeout + 5,
             )
         except TimeoutError:
@@ -1340,4 +1547,6 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     from cairnmind.inspector_api import attach_inspector_routes
     attach_inspector_routes(app, store, settings)
+    from cairnmind.ui_server import attach_ui_routes
+    attach_ui_routes(app, store, settings, dependencies=auth)
     return app

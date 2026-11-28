@@ -87,7 +87,7 @@ def _unreadable(path: Path, exc: Exception) -> str:
     shown = safe_text(str(path))
     if isinstance(exc, FileNotFoundError):
         return f"The question file {shown} does not exist."
-    if isinstance(exc, IsADirectoryError):
+    if isinstance(exc, IsADirectoryError) or (isinstance(exc, PermissionError) and Path(path).is_dir()):
         return f"The question file {shown} is a folder, not a file."
     if isinstance(exc, OSError):
         return f"Cannot read the question file {shown}: {exc.strerror or 'the system refused'}."
@@ -336,6 +336,9 @@ def run_repository_evaluation(settings: Settings, root: Path, questions_path: Pa
             except OllamaUnavailable as exc:
                 report.update(status="failed", failure_stage=report.get("stage"), error=measured._error(exc))
             except Exception as exc:  # noqa: BLE001 - the report records the failure, never a pass
+                from .vcr import CassetteMissError
+                if isinstance(exc, CassetteMissError):
+                    raise
                 report.update(status="failed", failure_stage=report.get("stage", "setup"), error=measured._error(exc))
             finally:
                 if isolated is not None:
@@ -344,7 +347,7 @@ def run_repository_evaluation(settings: Settings, root: Path, questions_path: Pa
     output = Path(report_dir or settings.data_dir / "evaluations").expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = output / ("repository-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid4().hex[:8] + ".json")
-    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
     report["report_path"] = str(path)

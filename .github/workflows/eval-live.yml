@@ -1,0 +1,46 @@
+name: Live Eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      chat_model:
+        description: Chat model tag for live Ollama run
+        required: false
+        default: qwen2.5:14b
+      embedding_model:
+        description: Embedding model tag for live Ollama run
+        required: false
+        default: nomic-embed-text
+  schedule:
+    # Weekly live verification against real models when self-hosted GPU runner is attached
+    - cron: "0 4 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  eval-live:
+    # Live end-to-end evaluation (including `eval repository .`), manual or scheduled.
+    # PR CI uses deterministic VCR replay (`eval-replay` in ci.yml) to avoid GPU costs and exit 3 skips.
+    runs-on: [self-hosted, linux, ollama]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked --extra dev
+      - name: Run live evaluations
+        env:
+          CAIRNMIND_CHAT_MODEL: ${{ inputs.chat_model || 'qwen2.5:14b' }}
+          CAIRNMIND_EMBEDDING_MODEL: ${{ inputs.embedding_model || 'nomic-embed-text' }}
+        run: |
+          uv run cairnmind --data-dir "$RUNNER_TEMP/live-eval" init
+          uv run cairnmind --data-dir "$RUNNER_TEMP/live-eval" engine start
+          trap 'uv run cairnmind --data-dir "$RUNNER_TEMP/live-eval" engine stop || true' EXIT
+          uv run cairnmind --data-dir "$RUNNER_TEMP/live-eval" eval extraction --runs 1
+          uv run cairnmind --data-dir "$RUNNER_TEMP/live-eval" eval run
+          uv run cairnmind --data-dir "$RUNNER_TEMP/live-eval" eval memory
+          uv run cairnmind --data-dir "$RUNNER_TEMP/live-eval" eval repository .

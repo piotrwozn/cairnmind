@@ -1,0 +1,30 @@
+{
+  "action": "none",
+  "changed": [],
+  "check_profile": null,
+  "client": null,
+  "command": null,
+  "command_reason": null,
+  "credential": null,
+  "label": null,
+  "model": null,
+  "plan": {
+    "id": "<UUID_1>",
+    "title": "Contract stabilization",
+    "version": 1
+  },
+  "problem": "not_mapped",
+  "profile_id": null,
+  "provider": null,
+  "reason": "ready",
+  "required_profiles": [],
+  "runtime": null,
+  "slot_id": null,
+  "stage": "implement",
+  "task": {
+    "content": "Verify frozen CLI and MCP responses.",
+    "id": "<UUID_2>",
+    "state": "todo",
+    "version": 1
+  }
+}

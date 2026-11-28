@@ -26,8 +26,9 @@ def rows(store, sql, params=None):
 def test_incremental_snapshots_graph_and_deleted_code(workspace):
     store, project, root = workspace
     auth = root / "auth.py"
-    auth.write_text("def login():\n    return True\n")
-    (root / "test_auth.py").write_text("from auth import login\n\ndef test_login():\n    assert login()\n")
+    auth.write_text("def login():\n    return True\n", encoding="utf-8", newline="\n")
+    (root / "test_auth.py").write_text("from auth import login\n\ndef test_login():\n    assert login()\n",
+                                       encoding="utf-8", newline="\n")
     first = index_project(store, project["id"])
     assert first["changed"] == 2
     edge_kinds = {row["kind"] for row in rows(store, "SELECT * FROM edges")}
@@ -76,7 +77,7 @@ def test_history_partial_tail_is_retried_without_duplicates(workspace, tmp_path)
     second = {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "I will implement it"}]}}
     raw_first = json.dumps(first) + "\n"
     raw_second = json.dumps(second)
-    history.write_text(raw_first + raw_second[:20])
+    history.write_text(raw_first + raw_second[:20], encoding="utf-8", newline="\n")
     result = import_history(store, history, project["id"], "claude")
     assert result["archived"] == 1
     assert poll_imports(store)["archived"] == 0

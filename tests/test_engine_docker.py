@@ -7,6 +7,7 @@ import os
 import re
 import string
 import subprocess
+import sys
 from urllib.parse import urlparse
 
 import pytest
@@ -161,25 +162,39 @@ def test_start_runs_the_image_as_the_host_user_on_loopback_with_the_password_as_
     assert status["available"] and status["engine"] == "docker" and status["container"]["state"] == "running"
     name, held, state = container_name(settings), labels(settings), settings.data_dir / "arcade"
     assert name == "cairnmind-arcadedb-" + held["io.cairnmind.installation"][:12]
+    from conftest import assert_private
     (run,) = docker.verbs("run")
-    assert run == ["run", "--detach", "--name", name,
-                   "--label", f"io.cairnmind.installation={held['io.cairnmind.installation']}",
-                   "--label", f"io.cairnmind.data-dir={settings.data_dir}",
-                   "--user", f"{os.getuid()}:{os.getgid()}",
-                   "--publish", "127.0.0.1:2499:2480",
-                   "--volume", f"{state}:/var/lib/arcadedb",
-                   "--volume", f"{state / 'root-password'}:/run/secrets/arcadedb_root_password:ro",
-                   "--env", "ARCADEDB_JAVA_OPTS=-Darcadedb.server.mode=development",
-                   "--pull", "never", PUBLISHED]
+    if sys.platform == "win32":
+        assert run == ["run", "--detach", "--name", name,
+                       "--label", f"io.cairnmind.installation={held['io.cairnmind.installation']}",
+                       "--label", f"io.cairnmind.data-dir={settings.data_dir}",
+                       "--publish", "127.0.0.1:2499:2480",
+                       "--mount", f"type=bind,source={state},target=/var/lib/arcadedb",
+                       "--mount", f"type=bind,source={state / 'root-password'},target=/run/secrets/arcadedb_root_password,readonly",
+                       "--env", "ARCADEDB_JAVA_OPTS=-Darcadedb.server.mode=development",
+                       "--pull", "never", PUBLISHED]
+    else:
+        assert run == ["run", "--detach", "--name", name,
+                       "--label", f"io.cairnmind.installation={held['io.cairnmind.installation']}",
+                       "--label", f"io.cairnmind.data-dir={settings.data_dir}",
+                       "--user", f"{os.getuid()}:{os.getgid()}",
+                       "--publish", "127.0.0.1:2499:2480",
+                       "--volume", f"{state}:/var/lib/arcadedb",
+                       "--volume", f"{state / 'root-password'}:/run/secrets/arcadedb_root_password:ro",
+                       "--env", "ARCADEDB_JAVA_OPTS=-Darcadedb.server.mode=development",
+                       "--pull", "never", PUBLISHED]
     assert not any(settings.arcade_password in argument for call, _ in docker.calls for argument in call)
-    assert docker.state_at_run["root-password"] == "0o600"
-    assert {name: docker.state_at_run[name] for name in ("config", "databases", "backups", "log")} == \
-           dict.fromkeys(("config", "databases", "backups", "log"), "0o700")
-    assert (state.stat().st_mode & 0o777) == 0o700
+    if sys.platform != "win32":
+        assert docker.state_at_run["root-password"] == "0o600"
+        assert {name: docker.state_at_run[name] for name in ("config", "databases", "backups", "log")} == \
+               dict.fromkeys(("config", "databases", "backups", "log"), "0o700")
+        assert (state.stat().st_mode & 0o777) == 0o700
+    else:
+        assert_private(state / "root-password")
     record = json.loads((state / "container.json").read_text())
     assert record["name"] == name and record["image"] == PUBLISHED and record["installation"] == held[
         "io.cairnmind.installation"]
-    assert (state / "container.json").stat().st_mode & 0o777 == 0o600
+    assert_private(state / "container.json")
     assert (state / "root-password").read_text() == settings.arcade_password
 
 
@@ -236,7 +251,8 @@ def test_the_wheel_ships_deploy_arcadedb_as_the_build_context(tmp_path, monkeypa
     root = Path(__file__).resolve().parents[1]
     project = tomllib.loads((root / "pyproject.toml").read_text())
     shipped = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    assert shipped == {"deploy/arcadedb": "cairnmind/arcadedb_image"}
+    assert shipped["deploy/arcadedb"] == "cairnmind/arcadedb_image"
+    assert shipped["examples/sample-project"] == "cairnmind/sample_project"
     assert (root / "deploy" / "arcadedb" / "Dockerfile").is_file()  # what the mapping ships
     # The context is the package's own folder: an installed wheel has it, a source checkout does not.
     monkeypatch.setattr(engine_docker, "__file__", str(tmp_path / "package" / "engine_docker.py"))
@@ -424,12 +440,13 @@ def test_a_container_that_stops_or_never_answers_during_startup(docker, tmp_path
 
 def test_docker_mode_refuses_root_an_unsafe_path_and_a_short_password(docker, tmp_path, monkeypatch):
     settings = started(docker, tmp_path)
-    with monkeypatch.context() as patch:
-        patch.setattr(os, "getuid", lambda: 0)
-        with pytest.raises(ArcadeError) as root:
-            start_docker_engine(settings)
-    assert str(root.value) == ROOT_REFUSED
-    odd = Settings.load(tmp_path / "da:ta", create=True)
+    if sys.platform != "win32":
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "getuid", lambda: 0)
+            with pytest.raises(ArcadeError) as root:
+                start_docker_engine(settings)
+        assert str(root.value) == ROOT_REFUSED
+    odd = Settings.load(tmp_path / ("da,ta" if sys.platform == "win32" else "da:ta"), create=True)
     with pytest.raises(ArcadeError) as unsafe:
         start_docker_engine(odd)
     assert str(unsafe.value) == PATH_UNSAFE.format(path=str(odd.data_dir / "arcade"))
@@ -668,6 +685,7 @@ def test_invalid_stored_values_are_refused_naming_them(docker, tmp_path):
         result.exception)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Uses POSIX /bin/sh docker stand-in script")
 def test_engine_start_docker_through_a_docker_stand_in_on_path(tmp_path, monkeypatch):
     bin_dir, work = tmp_path / "bin", tmp_path / "work"
     bin_dir.mkdir()

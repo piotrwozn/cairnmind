@@ -1,0 +1,33 @@
+---
+interface Props {
+  command?: string;
+  compact?: boolean;
+}
+
+const { command = 'uvx cairnmind try', compact = false } = Astro.props;
+---
+
+<div
+  class:list={[
+    'inline-flex items-center justify-between gap-3 rounded-xl border border-[var(--accent)] bg-[var(--bg-code)] shadow-[0_12px_34px_rgba(0,0,0,0.42),0_0_0_1px_rgba(135,175,215,0.22),inset_0_1px_0_rgba(255,255,255,0.16)]',
+    compact ? 'px-3.5 py-2' : 'px-4 py-2.5',
+  ]}
+>
+  <div class="flex items-center gap-2.5 min-w-0">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0" aria-hidden="true">
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
+    </svg>
+    <code class="text-sm font-semibold text-[var(--text-strong)] whitespace-nowrap">
+      <span class="text-[var(--text-dim)] select-none">$ </span>{command}
+    </code>
+  </div>
+  <button
+    type="button"
+    data-cm-copy={command}
+    aria-label={`Copy command ${command}`}
+    class="inline-flex items-center gap-1.5 min-h-[44px] px-3.5 rounded-lg text-xs font-mono font-semibold border border-[var(--accent-border)] bg-[var(--accent-solid)] text-white hover:bg-[var(--accent-solid-hover)] cursor-pointer transition-colors shrink-0"
+  >
+    <span data-cm-copy-label>Copy</span>
+  </button>
+</div>

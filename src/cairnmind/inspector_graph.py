@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-TRANSCRIPT = ("transcript", "transcript_unknown")
+TRANSCRIPT = ("transcript", "transcript_unknown", "converted_transcript")
 FILE_KINDS = ("code", "document", "file")
 FIELDS = {
     "sources": "id,kind,uri,is_current,created_at,metadata.root AS root,metadata.worktree AS worktree,metadata.path AS path,metadata.role AS role,metadata.client AS client,metadata.session_id AS session_id,metadata.origin_client AS origin_client,metadata.origin_evidence AS origin_evidence,metadata.source_timestamp AS source_timestamp,metadata.byte_offset AS byte_offset",

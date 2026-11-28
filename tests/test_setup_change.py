@@ -17,8 +17,9 @@ import types
 import httpx
 import pytest
 
-from cairnmind import (cli, project_removal, service_version, setup_change, setup_mark, setup_profiles, store_writer,
-                       upgrade_mark)
+from conftest import assert_private
+from cairnmind import (cli, process_control, project_removal, service_version, setup_change, setup_mark, setup_profiles,
+                       store_writer, upgrade_mark)
 from cairnmind.config import Settings, is_own_variable
 from cairnmind.setup_profiles import Request, render_one, run
 from cairnmind.store import Store
@@ -599,19 +600,23 @@ def test_an_error_after_the_apply_is_put_back_and_said_as_what_it_is(rig, monkey
 def test_the_service_lock_is_waited_for_and_held(rig, monkeypatch):
     """_stop does not call the service gone while its lock is held; _apply never changes anything under a service
     that started again (a `cairnmind serve` in a terminal does not read the mark, so the lock is the only guard)."""
-    import fcntl
+    from cairnmind import file_locks
     make(rig.tmp)
     settings = Settings.load(rig.data)
     rig.alive = False
     other = (rig.data / "service.lock").open("a")
     try:
-        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        file_locks.lock_exclusive(other, blocking=False)
         assert setup_change._stop(settings) == (setup_change.STOP_TIMEOUT, {"seconds": setup_change.STOP_SECONDS})
         before = config_bytes(rig.tmp)
         assert setup_change._apply(settings, rig.request(), {"plan": [], "writer": []}, None) == (
             "refused", (setup_change.SERVICE_BACK, {}))
         assert config_bytes(rig.tmp) == before
     finally:
+        try:
+            file_locks.unlock(other)
+        except OSError:
+            pass
         other.close()
     assert setup_change._stop(settings) is None
 
@@ -809,11 +814,13 @@ def test_begin_starts_a_detached_helper_with_a_clean_environment(rig, monkeypatc
     setup_change.begin(Settings.load(rig.data), request, {"plan": ["a"], "writer": []}, "pl")
     assert seen["command"] == [sys.executable, "-I", "-m", "cairnmind.setup_change", "--data-dir", str(rig.data)]
     kwargs = seen["kwargs"]
-    assert kwargs["start_new_session"] is True and kwargs["stdin"] == subprocess.PIPE and kwargs["cwd"] == rig.data
+    expected_detached = process_control.detached_popen_kwargs()
+    assert all(kwargs.get(k) == v for k, v in expected_detached.items())
+    assert kwargs["stdin"] == subprocess.PIPE and kwargs["cwd"] == rig.data
     assert "TMUX" not in kwargs["env"] and "TMUX_PANE" not in kwargs["env"]
     assert "CAIRNMIND_SESSION_ID" not in kwargs["env"] and "CAIRNMIND_CLIENT" not in kwargs["env"]
     assert kwargs["env"]["CAIRNMIND_ARCADE_URL_NOT_THIS"] == "kept"
-    assert (rig.data / setup_change.LOG).stat().st_mode & 0o777 == 0o600
+    assert_private(rig.data / setup_change.LOG)
     assert json.loads(written[0])["language"] == "pl" and written[1] == "closed"
 
 
@@ -835,6 +842,7 @@ def test_the_helper_reports_a_refusal_through_its_progress_file(tmp_path):
     assert missing.returncode == 2 and b"no Cairnmind configuration" in missing.stderr
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handlers (SIGTERM/SIGHUP/SIGINT) do not apply on Windows")
 @pytest.mark.parametrize("name", ["SIGTERM", "SIGHUP", "SIGINT"])
 def test_a_signal_sent_to_a_real_helper_ends_it_through_the_handlers_with_status_130(tmp_path, name):
     """What closing the terminal (SIGHUP), `kill` (SIGTERM) and Ctrl-C (SIGINT) do to the helper: the handlers turn them

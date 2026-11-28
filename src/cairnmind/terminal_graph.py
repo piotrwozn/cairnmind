@@ -664,7 +664,8 @@ class GraphApp(BasePanel):
                     self.model.targets = targets
             # A graph being written is partial (#386): the line shows the sentence once and clears with the mark.
             text = CODE_GRAPH_NOT_BUILT if CODE_GRAPH_NOT_BUILT in (data.get("warnings") or []) else ""
-            if str(self.query_one("#panel-notice", Static).render()) != self.t(text):
+            notices = self.query("#panel-notice")
+            if notices and str(notices.first(Static).render()) != self.t(text):
                 self.notice(text)
             self.invalidate_frame()
         except (OSError, ValueError, RuntimeError) as exc:

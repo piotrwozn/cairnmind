@@ -22,11 +22,15 @@ evidence/
 
 # Maintainer-only release and qualification tooling, kept on disk only
 release-tools/
-releases/
+/releases/
 .ruv-swarm/
 
 # Build outputs and local project state
 dist/
+website/.astro/
+website/dist/
+website/public/media/demo-60s.svg
+website/public/media/handoff-demo.gif
 *.egg-info/
 .coverage
 .coverage.*

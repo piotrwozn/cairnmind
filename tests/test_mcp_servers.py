@@ -15,11 +15,13 @@ def server(**changes):
 
 
 def test_server_list_round_trips_per_project_and_old_files_load(tmp_path):
+    from cairnmind import private_files
     settings = Settings.load(tmp_path / "data")
     state = CockpitState(settings)
     assert state.load()["project_mcp_servers"] == {}
-    state.path.parent.mkdir(parents=True, mode=0o700)
-    state.path.write_text('{"version": 2, "language": "pl"}')
+    private_files.ensure_private_dir(state.path.parent)
+    state.path.write_text('{"version": 2, "language": "pl"}', encoding="utf-8")
+    private_files.make_private(state.path)
     assert state.load()["project_mcp_servers"] == {}
     saved = state.update({"project_mcp_servers": {"project-a": [server()]}})
     assert saved["project_mcp_servers"] == {"project-a": [server()]} == state.load()["project_mcp_servers"]
@@ -34,6 +36,10 @@ def test_server_list_round_trips_per_project_and_old_files_load(tmp_path):
     [server(url="http://example.test")],                      # unknown field
     [server(credential_ref="env:TOKEN")],                     # no credential fields in this version
     [server(command="python3")],                              # relative command
+    [server(command=r".\srv.exe")],                            # Windows relative command
+    [server(command=r"\\server\share\srv.exe")],               # UNC path refused (#443)
+    [server(command=r"C:\app\..\evil.exe")],                   # parent traversal refused (#443)
+    [server(command="/usr/bin/../evil")],                     # POSIX parent traversal refused
     [server(command="/bin/x\x1b[31m")],                       # control characters in the command
     [server(), server()],                                     # duplicate id
     [server(id="my_server")],                                 # underscore is the name separator

@@ -80,7 +80,10 @@ def required_missing(report: dict) -> list[str]:
     """One plain line per required part of the report that is missing or unusable; cairnmind doctor exits 1 for these."""
     lines = _prerequisites(report)
     arcade = report.get("arcadedb") or {}
-    if arcade.get("sign_in_refused"):  # another data directory's engine answers here: the text names the way out
+    sqlite_mode = report.get("storage_backend") == "sqlite" or arcade.get("needed") is False
+    if sqlite_mode:
+        pass
+    elif arcade.get("sign_in_refused"):  # another data directory's engine answers here: the text names the way out
         lines.append(_line(arcade.get("error") or "", limit=900))
     elif arcade.get("available") is False:
         if arcade.get("mode") == "connect":
@@ -104,7 +107,9 @@ def required_missing(report: dict) -> list[str]:
         lines.append(_line(knowledge))  # a stored value that is neither enabled nor disabled
     writer = report.get("store_writer") or {}
     # "unknown" because the engine did not answer is the engine's state, already said above or present on demand.
-    unknown_for_the_engine = writer.get("role") == "unknown" and arcade.get("available") is False
+    unknown_for_the_engine = writer.get("role") == "unknown" and (
+        arcade.get("available") is False or (sqlite_mode and not (report.get("sqlite") or {}).get("exists"))
+    )
     # A reader is how a second installation is meant to be (#373); a lost role, an unknown one, a mixed store and a
     # copy of the writer's own data directory (it cannot write and nobody meant it) are not.
     if ((writer.get("role") in {"lost", "unknown"} or writer.get("problem") or _copy_of_the_writer(writer))
@@ -113,6 +118,13 @@ def required_missing(report: dict) -> list[str]:
                            f"{writer.get('next') or ''}"))
     # Commands here are refused; whole, so the command that ends a refusal is never cut off (#319).
     lines += [_line(note, limit=600) for note in report.get("environment_blockers") or []]
+    pulse = report.get("pulse")
+    if isinstance(pulse, dict) and pulse.get("status") == "broken":
+        reasons = pulse.get("integrity_errors") or pulse.get("broken_refs") or ["integrity check failed"]
+        lines.append(_line(f"Memory Pulse: BROKEN ({'; '.join(str(r) for r in reasons[:3])})", limit=600))
+    handshake = report.get("mcp_handshake")
+    if isinstance(handshake, dict) and handshake.get("ok") is False:
+        lines.append(_line(f"MCP Handshake failed: {handshake.get('error') or 'unknown error'}", limit=600))
     return lines
 
 
@@ -156,6 +168,10 @@ def attention(report: dict) -> list[str]:
 
 
 def _engine_present(report: dict) -> list[str]:
+    if report.get("storage_backend") == "sqlite":
+        sqlite_info = report.get("sqlite") or {}
+        path = sqlite_info.get("db_path") or "state.db"
+        return [f"Embedded SQLite database ({path})"]
     arcade = report.get("arcadedb") or {}
     if _on_demand(report):
         return [ENGINE_ON_DEMAND.format(url=arcade.get("url") or "its address")]
@@ -231,13 +247,59 @@ def summary(report: dict) -> list[str]:
     # A project folder this machine cannot read (#371): a note, never a fault; the exit code does not change.
     folders = [e["message"] for e in report.get("project_folders") or []
                if isinstance(e, dict) and isinstance(e.get("message"), str)]
+    sqlite_warnings = [
+        str(w) for w in ((report.get("sqlite") or {}).get("warnings") or []) if isinstance(w, str) and w
+    ]
+    preflight_warnings = [
+        str(w) for w in ((report.get("storage_preflight") or {}).get("warnings") or [])
+        if isinstance(w, str) and w
+    ]
+    preflight_lines = _preflight_summary(report)
     for heading, items in ((OPTIONAL_BROKEN, broken), (OPTIONAL_OFF, off), (OPTIONAL_ON, on),
-                           (NOTES, [n for n in notes if n not in blockers] + folders)):
+                           ("Pre-flight:", preflight_lines),
+                           (NOTES, [n for n in notes if n not in blockers] + folders + sqlite_warnings + preflight_warnings)):
         if items:
             lines.append(heading)
             lines += [f"  - {_line(item, limit=900 if item in folders else 300)}" for item in items]
     lines += [FULL_REPORT, NEXT_FIX if missing else NEXT_PROJECTS if report.get("projects") else NEXT_START]
     return lines
+
+
+def _preflight_summary(report: dict) -> list[str]:
+    """Concise pre-flight status lines for Memory Pulse, MCP presets, handshake and security guards."""
+    items: list[str] = []
+    pulse = report.get("pulse")
+    if isinstance(pulse, dict) and pulse.get("status") not in (None, "not_checked"):
+        status = str(pulse["status"]).upper()
+        drift = len(pulse.get("drift_files") or [])
+        stale = len(pulse.get("stale_test_tasks") or [])
+        degraded = len(pulse.get("degraded_entities") or [])
+        items.append(f"Memory Pulse: {status} ({drift} drift, {stale} stale tests, {degraded} degraded)")
+    presets = report.get("mcp_presets")
+    if isinstance(presets, list) and presets:
+        formatted = []
+        for entry in presets:
+            if not isinstance(entry, dict) or not entry.get("configured"):
+                continue
+            client = entry.get("client", "unknown")
+            path = entry.get("path") or ""
+            short = path.rsplit("/", 2)[-1] if "/" in path else path
+            formatted.append(f"{client} ({short})" if short else str(client))
+        if formatted:
+            items.append(f"MCP Clients: {', '.join(formatted)}")
+    handshake = report.get("mcp_handshake")
+    if isinstance(handshake, dict):
+        if handshake.get("ok"):
+            clean = "stdio clean" if handshake.get("stdout_clean", True) else "stdio dirty"
+            items.append(f"MCP Handshake: OK ({handshake.get('latency_ms', 0)} ms, {clean})")
+        else:
+            items.append(f"MCP Handshake: FAILED ({handshake.get('error') or 'unknown error'})")
+    guards = report.get("security_guards")
+    if isinstance(guards, dict):
+        ack = "ON" if guards.get("read_before_write_ack") else "OFF"
+        profile = guards.get("snapshot_profile") or "none"
+        items.append(f"Security Guards: Read-before-write ACK {ack}, snapshot profile={profile}")
+    return items
 
 
 def main() -> int:

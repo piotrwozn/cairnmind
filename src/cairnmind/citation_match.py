@@ -29,12 +29,53 @@ not make two brackets into evidence.
 """
 from __future__ import annotations
 
-_IGNORED = "`"
+_IGNORED = "`\ufeff"
 _SEPARATOR = " "
 
 
 def _word(char: str) -> bool:
     return char.isalnum() or char == "_"
+
+
+def _lf_with_map(text: str) -> tuple[str, list[int]]:
+    """Convert CRLF/CR to LF and drop UTF-8 BOM, returning `(normalized, origin_indices)`."""
+    chars: list[str] = []
+    origin: list[int] = []
+    i = 0
+    length = len(text)
+    while i < length:
+        ch = text[i]
+        if ch == "\ufeff":
+            i += 1
+            continue
+        if ch == "\r":
+            chars.append("\n")
+            origin.append(i)
+            i += 2 if (i + 1 < length and text[i + 1] == "\n") else 1
+            continue
+        chars.append(ch)
+        origin.append(i)
+        i += 1
+    return "".join(chars), origin
+
+
+def _span_lf(quote: str, content: str) -> tuple[int, int] | None:
+    """Exact match after normalizing CRLF/CR -> LF and stripping BOM, mapped back to `content` offsets."""
+    if "\r" not in quote and "\r" not in content and "\ufeff" not in quote and "\ufeff" not in content:
+        return None
+    q_norm, _ = _lf_with_map(quote)
+    if not q_norm:
+        return None
+    c_norm, origin = _lf_with_map(content)
+    found = c_norm.find(q_norm)
+    if found < 0:
+        return None
+    start = origin[found]
+    last_idx = found + len(q_norm) - 1
+    end = origin[last_idx] + 1
+    if content[origin[last_idx]:origin[last_idx] + 2] == "\r\n":
+        end = origin[last_idx] + 2
+    return start, end
 
 
 def _normalized(text: str) -> tuple[str, list[int]]:
@@ -98,18 +139,22 @@ def _lines_in_order(lines: list[str], text: str) -> bool:
 def locate_quote(quote: str, content: str, minimum: int = 1) -> tuple[int, int] | None:
     """(start, end) of the passage of ``content`` that ``quote`` stands for, or None.
 
-    ``content[start:end]`` is what the citation records. See the module text for the rules.
+    ``content[start:end]`` is what the citation records. Handles UTF-8 BOM and CRLF/LF differences
+    deterministically at Level 0. See the module text for the layout rules.
     """
-    if not quote.strip():
+    if not quote.strip().lstrip("\ufeff"):
         return None
     span = _span(quote, content, None)
+    if span is not None:
+        return span
+    span = _span_lf(quote, content)
     if span is not None:
         return span
     normalized = _normalized(content)
     span = _span(quote, content, normalized)
     if span is not None:
         return span
-    lines = quote.split("\n")
+    lines = quote.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     if len(lines) < 2 or not _lines_in_order(lines, normalized[0]):
         return None
     for length in range(len(lines) - 1, 0, -1):

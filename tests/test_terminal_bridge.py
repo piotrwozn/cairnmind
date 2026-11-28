@@ -4,15 +4,17 @@ from __future__ import annotations
 import asyncio
 import base64
 from contextlib import asynccontextmanager
-import fcntl
 import json
 import os
 from pathlib import Path
 import signal
 import struct
 import sys
-import termios
 from types import SimpleNamespace
+
+if sys.platform != "win32":
+    import fcntl
+    import termios
 
 import pytest
 
@@ -20,6 +22,8 @@ from conftest import status_flags, terminal_attributes
 from cairnmind.config import Settings
 from cairnmind import native_worker
 from cairnmind.terminal_bridge import CONTROL_STATES, PaneStatus, RawTerminalBridge, raw_terminal, terminal_dimensions
+
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX PTY terminal bridge")
 
 
 class Pane:

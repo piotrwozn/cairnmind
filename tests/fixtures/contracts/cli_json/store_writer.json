@@ -1,0 +1,17 @@
+{
+  "installation": "<ID32_1>",
+  "role": "writer",
+  "writer": {
+    "history": [
+      {
+        "at": "<TIMESTAMP>",
+        "host": "<HOST>",
+        "how": "first",
+        "installation_id": "<ID32_1>"
+      }
+    ],
+    "host": "<HOST>",
+    "installation": "<ID32_1>",
+    "since": "<TIMESTAMP>"
+  }
+}

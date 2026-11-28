@@ -1,0 +1,21 @@
+{
+  "active_key": "[\"<UUID_1>\",\"fact\",\"cli-fact\"]",
+  "content": "CLI note contract check",
+  "created_at": "<TIMESTAMP>",
+  "id": "<UUID_2>",
+  "key": "cli-fact",
+  "kind": "fact",
+  "metadata": {
+    "evidence_basis": "observed",
+    "evidence_earliest": "<TIMESTAMP>",
+    "evidence_latest": "<TIMESTAMP>"
+  },
+  "project_id": "<UUID_1>",
+  "source_ids": [
+    "<UUID_3>"
+  ],
+  "status": "proposed",
+  "supersedes": null,
+  "updated_at": "<TIMESTAMP>",
+  "version": 1
+}

@@ -1,0 +1,90 @@
+{
+  "detected_languages": [],
+  "docker_available": false,
+  "docker_fallback": true,
+  "indexers": {
+    "rust-analyzer": {
+      "docker_image": null,
+      "executable": null,
+      "installed": false,
+      "languages": [
+        "rust"
+      ],
+      "missing_tools": [],
+      "mode": "<HOST_MODE>",
+      "version": "2026-11-23"
+    },
+    "scip-clang": {
+      "docker_image": "ghcr.io/sourcegraph/scip-clang:v0.4.3",
+      "executable": null,
+      "installed": false,
+      "languages": [
+        "c",
+        "cpp"
+      ],
+      "missing_tools": [],
+      "mode": "<HOST_MODE>",
+      "version": "v0.4.3"
+    },
+    "scip-dotnet": {
+      "docker_image": null,
+      "executable": null,
+      "installed": false,
+      "languages": [
+        "csharp"
+      ],
+      "missing_tools": [],
+      "mode": "<HOST_MODE>",
+      "version": "0.2.14"
+    },
+    "scip-go": {
+      "docker_image": null,
+      "executable": null,
+      "installed": false,
+      "languages": [
+        "go"
+      ],
+      "missing_tools": [],
+      "mode": "<HOST_MODE>",
+      "version": "v0.2.10"
+    },
+    "scip-java": {
+      "docker_image": null,
+      "executable": null,
+      "installed": false,
+      "languages": [
+        "java",
+        "kotlin"
+      ],
+      "missing_tools": [],
+      "mode": "<HOST_MODE>",
+      "version": "v0.14.2"
+    },
+    "scip-php": {
+      "docker_image": null,
+      "executable": null,
+      "installed": false,
+      "languages": [
+        "php"
+      ],
+      "missing_tools": [],
+      "mode": "<HOST_MODE>",
+      "version": "dev-main"
+    },
+    "scip-ruby": {
+      "docker_image": "ghcr.io/sourcegraph/scip-ruby:scip-ruby-v0.5.1",
+      "executable": null,
+      "installed": false,
+      "languages": [
+        "ruby"
+      ],
+      "missing_tools": [],
+      "mode": "<HOST_MODE>",
+      "version": "scip-ruby-v0.5.1"
+    }
+  },
+  "mode": "auto",
+  "platform": "<HOST>",
+  "runtime_dir": "<DATA_DIR>/runtime/scip",
+  "timeout": 300.0
+}

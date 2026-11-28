@@ -1,5 +1,5 @@
 [checks.unit]
-argv = ["python3", "-B", "checks/notes_check.py"]
+argv = ["uv", "run", "--no-project", "python", "-B", "checks/notes_check.py"]
 cwd = "."
 timeout_seconds = 60
 output_limit_bytes = 1048576

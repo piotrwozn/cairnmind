@@ -1,5 +1,14 @@
 # Cairnmind implementation contracts
 
+## Architecture taxonomy
+
+Cairnmind enforces four core concepts inside the service (never as prompts alone):
+
+- **Evidence-grounded answers & `origin_evidence`:** Every `ask` answer must cite verbatim passages verified against current sources; without verbatim confirmation it returns `unknown`. Writes from external MCP clients (`cairnmind mcp --client external`) or after third-party tool results carry server-set `origin_evidence: degraded` and are never counted or shown as verified.
+- **Resume packets & read-before-write ACK:** Each coding session receives a bounded, checksummed resume packet (`schema_version` 2) tied to a recomputed `state_hash`. Session writes are refused until the client acknowledges the exact packet, plan and task versions.
+- **Versioned plans & optimistic concurrency:** Plans and task steps are saved atomically with monotonic `version` numbers and `expected_version` / `expected_plan_version` CAS checks so concurrent sessions never silently overwrite each other.
+- **Named check profiles & code fingerprints:** Tasks with `requires_test` cannot transition to `done` without fresh local runs of every declared check profile in `.cairnmind/checks.toml`, bound to the task definition and to the worktree's current code fingerprint. Any later code change marks that check evidence stale.
+
 The active backend is **ArcadeDB 26.11.1**, using native document types, graph
 vertices/edges, FULL_TEXT/BM25 and LSM_VECTOR indexes. See
 [ARCADE_CONTRACTS.md](ARCADE_CONTRACTS.md) for component ownership and the HTTP DAL.
@@ -195,11 +204,7 @@ What can be added is added outside those processes, through the surfaces below. 
 
 **Tools from MCP servers for the built-in agent.** A person adds up to four stdio MCP servers per project under **More → MCP servers** in the workspace; they are stored in the owner-local cockpit preferences (`project_mcp_servers`, `mcp_servers.py`) and copied into the configuration of the next API agent run of that project (`api_runtime.py`). Each server runs as a separate child process of the agent worker, never inside a Cairnmind process: with a minimal environment built from scratch and no Cairnmind variable or credential, a private working directory, no stderr and its own process group, stopped when the run ends (`mcp_host.py`). Its tools are offered only after the resume acknowledgement, every call needs the person's one-use approval, and what it returns is archived as degraded third-party text that is never chunked or anchored; after a third-party result, nothing the agent says or does in that session counts as evidence (`mcp_agent.py`, `agent_memory.py`). A server is a program the person chose to run under their own account, so it can read what that account can, including `config.json`; Cairnmind is not a sandbox for it. See [API.md](API.md#third-party-mcp-tools).
 
-### Planned, not yet there
-
-- History of a client whose transcripts Cairnmind does not read, through a converter command that a person registers and runs from the command line outside any coding session: issue #127, later slices. Converted history would be marked as never verified. None of it exists yet; history import reads Codex and Claude Code only.
-
-No date is promised for it.
+**Another client's history through a converter command (#127).** A person registers an out-of-process converter command in `<data_dir>/importers.json` with `cairnmind importer add NAME COMMAND [ARGS...]` (`importers.py`, `cli_importers.py`) and runs `cairnmind import PATH --via NAME [--project PROJECT]` from the command line. Registration (`add`, `remove`, `list`) and execution (`import --via`) refuse to run when `CAIRNMIND_SESSION_ID` or `CAIRNMIND_PACKET_ID` (or their `DEVBRAIN_*` spellings) is set in the environment, and the service never runs a converter. Each converter runs out of process (`shell=False`, empty Cairnmind environment, private temporary working directory, bounded timeout and combined output limit) and writes normalised JSONL version 1 (`{"version": 1, "role": ..., "content": ...}`, optional `session_id`, `timestamp`, `cwd`, `event_id`). Converted lines are masked for secrets (`secret_mask.py`), stored as `converted_transcript` sources stamped with `importer: NAME` and `origin_evidence: "degraded"`, and indexed for search without writing `import_cursors` or queuing extraction: a record resting only on converted history is always `degraded` (never `anchored`), a native session's resume packet is unchanged, and removing the importer keeps the stored lines and their degraded mark.
 
 ### Not supported
 

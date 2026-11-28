@@ -48,7 +48,7 @@ class Machine:
         read_text = Path.read_text
 
         def fake_read(path, *args, **kwargs):
-            name = str(path)
+            name = path.as_posix()
             if name in MACHINE_ID_FILES:
                 if name not in self.files:
                     raise FileNotFoundError(name)
@@ -165,3 +165,9 @@ def test_the_parser_refuses_junk(text):
 
 def test_the_parser_accepts_the_same_uuid_printed_twice():
     assert store_writer.platform_uuid(IOREG + IOREG) == UUID.lower()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Reads Windows MachineGuid registry key")
+def test_windows_machine_identity_for_real():
+    ident = store_writer.machine_identity()
+    assert ident.startswith("machine-guid:") and len(ident.split(":", 1)[1]) == 36

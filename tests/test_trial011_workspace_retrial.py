@@ -190,7 +190,8 @@ async def test_a_long_notice_keeps_the_focused_project_button_in_view(tmp_path, 
         await settle(app, pilot)
         app.notice("\n".join(f"Row {row} of a stage notice" for row in range(1, 6)))
         await settle(app, pilot)
-        await pilot.pause(.1)
+        await pilot.pause(.3)
+        await settle(app, pilot)
         page = app.query_one("#project-page")
         assert page.max_scroll_y > 0  # the page does scroll at this size: the case of the trial
         assert app.focused is button and page.region.contains_region(button.region), (page.region, button.region)

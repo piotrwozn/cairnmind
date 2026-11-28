@@ -14,10 +14,8 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import fcntl
 import json
 import os
-import shlex
 import signal
 import subprocess
 import sys
@@ -31,6 +29,9 @@ import httpx
 from . import (database_mode, engine_docker, memory_models, project_removal, service_version, setup_mark,
                setup_profiles, store_writer, topology, upgrade_mark)
 from .config import SESSION_NAMES, Settings, drop_env, session_value, tls_verify
+from .file_locks import lock_exclusive
+from .private_files import open_no_follow
+from .process_control import detached_popen_kwargs
 from .setup_profiles import SetupFailed, SetupRefused, render_one
 
 PROGRESS, LOG = "setup-change.json", "setup-change.log"
@@ -362,11 +363,11 @@ def begin(settings, request, expected: dict, language: str) -> subprocess.Popen:
     drop_env(env, *SESSION_NAMES)  # a helper is no child actor of a coding session
     for name in ("TMUX", "TMUX_PANE"):  # the workspace's key is found from the data directory, not from the pane
         env.pop(name, None)
-    log = os.open(settings.data_dir / LOG, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+    log = open_no_follow(settings.data_dir / LOG, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
         process = subprocess.Popen([sys.executable, "-I", "-m", "cairnmind.setup_change", "--data-dir",
                                     str(settings.data_dir)], cwd=settings.data_dir, stdin=subprocess.PIPE,
-                                   stdout=log, stderr=log, start_new_session=True, env=env)
+                                   stdout=log, stderr=log, env=env, **detached_popen_kwargs())
     finally:
         os.close(log)
     try:
@@ -470,9 +471,9 @@ class _Report:
 
 
 def _lock_free(settings) -> bool:
-    with (settings.data_dir / "service.lock").open("a") as lock:
+    with (settings.data_dir / "service.lock").open("a", encoding="utf-8") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_exclusive(lock, blocking=False)
         except BlockingIOError:
             return False
         return True
@@ -544,9 +545,9 @@ def _left(result: dict) -> list:
 def _apply(settings, request, expected, out) -> tuple[str, object]:
     """setup_profiles.run with the service stopped: ("changed", result), ("refused", item), ("failed", item),
     ("not_put_back", item) or ("interrupted", None)."""
-    with (settings.data_dir / "service.lock").open("a") as lock:
+    with (settings.data_dir / "service.lock").open("a", encoding="utf-8") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_exclusive(lock, blocking=False)
         except BlockingIOError:
             return "refused", (SERVICE_BACK, {})
         try:
@@ -573,7 +574,8 @@ def _restart(data_dir: Path, out, state: str) -> str:
     """The service on the settings config.json holds now, which are the old ones."""
     reason = _start(Settings.load(data_dir))
     if reason:
-        command = shlex.join(["cairnmind", *_data_dir_arguments(data_dir), "serve"])
+        from .process_control import format_command
+        command = format_command(["cairnmind", *_data_dir_arguments(data_dir), "serve"])
         out.add((SERVICE_DOWN, {"reason": reason, "command": command}))
         return out.finish("service_down")
     out.add((AGAIN_OLD, {}))
@@ -753,8 +755,10 @@ def main(argv: list[str] | None = None) -> int:
         _signal[0] = number
         raise KeyboardInterrupt
 
-    for number in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
-        signal.signal(number, interrupted)
+    for name in ("SIGTERM", "SIGHUP", "SIGINT"):
+        number = getattr(signal, name, None)
+        if number is not None:
+            signal.signal(number, interrupted)
     raw = sys.stdin.buffer.read(_MAX_INPUT + 1)
     try:
         if len(raw) > _MAX_INPUT:

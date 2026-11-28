@@ -1,0 +1,876 @@
+{
+  "backend": "arcadedb",
+  "check_runs": [],
+  "chunks": [
+    {
+      "id": "9e1a6e329067f016ab6dd6c54c7af68c95b2ceadd73fd44db27d8eea30a43807",
+      "is_current": true,
+      "line_end": 1,
+      "line_start": 1,
+      "metadata": {
+        "language": "text"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "199a0401-d811-4b3c-9297-699bdf2b3134",
+      "text": "# Fixture App"
+    },
+    {
+      "id": "50ed76a102209ec2dbedb434519a46e0b11b3a1d56d14599dcfb6971d6436ef8",
+      "is_current": true,
+      "line_end": 2,
+      "line_start": 1,
+      "metadata": {
+        "language": "python"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "38f3daff-42a8-4c54-a7a2-d7f33fe91444",
+      "text": "def add(a, b):\n    return a + b"
+    }
+  ],
+  "edges": [
+    {
+      "from_id": "source:199a0401-d811-4b3c-9297-699bdf2b3134",
+      "id": "054f159fffd8fbb647ed6893d21be5b4844f57acb6770c89cdab67e6ea50b625",
+      "is_current": true,
+      "kind": "snapshot_of",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "199a0401-d811-4b3c-9297-699bdf2b3134",
+      "status": "observed",
+      "to_id": "71e8a59f079e878342eaa56019c982dbe4fe791d96def4696056522333d593ae"
+    },
+    {
+      "from_id": "source:38f3daff-42a8-4c54-a7a2-d7f33fe91444",
+      "id": "265793f25f5581408c9bda38140b330cc60c8f81a732a88f367f845d540bdc43",
+      "is_current": true,
+      "kind": "snapshot_of",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "38f3daff-42a8-4c54-a7a2-d7f33fe91444",
+      "status": "observed",
+      "to_id": "c7b36f1ecf32815be5e2d2dde8a9fcd95ba4a1d20f0f0554ff79d3b24f51e714"
+    },
+    {
+      "from_id": "c7b36f1ecf32815be5e2d2dde8a9fcd95ba4a1d20f0f0554ff79d3b24f51e714",
+      "id": "7af61078e1cea82041d90078429a654c859a79cab3f1fe246b399c969ef20eff",
+      "is_current": true,
+      "kind": "defines",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "38f3daff-42a8-4c54-a7a2-d7f33fe91444",
+      "status": "observed",
+      "to_id": "557b68d113564627cb7703eaa04e9cda29b7fcdf67625361577b344af49a19d5"
+    },
+    {
+      "from_id": "record:fb231e03-7477-4f94-8463-b70c5b286a67",
+      "id": "734e8d135b79b375bcc4f30a76d0d6437a5ff4757fb4e109791a75c87303ef63",
+      "is_current": true,
+      "kind": "supported_by",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "38f3daff-42a8-4c54-a7a2-d7f33fe91444",
+      "status": "observed",
+      "to_id": "source:38f3daff-42a8-4c54-a7a2-d7f33fe91444"
+    },
+    {
+      "from_id": "record:42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+      "id": "1169c782d412e553302f2322ba6edb823b686b4b71fad6e15f0c02ace67083f2",
+      "is_current": true,
+      "kind": "supported_by",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "7d87d480-7c04-4037-8762-f7da4f96bb02",
+      "status": "observed",
+      "to_id": "source:7d87d480-7c04-4037-8762-f7da4f96bb02"
+    },
+    {
+      "from_id": "record:42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+      "id": "f6c8e49d7155864f3bbcd43677e86e2baebc6c05b05e1482fa64b3efd3c95867",
+      "is_current": true,
+      "kind": "supported_by",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "38f3daff-42a8-4c54-a7a2-d7f33fe91444",
+      "status": "observed",
+      "to_id": "source:38f3daff-42a8-4c54-a7a2-d7f33fe91444"
+    },
+    {
+      "from_id": "record:42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+      "id": "fee8bba7b373dca1b419d1a7f7d5291cb61783233a039dfc3d8f614622547259",
+      "is_current": true,
+      "kind": "supported_by",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "0d80f85a-2989-420e-b132-6bd400e9769b",
+      "status": "observed",
+      "to_id": "source:0d80f85a-2989-420e-b132-6bd400e9769b"
+    }
+  ],
+  "embeddings": [],
+  "exported_at": "2026-11-26T20:46:36.139509+00:00",
+  "format_version": 5,
+  "import_cursors": [],
+  "ingestion_inbox": [],
+  "jobs": [
+    {
+      "attempts": 0,
+      "created_at": "2026-11-26T20:46:34.578120+00:00",
+      "dedupe_key": "embed:9e1a6e329067f016ab6dd6c54c7af68c95b2ceadd73fd44db27d8eea30a43807",
+      "error": null,
+      "id": "b8c74122-28c5-482c-a7c6-ee0b101a093f",
+      "job_key": "[\"embed\",\"8d86254a-7869-4ba3-a7fc-bbb26eb3a0da\",\"embed:9e1a6e329067f016ab6dd6c54c7af68c95b2ceadd73fd44db27d8eea30a43807\"]",
+      "kind": "embed",
+      "lease_until": null,
+      "payload": {
+        "chunk_id": "9e1a6e329067f016ab6dd6c54c7af68c95b2ceadd73fd44db27d8eea30a43807"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "state": "pending",
+      "updated_at": "2026-11-26T20:46:34.578120+00:00",
+      "worker": null
+    },
+    {
+      "attempts": 0,
+      "created_at": "2026-11-26T20:46:34.589471+00:00",
+      "dedupe_key": "extract:199a0401-d811-4b3c-9297-699bdf2b3134",
+      "error": null,
+      "id": "31b83919-5b39-485f-8133-6ca40fdccbb4",
+      "job_key": "[\"extract\",\"8d86254a-7869-4ba3-a7fc-bbb26eb3a0da\",\"extract:199a0401-d811-4b3c-9297-699bdf2b3134\"]",
+      "kind": "extract",
+      "lease_until": null,
+      "payload": {
+        "source_id": "199a0401-d811-4b3c-9297-699bdf2b3134"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "state": "pending",
+      "updated_at": "2026-11-26T20:46:34.589471+00:00",
+      "worker": null
+    },
+    {
+      "attempts": 0,
+      "created_at": "2026-11-26T20:46:34.609881+00:00",
+      "dedupe_key": "embed:50ed76a102209ec2dbedb434519a46e0b11b3a1d56d14599dcfb6971d6436ef8",
+      "error": null,
+      "id": "bb180f77-894e-426d-8d86-cd94906d6ca7",
+      "job_key": "[\"embed\",\"8d86254a-7869-4ba3-a7fc-bbb26eb3a0da\",\"embed:50ed76a102209ec2dbedb434519a46e0b11b3a1d56d14599dcfb6971d6436ef8\"]",
+      "kind": "embed",
+      "lease_until": null,
+      "payload": {
+        "chunk_id": "50ed76a102209ec2dbedb434519a46e0b11b3a1d56d14599dcfb6971d6436ef8"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "state": "pending",
+      "updated_at": "2026-11-26T20:46:34.609881+00:00",
+      "worker": null
+    }
+  ],
+  "journal_events": [
+    {
+      "at": "2026-11-26T20:46:34.480320+00:00",
+      "entity_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "entity_type": "project",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:1",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 1
+    },
+    {
+      "at": "2026-11-26T20:46:34.480320+00:00",
+      "entity_id": "52ec096a-5447-413e-8676-588d656983f9",
+      "entity_type": "scope",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:2",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 2
+    },
+    {
+      "at": "2026-11-26T20:46:34.619103+00:00",
+      "entity_id": "50ed76a102209ec2dbedb434519a46e0b11b3a1d56d14599dcfb6971d6436ef8",
+      "entity_type": "chunk",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:3",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 3
+    },
+    {
+      "at": "2026-11-26T20:46:34.619103+00:00",
+      "entity_id": "9e1a6e329067f016ab6dd6c54c7af68c95b2ceadd73fd44db27d8eea30a43807",
+      "entity_type": "chunk",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:4",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 4
+    },
+    {
+      "at": "2026-11-26T20:46:34.619103+00:00",
+      "entity_id": "31b83919-5b39-485f-8133-6ca40fdccbb4",
+      "entity_type": "job",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:5",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 5
+    },
+    {
+      "at": "2026-11-26T20:46:34.619103+00:00",
+      "entity_id": "b8c74122-28c5-482c-a7c6-ee0b101a093f",
+      "entity_type": "job",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:6",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 6
+    },
+    {
+      "at": "2026-11-26T20:46:34.619103+00:00",
+      "entity_id": "bb180f77-894e-426d-8d86-cd94906d6ca7",
+      "entity_type": "job",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:7",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 7
+    },
+    {
+      "at": "2026-11-26T20:46:34.619103+00:00",
+      "entity_id": "199a0401-d811-4b3c-9297-699bdf2b3134",
+      "entity_type": "source",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:8",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 8
+    },
+    {
+      "at": "2026-11-26T20:46:34.619103+00:00",
+      "entity_id": "38f3daff-42a8-4c54-a7a2-d7f33fe91444",
+      "entity_type": "source",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:9",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 9
+    },
+    {
+      "at": "2026-11-26T20:46:34.778511+00:00",
+      "entity_id": null,
+      "entity_type": "graph",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:10",
+      "op": "reset",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 10
+    },
+    {
+      "at": "2026-11-26T20:46:34.778511+00:00",
+      "entity_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "entity_type": "project",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:11",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 11
+    },
+    {
+      "at": "2026-11-26T20:46:34.822835+00:00",
+      "entity_id": "7d87d480-7c04-4037-8762-f7da4f96bb02",
+      "entity_type": "source",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:12",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 12
+    },
+    {
+      "at": "2026-11-26T20:46:34.985992+00:00",
+      "entity_id": "1169c782d412e553302f2322ba6edb823b686b4b71fad6e15f0c02ace67083f2",
+      "entity_type": "edge",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:13",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 13
+    },
+    {
+      "at": "2026-11-26T20:46:34.985992+00:00",
+      "entity_id": "f6c8e49d7155864f3bbcd43677e86e2baebc6c05b05e1482fa64b3efd3c95867",
+      "entity_type": "edge",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:14",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 14
+    },
+    {
+      "at": "2026-11-26T20:46:34.985992+00:00",
+      "entity_id": "record:42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+      "entity_type": "node",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:15",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 15
+    },
+    {
+      "at": "2026-11-26T20:46:34.985992+00:00",
+      "entity_id": "source:7d87d480-7c04-4037-8762-f7da4f96bb02",
+      "entity_type": "node",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:16",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 16
+    },
+    {
+      "at": "2026-11-26T20:46:34.985992+00:00",
+      "entity_id": "42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+      "entity_type": "record",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:17",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 17
+    },
+    {
+      "at": "2026-11-26T20:46:35.560555+00:00",
+      "entity_id": "fee8bba7b373dca1b419d1a7f7d5291cb61783233a039dfc3d8f614622547259",
+      "entity_type": "edge",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:18",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 18
+    },
+    {
+      "at": "2026-11-26T20:46:35.560555+00:00",
+      "entity_id": "record:42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+      "entity_type": "node",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:19",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 19
+    },
+    {
+      "at": "2026-11-26T20:46:35.560555+00:00",
+      "entity_id": "source:0d80f85a-2989-420e-b132-6bd400e9769b",
+      "entity_type": "node",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:20",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 20
+    },
+    {
+      "at": "2026-11-26T20:46:35.560555+00:00",
+      "entity_id": "42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+      "entity_type": "record",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:21",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 21
+    },
+    {
+      "at": "2026-11-26T20:46:35.560555+00:00",
+      "entity_id": "0d80f85a-2989-420e-b132-6bd400e9769b",
+      "entity_type": "source",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:22",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 22
+    },
+    {
+      "at": "2026-11-26T20:46:35.650193+00:00",
+      "entity_id": "734e8d135b79b375bcc4f30a76d0d6437a5ff4757fb4e109791a75c87303ef63",
+      "entity_type": "edge",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:23",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 23
+    },
+    {
+      "at": "2026-11-26T20:46:35.650193+00:00",
+      "entity_id": "record:fb231e03-7477-4f94-8463-b70c5b286a67",
+      "entity_type": "node",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:24",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 24
+    },
+    {
+      "at": "2026-11-26T20:46:35.650193+00:00",
+      "entity_id": "fb231e03-7477-4f94-8463-b70c5b286a67",
+      "entity_type": "record",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:25",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 25
+    },
+    {
+      "at": "2026-11-26T20:46:35.837441+00:00",
+      "entity_id": null,
+      "entity_type": "memory",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:26",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 26
+    },
+    {
+      "at": "2026-11-26T20:46:36.043251+00:00",
+      "entity_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "entity_type": "project",
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "id": "05c03130-18bd-434c-8bdb-01645775ce13:27",
+      "op": "upsert",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "seq": 27
+    }
+  ],
+  "journal_state": [
+    {
+      "epoch": "05c03130-18bd-434c-8bdb-01645775ce13",
+      "first_seq": 1,
+      "id": "current",
+      "seq": 27,
+      "writer": "2447c26ebb9941108a69bd1afd042784",
+      "writer_change": "a36fd1b1ba5c42e18b6c8eb3524de0da"
+    }
+  ],
+  "memory_bindings": [],
+  "memory_imports": [],
+  "memory_settings": [],
+  "memory_snapshots": [
+    {
+      "active_plan_id": null,
+      "ancestors": [],
+      "created_at": "2026-11-26T20:46:35.825931+00:00",
+      "id": "260ee683586f9026faa7647d37f2c8f25a20d0fb6f4c18c35a6fa442383d1838",
+      "manifest_sha": "89c2d852c384582d47cea4f20e756076019d2a3848fa1cc4886fb3b3859c1705",
+      "origin": "local",
+      "parent_id": null,
+      "path": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo/.memory/cairnmind/manifest.json",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "snapshot_id": "12b704c003289bc9f70e02dfae78160ae4193ddf959e270d96ace7a71ce8b56e",
+      "state_hash": "71f2c026ac97ba5ffa012053cd8bae93f0adf7cbf063c52d37dd6f113ee5b9dd",
+      "worktree": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "71e8a59f079e878342eaa56019c982dbe4fe791d96def4696056522333d593ae",
+      "is_current": true,
+      "kind": "file",
+      "label": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo/README.md",
+      "metadata": {
+        "path": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo/README.md"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "199a0401-d811-4b3c-9297-699bdf2b3134"
+    },
+    {
+      "id": "source:199a0401-d811-4b3c-9297-699bdf2b3134",
+      "is_current": true,
+      "kind": "source",
+      "label": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo/README.md",
+      "metadata": {
+        "source_id": "199a0401-d811-4b3c-9297-699bdf2b3134",
+        "source_kind": "document"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "199a0401-d811-4b3c-9297-699bdf2b3134"
+    },
+    {
+      "id": "c7b36f1ecf32815be5e2d2dde8a9fcd95ba4a1d20f0f0554ff79d3b24f51e714",
+      "is_current": true,
+      "kind": "file",
+      "label": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo/src/app.py",
+      "metadata": {
+        "path": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo/src/app.py"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "38f3daff-42a8-4c54-a7a2-d7f33fe91444"
+    },
+    {
+      "id": "source:38f3daff-42a8-4c54-a7a2-d7f33fe91444",
+      "is_current": true,
+      "kind": "source",
+      "label": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo/src/app.py",
+      "metadata": {
+        "source_id": "38f3daff-42a8-4c54-a7a2-d7f33fe91444",
+        "source_kind": "code"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "38f3daff-42a8-4c54-a7a2-d7f33fe91444"
+    },
+    {
+      "id": "557b68d113564627cb7703eaa04e9cda29b7fcdf67625361577b344af49a19d5",
+      "is_current": true,
+      "kind": "symbol",
+      "label": "add",
+      "metadata": {
+        "kind": "function",
+        "line_end": 2,
+        "line_start": 1,
+        "name": "add",
+        "path": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo/src/app.py"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "38f3daff-42a8-4c54-a7a2-d7f33fe91444"
+    },
+    {
+      "id": "record:42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+      "is_current": true,
+      "kind": "decision",
+      "label": "Keep portable snapshots backwards compatible across releases.",
+      "metadata": {
+        "confirmation": {
+          "actor_name": "Fixture Builder",
+          "at": "2026-11-26T20:46:35.398409+00:00",
+          "by": "person",
+          "route": "inspector_review",
+          "source_id": "0d80f85a-2989-420e-b132-6bd400e9769b",
+          "version": 2
+        },
+        "evidence": "def add(a, b):",
+        "evidence_basis": "observed",
+        "evidence_earliest": "2026-11-26T20:46:34.599812+00:00",
+        "evidence_latest": "2026-11-26T20:46:34.813539+00:00",
+        "record_id": "42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+        "root": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo",
+        "status": "confirmed"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "7d87d480-7c04-4037-8762-f7da4f96bb02"
+    },
+    {
+      "id": "source:7d87d480-7c04-4037-8762-f7da4f96bb02",
+      "is_current": true,
+      "kind": "source",
+      "label": "workspace://finding/release-0.12.0",
+      "metadata": {
+        "source_id": "7d87d480-7c04-4037-8762-f7da4f96bb02",
+        "source_kind": "manual"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "7d87d480-7c04-4037-8762-f7da4f96bb02"
+    },
+    {
+      "id": "source:0d80f85a-2989-420e-b132-6bd400e9769b",
+      "is_current": true,
+      "kind": "source",
+      "label": "review://415cfe90-ab82-44df-8ef6-73c1d127e43b",
+      "metadata": {
+        "source_id": "0d80f85a-2989-420e-b132-6bd400e9769b",
+        "source_kind": "manual"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "0d80f85a-2989-420e-b132-6bd400e9769b"
+    },
+    {
+      "id": "record:fb231e03-7477-4f94-8463-b70c5b286a67",
+      "is_current": true,
+      "kind": "fact",
+      "label": "src/app.py defines add(a, b).",
+      "metadata": {
+        "evidence": "def add(a, b):",
+        "evidence_basis": "observed",
+        "evidence_earliest": "2026-11-26T20:46:34.599812+00:00",
+        "evidence_latest": "2026-11-26T20:46:34.599812+00:00",
+        "record_id": "fb231e03-7477-4f94-8463-b70c5b286a67",
+        "root": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo",
+        "status": "proposed"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_id": "38f3daff-42a8-4c54-a7a2-d7f33fe91444"
+    }
+  ],
+  "plan_requests": [],
+  "plan_revisions": [],
+  "plans": [],
+  "project_roots": [
+    {
+      "id": "52ec096a-5447-413e-8676-588d656983f9",
+      "path": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da"
+    }
+  ],
+  "projects": [
+    {
+      "created_at": "2026-11-26T20:46:34.467767+00:00",
+      "graph_edges": 3,
+      "graph_fingerprint": "a46e9b0b83f1edb3282f71746de527d47643fcc839943cc9d0138ade02d5f886",
+      "graph_nodes": 5,
+      "id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "name": "fixture-app",
+      "publication_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "root": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo"
+    }
+  ],
+  "record_revisions": [
+    {
+      "id": "42ca5c1c-a091-4ffd-8792-55ae59e43a1d:1",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "record_id": "42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+      "recorded_at": "2026-11-26T20:46:34.866605+00:00",
+      "snapshot": {
+        "active_key": "[\"8d86254a-7869-4ba3-a7fc-bbb26eb3a0da\",\"decision\",\"keep-contract\"]",
+        "content": "Keep portable snapshots backwards compatible across releases.",
+        "created_at": "2026-11-26T20:46:34.860209+00:00",
+        "id": "42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+        "key": "keep-contract",
+        "kind": "decision",
+        "metadata": {
+          "evidence": "def add(a, b):",
+          "evidence_basis": "observed",
+          "evidence_earliest": "2026-11-26T20:46:34.599812+00:00",
+          "evidence_latest": "2026-11-26T20:46:34.813539+00:00",
+          "root": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo"
+        },
+        "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+        "source_ids": [
+          "7d87d480-7c04-4037-8762-f7da4f96bb02",
+          "38f3daff-42a8-4c54-a7a2-d7f33fe91444"
+        ],
+        "status": "proposed",
+        "supersedes": null,
+        "updated_at": "2026-11-26T20:46:34.860209+00:00",
+        "version": 1
+      },
+      "version": 1
+    },
+    {
+      "id": "42ca5c1c-a091-4ffd-8792-55ae59e43a1d:2",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "record_id": "42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+      "recorded_at": "2026-11-26T20:46:35.415073+00:00",
+      "snapshot": {
+        "active_key": "[\"8d86254a-7869-4ba3-a7fc-bbb26eb3a0da\",\"decision\",\"keep-contract\"]",
+        "content": "Keep portable snapshots backwards compatible across releases.",
+        "created_at": "2026-11-26T20:46:34.860209+00:00",
+        "id": "42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+        "key": "keep-contract",
+        "kind": "decision",
+        "metadata": {
+          "confirmation": {
+            "actor_name": "Fixture Builder",
+            "at": "2026-11-26T20:46:35.398409+00:00",
+            "by": "person",
+            "route": "inspector_review",
+            "source_id": "0d80f85a-2989-420e-b132-6bd400e9769b",
+            "version": 2
+          },
+          "evidence": "def add(a, b):",
+          "evidence_basis": "observed",
+          "evidence_earliest": "2026-11-26T20:46:34.599812+00:00",
+          "evidence_latest": "2026-11-26T20:46:34.813539+00:00",
+          "root": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo"
+        },
+        "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+        "source_ids": [
+          "7d87d480-7c04-4037-8762-f7da4f96bb02",
+          "38f3daff-42a8-4c54-a7a2-d7f33fe91444",
+          "0d80f85a-2989-420e-b132-6bd400e9769b"
+        ],
+        "status": "confirmed",
+        "supersedes": null,
+        "updated_at": "2026-11-26T20:46:35.402159+00:00",
+        "version": 2
+      },
+      "version": 2
+    },
+    {
+      "id": "fb231e03-7477-4f94-8463-b70c5b286a67:1",
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "record_id": "fb231e03-7477-4f94-8463-b70c5b286a67",
+      "recorded_at": "2026-11-26T20:46:35.593182+00:00",
+      "snapshot": {
+        "active_key": "[\"8d86254a-7869-4ba3-a7fc-bbb26eb3a0da\",\"fact\",\"adder-exists\"]",
+        "content": "src/app.py defines add(a, b).",
+        "created_at": "2026-11-26T20:46:35.588665+00:00",
+        "id": "fb231e03-7477-4f94-8463-b70c5b286a67",
+        "key": "adder-exists",
+        "kind": "fact",
+        "metadata": {
+          "evidence": "def add(a, b):",
+          "evidence_basis": "observed",
+          "evidence_earliest": "2026-11-26T20:46:34.599812+00:00",
+          "evidence_latest": "2026-11-26T20:46:34.599812+00:00",
+          "root": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo"
+        },
+        "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+        "source_ids": [
+          "38f3daff-42a8-4c54-a7a2-d7f33fe91444"
+        ],
+        "status": "proposed",
+        "supersedes": null,
+        "updated_at": "2026-11-26T20:46:35.588665+00:00",
+        "version": 1
+      },
+      "version": 1
+    }
+  ],
+  "records": [
+    {
+      "active_key": "[\"8d86254a-7869-4ba3-a7fc-bbb26eb3a0da\",\"decision\",\"keep-contract\"]",
+      "content": "Keep portable snapshots backwards compatible across releases.",
+      "created_at": "2026-11-26T20:46:34.860209+00:00",
+      "id": "42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+      "key": "keep-contract",
+      "kind": "decision",
+      "metadata": {
+        "confirmation": {
+          "actor_name": "Fixture Builder",
+          "at": "2026-11-26T20:46:35.398409+00:00",
+          "by": "person",
+          "route": "inspector_review",
+          "source_id": "0d80f85a-2989-420e-b132-6bd400e9769b",
+          "version": 2
+        },
+        "evidence": "def add(a, b):",
+        "evidence_basis": "observed",
+        "evidence_earliest": "2026-11-26T20:46:34.599812+00:00",
+        "evidence_latest": "2026-11-26T20:46:34.813539+00:00",
+        "root": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_ids": [
+        "7d87d480-7c04-4037-8762-f7da4f96bb02",
+        "38f3daff-42a8-4c54-a7a2-d7f33fe91444",
+        "0d80f85a-2989-420e-b132-6bd400e9769b"
+      ],
+      "status": "confirmed",
+      "supersedes": null,
+      "updated_at": "2026-11-26T20:46:35.402159+00:00",
+      "version": 2
+    },
+    {
+      "active_key": "[\"8d86254a-7869-4ba3-a7fc-bbb26eb3a0da\",\"fact\",\"adder-exists\"]",
+      "content": "src/app.py defines add(a, b).",
+      "created_at": "2026-11-26T20:46:35.588665+00:00",
+      "id": "fb231e03-7477-4f94-8463-b70c5b286a67",
+      "key": "adder-exists",
+      "kind": "fact",
+      "metadata": {
+        "evidence": "def add(a, b):",
+        "evidence_basis": "observed",
+        "evidence_earliest": "2026-11-26T20:46:34.599812+00:00",
+        "evidence_latest": "2026-11-26T20:46:34.599812+00:00",
+        "root": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "source_ids": [
+        "38f3daff-42a8-4c54-a7a2-d7f33fe91444"
+      ],
+      "status": "proposed",
+      "supersedes": null,
+      "updated_at": "2026-11-26T20:46:35.588665+00:00",
+      "version": 1
+    }
+  ],
+  "resume_acks": [],
+  "resume_packets": [],
+  "session_events": [],
+  "sessions": [],
+  "sources": [
+    {
+      "content": "# Fixture App\n",
+      "created_at": "2026-11-26T20:46:34.559540+00:00",
+      "current_key": "[\"8d86254a-7869-4ba3-a7fc-bbb26eb3a0da\",\"/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo/README.md\"]",
+      "id": "199a0401-d811-4b3c-9297-699bdf2b3134",
+      "is_current": true,
+      "kind": "document",
+      "metadata": {
+        "analysis": {
+          "calls": [],
+          "errors": [],
+          "imports": [],
+          "language": "text",
+          "symbols": []
+        },
+        "analysis_version": "syntax-v3:tree-sitter=0.25.2:tree-sitter-python=0.25.0:tree-sitter-javascript=0.25.0:tree-sitter-typescript=0.23.2",
+        "content_hash": "0d871cf0980505077788f103814580ed4318d0ed0d56669a9fc27f7ab858aee1",
+        "git_commit": "3894344ccc02b23273178dd6b558524d5f24bca3",
+        "language": "text",
+        "path": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo/README.md",
+        "relative_path": "README.md",
+        "root": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo",
+        "snapshot": "working_tree"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "sha256": "0d871cf0980505077788f103814580ed4318d0ed0d56669a9fc27f7ab858aee1",
+      "uri": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo/README.md"
+    },
+    {
+      "content": "def add(a, b):\n    return a + b\n",
+      "created_at": "2026-11-26T20:46:34.599812+00:00",
+      "current_key": "[\"8d86254a-7869-4ba3-a7fc-bbb26eb3a0da\",\"/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo/src/app.py\"]",
+      "id": "38f3daff-42a8-4c54-a7a2-d7f33fe91444",
+      "is_current": true,
+      "kind": "code",
+      "metadata": {
+        "analysis": {
+          "calls": [],
+          "errors": [],
+          "imports": [],
+          "language": "python",
+          "symbols": [
+            {
+              "kind": "function",
+              "line_end": 2,
+              "line_start": 1,
+              "name": "add"
+            }
+          ]
+        },
+        "analysis_version": "syntax-v3:tree-sitter=0.25.2:tree-sitter-python=0.25.0:tree-sitter-javascript=0.25.0:tree-sitter-typescript=0.23.2",
+        "content_hash": "ba1a531f581d2e6094e978ed6f7aca7a8d92eeb62c6e7ad73ee692f7f18bc772",
+        "git_commit": "3894344ccc02b23273178dd6b558524d5f24bca3",
+        "language": "python",
+        "path": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo/src/app.py",
+        "relative_path": "src/app.py",
+        "root": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo",
+        "snapshot": "working_tree"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "sha256": "ba1a531f581d2e6094e978ed6f7aca7a8d92eeb62c6e7ad73ee692f7f18bc772",
+      "uri": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo/src/app.py"
+    },
+    {
+      "content": "Keep portable snapshots backwards compatible across releases.",
+      "created_at": "2026-11-26T20:46:34.813539+00:00",
+      "current_key": "[\"8d86254a-7869-4ba3-a7fc-bbb26eb3a0da\",\"workspace://finding/release-0.12.0\"]",
+      "id": "7d87d480-7c04-4037-8762-f7da4f96bb02",
+      "is_current": true,
+      "kind": "manual",
+      "metadata": {
+        "origin": "workspace_finding",
+        "root": "/tmp/cm-fixture-0.12.0-d4lq9kuq/work/repo"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "sha256": "25de9c97a62affbaa95a821b34b15c2404146f940f338ac5592841d6c7c9420b",
+      "uri": "workspace://finding/release-0.12.0"
+    },
+    {
+      "content": "{\"action\":\"confirm\",\"actor\":\"local_user\",\"actor_name\":\"Fixture Builder\",\"at\":\"2026-11-26T20:46:35.363790+00:00\",\"branch\":\"master\",\"commit\":\"3894344ccc02b23273178dd6b558524d5f24bca3\",\"content_sha256\":\"25de9c97a62affbaa95a821b34b15c2404146f940f338ac5592841d6c7c9420b\",\"evidence_sha256\":\"e4e4a401c3f2692049d645321aa52b342e739b5454699c76ba2a6dd7cd213cb8\",\"identity_sha256\":\"492066a324aa064273c1c62ced1141803d9972ddd23822b4ab3c586931b895ec\",\"previous_status\":\"proposed\",\"previous_version\":1,\"reason\":\"\",\"record_id\":\"42ca5c1c-a091-4ffd-8792-55ae59e43a1d\",\"status\":\"confirmed\"}",
+      "created_at": "2026-11-26T20:46:35.369624+00:00",
+      "current_key": "[\"8d86254a-7869-4ba3-a7fc-bbb26eb3a0da\",\"review://415cfe90-ab82-44df-8ef6-73c1d127e43b\"]",
+      "id": "0d80f85a-2989-420e-b132-6bd400e9769b",
+      "is_current": true,
+      "kind": "manual",
+      "metadata": {
+        "origin": "local_user_review",
+        "record_id": "42ca5c1c-a091-4ffd-8792-55ae59e43a1d",
+        "role": "user"
+      },
+      "project_id": "8d86254a-7869-4ba3-a7fc-bbb26eb3a0da",
+      "sha256": "997d536b95f9954c273a28d623f702f601e567e341dc74f3c0324c6a7c5dafa4",
+      "uri": "review://415cfe90-ab82-44df-8ef6-73c1d127e43b"
+    }
+  ],
+  "vector_data": {},
+  "vector_indexes": [],
+  "worktree_states": []
+}

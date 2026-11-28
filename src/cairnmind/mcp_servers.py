@@ -10,7 +10,9 @@ of Cairnmind's own variables, is refused. No server receives a credential in thi
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 
 from .config import ENV_PREFIXES
 from .path_spelling import ignores_case, path_identity, same_or_below
@@ -34,7 +36,7 @@ LOADER_ENV = ("PATH", "HOME", "SHELL", "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDI
               "PYTHONSTARTUP", "PYTHONHOME", "PYTHONUSERBASE", "PYTHONPLATLIBDIR", "NODE_PATH", "NODE_OPTIONS",
               "PERL5LIB", "PERL5OPT", "PERLLIB", "RUBYLIB", "RUBYOPT", "GEM_HOME", "GEM_PATH", "BASH_ENV",
               "ENV", "CLASSPATH", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "XDG_CONFIG_HOME",
-              "XDG_DATA_HOME")
+              "XDG_DATA_HOME", "PATHEXT", "COMSPEC", "PSMODULEPATH")
 LOADER_PREFIXES = ("LD_", "DYLD_")
 
 
@@ -58,6 +60,16 @@ def _text(value) -> bool:
     return True
 
 
+def _is_absolute_command(command: str) -> bool:
+    if ".." in re.split(r"[\\/]", command):
+        return False
+    if command.startswith("/"):
+        return not command.startswith("//")
+    if sys.platform == "win32":
+        return bool(re.match(r"^[A-Za-z]:[\\/]", command))
+    return False
+
+
 def validate_server(value) -> dict:
     """One server definition; unknown fields, relative commands and secret-looking names are refused."""
     if not isinstance(value, dict) or set(value) - _FIELDS or not {"id", "command"} <= set(value):
@@ -65,7 +77,7 @@ def validate_server(value) -> dict:
     identifier, command = value["id"], value["command"]
     if not isinstance(identifier, str) or not SERVER_ID.fullmatch(identifier):
         raise ValueError("A server id has 1 to 24 lowercase letters, digits or hyphens.")
-    if not _text(command) or not command.startswith("/") or _CONTROL.search(command):
+    if not _text(command) or not _is_absolute_command(command) or _CONTROL.search(command):
         raise ValueError("A server command must be an absolute path.")
     args = value.get("args", [])
     if not isinstance(args, list) or len(args) > MAX_ARGS or any(not _text(arg) for arg in args):
@@ -88,6 +100,7 @@ def validate_server(value) -> dict:
 # Shell operators and quotes split too: `cd /path/WORKTR~1&&srv` names the folder before '&&', and only the
 # resolved token sees that a short 8.3 alias is the worktree (#230).
 _SEPARATORS = re.compile(r"[=:,;\s&|<>`$()'\"]+")
+_WIN_SEPARATORS = re.compile(r"[=,;\s&|<>`$()'\"]+")
 _PATH_CHARACTER = re.compile(r"[A-Za-z0-9._-]")
 
 
@@ -109,13 +122,18 @@ def _normal(text: str) -> str:
 def _tokens(text: str):
     """Every piece of a value that can be a path: split on '=', ':', ',', ';', whitespace, quotes and the shell
     operators, and in each piece also the part from its first '/' on (an option such as '-f/path')."""
-    for token in _SEPARATORS.split(text):
-        token = token.strip("'\"()[]{}")
-        if token:
-            yield token
-            slash = token.find("/")
-            if slash > 0:
-                yield token[slash:]
+    seen = set()
+    splitters = (_SEPARATORS, _WIN_SEPARATORS) if sys.platform == "win32" else (_SEPARATORS,)
+    for splitter in splitters:
+        for token in splitter.split(text):
+            token = token.strip("'\"()[]{}")
+            if token and token not in seen:
+                seen.add(token)
+                yield token
+                slash = token.find("/")
+                if slash > 0 and token[slash:] not in seen:
+                    seen.add(token[slash:])
+                    yield token[slash:]
 
 
 def _names_root(text: str, roots, fold: bool = False) -> bool:
@@ -149,7 +167,6 @@ def inside_worktree(definition: dict, worktree) -> bool:
     A sibling that merely shares a name prefix is not inside. A value that only becomes a path inside the
     server (a name it looks up, a configuration file it reads, ``$HOME`` expanded by a shell) cannot be seen.
     """
-    import os
     from pathlib import Path
     given = Path(os.path.abspath(worktree))
     root = given.resolve()

@@ -1,0 +1,427 @@
+---
+import { NAV_LINKS, SITE } from '@/data/site';
+import { getRepoStats } from '@/lib/github';
+import ThemeToggle from '@/components/astro/ThemeToggle.astro';
+import DocsSearch from '@/components/astro/DocsSearch.astro';
+
+interface Props {
+  currentPath: string;
+}
+
+const { currentPath } = Astro.props;
+const repoStats = await getRepoStats();
+
+function isCurrent(href: string): boolean {
+  if (href === '/') return currentPath === '/';
+  return currentPath === href || currentPath.startsWith(href);
+}
+---
+
+<header class="glass-header sticky top-0 z-50">
+  <div class="container-shell flex items-center justify-between gap-2 h-[var(--header-h)]">
+    <!-- Brand Mark -->
+    <a
+      href="/"
+      class="flex items-center gap-2 min-h-[44px] text-[var(--text-strong)] no-underline font-semibold tracking-tight shrink-0"
+    >
+      <svg
+        width="25"
+        height="25"
+        viewBox="0 0 28 28"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        aria-hidden="true"
+      >
+        <rect x="4" y="19" width="20" height="5" rx="2.5" fill="currentColor" fill-opacity="0.92" />
+        <rect x="7" y="12.5" width="14" height="4.8" rx="2.4" fill="var(--accent)" />
+        <rect x="10.2" y="6" width="7.6" height="4.6" rx="2.3" fill="currentColor" fill-opacity="0.72" />
+      </svg>
+      <span class="text-[1.02rem]">{SITE.name}</span>
+      <span class="hidden xl:inline-flex font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--glass-bg-subtle)] border border-[var(--glass-border)] text-[var(--text-muted)]">
+        {repoStats.releaseTag}
+      </span>
+    </a>
+
+    <!-- Primary Desktop Navigation -->
+    <nav class="hidden lg:flex items-center gap-0.5 xl:gap-1" aria-label="Main navigation">
+      {NAV_LINKS.map((link) => {
+        const active = isCurrent(link.href);
+        return (
+          <a
+            href={link.href}
+            aria-current={active ? 'page' : undefined}
+            class:list={[
+              'inline-flex items-center min-h-[44px] px-2.5 xl:px-3 py-2 rounded-lg text-[0.86rem] font-medium no-underline transition-colors whitespace-nowrap',
+              active
+                ? 'bg-[var(--accent-surface)] text-[var(--text-strong)] border border-[var(--accent-border)]'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-strong)] hover:bg-[var(--glass-bg-subtle)] border border-transparent',
+            ]}
+          >
+            {link.label}
+          </a>
+        );
+      })}
+    </nav>
+
+    <!-- Actions: Star on GitHub highlighted, Quick Try subtle ghost, ≥44px touch targets -->
+    <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+      <DocsSearch />
+      <ThemeToggle />
+      <a
+        href="/#get-started"
+        class="hidden xl:inline-flex items-center min-h-[44px] px-3 rounded-lg text-xs font-mono font-medium no-underline border border-[var(--glass-border)] bg-[var(--glass-bg-subtle)] text-[var(--text-primary)] hover:border-[var(--accent-border)] hover:text-[var(--text-strong)]"
+      >
+        Quick Try
+      </a>
+      <a
+        href={SITE.repoUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="hidden sm:inline-flex items-center gap-1.5 min-h-[44px] px-3 rounded-lg text-xs font-mono font-semibold no-underline border border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--text-strong)] hover:bg-[var(--accent-solid)] hover:text-white transition-colors"
+      >
+        <span aria-hidden="true">★</span>
+        <span>Star</span>
+        {repoStats.starsFormatted && (
+          <span class="px-1.5 py-0.5 rounded bg-black/25 text-[11px] tabular">{repoStats.starsFormatted}</span>
+        )}
+      </a>
+
+      <!-- Accessible Mobile Navigation -->
+      <div class="lg:hidden" data-cm-mobile-wrap>
+        <button
+          type="button"
+          data-cm-mobile-btn
+          aria-expanded="false"
+          aria-controls="cm-mobile-nav-panel"
+          class="inline-flex items-center justify-center min-h-[44px] min-w-[56px] px-3 rounded-lg border border-[var(--glass-border-hi)] bg-[var(--glass-bg-subtle)] text-[var(--text-strong)] text-xs font-mono font-semibold cursor-pointer"
+        >
+          Menu
+        </button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- Mobile Drawer + Dimmer rendered OUTSIDE sticky <header> so backdrop-filter stacking never makes it transparent -->
+<div id="cm-mobile-backdrop" class="mobile-nav-backdrop" hidden></div>
+<nav
+  id="cm-mobile-nav-panel"
+  class="mobile-nav-panel"
+  aria-label="Mobile navigation"
+  hidden
+>
+  <div class="flex flex-col gap-1">
+    {NAV_LINKS.map((link) => (
+      <a
+        href={link.href}
+        aria-current={isCurrent(link.href) ? 'page' : undefined}
+        class:list={[
+          'flex items-center min-h-[44px] px-3.5 rounded-lg text-sm font-medium no-underline',
+          isCurrent(link.href)
+            ? 'bg-[var(--accent-surface)] text-[var(--text-strong)] border border-[var(--accent-border)] font-semibold'
+            : 'text-[var(--text-primary)] hover:bg-[var(--glass-bg-subtle)]',
+        ]}
+      >
+        {link.label}
+      </a>
+    ))}
+    <div class="mt-2 pt-3 border-t border-[var(--glass-border)] flex items-center gap-2">
+      <a
+        href={SITE.repoUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="flex-1 inline-flex items-center justify-center gap-1.5 min-h-[44px] rounded-lg text-xs font-mono font-semibold no-underline bg-[var(--accent-solid)] text-white"
+      >
+        ★ Star on GitHub{repoStats.starsFormatted ? ` (${repoStats.starsFormatted})` : ''}
+      </a>
+      <a
+        href="/#get-started"
+        class="inline-flex items-center justify-center min-h-[44px] px-3.5 rounded-lg text-xs font-mono font-medium no-underline border border-[var(--glass-border-hi)] text-[var(--text-strong)]"
+      >
+        Try 15s
+      </a>
+    </div>
+  </div>
+</nav>
+
+<!-- 100% Opaque Search Modal rendered OUTSIDE sticky <header> (zero bleed-through, full Arrow/Enter keyboard support) -->
+<div
+  id="cm-search-modal"
+  data-cm-search-modal
+  hidden
+  class="search-modal-backdrop"
+  role="dialog"
+  aria-modal="true"
+  aria-label="Search Cairnmind site and documentation"
+>
+  <div class="search-modal-panel">
+    <div class="flex items-center gap-2.5 px-4 py-2.5 border-b border-[var(--glass-border)]">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0" aria-hidden="true">
+        <circle cx="11" cy="11" r="8" />
+        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+      </svg>
+      <label for="cm-search-input" class="sr-only">Search documentation and commands</label>
+      <input
+        id="cm-search-input"
+        name="q"
+        data-cm-search-input
+        type="search"
+        autocomplete="off"
+        role="combobox"
+        aria-expanded="true"
+        aria-controls="cm-search-listbox"
+        aria-autocomplete="list"
+        placeholder="Search docs, commands, contracts, comparisons…"
+        class="w-full min-h-[44px] bg-transparent border-none text-sm text-[var(--text-strong)] placeholder:text-[var(--text-dim)] focus:outline-none"
+      />
+      <button
+        type="button"
+        data-cm-search-close
+        aria-label="Close search"
+        class="inline-flex items-center justify-center min-h-[44px] min-w-[44px] px-2.5 rounded-md text-xs font-mono text-[var(--text-muted)] hover:text-[var(--text-strong)] cursor-pointer bg-transparent border border-[var(--glass-border)]"
+      >
+        Esc
+      </button>
+    </div>
+    <div id="cm-search-listbox" role="listbox" class="max-h-[55vh] overflow-y-auto p-2" data-cm-search-results></div>
+    <div class="px-4 py-2 border-t border-[var(--glass-border)] flex items-center justify-between text-[11px] font-mono text-[var(--text-dim)]">
+      <span>↑ ↓ to navigate · Enter to open · Esc to close</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Mobile drawer
+  const mobileBtn = document.querySelector<HTMLButtonElement>('[data-cm-mobile-btn]');
+  const mobilePanel = document.getElementById('cm-mobile-nav-panel');
+  const mobileBackdrop = document.getElementById('cm-mobile-backdrop');
+
+  if (mobileBtn && mobilePanel && mobileBackdrop) {
+    const setOpen = (open: boolean) => {
+      mobilePanel.hidden = !open;
+      mobileBackdrop.hidden = !open;
+      mobileBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      mobileBtn.textContent = open ? 'Close' : 'Menu';
+    };
+
+    mobileBtn.addEventListener('click', () => setOpen(mobilePanel.hidden));
+    mobileBackdrop.addEventListener('click', () => setOpen(false));
+    mobilePanel.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => setOpen(false)));
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !mobilePanel.hidden) setOpen(false);
+    });
+  }
+
+  // Keyboard-navigable search modal (ArrowDown, ArrowUp, Home, End, Enter, Escape)
+  interface SearchEntry {
+    title: string;
+    href: string;
+    section: string;
+    excerpt: string;
+  }
+
+  const searchModal = document.querySelector<HTMLElement>('[data-cm-search-modal]');
+  const searchInput = document.querySelector<HTMLInputElement>('[data-cm-search-input]');
+  const resultsEl = document.querySelector<HTMLElement>('[data-cm-search-results]');
+  const searchOpenBtn = document.querySelector<HTMLButtonElement>('[data-cm-search-open]');
+  const searchCloseBtn = document.querySelector<HTMLButtonElement>('[data-cm-search-close]');
+
+  let entries: SearchEntry[] | null = null;
+  let loading = false;
+  let currentMatches: SearchEntry[] = [];
+  let activeIndex = -1;
+
+  function truncateAtWord(text: string, maxLen = 145): string {
+    const clean = text.replace(/\s+/g, ' ').trim();
+    if (clean.length <= maxLen) return clean;
+    const cut = clean.slice(0, maxLen);
+    const lastSpace = cut.lastIndexOf(' ');
+    const safe = lastSpace > 40 ? cut.slice(0, lastSpace) : cut;
+    return `${safe.replace(/[,:;.·\s]+$/, '')}…`;
+  }
+
+  function syncActiveOption() {
+    if (!resultsEl || !searchInput) return;
+    const options = Array.from(resultsEl.querySelectorAll<HTMLAnchorElement>('[role="option"]'));
+    options.forEach((opt, idx) => {
+      const selected = idx === activeIndex;
+      opt.setAttribute('aria-selected', selected ? 'true' : 'false');
+      if (selected) {
+        opt.classList.add('bg-[var(--accent-surface)]', 'border-[var(--accent-border)]');
+        opt.classList.remove('border-transparent');
+        opt.scrollIntoView({ block: 'nearest' });
+        searchInput.setAttribute('aria-activedescendant', opt.id);
+      } else {
+        opt.classList.remove('bg-[var(--accent-surface)]', 'border-[var(--accent-border)]');
+        opt.classList.add('border-transparent');
+      }
+    });
+    if (activeIndex < 0 || activeIndex >= options.length) {
+      searchInput.removeAttribute('aria-activedescendant');
+    }
+  }
+
+  function renderResults(query: string) {
+    if (!resultsEl) return;
+    resultsEl.textContent = '';
+
+    if (loading) {
+      const p = document.createElement('p');
+      p.className = 'p-4 text-xs font-mono text-[var(--text-muted)]';
+      p.textContent = 'Loading index…';
+      resultsEl.appendChild(p);
+      currentMatches = [];
+      activeIndex = -1;
+      syncActiveOption();
+      return;
+    }
+
+    const list = entries ?? [];
+    const q = query.trim().toLowerCase();
+    const terms = q ? q.split(/\s+/).filter(Boolean) : [];
+    currentMatches = (
+      terms.length
+        ? list.filter((item) => {
+            const hay = `${item.title} ${item.section} ${item.excerpt}`.toLowerCase();
+            return terms.every((t) => hay.includes(t));
+          })
+        : list
+    ).slice(0, 12);
+
+    if (currentMatches.length === 0) {
+      const p = document.createElement('p');
+      p.className = 'p-4 text-xs font-mono text-[var(--text-muted)]';
+      p.textContent = `No results for "${query}". Try pulse, SCIP, Windows, MCP, or stable contract.`;
+      resultsEl.appendChild(p);
+      activeIndex = -1;
+      syncActiveOption();
+      return;
+    }
+
+    const ul = document.createElement('ul');
+    ul.className = 'list-none p-0 m-0 space-y-1';
+
+    currentMatches.forEach((item, idx) => {
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.id = `cm-search-opt-${idx}`;
+      a.href = item.href;
+      a.setAttribute('role', 'option');
+      a.setAttribute('aria-selected', 'false');
+      a.className =
+        'block rounded-lg px-3 py-2.5 min-h-[44px] no-underline hover:bg-[var(--glass-bg-subtle)] border border-transparent hover:border-[var(--glass-border)] transition-colors';
+
+      const topRow = document.createElement('div');
+      topRow.className = 'flex items-center justify-between gap-2';
+
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'text-sm font-semibold text-[var(--text-strong)]';
+      titleSpan.textContent = item.title;
+
+      const secSpan = document.createElement('span');
+      secSpan.className = 'font-mono text-[10px] uppercase tracking-wider text-[var(--accent)] shrink-0';
+      secSpan.textContent = item.section;
+
+      topRow.appendChild(titleSpan);
+      topRow.appendChild(secSpan);
+
+      const excerptP = document.createElement('p');
+      excerptP.className = 'mt-1 text-xs text-[var(--text-muted)] line-clamp-2';
+      excerptP.textContent = truncateAtWord(item.excerpt, 145);
+
+      a.appendChild(topRow);
+      a.appendChild(excerptP);
+      a.addEventListener('pointerenter', () => {
+        activeIndex = idx;
+        syncActiveOption();
+      });
+
+      li.appendChild(a);
+      ul.appendChild(li);
+    });
+
+    resultsEl.appendChild(ul);
+    activeIndex = 0;
+    syncActiveOption();
+  }
+
+  async function ensureIndex() {
+    if (entries !== null || loading) return;
+    loading = true;
+    renderResults(searchInput?.value ?? '');
+    try {
+      const res = await fetch('/search-index.json');
+      entries = res.ok ? await res.json() : [];
+    } catch {
+      entries = [];
+    } finally {
+      loading = false;
+      renderResults(searchInput?.value ?? '');
+    }
+  }
+
+  function openSearch() {
+    if (!searchModal) return;
+    searchModal.hidden = false;
+    void ensureIndex();
+    renderResults(searchInput?.value ?? '');
+    setTimeout(() => searchInput?.focus(), 20);
+  }
+
+  function closeSearch() {
+    if (!searchModal) return;
+    searchModal.hidden = true;
+    searchOpenBtn?.focus();
+  }
+
+  searchOpenBtn?.addEventListener('click', openSearch);
+  searchCloseBtn?.addEventListener('click', closeSearch);
+  searchModal?.addEventListener('click', (e) => {
+    if (e.target === searchModal) closeSearch();
+  });
+
+  searchInput?.addEventListener('input', () => renderResults(searchInput.value));
+  searchInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (currentMatches.length > 0) {
+        activeIndex = (activeIndex + 1) % currentMatches.length;
+        syncActiveOption();
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (currentMatches.length > 0) {
+        activeIndex = activeIndex <= 0 ? currentMatches.length - 1 : activeIndex - 1;
+        syncActiveOption();
+      }
+    } else if (e.key === 'Home') {
+      if (currentMatches.length > 0) {
+        e.preventDefault();
+        activeIndex = 0;
+        syncActiveOption();
+      }
+    } else if (e.key === 'End') {
+      if (currentMatches.length > 0) {
+        e.preventDefault();
+        activeIndex = currentMatches.length - 1;
+        syncActiveOption();
+      }
+    } else if (e.key === 'Enter') {
+      if (activeIndex >= 0 && activeIndex < currentMatches.length) {
+        e.preventDefault();
+        window.location.href = currentMatches[activeIndex].href;
+      }
+    }
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      if (searchModal?.hidden) openSearch();
+      else closeSearch();
+    } else if (e.key === 'Escape' && searchModal && !searchModal.hidden) {
+      e.preventDefault();
+      closeSearch();
+    }
+  });
+</script>

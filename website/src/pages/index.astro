@@ -1,0 +1,566 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import MemoryGraphBackdrop from '@/components/astro/MemoryGraphBackdrop.astro';
+import HeroQuickTry from '@/components/astro/HeroQuickTry.astro';
+import HeroAutoDemo from '@/components/astro/HeroAutoDemo.astro';
+import WorksWithRibbon from '@/components/astro/WorksWithRibbon.astro';
+import CaptureShowcase from '@/components/astro/CaptureShowcase.astro';
+import MetricStrip from '@/components/astro/MetricStrip.astro';
+import AdoptionLadder from '@/components/astro/AdoptionLadder.astro';
+import { SITE } from '@/data/site';
+import { WHAT_IT_DOES_NOT_DO } from '@/data/features';
+import { COMPARISON_PAGES, HOME_COMPARISON_MATRIX } from '@/data/comparisons';
+import { FAQ_ITEMS, renderInlineCode } from '@/data/faq';
+import benchmarks from '@/data/benchmarks.json';
+import { getAllDocs } from '@/lib/docs';
+import { getRepoStats } from '@/lib/github';
+import { REPO_META } from '@/lib/repoMeta';
+import { organizationJsonLd, softwareApplicationJsonLd, webSiteJsonLd } from '@/lib/seo';
+
+const [repoStats, allDocs] = await Promise.all([getRepoStats(), getAllDocs()]);
+const jsonLd = [softwareApplicationJsonLd(), webSiteJsonLd(), organizationJsonLd()];
+
+const PAIN_ROWS = [
+  {
+    pain: '“All tests pass, task done!” Except the agent edited a file 12 minutes after the tests ran.',
+    fix: 'Cairnmind blocks “done” until your local tests actually pass on the current code.',
+    href: '/use-cases/prevent-hallucinated-done/',
+  },
+  {
+    pain: 'Your assistant invents a config flag, port, or CLI option that does not exist in the repo.',
+    fix: 'Every answer must quote a real line from your current files, or explicitly say “unknown”.',
+    href: '/features/#verified-knowledge',
+  },
+  {
+    pain: 'A new session, or a switch from Claude Code to Codex or Cursor, forgets yesterday’s decisions.',
+    fix: 'Versioned plans, decisions, and task progress carry cleanly between agents without pasting chat logs.',
+    href: '/use-cases/cross-agent-handoff/',
+  },
+];
+
+const CONCISE_CAPABILITIES = [
+  {
+    title: 'See what breaks before you edit',
+    summary:
+      'Ask “what breaks if I change checkout.py?” and trace callers, architecture decisions, and affected tests across 12 languages (3 Tree-sitter + 9 SCIP) locally.',
+    href: '/features/#code-graph-and-storage',
+    linkLabel: 'Code graph & impact',
+  },
+  {
+    title: 'You approve. Agents only propose.',
+    summary:
+      'Assistants and scripts can only suggest rules. Only you, at your keyboard, can confirm decisions or publish team memory. Secrets never leave your machine.',
+    href: '/features/#human-sovereignty-security',
+    linkLabel: 'Approval & secrets gate',
+  },
+  {
+    title: 'Real quotes or “I don’t know”',
+    summary:
+      'Answers cite live source lines checked against disk and auto-follow code refactors. Works with zero GPU in deterministic search mode, or with local Ollama models.',
+    href: '/features/#verified-knowledge',
+    linkLabel: 'Citation verification',
+  },
+  {
+    title: '“Done” requires passing tests on live code',
+    summary:
+      'Bind tasks to your existing test commands, catch stale checks in under 500 ms in pre-push or CI, and replay logged answers to catch regressions.',
+    href: '/features/#test-gates-and-ci',
+    linkLabel: 'Test gates & CI checks',
+  },
+  {
+    title: 'Switch Claude, Codex & Cursor cleanly',
+    summary:
+      'Agents must confirm they read the latest plan before writing, preventing silent overwrites across Claude Code, Codex CLI, Cursor, Copilot, and any MCP client.',
+    href: '/features/#handoffs-and-occ',
+    linkLabel: 'Handoffs & MCP clients',
+  },
+  {
+    title: 'Terminal UI, local web cockpit & Git team memory',
+    summary:
+      'Review memory in the terminal (Linux, macOS, native Windows) or local browser cockpit, and share confirmed team decisions through Git without credentials.',
+    href: '/features/#workspaces-and-contract',
+    linkLabel: 'Workspaces & Git memory',
+  },
+];
+
+const INLINE_FAQ = FAQ_ITEMS.filter((item) =>
+  ['do-i-need-gpu-or-ollama', 'how-fast-can-i-try', 'native-windows-support', 'only-a-person-confirms'].includes(item.id)
+);
+---
+
+<BaseLayout
+  title="Cairnmind: Make AI coding agents prove “Done”"
+  description="Free, local-first fact-checker and test gate for Claude Code, Codex CLI, Cursor, and Copilot: blocks fake Done, cites real repo lines, zero GPU."
+  pathname="/"
+  jsonLd={jsonLd}
+>
+  <!-- 1. HERO: Calm Hero-only Cairnmind-inside-Cairnmind graph, pain-first headline, ★ Star CTA -->
+  <section class="relative section-band pt-10 sm:pt-14 pb-12 overflow-hidden">
+    <MemoryGraphBackdrop />
+    <div class="hero-caustic" aria-hidden="true"></div>
+
+    <div class="container-shell relative z-10">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center">
+        <!-- Left 7 cols -->
+        <div class="lg:col-span-7">
+          <a
+            href="/docs/changelog/"
+            class="inline-flex items-center gap-2 min-h-[44px] px-3.5 py-1.5 rounded-full font-mono text-xs no-underline border border-[var(--accent-border)] bg-[var(--accent-surface)] text-[var(--text-strong)] hover:border-[var(--accent)] transition-colors mb-5 whitespace-nowrap"
+          >
+            <span class="text-[var(--ok)]" aria-hidden="true">●</span>
+            <span class="sm:hidden">{repoStats.releaseTag} · What’s new</span>
+            <span class="hidden sm:inline">
+              {repoStats.releaseTag} · {repoStats.releaseHighlight} · {repoStats.releaseDateFormatted}
+            </span>
+            <span aria-hidden="true">→</span>
+          </a>
+
+          <p class="eyebrow">Memory as evidence, not notes</p>
+          <h1 class="mt-2.5 text-4xl sm:text-5xl xl:text-[3.65rem] font-semibold tracking-tight leading-[1.06]">
+            Your coding agent says “Done”.
+            <span class="hero-headline-accent">Cairnmind makes it prove it.</span>
+          </h1>
+
+          <!-- Concise 3-line definition for developers & AI answer engines -->
+          <p class="mt-5 text-base sm:text-lg text-[var(--text-primary)] leading-relaxed max-w-2xl">
+            {SITE.shortDefinition}
+          </p>
+
+          <!-- Primary CTA Row: 1-click sandbox + ★ Star on GitHub -->
+          <div class="mt-7 flex flex-wrap items-center gap-3">
+            <HeroQuickTry />
+            <a
+              href={SITE.repoUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="btn-secondary min-h-[48px] px-4 font-mono text-sm border-[var(--accent-border)]"
+            >
+              <span aria-hidden="true" class="text-[var(--warn)]">★</span>
+              <span>Star on GitHub</span>
+              {repoStats.starsFormatted && (
+                <span class="px-1.5 py-0.5 rounded bg-[var(--accent-surface)] text-xs tabular">
+                  {repoStats.starsFormatted}
+                </span>
+              )}
+            </a>
+          </div>
+
+          <!-- Secondary text links + uv alternative (all >= 44px touch targets) -->
+          <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-mono">
+            <a href="#demo" class="inline-flex items-center min-h-[44px] font-semibold">▶ Watch the 20-second demo</a>
+            <span class="text-[var(--text-dim)]" aria-hidden="true">·</span>
+            <a href="/docs/" class="inline-flex items-center min-h-[44px]">Read the docs →</a>
+            <span class="text-[var(--text-dim)]" aria-hidden="true">·</span>
+            <span class="inline-flex items-center gap-1.5 min-h-[44px] text-[var(--text-muted)]">
+              <span>No uv? →</span>
+              <code class="code-inline">pipx run cairnmind try</code>
+            </span>
+          </div>
+
+          <!-- Zero-friction reassurance -->
+          <div class="mt-2.5 flex flex-wrap items-center gap-x-5 gap-y-1.5 font-mono text-xs text-[var(--text-muted)]">
+            <span><strong class="text-[var(--ok)]">✓</strong> Free &amp; Apache-2.0</span>
+            <span><strong class="text-[var(--ok)]">✓</strong> No account, no cloud, no GPU</span>
+            <span><strong class="text-[var(--ok)]">✓</strong> 0 files written to your repo</span>
+            <span><strong class="text-[var(--ok)]">✓</strong> <code class="code-inline">uvx</code> leaves nothing installed</span>
+          </div>
+        </div>
+
+        <!-- Right 5 cols: Single focused auto-playing Live MCP Gate -->
+        <div class="lg:col-span-5">
+          <HeroAutoDemo />
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. WORKS WITH (Monochrome brand marks separated cleanly from "Built on") -->
+  <WorksWithRibbon />
+
+  <!-- 3. SOUND FAMILIAR? (3 concrete pains -> 3 plain-English fixes) -->
+  <section class="section-band" aria-labelledby="sound-familiar-heading">
+    <div class="container-shell">
+      <div class="max-w-2xl">
+        <p class="eyebrow">Sound familiar?</p>
+        <h2 id="sound-familiar-heading" class="mt-2 text-2xl sm:text-4xl font-semibold">
+          Three daily agent failures, stopped outside the prompt
+        </h2>
+      </div>
+
+      <div class="mt-8 grid grid-cols-1 md:grid-cols-3 gap-5">
+        {PAIN_ROWS.map((row) => (
+          <article class="glass-surface glass-interactive p-6 flex flex-col justify-between gap-4">
+            <div class="space-y-3.5">
+              <div class="rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] p-3">
+                <p class="font-mono text-[10.5px] uppercase tracking-wider text-[var(--danger)] font-semibold mb-1">
+                  The pain
+                </p>
+                <p class="text-sm text-[var(--text-primary)] leading-snug">{row.pain}</p>
+              </div>
+              <div class="pl-1">
+                <p class="font-mono text-[10.5px] uppercase tracking-wider text-[var(--ok)] font-semibold mb-1">
+                  With Cairnmind
+                </p>
+                <p class="text-sm text-[var(--text-strong)] leading-relaxed">{row.fix}</p>
+              </div>
+            </div>
+            <a href={row.href} class="inline-flex items-center min-h-[44px] font-mono text-xs">
+              See how it works →
+            </a>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. SEE IT LIVE (Tab 1: real 20s animated GIF from `uvx cairnmind try`, Tab 2: Cold Handoff, Tab 3: Terminal UI, Tab 4: Web Cockpit) -->
+  <section id="demo" class="section-band section-divider pt-10" aria-label="Live product demonstrations">
+    <div class="container-shell">
+      <CaptureShowcase />
+    </div>
+  </section>
+
+  <!-- 5. HOW IT WORKS IN 4 STEPS (Plain mental model; deep SVG diagram lives on /features and /docs/architecture) -->
+  <section class="section-band section-divider" aria-labelledby="how-it-works-heading">
+    <div class="container-shell">
+      <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-7">
+        <div class="max-w-2xl">
+          <p class="eyebrow">How it works</p>
+          <h2 id="how-it-works-heading" class="mt-2 text-2xl sm:text-4xl font-semibold">
+            A local referee between your agent and your repo
+          </h2>
+        </div>
+        <a href="/docs/architecture/" class="btn-secondary shrink-0">Full architecture diagram →</a>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="glass-surface p-5">
+          <span class="font-mono text-xs text-[var(--warn)] font-semibold">1. You</span>
+          <h3 class="mt-2 text-base font-semibold">Approve rules &amp; plans</h3>
+          <p class="mt-1.5 text-sm text-[var(--text-muted)]">
+            Work normally in your terminal or editor. Only you can confirm decisions or publish team memory.
+          </p>
+        </div>
+        <div class="glass-surface p-5">
+          <span class="font-mono text-xs text-[var(--accent)] font-semibold">2. Your Agent</span>
+          <h3 class="mt-2 text-base font-semibold">Claude, Codex, Cursor…</h3>
+          <p class="mt-1.5 text-sm text-[var(--text-muted)]">
+            Connects over local MCP. Must confirm it read the latest plan before editing or saving state.
+          </p>
+        </div>
+        <div class="glass-elevated p-5">
+          <span class="font-mono text-xs text-[var(--ok)] font-semibold">3. Cairnmind</span>
+          <h3 class="mt-2 text-base font-semibold">Verifies quotes &amp; tests</h3>
+          <p class="mt-1.5 text-sm text-[var(--text-muted)]">
+            Checks cited lines against live files on disk and rejects “done” if code changed after tests ran.
+          </p>
+        </div>
+        <div class="glass-surface p-5">
+          <span class="font-mono text-xs text-[var(--text-dim)] font-semibold">4. Your Machine</span>
+          <h3 class="mt-2 text-base font-semibold">100% local repo &amp; store</h3>
+          <p class="mt-1.5 text-sm text-[var(--text-muted)]">
+            Code graph, plans, and check logs stay on disk. Never commits to Git, never phones home.
+          </p>
+        </div>
+      </div>
+
+      <p class="mt-4 font-mono text-xs text-[var(--text-dim)]">
+        Built on: SQLite (instant try / lightweight) · ArcadeDB 26.11 (optional full graph) · Tree-sitter + SCIP (12 languages) · Ollama (optional local models).
+      </p>
+    </div>
+  </section>
+
+  <!-- 6. WHAT IT DOES (6 clean tiles; horizontal snap carousel on mobile to cut vertical scroll!) -->
+  <section class="band-refract section-band section-divider" aria-labelledby="capabilities-heading">
+    <div class="container-shell">
+      <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+        <div class="max-w-2xl">
+          <p class="eyebrow">Capabilities</p>
+          <h2 id="capabilities-heading" class="mt-2 text-2xl sm:text-4xl font-semibold">
+            Built for real repositories, not toy prompts
+          </h2>
+        </div>
+        <a href="/features/" class="btn-secondary shrink-0">Deep dive &amp; CLI contracts →</a>
+      </div>
+
+      <p class="md:hidden font-mono text-[11px] text-[var(--text-dim)] mb-2.5">
+        Swipe cards to explore all 6 →
+      </p>
+
+      <div class="flex md:grid overflow-x-auto snap-x snap-mandatory gap-4 -mx-4 px-4 pb-2 md:mx-0 md:px-0 md:pb-0 md:grid-cols-2 lg:grid-cols-3">
+        {CONCISE_CAPABILITIES.map((cap) => (
+          <a
+            href={cap.href}
+            class="glass-surface glass-interactive p-6 no-underline flex flex-col justify-between gap-4 min-w-[82vw] sm:min-w-[330px] md:min-w-0 snap-start min-h-[44px]"
+          >
+            <div>
+              <h3 class="text-lg font-semibold text-[var(--text-strong)]">{cap.title}</h3>
+              <p class="mt-2 text-sm text-[var(--text-muted)] leading-relaxed">{cap.summary}</p>
+            </div>
+            <span class="inline-flex items-center min-h-[44px] font-mono text-xs text-[var(--accent)]">
+              {cap.linkLabel} →
+            </span>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. MEASURED PROOF + ENGINEERING SCALE BAR -->
+  <section class="section-band section-divider" aria-labelledby="benchmarks-heading">
+    <div class="container-shell">
+      <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+        <div class="max-w-3xl">
+          <p class="eyebrow">Measured Proof</p>
+          <h2 id="benchmarks-heading" class="mt-2 text-2xl sm:text-4xl font-semibold">
+            Proven on real code, including what failed
+          </h2>
+          <p class="mt-2.5 text-sm sm:text-base text-[var(--text-muted)] leading-relaxed">
+            Test gates, verbatim search, and the code graph need <strong class="text-[var(--text-strong)]">zero GPU</strong>. Optional 9B-model evals ran on an {benchmarks.environment.hardware}. Reproduce on your own repo:
+            <code class="code-inline ml-1 whitespace-nowrap">cairnmind eval repository .</code>
+          </p>
+        </div>
+        <a href="/benchmarks/" class="btn-secondary shrink-0">All 6 evals &amp; caveats →</a>
+      </div>
+
+      <MetricStrip />
+
+      <!-- Engineering scale & CI contract link (auto-counted from repo at build time) -->
+      <div class="mt-5 glass-surface px-5 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 font-mono text-xs">
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[var(--text-muted)]">
+          <strong class="text-[var(--text-strong)]">Built seriously:</strong>
+          <span><strong class="text-[var(--ok)] tabular">{REPO_META.testFunctionsFormatted}</strong> automated CI tests ({REPO_META.testSuitesFormatted} suites)</span>
+          <span>·</span>
+          <span><strong class="text-[var(--text-strong)]">3 OSes</strong> (Linux, Windows, macOS)</span>
+          <span>·</span>
+          <span><strong class="text-[var(--accent)]">Contract frozen for 1.0</strong> ({REPO_META.contractFixturesFormatted} real JSON fixtures)</span>
+        </div>
+        <a href="/features/#contracts" class="inline-flex items-center min-h-[44px] shrink-0 font-semibold">
+          Inspect live CI outputs →
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8. CAIRNMIND VS. ALTERNATIVES (Full table on desktop + compact stacked cards on mobile) -->
+  <section class="section-band section-divider" aria-labelledby="compare-heading">
+    <div class="container-shell">
+      <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+        <div class="max-w-2xl">
+          <p class="eyebrow">How It Compares</p>
+          <h2 id="compare-heading" class="mt-2 text-2xl sm:text-4xl font-semibold">
+            Why not just CLAUDE.md or built-in memory?
+          </h2>
+        </div>
+        <a href="/compare/" class="btn-secondary shrink-0">Full comparison guides →</a>
+      </div>
+
+      <!-- Desktop 5-col comparison table -->
+      <div class="hidden md:block table-wrap">
+        <table class="cm-table">
+          <thead>
+            <tr>
+              <th scope="col">Capability</th>
+              <th scope="col" class="cm-col-highlight text-[var(--text-strong)]">Cairnmind</th>
+              <th scope="col">CLAUDE.md / AGENTS.md</th>
+              <th scope="col">Built-in memory</th>
+              <th scope="col">RAG / MCP plugin</th>
+            </tr>
+          </thead>
+          <tbody>
+            {HOME_COMPARISON_MATRIX.map((row) => (
+              <tr>
+                <td><strong>{row.criterion}</strong></td>
+                <td class="cm-col-highlight"><strong class="text-[var(--text-strong)]">{row.cairnmind}</strong></td>
+                <td>{row.files}</td>
+                <td>{row.builtin}</td>
+                <td>{row.plugin}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Mobile scannable comparison cards (cuts horizontal scroll & vertical bulk) -->
+      <div class="md:hidden space-y-3">
+        {HOME_COMPARISON_MATRIX.map((row) => (
+          <div class="glass-surface p-4 space-y-2">
+            <p class="font-mono text-[11px] uppercase tracking-wider text-[var(--text-dim)]">{row.criterion}</p>
+            <p class="text-sm font-semibold text-[var(--text-strong)]">
+              <span class="text-[var(--ok)]">Cairnmind:</span> {row.cairnmind}
+            </p>
+            <p class="text-xs text-[var(--text-muted)] leading-snug">
+              <strong class="text-[var(--text-primary)]">CLAUDE.md:</strong> {row.files} ·
+              <strong class="text-[var(--text-primary)]"> Built-in:</strong> {row.builtin} ·
+              <strong class="text-[var(--text-primary)]"> MCP plugin:</strong> {row.plugin}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3.5">
+        {COMPARISON_PAGES.map((c) => (
+          <a href={`/compare/${c.slug}/`} class="glass-surface glass-interactive px-4 py-3 min-h-[48px] no-underline flex items-center justify-between gap-3">
+            <span class="text-sm font-semibold text-[var(--text-strong)]">{c.seoTitle}</span>
+            <span class="font-mono text-xs text-[var(--accent)] shrink-0">Read →</span>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- 9. HONEST LIMITS (concise 5 points; full CI Support Matrix lives on /install/#supported-matrix) -->
+  <section class="section-band section-divider" aria-labelledby="limits-heading">
+    <div class="container-shell">
+      <div class="glass-surface p-6 sm:p-8">
+        <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+          <div>
+            <p class="eyebrow">Honest Limits</p>
+            <h2 id="limits-heading" class="mt-1.5 text-2xl sm:text-3xl font-semibold">
+              What Cairnmind does not do
+            </h2>
+          </div>
+          <a href="/install/#supported-matrix" class="inline-flex items-center min-h-[44px] font-mono text-xs shrink-0">
+            Full OS &amp; client support matrix →
+          </a>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {WHAT_IT_DOES_NOT_DO.map((item) => (
+            <div class="border-l-2 border-[var(--warn-border)] pl-3.5">
+              <p class="text-sm font-semibold text-[var(--text-strong)]">{item.claim}</p>
+              <p class="mt-1 text-xs text-[var(--text-muted)] leading-relaxed">{item.detail}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 10. GET STARTED IN 3 STEPS (Light, inviting — full OS commands live cleanly on /install/) -->
+  <section id="get-started" class="section-band section-divider" aria-labelledby="install-heading">
+    <div class="container-shell">
+      <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+        <div class="max-w-2xl">
+          <p class="eyebrow">Get Started</p>
+          <h2 id="install-heading" class="mt-2 text-2xl sm:text-4xl font-semibold">
+            Start in 15 seconds. Scale only if you want.
+          </h2>
+        </div>
+        <a href="/install/" class="btn-secondary shrink-0">Linux / macOS / Windows / Docker →</a>
+      </div>
+
+      <AdoptionLadder />
+    </div>
+  </section>
+
+  <!-- 11. WHY I BUILT THIS + INLINE FAQ + COMMUNITY -->
+  <section class="section-band section-divider" aria-labelledby="why-built-heading">
+    <div class="container-shell grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <div class="lg:col-span-5 glass-elevated p-6 sm:p-7 flex flex-col justify-between gap-5">
+        <div>
+          <p class="eyebrow">Why I built this</p>
+          <h2 id="why-built-heading" class="mt-2 text-2xl font-semibold">
+            Dogfooded to build itself
+          </h2>
+          <p class="mt-3 text-sm text-[var(--text-primary)] leading-relaxed">
+            I got tired of coding agents claiming “all tests pass” after a quick cleanup edit, or inventing config values that never existed. So I built a local gatekeeper that treats every claim as untrusted until verified against live files and fresh local test runs.
+          </p>
+          <p class="mt-3 text-sm text-[var(--text-muted)] leading-relaxed">
+            Cairnmind’s own {REPO_META.pythonModulesFormatted} Python modules, {REPO_META.testFunctionsFormatted} CI tests, and {REPO_META.contractFixturesFormatted} frozen contract fixtures are developed by coding agents operating under Cairnmind’s own test gates and human-only confirmation key.
+          </p>
+        </div>
+
+        <div class="pt-4 border-t border-[var(--glass-border)] space-y-3">
+          <div class="flex items-center gap-3">
+            <img
+              src="/media/author-avatar.webp"
+              alt="Avatar of Piotr Woźnicki, creator of Cairnmind"
+              width="48"
+              height="48"
+              class="w-12 h-12 rounded-full border border-[var(--accent-border)] object-cover shrink-0"
+            />
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-x-2 text-xs font-mono">
+                <strong class="text-[var(--text-strong)]">{SITE.authorName}</strong>
+                <a href={SITE.authorUrl} target="_blank" rel="noopener noreferrer" class="inline-flex items-center min-h-[44px]">
+                  {SITE.authorHandle} ↗
+                </a>
+              </div>
+              <p class="font-mono text-[11px] text-[var(--text-dim)] -mt-2">
+                Last release: {repoStats.releaseTag} · {repoStats.releaseDateFormatted}
+              </p>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-2 text-xs font-mono">
+            <a href={SITE.discussionsUrl} target="_blank" rel="noopener noreferrer" class="glass-pill min-h-[44px] px-3 no-underline hover:border-[var(--accent-border)]">
+              Discussions ↗
+            </a>
+            <a href={SITE.goodFirstIssuesUrl} target="_blank" rel="noopener noreferrer" class="glass-pill min-h-[44px] px-3 no-underline hover:border-[var(--accent-border)]">
+              Good first issues ↗
+            </a>
+            <a href={SITE.contributingUrl} target="_blank" rel="noopener noreferrer" class="glass-pill min-h-[44px] px-3 no-underline hover:border-[var(--accent-border)]">
+              Contributing ↗
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <div class="lg:col-span-7 glass-surface p-6 sm:p-7">
+        <div class="flex items-center justify-between gap-2 mb-3">
+          <h2 class="text-xl font-semibold">Quick answers</h2>
+          <a href="/faq/" class="inline-flex items-center min-h-[44px] font-mono text-xs">
+            All {FAQ_ITEMS.length} FAQs →
+          </a>
+        </div>
+        <div class="divide-y divide-[var(--glass-border)]">
+          {INLINE_FAQ.map((item, idx) => (
+            <details open={idx === 0} class="py-2 first:pt-0 last:pb-0">
+              <summary class="cursor-pointer font-semibold text-sm sm:text-base text-[var(--text-strong)] list-none flex items-center justify-between gap-3 min-h-[44px]">
+                <span>{item.question}</span>
+                <span class="font-mono text-xs text-[var(--accent)] shrink-0">+</span>
+              </summary>
+              <p class="pb-2.5 pt-1 text-sm text-[var(--text-muted)] leading-relaxed" set:html={renderInlineCode(item.answer)} />
+            </details>
+          ))}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 12. CLOSING CTA: ★ Star on GitHub primary + 1-click try -->
+  <section class="band-refract-cta section-band section-divider" aria-labelledby="closing-cta-heading">
+    <div class="container-shell">
+      <div class="glass-elevated p-7 sm:p-11 text-center">
+        <span class="glass-pill glass-pill-ok">Free · Apache-2.0 · Local-first</span>
+        <h2 id="closing-cta-heading" class="mt-4 text-2xl sm:text-4xl font-semibold max-w-2xl mx-auto">
+          Stop taking your agent’s word for “Done”.
+        </h2>
+        <p class="mt-3 text-base text-[var(--text-muted)] max-w-xl mx-auto leading-relaxed">
+          If Cairnmind saves you from even one fake “Done” or hallucinated flag, a ★ on GitHub helps other developers find it.
+        </p>
+        <div class="mt-7 flex flex-wrap items-center justify-center gap-3">
+          <a
+            href={SITE.repoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="btn-primary min-h-[48px] px-5 font-mono text-sm"
+          >
+            <span aria-hidden="true">★</span>
+            <span>Star on GitHub</span>
+            {repoStats.starsFormatted && (
+              <span class="px-1.5 py-0.5 rounded bg-black/25 text-xs tabular">{repoStats.starsFormatted}</span>
+            )}
+          </a>
+          <HeroQuickTry />
+        </div>
+        <div class="mt-3 flex flex-wrap items-center justify-center gap-x-2 font-mono text-xs text-[var(--text-dim)]">
+          <a href="/docs/" class="inline-flex items-center min-h-[44px] px-2">Browse Documentation ({allDocs.length} guides)</a>
+          <span aria-hidden="true">·</span>
+          <a href="/use-cases/" class="inline-flex items-center min-h-[44px] px-2">Use Cases</a>
+          <span aria-hidden="true">·</span>
+          <a href={SITE.releasesUrl} target="_blank" rel="noopener noreferrer" class="inline-flex items-center min-h-[44px] px-2">Releases ↗</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

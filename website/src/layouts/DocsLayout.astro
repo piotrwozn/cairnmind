@@ -1,0 +1,253 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import Breadcrumbs from '@/components/astro/Breadcrumbs.astro';
+import { DOC_GROUPS, type RenderedDoc } from '@/lib/docs';
+import { breadcrumbListJsonLd, techArticleJsonLd } from '@/lib/seo';
+
+interface Props {
+  doc: RenderedDoc;
+  allDocs: RenderedDoc[];
+}
+
+const { doc, allDocs } = Astro.props;
+const pathname = `/docs/${doc.slug}/`;
+const currentIndex = allDocs.findIndex((d) => d.slug === doc.slug);
+const prevDoc = currentIndex > 0 ? allDocs[currentIndex - 1] : null;
+const nextDoc = currentIndex >= 0 && currentIndex < allDocs.length - 1 ? allDocs[currentIndex + 1] : null;
+const readingMinutes = Math.max(1, Math.round(doc.wordCount / 220));
+
+const crumbs = [
+  { label: 'Home', href: '/' },
+  { label: 'Docs', href: '/docs/' },
+  { label: doc.title, href: pathname },
+];
+
+const jsonLd = [
+  techArticleJsonLd({
+    headline: doc.title,
+    description: doc.description,
+    pathname,
+  }),
+  breadcrumbListJsonLd(crumbs),
+];
+
+const grouped = DOC_GROUPS.map((group) => ({
+  group,
+  items: allDocs.filter((d) => d.group === group),
+})).filter((g) => g.items.length > 0);
+---
+
+<BaseLayout
+  title={`${doc.title} | Cairnmind Docs`}
+  description={doc.description}
+  pathname={pathname}
+  ogType="article"
+  jsonLd={jsonLd}
+>
+  <div class="container-shell py-8 lg:py-12">
+    <div class="grid grid-cols-1 gap-8 lg:grid-cols-[248px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)_220px]">
+      <!-- Sidebar (desktop sticky + mobile disclosure works without JS) -->
+      <aside aria-label="Documentation navigation">
+        <details class="glass-surface p-4 lg:hidden mb-4">
+          <summary class="cursor-pointer font-mono text-xs uppercase tracking-wider text-[var(--accent)] font-semibold">
+            Documentation Menu ({allDocs.length} guides)
+          </summary>
+          <nav class="mt-4 space-y-5" aria-label="Mobile documentation links">
+            {grouped.map(({ group, items }) => (
+              <div>
+                <p class="font-mono text-[11px] uppercase tracking-wider text-[var(--text-dim)] mb-2">{group}</p>
+                <ul class="space-y-1 list-none p-0 m-0">
+                  {items.map((item) => {
+                    const active = item.slug === doc.slug;
+                    return (
+                      <li>
+                        <a
+                          href={`/docs/${item.slug}/`}
+                          aria-current={active ? 'page' : undefined}
+                          class:list={[
+                            'block rounded-md px-2.5 py-1.5 text-sm no-underline transition-colors',
+                            active
+                              ? 'bg-[var(--accent-surface)] text-[var(--text-strong)] font-semibold border border-[var(--accent-border)]'
+                              : 'text-[var(--text-muted)] hover:text-[var(--text-strong)] hover:bg-[var(--glass-bg-subtle)]',
+                          ]}
+                        >
+                          {item.title}
+                        </a>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </nav>
+        </details>
+
+        <nav
+          class="hidden lg:block sticky top-[calc(var(--header-h)+1.5rem)] max-h-[calc(100vh-var(--header-h)-3rem)] overflow-y-auto pr-2 space-y-6"
+          aria-label="Documentation sections"
+        >
+          {grouped.map(({ group, items }) => (
+            <div>
+              <p class="font-mono text-[11px] uppercase tracking-wider text-[var(--text-dim)] mb-2 px-2.5">
+                {group}
+              </p>
+              <ul class="space-y-0.5 list-none p-0 m-0">
+                {items.map((item) => {
+                  const active = item.slug === doc.slug;
+                  return (
+                    <li>
+                      <a
+                        href={`/docs/${item.slug}/`}
+                        aria-current={active ? 'page' : undefined}
+                        class:list={[
+                          'block rounded-lg px-2.5 py-1.5 text-[0.875rem] no-underline transition-colors',
+                          active
+                            ? 'bg-[var(--accent-surface)] text-[var(--text-strong)] font-semibold border border-[var(--accent-border)]'
+                            : 'text-[var(--text-muted)] hover:text-[var(--text-strong)] hover:bg-[var(--glass-bg-subtle)] border border-transparent',
+                        ]}
+                      >
+                        {item.title}
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </nav>
+      </aside>
+
+      <!-- Main Doc Content -->
+      <article class="min-w-0">
+        <div class="glass-surface p-6 sm:p-9">
+          <Breadcrumbs items={crumbs} />
+
+          <header class="mt-4 pb-6 border-b border-[var(--glass-border)]">
+            <div class="flex flex-wrap items-center gap-2 mb-3">
+              <span class="glass-pill glass-pill-accent">{doc.group}</span>
+              <span class="glass-pill tabular">{readingMinutes} min read</span>
+              <a
+                href={doc.githubUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="glass-pill no-underline hover:border-[var(--accent-border)]"
+              >
+                Source: {doc.sourceRelPath} ↗
+              </a>
+            </div>
+            <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">{doc.title}</h1>
+            <p class="mt-3 text-[var(--text-muted)] text-base leading-relaxed">{doc.description}</p>
+          </header>
+
+          <div class="prose-cm mt-8" set:html={doc.html} />
+
+          <nav
+            aria-label="Adjacent documentation pages"
+            class="mt-12 pt-6 border-t border-[var(--glass-border)] grid grid-cols-1 sm:grid-cols-2 gap-4"
+          >
+            {prevDoc ? (
+              <a
+                href={`/docs/${prevDoc.slug}/`}
+                class="glass-surface glass-interactive p-4 no-underline flex flex-col gap-1"
+              >
+                <span class="font-mono text-xs text-[var(--text-dim)]">← Previous</span>
+                <span class="font-semibold text-[var(--text-strong)]">{prevDoc.title}</span>
+              </a>
+            ) : (
+              <div />
+            )}
+            {nextDoc && (
+              <a
+                href={`/docs/${nextDoc.slug}/`}
+                class="glass-surface glass-interactive p-4 no-underline flex flex-col gap-1 sm:text-right"
+              >
+                <span class="font-mono text-xs text-[var(--text-dim)]">Next →</span>
+                <span class="font-semibold text-[var(--text-strong)]">{nextDoc.title}</span>
+              </a>
+            )}
+          </nav>
+        </div>
+      </article>
+
+      <!-- Right TOC -->
+      <aside class="hidden xl:block" aria-label="On this page">
+        {doc.toc.length > 0 && (
+          <div class="sticky top-[calc(var(--header-h)+1.5rem)] max-h-[calc(100vh-var(--header-h)-3rem)] overflow-y-auto pl-2">
+            <p class="font-mono text-[11px] uppercase tracking-wider text-[var(--text-dim)] mb-3">
+              On this page
+            </p>
+            <ul class="space-y-1.5 list-none p-0 m-0 border-l border-[var(--glass-border)]">
+              {doc.toc.slice(0, 28).map((item) => (
+                <li class={item.depth === 3 ? 'pl-5' : 'pl-3'}>
+                  <a
+                    href={`#${item.id}`}
+                    class="block text-xs leading-snug text-[var(--text-muted)] hover:text-[var(--text-strong)] no-underline py-0.5"
+                  >
+                    {item.text}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </aside>
+    </div>
+  </div>
+</BaseLayout>
+
+<style is:global>
+  .prose-cm .doc-anchor {
+    color: inherit;
+    text-decoration: none;
+  }
+  .prose-cm .doc-anchor:hover::after {
+    content: " #";
+    color: var(--accent);
+  }
+  .prose-cm pre {
+    position: relative;
+    padding-top: 2.55rem;
+  }
+  .doc-copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    min-height: 28px;
+    padding: 3px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--glass-border-hi);
+    background: var(--glass-bg-floating);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+    z-index: 2;
+    transition: color 150ms ease, border-color 150ms ease;
+  }
+  .doc-copy-btn:hover {
+    color: var(--text-strong);
+    border-color: var(--accent-border);
+  }
+</style>
+
+<script>
+  document.querySelectorAll<HTMLPreElement>('.prose-cm pre').forEach((pre) => {
+    const code = pre.querySelector('code');
+    if (!code || pre.querySelector('.doc-copy-btn')) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'doc-copy-btn';
+    btn.setAttribute('aria-label', 'Copy code snippet');
+    btn.textContent = 'Copy';
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(code.innerText);
+        btn.textContent = 'Copied ✓';
+        setTimeout(() => {
+          btn.textContent = 'Copy';
+        }, 1600);
+      } catch {}
+    });
+    pre.appendChild(btn);
+  });
+</script>
