@@ -302,6 +302,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The sentence that tells how an act of yours ended (a review, a verdict, a plan confirmation, a conflict decision, a memory import, accepting a kind, replacing a record, deleting a project's memory) stays on the workspace's notice line for 12 seconds or until your next key, click, button or typing. What a background refresh, the workspace's own unavailable state, the inspector's count line or a failed inspector reload tells meanwhile waits in Notices, counted once while it repeats, and shows when the hold ends, unless the refresh has recovered by then (#430).
 - With the database in Docker or on a server (production mode), a directory renamed and renamed back is indexed again after one wait, as with the engine the product starts itself, instead of failing with 'Found duplicate key in index' (#455).
 - The command line of a process read right after its start is read again until the kernel has recorded it, so `engine stop`, the engine check and the status no longer fail or lose the managed Java on that moment; an engine process whose command line cannot be read is named as unreadable when stopping, instead of being called foreign, and nothing is stopped (#460).
+- A notice that waited behind the outcome of an act now always shows when the hold ends: when the hold's timer fired a moment before a coarse clock said so (as on Windows), the hold never ended and the notice was lost until the next key (#485).
 
 ### Development and CI
 

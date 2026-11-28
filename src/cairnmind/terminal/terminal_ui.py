@@ -466,7 +466,12 @@ class BasePanel(App):
         return bool(self._outcome and entry is not None and _clock() < self._outcome[1])
 
     def _hold_over(self) -> None:  # the timer set with the outcome; an earlier outcome's timer finds a later deadline
-        if self._outcome is not None and _clock() >= self._outcome[1]:
+        if self._outcome is None:
+            return
+        left = self._outcome[1] - _clock()
+        if left > 0:  # a timer can fire a step before a coarse clock says so (Windows): wait for the rest (#485)
+            self.set_timer(left + .01, self._hold_over)
+        else:
             self._release_outcome()
 
     def _release_outcome(self) -> None:
