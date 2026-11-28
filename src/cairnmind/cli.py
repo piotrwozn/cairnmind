@@ -1341,7 +1341,9 @@ def ui(
 def serve(ctx: typer.Context, defer_background_inference: bool = False):
     """Run the local service (the single owner of the GPU and the queue)."""
     import uvicorn
+    from cairnmind import memory_release
     from cairnmind.service import create_app
+    memory_release.limit_arenas()  # before the first worker thread: one arena per thread kept every thread's peak (#410)
     settings = ctx.obj
     with (settings.data_dir / "service.lock").open("a", encoding="utf-8") as lock:
         try:

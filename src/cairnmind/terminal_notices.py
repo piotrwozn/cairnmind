@@ -42,9 +42,11 @@ class NoticeHistory:
         self._seen = 0        # highest seq the person has opened the history at
         self._on_line = None   # seq of the entry the notice line shows, if any
 
-    def add(self, text: object, scope: dict | None, kind: str = "info", *, on_line: bool = True) -> None:
+    def add(self, text: object, scope: dict | None, kind: str = "info", *, on_line: bool = True,
+            waiting: Notice | None = None) -> None:
         """Store one notice. `on_line` is False for a notice kept only here, never shown on the line
-        (the outcome of work for a project that is no longer shown); the line keeps what it shows."""
+        (the outcome of work for a project that is no longer shown); the line keeps what it shows.
+        `waiting` is the entry kept off the line during a hold: shown now by this same text, it is not counted again."""
         kind = kind if kind in KINDS else "info"
         shown = safe_text(text, limit=MAX_ENTRY_CHARS)
         if not shown.strip():
@@ -54,10 +56,13 @@ class NoticeHistory:
         scope = scope if isinstance(scope, dict) else {}
         project = (scope.get("project_id"), scope.get("worktree"))
         last = self.entries[-1] if self.entries else None
-        if (on_line and last is not None and last.text == shown and (last.project_id, last.worktree) == project
+        if (last is not None and last.text == shown and (last.project_id, last.worktree) == project
                 and last.kind == kind):
-            last.when, last.count = _now(), last.count + 1
-            self._on_line = last.seq
+            last.when = _now()
+            if last is not waiting:  # told for the first time to the person: the waiting one is that same event
+                last.count += 1  # also a held notice that repeats (#430)
+            if on_line:
+                self._on_line = last.seq
             return
         self._seq += 1
         name = scope.get("project_name")
@@ -68,6 +73,10 @@ class NoticeHistory:
             self._on_line = self._seq
         while len(self.entries) > 1 and (len(self.entries) > self.max_entries or self._chars > self.max_chars):
             self._chars -= len(self.entries.popleft().text)
+
+    def put_on_line(self, entry: Notice) -> None:
+        """A notice kept only here (add with on_line=False) is now shown on the line."""
+        self._on_line = entry.seq
 
     def on_line(self) -> Notice | None:
         """The entry the notice line shows, if it shows one."""

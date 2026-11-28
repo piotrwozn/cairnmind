@@ -73,6 +73,8 @@ NATIVE_RUNS = ("The native engine (Java, process {pid}) runs on this data direct
                "stop` first: the two engines must not use one data directory at the same time.")
 NATIVE_UNKNOWN = ("This data directory records a native engine (process {pid}) whose command line cannot be read, so "
                   "it cannot be told whether it runs here. Nothing was started.")
+NATIVE_STOP_UNKNOWN = ("This data directory records a native engine (process {pid}) whose command line cannot be "
+                       "read, so it cannot be told that it is this engine. Nothing was stopped.")
 CONTAINER_RUNS = ("An engine in Docker (container {name}) runs on this data directory. Stop it with `cairnmind "
                   "engine stop` first: the two engines must not use one data directory at the same time.")
 OTHER_IMAGE = ("The engine container {name} runs {running}, not {wanted}. Stop it with `cairnmind engine stop`, then "
@@ -149,6 +151,8 @@ MESSAGES = {
                   "danych."),
     NATIVE_UNKNOWN: ("Ten katalog danych zapisał natywny silnik (proces {pid}), którego wiersza poleceń nie można "
                      "odczytać, więc nie wiadomo, czy tu działa. Nic nie zostało uruchomione."),
+    NATIVE_STOP_UNKNOWN: ("Ten katalog danych zapisał natywny silnik (proces {pid}), którego wiersza poleceń nie "
+                          "można odczytać, więc nie wiadomo, czy to ten silnik. Nic nie zostało zatrzymane."),
     CONTAINER_RUNS: ("Na tym katalogu danych działa silnik w Dockerze (kontener {name}). Najpierw zatrzymaj go "
                      "poleceniem `cairnmind engine stop`: dwa silniki nie mogą jednocześnie używać jednego "
                      "katalogu danych."),

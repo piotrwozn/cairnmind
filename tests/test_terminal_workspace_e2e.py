@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import asyncio
+import contextlib
 from dataclasses import dataclass
 import inspect
 import json
@@ -31,11 +32,12 @@ import pytest
 import uvicorn
 from websockets.sync.client import connect
 
+import run_guard
 from conftest import status_flags, terminal_attributes, time_budget
 from cairnmind import client_auth
 from cairnmind.client_runtime import NativeRuntime
 from cairnmind.cockpit import _birth, create_cockpit_app, instance_id
-from cairnmind.cockpit_state import _atomic
+from cairnmind.cockpit_state import _atomic, _private_lock
 from cairnmind.config import Settings
 from cairnmind.service import create_app
 from cairnmind.store import Store
@@ -215,6 +217,14 @@ class TerminalStack:
             "version": __import__("cairnmind").__version__})
         self.login()
 
+    def restart_broker(self):
+        """Stop the broker and start it again while holding the product's own launch lock: a panel that finds the
+        broker gone waits for it, then finds this one, and starts no broker of its own (#457)."""
+        with _private_lock(self.settings.data_dir / "cockpit" / "launch.lock"):
+            self.broker.stop()
+            self.start_broker()
+        assert not [row for row in run_guard.processes_under(self.settings.data_dir) if row[1].endswith(" cockpit serve")]
+
     def login(self):
         if self.http:
             self.http.close()
@@ -251,11 +261,31 @@ class TerminalStack:
         rows = [json.loads(line) for line in self.trace_path.read_text().splitlines()] if self.trace_path.exists() else []
         return [row for row in rows if event is None or row["event"] == event]
 
+    def stop_brokers_the_product_started(self):
+        """While this stack's broker is stopped, a panel of an open workspace starts a broker of its own, detached
+        by design (BrokerClient.reconnect): it is nobody's child, and only `cockpit stop` or this stops it (#457)."""
+        brokers = [pid for pid, args in run_guard.processes_under(self.settings.data_dir)
+                   if args.endswith(" cockpit serve")]
+        for number in (signal.SIGTERM, signal.SIGKILL):
+            # Its identity is read again before each signal, as the guard does.
+            brokers = [pid for pid, args in run_guard.processes_under(self.settings.data_dir)
+                       if pid in brokers and args.endswith(" cockpit serve")]
+            for pid in brokers:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, number)
+            deadline = time.monotonic() + (time_budget(10) if number == signal.SIGTERM else 0)
+            while time.monotonic() < deadline:
+                brokers = [pid for pid in brokers if pane_process_alive(pid)]
+                if not brokers:
+                    return
+                time.sleep(.05)
+
     def close(self):
         if self.http:
             self.http.close()
         if self.broker:
             self.broker.stop()
+        self.stop_brokers_the_product_started()
         for row in self.runtime.list_runs():
             if row["lifecycle"] in {"running", "starting", "stopping"}:
                 self.runtime.stop(row["id"], row["generation"])
@@ -338,9 +368,8 @@ def test_real_broker_paired_native_unicode_interrupt_resize_and_restart(terminal
         two.send(json.dumps({"type": "input", "text": "size\n"}))
         receive_until(two, "SIZE 103x34")
     before = {row["id"]: (row["pid"], row["session_id"]) for row in stack.runtime.list_runs()}
-    stack.broker.stop()
-    stack.start_broker()
-    after = {row["id"]: (row["pid"], row["session_id"]) for row in stack.runtime.list_runs()}
+    stack.restart_broker()
+    after ={row["id"]: (row["pid"], row["session_id"]) for row in stack.runtime.list_runs()}
     assert after == before
     with stack.terminal(first) as one:
         receive_until(one, "NATIVE_READY codex")
@@ -461,6 +490,14 @@ async def test_raw_bridge_real_pty_input_paste_resize_and_terminal_restore(termi
         os.close(slave)
 
 
+def pane_process_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 @pytest.fixture
 def outer_workspace(terminal_stack):
     from cairnmind.workspace import WorkspaceManager
@@ -470,7 +507,19 @@ def outer_workspace(terminal_stack):
     try:
         yield manager
     finally:
+        # A panel that is still ending when the stack's broker stops would start a broker of its own, which
+        # nobody stops (#457): the workspace's panes are gone before the stack closes.
+        pids = [int(pid) for pid in manager.tmux("list-panes", "-a", "-F", "#{pane_pid}", check=False).stdout.split()]
         manager.tmux("kill-server", check=False)
+        deadline = time.monotonic() + time_budget(10)
+        while time.monotonic() < deadline:
+            pids = [pid for pid in pids if pane_process_alive(pid)]
+            if not pids:
+                break
+            time.sleep(.05)
+        for pid in pids:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
         manager.broker.close()
 
 
@@ -507,8 +556,7 @@ def test_real_outer_workspace_project_switch_and_broker_restart_preserve_native_
     manager.refresh()
     wait_pane(manager, manager.panes()["client1"], "NATIVE_READY codex")
     assert before == {row["id"]: (row["pid"], row["session_id"]) for row in stack.runtime.list_runs()}
-    stack.broker.stop()
-    stack.start_broker()
+    stack.restart_broker()
     manager.broker.reconnect()
     manager.refresh()
     first = manager.panes()["client1"]

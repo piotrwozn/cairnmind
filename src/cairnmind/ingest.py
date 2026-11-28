@@ -28,7 +28,7 @@ from cairnmind.embed_jobs import queue_embed_jobs
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
 from cairnmind.quote_healing import is_healing_audit_source
-from cairnmind import graph_duplicates, graph_transactions
+from cairnmind import graph_duplicates, graph_transactions, memory_release
 from cairnmind.code_graph import code_graph_pending
 from cairnmind.graph_transactions import GraphTransactions, await_vertices
 from cairnmind.journal import MAX_TRANSACTION_EVENTS
@@ -751,7 +751,8 @@ def index_project(store, project_id: str, walk: tuple | None = None) -> dict:
             if (len(result.get("errors", [])) == len(result.get("unavailable", [])) + bool(state.get("graph_kept")) and complete
                     and newest < started - RACY_WINDOW_NS):
                 _INDEXED[key] = signature
-        return result
+    memory_release.release_freed()  # the pass built the whole graph and let it go: its pages go back (#410)
+    return result
 
 
 def index_project_if_changed(store, project_id: str) -> dict:
