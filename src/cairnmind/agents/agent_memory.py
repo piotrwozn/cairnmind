@@ -19,9 +19,9 @@ import httpx
 
 from cairnmind.config import tls_verify
 from cairnmind.memory.memory_egress import ordered
+from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.storage.sql import clean_row, json_text
 from cairnmind.storage.storage_query import col, db_find, db_find_one, desc, eq, lte
-from cairnmind.pal.terminal_safe import safe_text
 
 AGENT_CLIENTS = {"api", "copilot"}
 # The store's refusal of a second active record under one key (store._remember), and what the model does.
@@ -258,6 +258,8 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
         return {**result, "unknowns": [target["error"]]}
     sid = target.get("agent_session_id")
     try:
+        if not isinstance(sid, str):
+            raise ValueError("Invalid own-agent logical session identity")
         expected_path = _journal_path(settings, sid)
         if target.get("path") != str(expected_path):
             raise ValueError("Own-agent archive path does not match its bound logical session")
@@ -308,8 +310,8 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
         by_sequence = {row.get("metadata", {}).get("agent_sequence"): row for row in rows}
         source_rows = []
         tainted = None  # the server of the first third-party result in this session, once there is one
-        from cairnmind.scip.ingest import _write_chunks
         from cairnmind.memory.secret_mask import ingest_masker, masked_metadata
+        from cairnmind.scip.ingest import _write_chunks
         masker = ingest_masker(settings)
         for event in events:
             if time.monotonic() > deadline:

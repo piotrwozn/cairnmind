@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from contextlib import asynccontextmanager
 import json
 import os
-from pathlib import Path
 import signal
 import struct
 import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 if sys.platform != "win32":
@@ -17,11 +17,17 @@ if sys.platform != "win32":
     import termios
 
 import pytest
-
 from conftest import status_flags, terminal_attributes
+
 from cairnmind.config import Settings
 from cairnmind.terminal import native_worker
-from cairnmind.terminal.terminal_bridge import CONTROL_STATES, PaneStatus, RawTerminalBridge, raw_terminal, terminal_dimensions
+from cairnmind.terminal.terminal_bridge import (
+    CONTROL_STATES,
+    PaneStatus,
+    RawTerminalBridge,
+    raw_terminal,
+    terminal_dimensions,
+)
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX PTY terminal bridge")
 
@@ -156,11 +162,10 @@ def test_raw_context_restores_exact_terminal_state_after_exception(pty_pair):
     _, slave = pty_pair
     attributes = terminal_attributes(slave)
     flags = status_flags(slave)
-    with pytest.raises(RuntimeError):
-        with raw_terminal(slave, slave):
-            assert not terminal_attributes(slave)[3] & termios.ISIG
-            assert not os.get_blocking(slave)
-            raise RuntimeError("controlled interruption")
+    with pytest.raises(RuntimeError), raw_terminal(slave, slave):
+        assert not terminal_attributes(slave)[3] & termios.ISIG
+        assert not os.get_blocking(slave)
+        raise RuntimeError("controlled interruption")
     assert terminal_attributes(slave) == attributes
     assert status_flags(slave) == flags
 

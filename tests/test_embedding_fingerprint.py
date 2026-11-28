@@ -5,23 +5,22 @@ No model and no network: the embedding server is an httpx.MockTransport whose an
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 import json
 import threading
 import time
+from dataclasses import replace
 
 import httpx
 import pytest
+from test_knowledge import document
 from typer.testing import CliRunner
 
-from cairnmind.memory import memory_fingerprint, memory_models
-from cairnmind.config import Settings
-from cairnmind.memory.memory_openai import OpenAICompatible
 from cairnmind.agents.ollama import Ollama, OllamaUnavailable
 from cairnmind.agents.retrieval import Retriever
+from cairnmind.config import Settings
+from cairnmind.memory import memory_fingerprint, memory_models
+from cairnmind.memory.memory_openai import OpenAICompatible
 from cairnmind.store import Store
-
-from test_knowledge import document
 
 LMSTUDIO = {"provider": "openai_compatible", "base_url": "http://127.0.0.1:1234/v1"}
 OLD, NEW = [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]
@@ -137,6 +136,7 @@ def test_the_local_ollama_needs_no_fingerprint(tmp_path):
 
 def test_the_service_start_with_the_local_ollama_sends_no_extra_request(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
+
     from cairnmind.service import create_app
     paths = []
 
@@ -166,6 +166,7 @@ def wait_for_check(client, headers):
 
 def test_the_service_checks_at_start_and_holds_new_vectors_while_changed(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
+
     from cairnmind.service import create_app
     server = Server(OLD)
     real = httpx.AsyncClient
@@ -206,6 +207,7 @@ class Chat:
 
 def test_the_worker_makes_no_vector_while_the_weights_are_changed(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
+
     from cairnmind.service import create_app
     server = Server(NEW)
     settings = replace(Settings.load(tmp_path / "data", create=True), embedding_model="text-embed",
@@ -256,6 +258,7 @@ def test_no_vector_is_made_before_the_start_check_answers(tmp_path, monkeypatch)
     # A restart after a swap: the earlier gen-0 namespace must not get vectors of the new weights while
     # the check is still on its way.
     from fastapi.testclient import TestClient
+
     from cairnmind.service import create_app
     server = HeldServer(OLD)
     settings = replace(Settings.load(tmp_path / "data", create=True), embedding_model="text-embed",

@@ -9,26 +9,50 @@ or pushes; the files are committed by a person with their branch.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
+from cairnmind.memory.memory_published_carrier import carrier_of, unbound_in_checkout
+from cairnmind.memory.memory_published_carrier import destination as carrier_destination
+from cairnmind.memory.memory_published_check import STATIC_FILES, check_files, format_bytes, read_tree, scan
+from cairnmind.memory.memory_published_format import (
+    GITATTRIBUTES,
+    GITIGNORE,
+    MAX_FILE_BYTES,
+    MAX_NOTE_CHARS,
+    MAX_QUOTE_CHARS,
+    PUBLISHED_KINDS,
+    J,
+    _audit,
+    _when,
+    canonical_uuid,
+    clean_text,
+    clean_value,
+    derive_covered,
+    derive_plan_covered,
+    path_of,
+    plan_hash,
+    projection,
+    ref_class,
+    render,
+    same,
+    sha256_text,
+    task_fields,
+)
+from cairnmind.memory.memory_published_release import (
+    REGISTERED_ADVICE,
+    SecretsRefused,
+    publication_rules,
+    release_sources,
+)
+from cairnmind.memory.memory_published_secrets import REGISTERED, described, scan_text
 from cairnmind.pal.file_locks import lock_exclusive
 from cairnmind.pal.private_files import open_no_follow
-
-from cairnmind.memory.memory_published_carrier import carrier_of, destination as carrier_destination, unbound_in_checkout
-from cairnmind.memory.memory_published_check import STATIC_FILES, check_files, format_bytes, read_tree, scan
-from cairnmind.memory.memory_published_release import REGISTERED_ADVICE, SecretsRefused, publication_rules, release_sources
-from cairnmind.memory.memory_published_secrets import REGISTERED, described, scan_text
-from cairnmind.memory.memory_published_format import (
-    GITATTRIBUTES, GITIGNORE, MAX_NOTE_CHARS, canonical_uuid, MAX_QUOTE_CHARS, PUBLISHED_KINDS, J, _audit, _when, clean_text,
-    clean_value, derive_covered, derive_plan_covered, path_of, plan_hash, projection, ref_class, render, same,
-    sha256_text, task_fields, MAX_FILE_BYTES,
-)
+from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.storage.sql import clean_row
 from cairnmind.storage.storage_query import db_find, db_find_one, db_update_where, eq, is_in, is_not_null
 from cairnmind.store import degraded_origin
-from cairnmind.pal.terminal_safe import safe_text
 
 # Writing stayed behind this switch until the secrets gate of #171 refused registered secrets and private
 # keys. It is no longer read; the name is kept for scripts and tests that still set it.
@@ -264,7 +288,7 @@ class Publisher:
     def build(self, project_id, worktree=None, authorize=None):
         """Render the package from one consistent read: {path: bytes}, the models, and what is held."""
         project, root, folder = self.destination(project_id, worktree)
-        if hasattr(authorize, "refresh"):
+        if authorize is not None and hasattr(authorize, "refresh"):
             authorize.refresh()  # hashes the worktree: never inside the transaction below (#255)
         with self.store.transaction() as tx:
             if authorize is not None:
@@ -601,8 +625,7 @@ def publication_status(store, project_id, worktree=None):
             identity = _parse(files["FORMAT.json"]).get("project_id")
         except (ValueError, AttributeError):
             identity = None
+    pub_row = db_find_one(store, "projects", {"id": project_id}, columns=("publication_id",), required=True)
     return {**carried, "destination": str(folder), "format_exists": "FORMAT.json" in files, "format_project_id": identity,
-            "publication_id": db_find_one(
-                store, "projects", {"id": project_id}, columns=("publication_id",), required=True
-            ).get("publication_id"),
+            "publication_id": pub_row.get("publication_id") if pub_row is not None else None,
             "files": len(files), "unreadable": [path for path, _ in errors]}

@@ -7,12 +7,12 @@ import pytest
 
 from cairnmind.memory.memory_published_format import MAX_NOTE_CHARS, PublishedFormatError, render
 from cairnmind.memory.memory_published_parse import (
-    _Lines,
     _blocks,
     _check_revision,
     _check_source,
     _entries,
     _fields,
+    _Lines,
     _plan_entry,
     _record_entry,
     _sources,

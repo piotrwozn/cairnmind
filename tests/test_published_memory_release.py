@@ -1,8 +1,10 @@
 """The secrets gate of published memory (#171) on real ArcadeDB and Git: refusals, releases, round trips."""
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
+from test_published_memory import commit, folder_of, git, published_bytes, repository, reviewed, teammate
+from test_published_memory_secrets import KEY_BLOCK, SHAPES
 from typer.testing import CliRunner
 
 from cairnmind import cli
@@ -12,12 +14,15 @@ from cairnmind.memory.memory_published import Publisher
 from cairnmind.memory.memory_published_check import check_directory
 from cairnmind.memory.memory_published_import import PublishedImporter
 from cairnmind.memory.memory_published_release import (
-    CLI_REFUSED, SecretsRefused, checkout_rules, import_rules, registered_secrets, release,
+    CLI_REFUSED,
+    SecretsRefused,
+    checkout_rules,
+    import_rules,
+    registered_secrets,
+    release,
 )
 from cairnmind.service import create_app
 from cairnmind.store import Store
-from test_published_memory import commit, folder_of, git, published_bytes, repository, reviewed, teammate
-from test_published_memory_secrets import KEY_BLOCK, SHAPES
 
 
 @pytest.fixture

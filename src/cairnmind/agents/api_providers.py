@@ -16,7 +16,6 @@ import httpx
 from cairnmind.agents.api_profiles import normalize_profile
 from cairnmind.config import tls_verify
 
-
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_LINE_BYTES = 2 * 1024 * 1024
 MAX_TOOL_CALLS = 64
@@ -365,8 +364,10 @@ class Provider:
         provider = self.profile["provider"]
         if provider in {"openai", "anthropic"} and not self._key:
             raise ProviderError("credential_missing")
-        result = {"Content-Type": "application/json", "Accept": "application/json"}
+        result: dict[str, str] = {"Content-Type": "application/json", "Accept": "application/json"}
         if provider == "anthropic":
+            if not self._key:
+                raise ProviderError("credential_missing")
             result.update({"x-api-key": self._key, "anthropic-version": "2023-06-01"})
         elif self._key:
             result["Authorization"] = "Bearer " + self._key

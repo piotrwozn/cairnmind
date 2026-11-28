@@ -12,10 +12,11 @@ import signal
 import subprocess
 import sys
 import time
+from contextlib import suppress
 
 IS_WINDOWS = sys.platform == "win32"
 
-if IS_WINDOWS:
+if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
 
@@ -88,18 +89,18 @@ if IS_WINDOWS:
 def quote_arg(value) -> str:
     """Quote a single CLI argument for display or command execution (Windows cmd/PS vs POSIX sh)."""
     text = str(value)
-    return subprocess.list2cmdline([text]) if sys.platform == "win32" else shlex.quote(text)
+    return subprocess.list2cmdline([text]) if IS_WINDOWS else shlex.quote(text)
 
 
 def format_command(argv) -> str:
     """Format argv for display or command execution (list2cmdline on Windows, shlex.join on POSIX)."""
     items = [str(part) for part in argv]
-    return subprocess.list2cmdline(items) if sys.platform == "win32" else shlex.join(items)
+    return subprocess.list2cmdline(items) if IS_WINDOWS else shlex.join(items)
 
 
 def detached_popen_kwargs() -> dict:
     """Keyword arguments for spawning a long-lived background process (service, engine, broker)."""
-    if not IS_WINDOWS:
+    if not IS_WINDOWS or sys.platform != "win32":
         return {"start_new_session": True}
     # Win32 CreateProcessW forbids combining DETACHED_PROCESS with CREATE_NO_WINDOW;
     # CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW runs headless and detaches Ctrl+C.
@@ -109,7 +110,7 @@ def detached_popen_kwargs() -> dict:
 
 def group_popen_kwargs() -> dict:
     """Keyword arguments for spawning a child process in its own controllable group."""
-    if not IS_WINDOWS:
+    if not IS_WINDOWS or sys.platform != "win32":
         return {"start_new_session": True}
     return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW}
 
@@ -120,8 +121,11 @@ def terminate_pid(pid: int, *, force: bool = False) -> None:
     Raises ProcessLookupError if the process does not exist.
     """
     if not IS_WINDOWS:
-        os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
+        sig = getattr(signal, "SIGKILL", signal.SIGTERM) if force else signal.SIGTERM
+        os.kill(pid, sig)
         return
+    if sys.platform != "win32":
+        raise OSError("Win32 process termination is only available on Windows")
     handle = _kernel32.OpenProcess(_PROCESS_TERMINATE, False, pid)
     if not handle:
         err = ctypes.get_last_error()
@@ -143,7 +147,12 @@ def terminate_pid(pid: int, *, force: bool = False) -> None:
 def terminate_group(pgid: int, *, force: bool = False) -> None:
     """Terminate a process group on POSIX, or the leader PID on Windows when no Job handle exists."""
     if not IS_WINDOWS:
-        os.killpg(pgid, signal.SIGKILL if force else signal.SIGTERM)
+        sig = getattr(signal, "SIGKILL", signal.SIGTERM) if force else signal.SIGTERM
+        killpg = getattr(os, "killpg", None)
+        if killpg is not None:
+            killpg(pgid, sig)
+        else:
+            os.kill(pgid, sig)
         return
     terminate_pid(pgid, force=force)
 
@@ -158,7 +167,7 @@ class ProcessJob:
     def __init__(self) -> None:
         self._handle = None
         self._pid: int | None = None
-        if IS_WINDOWS:
+        if IS_WINDOWS and sys.platform == "win32":
             handle = _kernel32.CreateJobObjectW(None, None)
             if not handle:
                 raise ctypes.WinError(ctypes.get_last_error())
@@ -175,7 +184,7 @@ class ProcessJob:
     def attach(self, pid: int) -> bool:
         """Associate pid with this job. Returns False if the process already exited or cannot be attached."""
         self._pid = pid
-        if not IS_WINDOWS:
+        if not IS_WINDOWS or sys.platform != "win32":
             return True
         if not self._handle:
             return False
@@ -193,14 +202,18 @@ class ProcessJob:
             if self._pid is None:
                 return False
             from cairnmind.pal import process_identity
-            try:
-                os.killpg(self._pid, 0)
-            except ProcessLookupError:
-                return False
-            except OSError:
-                pass
+            killpg = getattr(os, "killpg", None)
+            if killpg is not None:
+                try:
+                    killpg(self._pid, 0)
+                except ProcessLookupError:
+                    return False
+                except OSError:
+                    pass
             result = process_identity.group_running(self._pid)
             return None if result is None else result
+        if sys.platform != "win32":
+            return False
         if not self._handle:
             return False
         # JOBOBJECT_BASIC_PROCESS_ID_LIST starts with two DWORDs:
@@ -223,8 +236,11 @@ class ProcessJob:
         if not IS_WINDOWS:
             if self._pid is None:
                 return
+            killpg = getattr(os, "killpg", None)
+            if killpg is None:
+                return
             try:
-                os.killpg(self._pid, signal.SIGTERM)
+                killpg(self._pid, signal.SIGTERM)
             except ProcessLookupError:
                 return
             deadline = time.monotonic() + grace_seconds
@@ -232,20 +248,19 @@ class ProcessJob:
                 if self.running() is False:
                     return
                 time.sleep(0.02)
-            try:
-                os.killpg(self._pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            sigkill = getattr(signal, "SIGKILL", signal.SIGTERM)
+            with suppress(ProcessLookupError):
+                killpg(self._pid, sigkill)
+            return
+        if sys.platform != "win32":
             return
         if self._handle:
             _kernel32.TerminateJobObject(self._handle, 1)
         elif self._pid is not None:
-            try:
+            with suppress(ProcessLookupError):
                 terminate_pid(self._pid, force=True)
-            except ProcessLookupError:
-                pass
 
     def close(self) -> None:
-        if IS_WINDOWS and self._handle:
+        if sys.platform == "win32" and self._handle:
             _kernel32.CloseHandle(self._handle)
             self._handle = None

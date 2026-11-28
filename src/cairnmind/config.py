@@ -1,17 +1,16 @@
 """Shared runtime settings. All persistent state belongs in the WSL filesystem."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
-import hashlib
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from cairnmind.pal.file_locks import lock_exclusive
 from cairnmind.pal.private_files import ensure_private_dir, write_durable_private
-
 
 # Environment variables are spelled CAIRNMIND_<NAME>. The earlier spelling DEVBRAIN_<NAME> is
 # still read, and still set for child processes, so that sessions, project files and shell
@@ -304,7 +303,7 @@ class Settings:
                     changed = True
                 if obj._origin.get("password") == "none" and not connect_only(obj):
                     obj.arcade_password = secrets.token_urlsafe(32)
-                    obj._origin["password"] = "config"
+                    obj._origin["password"] = "config"  # noqa: S105 - origin label, not a secret
                     obj._origin["kept"].pop("arcade_password", None)
                     changed = True
                 if changed:
@@ -403,7 +402,7 @@ class Settings:
         prefix = env_value("ARCADE_DB_PREFIX", "cairnmind")
         derived = derived_database(root)
         if not values.get("arcade_database"):
-            if not prefix.replace("_", "").isalnum():
+            if not prefix or not prefix.replace("_", "").isalnum():
                 raise ValueError("Invalid ArcadeDB database prefix")
             values["arcade_database"] = derived
         # The first save stores the derived name in config.json, so it is recognised by its value.

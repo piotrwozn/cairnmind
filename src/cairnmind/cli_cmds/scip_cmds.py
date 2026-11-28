@@ -6,10 +6,10 @@ from typing import Annotated
 
 import typer
 
+from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.cli_arguments import (
     ProjectArg,
 )
-from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.io import initialized
 
 
@@ -30,7 +30,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         target_root = root
         if project and target_root is None:
             store = _io.store_for_read(ctx.obj)
-            target_root = Path(store.resolve_project(project)["root"])
+            target_root = Path(_io.resolve_project(store, project)["root"])
         _io.output(scip_status(ctx.obj, target_root))
 
     @scip_app.command("install")
@@ -123,7 +123,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         """Import an externally generated index.scip into a project's ArcadeDB code graph."""
         from cairnmind.scip.scip_ingest import apply_scip_index
         store = _io.store_for(ctx.obj)
-        proj = store.resolve_project(project)
+        proj = _io.resolve_project(store, project)
         target_root = root if root is not None else Path(proj["root"])
         result = apply_scip_index(store, proj["id"], target_root, index_file.expanduser().resolve())
         _io.output(result)

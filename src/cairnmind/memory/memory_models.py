@@ -15,24 +15,24 @@ identities and setup.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 import hashlib
 import ipaddress
 import json
 import os
-from pathlib import Path
 import tempfile
 import time
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
 
 from cairnmind.agents.api_profiles import MODEL_ID, _credential_ref, normalize_base_url
-from cairnmind.config import Settings, tls_verify
-from cairnmind.pal.file_locks import lock_exclusive
-from cairnmind.memory.memory_openai import OpenAICompatible, server_tag
 from cairnmind.agents.ollama import Ollama, OllamaUnavailable
+from cairnmind.config import Settings, tls_verify
+from cairnmind.memory.memory_openai import OpenAICompatible, server_tag
+from cairnmind.pal.file_locks import lock_exclusive
 from cairnmind.pal.private_files import atomic_replace, make_private
 
 ROLES = ("chat", "embedding")
@@ -324,7 +324,8 @@ async def ready_kinds(models) -> tuple[list[str], Exception | None]:
     if not isinstance(models, MemoryModels):
         await models.models()
         return ["embed", "extract"], None
-    kinds, error = [], None
+    kinds: list[str] = []
+    error: OllamaUnavailable | None = None
     for kind, client in (("embed", models.embedding_client), ("extract", models.chat_client)):
         try:
             await client.models()
@@ -332,6 +333,8 @@ async def ready_kinds(models) -> tuple[list[str], Exception | None]:
         except OllamaUnavailable as exc:
             error = exc
     if not kinds:
+        if error is None:
+            raise OllamaUnavailable("No memory model server is available")
         raise error
     return kinds, error
 
@@ -411,7 +414,8 @@ async def answer_label(settings: Settings, models) -> str | None:
         return None
     try:
         pair = await asyncio.wait_for(identities(models, settings), LABEL_SECONDS)
-    except Exception:  # an unnamed or slow-to-name model is not an evaluated one; the answer is unaffected
+    except (OllamaUnavailable, TimeoutError, ValueError, OSError, RuntimeError, httpx.HTTPError):
+        # An unnamed or slow-to-name model is not an evaluated one; the answer is unaffected.
         return "unevaluated"
     return "evaluated" if evaluation_status(settings, pair)["evaluated"] else "unevaluated"
 
@@ -442,7 +446,7 @@ def _destination(row: dict, role: str) -> dict:
 
 
 def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
-    model = getattr(settings, MODEL_FIELDS[role])
+    model: str = getattr(settings, MODEL_FIELDS[role])
     try:
         row = server(settings, role)
     except RemoteServerRefused as exc:  # no request, not even this read-only one (#288)

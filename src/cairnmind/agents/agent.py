@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import hashlib
 import itertools
 import json
+import logging
 import re
 import time
 from copy import deepcopy
@@ -14,26 +16,70 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from cairnmind.agents import subject as _subject
 from cairnmind.agents.answer_contract import answer_contract_errors, prepare_answer_schema
 from cairnmind.agents.citation_match import locate_quote, quote_weight
-from cairnmind.config import Settings
-from cairnmind.scip.definitions import MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, definition_lines, find_definitions
-from cairnmind.agents.extraction_input import EXTRACTION_SCHEMA, EXTRACTION_TOKENS, REPAIR_TOKENS, extraction_request, extractor_stamp
+from cairnmind.agents.extraction_input import (
+    EXTRACTION_SCHEMA,
+    EXTRACTION_TOKENS,
+    REPAIR_TOKENS,
+    extraction_request,
+    extractor_stamp,
+    repair_prompt,
+    source_text,
+)
 from cairnmind.agents.extraction_input import extraction_schema as _extraction_schema
-from cairnmind.agents.extraction_input import repair_prompt, source_text
-from cairnmind.memory.memory_egress import (ASK, HELD_BACK_SOURCE, HELD_BACK_UNKNOWN, HOSTED_ASK_UNKNOWN, REMOTE_NOT_ALLOWED, ask_gate,
-                            held_back_class)
-from cairnmind.memory.memory_models import answer_label, context_tokens, from_settings
 from cairnmind.agents.ollama import OllamaUnavailable
-from cairnmind.agents.retrieval import (Retriever, json_value, last_warnings, public_metadata, public_record, public_source_metadata, terms,
-                        with_source_origin)
+from cairnmind.agents.retrieval import (
+    Retriever,
+    json_value,
+    last_warnings,
+    public_metadata,
+    public_record,
+    public_source_metadata,
+    terms,
+    with_source_origin,
+)
+from cairnmind.agents.subject import (
+    NAMES_GAP,
+    SUBJECT_GAP,
+    found_names,
+    unnamed_answer_names,
+    unnamed_subject,
+)
+from cairnmind.agents.support import (
+    NAMES_SCHEMA,
+    NAMES_SYSTEM,
+    NAMES_TOKENS,
+    SUPPORT_SCHEMA,
+    SUPPORT_SYSTEM,
+    SUPPORT_TOKENS,
+    names_messages,
+    names_verdict,
+    support_messages,
+    support_verdict,
+)
+from cairnmind.config import Settings
+from cairnmind.memory.memory_egress import (
+    ASK,
+    HELD_BACK_SOURCE,
+    HELD_BACK_UNKNOWN,
+    HOSTED_ASK_UNKNOWN,
+    REMOTE_NOT_ALLOWED,
+    ask_gate,
+    held_back_class,
+)
+from cairnmind.memory.memory_models import answer_label, context_tokens, from_settings
+from cairnmind.scip.definitions import (
+    MAX_DEFINITION_ATTEMPTS,
+    MAX_DEFINITIONS,
+    definition_lines,
+    find_definitions,
+)
 from cairnmind.storage.storage_query import any_of, asc, db_find, desc, eq, is_in, is_null, like, ne, not_in
 from cairnmind.store import validate_task_state
-from cairnmind.agents import subject as _subject
-from cairnmind.agents.subject import NAMES_GAP, SUBJECT_GAP, found_names, unnamed_answer_names, unnamed_subject
-from cairnmind.agents.support import (NAMES_SCHEMA, NAMES_SYSTEM, NAMES_TOKENS, SUPPORT_SCHEMA, SUPPORT_SYSTEM, SUPPORT_TOKENS,
-                      names_messages, names_verdict, support_messages, support_verdict)
 
+log = logging.getLogger(__name__)
 
 SYSTEM = """You are the local evidence-grounded knowledge agent for a programming workspace.
 Answer in the user's language. Use tools to find facts, examine code, trace graph relationships,
@@ -129,7 +175,7 @@ def inference_lease_seconds() -> float:
 def _model_diagnostics(response: dict, phase: str) -> dict:
     """Expose only bounded runtime counters, never arbitrary model/server text."""
     reason = response.get("done_reason")
-    result = {"phase": phase, "done_reason": reason if isinstance(reason, str) and reason in {
+    result: dict[str, Any] = {"phase": phase, "done_reason": reason if isinstance(reason, str) and reason in {
         "stop", "length", "tool_calls", "load", "unload"} else "unknown" if reason is None else "other"}
     for key in ("prompt_eval_count", "eval_count", "total_duration"):
         value = response.get(key)
@@ -553,8 +599,9 @@ class KnowledgeAgent:
                 if value["text"] != text and isinstance(hit.get("line_start"), int):
                     value["line_start"], value["line_end"] = hit["line_start"] + first, hit["line_start"] + last
             value["source_sha256"] = source["sha256"]
-            if register and isinstance(value.get("text"), str) and value["text"] in source_text(source):
-                _show(source, value["text"], item_id=value.get("id"))
+            shown_text = value.get("text")
+            if register and isinstance(shown_text, str) and shown_text in source_text(source):
+                _show(source, shown_text, item_id=value.get("id"))
             # The source checked just above, not the chunk, says whether an external session wrote it.
             result.append(with_source_origin(value, source))
         return result
@@ -574,9 +621,11 @@ class KnowledgeAgent:
         except (ValueError, OSError):
             return []
         # Lines already in view: the hits that are always kept, then each definition added.
-        shown = [(hit["source_id"], hit.get("line_start"), hit.get("line_end"))
-                 for hit in hits[:INITIAL_HITS - MAX_DEFINITIONS]
-                 if isinstance(hit.get("line_start"), int) and isinstance(hit.get("line_end"), int)]
+        shown: list[tuple[Any, int, int]] = []
+        for hit in hits[:INITIAL_HITS - MAX_DEFINITIONS]:
+            hit_start, hit_end = hit.get("line_start"), hit.get("line_end")
+            if isinstance(hit_start, int) and isinstance(hit_end, int):
+                shown.append((hit["source_id"], hit_start, hit_end))
         result, attempts = [], 0
         for row in ranked:
             if len(result) >= MAX_DEFINITIONS or attempts >= MAX_DEFINITION_ATTEMPTS:
@@ -981,15 +1030,14 @@ class KnowledgeAgent:
             return self._result("partial", "There are not enough sources for a confirmed answer.",
                                 evidence, [*unknowns, "The answer has no verified citations."],
                                 started, [], code="missing_evidence"), True
-        result = self._result("partial" if unknowns else "complete", answer, evidence, unknowns, started, sources,
+        answer_text = answer if isinstance(answer, str) else ""
+        result = self._result("partial" if unknowns else "complete", answer_text, evidence, unknowns, started, sources,
                               code="unknowns_invalid" if invalid_unknowns else None)
         covered = result["answer"]
         if answer_schema is not None:
             # Typed answers: measure the values, not the JSON keys chosen by the caller.
-            try:
+            with contextlib.suppress(ValueError, TypeError):
                 covered = " ".join(_json_leaves(json.loads(covered)))
-            except (ValueError, TypeError):
-                pass
         result["coverage"] = quote_coverage(covered, [source["quote"] for source in sources])
         if dropped:
             result["diagnostics"]["citations_dropped"] = dropped
@@ -1096,8 +1144,10 @@ class KnowledgeAgent:
         from cairnmind.agents.nli_verifier import NEEDS_LLM_REVIEW_CODE, evaluate_tier1_nli
         from cairnmind.agents.verdict_cache import VerdictCache, prompt_fingerprint, verdict_cache_key
         vcache = VerdictCache(self.settings.data_dir) if getattr(self.settings, "data_dir", None) else None
-        if hasattr(self.ollama, "verdict_cache_id"):
-            model_cache_id = str(self.ollama.verdict_cache_id)
+        _missing = object()
+        cache_id = getattr(self.ollama, "verdict_cache_id", _missing)
+        if cache_id is not _missing:
+            model_cache_id = str(cache_id)
         elif hasattr(self.ollama, "base_url") or hasattr(self.ollama, "cassette_path"):
             model_cache_id = str(self.settings.chat_model)
         else:
@@ -1305,7 +1355,7 @@ class KnowledgeAgent:
         return None
 
     async def _ask_impl(self, project_id: str, question: str, worktree, answer_schema: dict | None,
-                        diagnostics: dict, *, whole: bool = False, timeout: float | None = None,
+                        diagnostics: dict, *, whole: bool = False, timeout: float | None = None,  # noqa: ASYNC109
                         verifier: str = "llm", nli_scorer=None) -> dict:
         """One pass over the question. ``whole`` is the second look (see ``ask``): the evidence is
         then the whole chunks of the first hits that the first pass showed in part, no definitions."""
@@ -1382,7 +1432,7 @@ class KnowledgeAgent:
                               budget=WHOLE_CATALOG_CHARS if whole else 4000, excerpt_chars=600)}
                 if answer_schema is not None:
                     prompt["answer_schema"] = answer_schema
-                messages = [system, {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}]
+                messages: list[dict[str, Any]] = [system, {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}]
                 for _step in range(self.settings.max_steps):
                     if sum(len(json.dumps(m, ensure_ascii=False)) for m in messages) > context_chars:
                         return self._result("partial", "The analysis reached the context budget; narrow the question.",
@@ -1562,6 +1612,8 @@ class KnowledgeAgent:
                         if gone:
                             diagnostics["counts"]["superseded_records"] = gone
                     else:
+                        if stamp is None:
+                            raise ValueError("Extractor stamp unavailable")
                         self._commit_extraction(project_id, source, accepted, deadline, diagnostics, stamp)
                     self._extraction_deadline(deadline)
                     diagnostics["persistence_stage"] = "save_diagnostics"
@@ -1618,7 +1670,8 @@ class KnowledgeAgent:
         if lookup is not None and timeout >= EXTRACTOR_DIGEST_FLOOR:
             try:
                 digest = await asyncio.wait_for(lookup(self.settings.chat_model), timeout)
-            except Exception:
+            except Exception as exc:
+                log.debug("Model digest lookup skipped (%s)", type(exc).__name__)
                 digest = None
         return extractor_stamp(self.settings.chat_model, digest)
 
@@ -1694,6 +1747,8 @@ class KnowledgeAgent:
                     *diagnostics["validation_codes"], failure]))
                 raise ValueError("Extraction format remained invalid after one correction")
             diagnostics["repair_outcome"] = "succeeded"
+        if records is None:
+            raise ValueError("Extraction returned no candidate records")
         diagnostics["counts"]["candidate_records"] = len(records)
         accepted = []
         for item in records:

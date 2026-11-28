@@ -20,9 +20,8 @@ def test_a_default_port_is_refused_even_when_something_listens_there(port):
         except OSError:
             pytest.skip(f"port {port} is taken on this machine, so a real listener cannot be set up")
         listener.listen()
-        with socket.socket() as client:
-            with pytest.raises(ConnectionRefusedError):
-                client.connect(("127.0.0.1", port))
+        with socket.socket() as client, pytest.raises(ConnectionRefusedError):
+            client.connect(("127.0.0.1", port))
         with socket.socket() as client:
             assert client.connect_ex(("127.0.0.1", port)) == 111
 

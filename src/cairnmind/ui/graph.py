@@ -1,8 +1,8 @@
 """Safe repository file-context reader, quote locator, and 4-column provenance graph builder."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +13,7 @@ MAX_CONTEXT_LINES = 400
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _sha256_bytes(data: bytes) -> str:

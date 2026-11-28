@@ -12,13 +12,13 @@ import subprocess
 
 import pytest
 
-from cairnmind.memory import memory as portable
 from cairnmind.agents.agent_tools import ToolError, _parts
-from cairnmind.scip.ingest import index_project
+from cairnmind.memory import memory as portable
 from cairnmind.memory.memory import MemoryManager, inspect_snapshot
 from cairnmind.memory.memory_paths import is_reserved_memory, snapshot_directory
-from cairnmind.store import Store
 from cairnmind.memory.verification import capture_code_state, load_profiles
+from cairnmind.scip.ingest import index_project
+from cairnmind.store import Store
 
 
 def git(root, *args):

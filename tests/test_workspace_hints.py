@@ -9,11 +9,11 @@ import re
 import time
 
 import pytest
+from test_workspace import manager as manager  # noqa: F401
 
 from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.terminal.terminal_i18n import tr
 from cairnmind.terminal.workspace import HINT_KEYS, HINT_SHORT, border_hint, tmux_chrome
-from test_workspace import manager as manager  # noqa: F401
 
 STYLE = re.compile(r"#\[[^]]*\]")
 

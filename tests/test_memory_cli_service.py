@@ -2,20 +2,20 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
+from conftest import plain_words
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from conftest import plain_words
 from cairnmind import __version__, cli
-from cairnmind.config import Settings
-from cairnmind.service import create_app
 from cairnmind.cli_cmds.service_version import instance_id
+from cairnmind.config import Settings
 from cairnmind.memory.sessions import SessionManager
+from cairnmind.service import create_app
 from cairnmind.store import Store
 
 

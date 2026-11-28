@@ -13,26 +13,26 @@ import subprocess
 import sys
 import time
 import uuid
-from contextlib import closing
+from contextlib import closing, suppress
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-from typer.testing import CliRunner
-
-from cairnmind import cli as cairnmind_cli
-from cairnmind.terminal import person_proof, setup_change, setup_mark, setup_profiles
-from cairnmind.storage import store_writer
-from cairnmind.cli_cmds import upgrade_mark
-from cairnmind.storage.arcade import ArcadeClient, ArcadeError
-from cairnmind.cli import app
-from cairnmind.config import Settings
-from cairnmind.memory.confirmation import confirmation_of
-from cairnmind.storage.database_mode import connect_only
-from cairnmind.store import Store
 from conftest import as_person
 from database_relay import Relay
 from test_connect_only import data_directory, repository, test_engine  # noqa: F401 - test_engine is a fixture
+from typer.testing import CliRunner
+
+from cairnmind import cli as cairnmind_cli
+from cairnmind.cli import app
+from cairnmind.cli_cmds import upgrade_mark
+from cairnmind.config import Settings
+from cairnmind.memory.confirmation import confirmation_of
+from cairnmind.storage import store_writer
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
+from cairnmind.storage.database_mode import connect_only
+from cairnmind.store import Store
+from cairnmind.terminal import person_proof, setup_change, setup_mark, setup_profiles
 
 runner = CliRunner()
 
@@ -56,6 +56,7 @@ def service_pids(settings) -> list[int]:
     if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
+
         from cairnmind.pal import process_identity
         psapi = ctypes.WinDLL("psapi", use_last_error=True)
         buf = (wintypes.DWORD * 4096)()
@@ -262,10 +263,8 @@ def new_names(installation, test_engine):  # noqa: F811
     yield found
     with closing(ArcadeClient(replace(installation.local, arcade_password=test_engine[1]), administrator=True)) as client:
         for command in (f"drop user {found.user}", f"drop database {found.database}"):
-            try:
+            with suppress(ArcadeError):
                 client.server_command(command)
-            except ArcadeError:
-                pass
 
 
 def administrators_request(ns, names):

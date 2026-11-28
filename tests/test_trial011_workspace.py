@@ -4,19 +4,19 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
+from consent_steps import consent_drawn
+from test_api_panels import ProfileBroker
+from test_terminal_panels import settle, setup
 from textual.widgets import Button, DataTable, Static, TextArea
 
 from cairnmind.config import Settings
+from cairnmind.terminal import terminal_i18n
 from cairnmind.terminal.terminal_commands import JoinWorkspaceApp
 from cairnmind.terminal.terminal_detail import joined, record_parts
-from cairnmind.terminal import terminal_i18n
 from cairnmind.terminal.terminal_i18n import tr
 from cairnmind.terminal.terminal_inspector import InspectorApp
 from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
 from cairnmind.terminal.terminal_ui import FormModal, MessageModal
-from consent_steps import consent_drawn
-from test_api_panels import ProfileBroker
-from test_terminal_panels import settle, setup
 
 SIZES = [(80, 24), (120, 40)]
 
@@ -509,9 +509,10 @@ def notice_rows(app):
 @pytest.mark.parametrize("size", [(80, 24), (120, 40), (45, 40)])
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_a_started_stage_names_its_stage_and_assistant_on_the_notice_line(tmp_path, monkeypatch, size, language):
-    from cairnmind.terminal import workspace_stage
     from test_terminal_ux080 import setup_ui
     from test_workspace_stage import answer_stage, decision
+
+    from cairnmind.terminal import workspace_stage
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)
     project = broker.projects[0]
     answer_stage(broker, decision("start_slot", project, stage="review", slot_id="slot-api", client="api",

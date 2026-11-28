@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 import inspect
 import json
 import logging
@@ -10,13 +9,14 @@ import os
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from types import SimpleNamespace as NS
 
 import pytest
 
-from cairnmind.config import Settings
 from cairnmind.agents import copilot_adapter as module
 from cairnmind.agents.copilot_adapter import CopilotAdapter, CopilotError
+from cairnmind.config import Settings
 
 
 @dataclass

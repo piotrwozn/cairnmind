@@ -8,21 +8,22 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
-from contextlib import contextmanager
 import json
 import os
 import re
 import signal
 import subprocess
+import sys
+from contextlib import contextmanager, suppress
 
-try:
+if sys.platform != "win32":
     import fcntl
     import termios
     import tty
-except ImportError:
-    fcntl = None  # type: ignore[assignment]
-    termios = None  # type: ignore[assignment]
-    tty = None  # type: ignore[assignment]
+else:
+    fcntl = None
+    termios = None
+    tty = None
 
 from websockets.exceptions import WebSocketException
 
@@ -38,6 +39,8 @@ CONTROL_STATES = frozenset({"controller", "readonly", "offline", "stale", *ENDED
 
 @contextmanager
 def raw_terminal(input_fd, output_fd):
+    if sys.platform == "win32":
+        raise ValueError("Terminal bridge requires a POSIX interactive terminal")
     if not os.isatty(input_fd) or not os.isatty(output_fd) or os.ttyname(input_fd) != os.ttyname(output_fd):
         raise ValueError("Terminal bridge requires one interactive terminal")
     attributes = termios.tcgetattr(input_fd)
@@ -49,14 +52,10 @@ def raw_terminal(input_fd, output_fd):
         yield
     finally:
         for fd, value in flags.items():
-            try:
+            with suppress(OSError):
                 fcntl.fcntl(fd, fcntl.F_SETFL, value)
-            except OSError:
-                pass
-        try:
+        with suppress(OSError):
             termios.tcsetattr(input_fd, termios.TCSANOW, attributes)
-        except OSError:
-            pass
 
 
 def terminal_dimensions(fd):
@@ -70,14 +69,12 @@ class PaneStatus:
         self.run_id, self.workspace_id = run_id, workspace_id
         self.pane = os.environ.get("TMUX_PANE", "")
         self.manager = None
-        try:
+        with suppress(ImportError, OSError, ValueError):
             from cairnmind.terminal.workspace import WorkspaceManager
             manager = WorkspaceManager(settings, workspace_id=workspace_id)
             socket = os.environ.get("TMUX", "").split(",", 1)[0]
             if socket == str(manager.socket) and re.fullmatch(r"%\d+", self.pane):
                 self.manager = manager
-        except (ImportError, OSError, ValueError):
-            pass
         self.previous = None
 
     def poll_nonce(self):
@@ -96,20 +93,16 @@ class PaneStatus:
     def state(self, value):
         if value == self.previous:
             return
-        if self.poll_nonce() is not None:
-            try:
+        if self.manager is not None and self.poll_nonce() is not None:
+            with suppress(OSError, ValueError, subprocess.SubprocessError):
                 result = self.manager.tmux("set-option", "-p", "-t", self.pane, "@cairnmind_control", value, check=False)
                 if result.returncode == 0:
                     self.previous = value
-            except (OSError, ValueError, subprocess.SubprocessError):
-                pass
 
     def auth_finished(self):
-        if self.poll_nonce() is not None:
-            try:
+        if self.manager is not None and self.poll_nonce() is not None:
+            with suppress(OSError, ValueError, subprocess.SubprocessError):
                 self.manager.auth_finished(self.run_id)
-            except (OSError, ValueError, subprocess.SubprocessError):
-                pass
 
 
 class RawTerminalBridge:
@@ -139,10 +132,8 @@ class RawTerminalBridge:
 
     async def _state(self, state):
         if self.pane is not None:
-            try:
+            with suppress(OSError, ValueError):
                 await asyncio.to_thread(self.pane.state, state)
-            except (OSError, ValueError):
-                pass
 
     @staticmethod
     async def _ready(fd, write=False):
@@ -168,8 +159,10 @@ class RawTerminalBridge:
             except BlockingIOError:
                 await self._ready(self.output_fd, True)
 
-    async def _final_output(self, data, timeout=.25):
+    async def _final_output(self, data, timeout=.25):  # noqa: ASYNC109 - callers pass explicit flush timeout
         """Bound final feedback even after the raw context restored blocking I/O."""
+        if sys.platform == "win32":
+            return False
         try:
             flags = fcntl.fcntl(self.output_fd, fcntl.F_GETFL)
         except OSError:
@@ -196,16 +189,14 @@ class RawTerminalBridge:
         except OSError:
             return False
         finally:
-            try:
+            with suppress(OSError):
                 fcntl.fcntl(self.output_fd, fcntl.F_SETFL, flags)
-            except OSError:
-                pass
 
     def _flush_input(self):
-        try:
+        if sys.platform == "win32":
+            return
+        with suppress(OSError):
             termios.tcflush(self.input_fd, termios.TCIFLUSH)
-        except OSError:
-            pass
 
     async def _connection(self, websocket):
         send_lock = asyncio.Lock()
@@ -305,15 +296,15 @@ class RawTerminalBridge:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     def _install_signals(self):
+        if sys.platform == "win32":
+            return
         loop = asyncio.get_running_loop()
         for number, callback in ((signal.SIGWINCH, self.resize_pending.set), (signal.SIGTERM, self.stopped.set),
                                   (signal.SIGHUP, self.stopped.set), (signal.SIGINT, self.stopped.set)):
-            try:
+            with suppress(RuntimeError, ValueError):
                 previous = signal.getsignal(number)
                 loop.add_signal_handler(number, callback)
                 self._signals[number] = previous
-            except (RuntimeError, ValueError):
-                pass
 
     def _restore_signals(self):
         loop = asyncio.get_running_loop()
@@ -356,16 +347,12 @@ class RawTerminalBridge:
                             self._finish({"purpose": "auth" if self.auth else None}, stale=True)
                             break
                         await self._state("offline")
-                        try:
+                        with suppress(TimeoutError):
                             await asyncio.wait_for(self.stopped.wait(), 1)
-                        except TimeoutError:
-                            pass
                     except (OSError, ValueError, WebSocketException):
                         await self._state("offline")
-                        try:
+                        with suppress(TimeoutError):
                             await asyncio.wait_for(self.stopped.wait(), 1)
-                        except TimeoutError:
-                            pass
         except (OSError, ValueError):
             result = 2
         finally:
@@ -381,10 +368,8 @@ class RawTerminalBridge:
                 # Even cancellation of optional feedback must retain the
                 # existing post-restoration removal of an account-login pane.
                 if self.auth and self.finished and self.pane is not None:
-                    try:
+                    with suppress(OSError, ValueError):
                         await asyncio.to_thread(self.pane.auth_finished)
-                    except (OSError, ValueError):
-                        pass
         return result
 
 

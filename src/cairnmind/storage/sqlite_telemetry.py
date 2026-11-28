@@ -10,18 +10,23 @@ from __future__ import annotations
 
 import ctypes
 import json
+import logging
 import os
-from pathlib import Path
 import re
 import sqlite3
 import sys
 import tempfile
 import time
-from typing import Any, Callable, TextIO
+from collections.abc import Callable
+from contextlib import suppress
+from pathlib import Path
+from typing import Any, TextIO
 
 from cairnmind.config import Settings, resolved_backend, sqlite_db_path
 from cairnmind.pal import platform_hints
 from cairnmind.pal.private_files import make_private
+
+log = logging.getLogger(__name__)
 
 # Scale thresholds recommending migration from SQLite to ArcadeDB server (Faza 5).
 MAX_DB_BYTES = 500 * 1024 * 1024  # 500 MB
@@ -74,10 +79,8 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.flush()
             os.fsync(handle.fileno())
-        try:
+        with suppress(OSError):
             make_private(tmp)
-        except OSError:
-            pass
         tmp.replace(path)
     finally:
         tmp.unlink(missing_ok=True)
@@ -106,10 +109,8 @@ def record_sqlite_metrics(data_dir: Path, snapshot: dict[str, Any], *, now: floa
         "sqlite_vec_loaded": bool(snapshot.get("sqlite_vec_loaded", existing.get("sqlite_vec_loaded", False))),
         "updated_at": ts,
     }
-    try:
+    with suppress(OSError):
         _atomic_write_json(metrics_path(data_dir), merged)
-    except OSError:
-        pass
     return merged
 
 
@@ -125,7 +126,8 @@ def _windows_drive_type(path_str: str) -> int | None:
         kernel32.GetDriveTypeW.argtypes = [ctypes.c_wchar_p]
         kernel32.GetDriveTypeW.restype = ctypes.c_uint
         return int(kernel32.GetDriveTypeW(root))
-    except Exception:  # noqa: BLE001
+    except (OSError, AttributeError, ValueError, TypeError) as exc:
+        log.debug("Windows GetDriveTypeW lookup failed for %s: %s", root, exc)
         return None
 
 
@@ -140,10 +142,12 @@ def _match_mount_fstype(target_path: str, mounts_text: str) -> tuple[str | None,
             continue
         mount_point = parts[1].replace("\\040", " ").rstrip("/") or "/"
         fstype = parts[2].lower()
-        if mount_point == "/" or normalized == mount_point or normalized.startswith(mount_point + "/"):
-            if best_mount is None or len(mount_point) > len(best_mount):
-                best_mount = mount_point
-                best_fs = fstype
+        if (
+            (mount_point == "/" or normalized == mount_point or normalized.startswith(mount_point + "/"))
+            and (best_mount is None or len(mount_point) > len(best_mount))
+        ):
+            best_mount = mount_point
+            best_fs = fstype
     return best_mount, best_fs
 
 
@@ -408,8 +412,6 @@ def maybe_emit_scale_hint(
     target_stream = stream if stream is not None else sys.stderr
     print(f"Cairnmind hint: {summary}", file=target_stream)
     existing["last_warned_at"] = ts
-    try:
+    with suppress(OSError):
         _atomic_write_json(metrics_path(settings.data_dir), existing)
-    except OSError:
-        pass
     return True

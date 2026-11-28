@@ -10,18 +10,18 @@ from __future__ import annotations
 import errno
 import functools
 import os
-from pathlib import Path
 import secrets
 import stat
 import sys
 import time
+from pathlib import Path
 
 IS_WINDOWS = sys.platform == "win32"
 
-if IS_WINDOWS:
+if sys.platform == "win32":
     import ctypes
-    from ctypes import wintypes
     import msvcrt
+    from ctypes import wintypes
 
     _FILE_ATTRIBUTE_DIRECTORY = 0x0010
     _FILE_ATTRIBUTE_NORMAL = 0x0080
@@ -199,6 +199,8 @@ if IS_WINDOWS:
         if not _advapi32.ConvertSidToStringSidW(sid_ptr, ctypes.byref(str_ptr)):
             raise ctypes.WinError(ctypes.get_last_error())
         try:
+            if not str_ptr.value:
+                raise OSError("Failed to convert SID to string")
             return ctypes.wstring_at(str_ptr.value)
         finally:
             _kernel32.LocalFree(str_ptr)
@@ -355,6 +357,8 @@ if IS_WINDOWS:
                     return False
                 header = ctypes.cast(ace_ptr, ctypes.POINTER(_ACE_HEADER)).contents
                 if header.AceType == _ACCESS_ALLOWED_ACE_TYPE:
+                    if not ace_ptr.value:
+                        return False
                     ace_sid = _sid_to_string(ace_ptr.value + sid_offset)
                     if ace_sid not in allowed_sids:
                         return False
@@ -367,79 +371,278 @@ if IS_WINDOWS:
             _kernel32.LocalFree(sd)
 
 
-def current_user_sid() -> str | None:
-    """Return the current process user's Windows SID string on Windows, or None on POSIX."""
-    if not IS_WINDOWS:
+    def current_user_sid() -> str | None:
+        """Return the current process user's Windows SID string on Windows, or None on POSIX."""
+        return _windows_current_user_sid()
+
+    def is_reparse_point(path: Path | str) -> bool:
+        """True when path is a symlink (POSIX) or symlink/junction/reparse point (Windows)."""
+        attrs = _kernel32.GetFileAttributesW(str(Path(path)))
+        if attrs == _INVALID_FILE_ATTRIBUTES:
+            return False
+        return bool(attrs & _FILE_ATTRIBUTE_REPARSE_POINT)
+
+    def is_private_stat(info: os.stat_result, path: Path | None = None, *,
+                        directory: bool = False, strict: bool = True) -> bool:
+        """Check whether an open/statted file or directory is owned by this user and private."""
+        if directory and not stat.S_ISDIR(info.st_mode):
+            return False
+        if not directory and not stat.S_ISREG(info.st_mode):
+            return False
+        if path is None or is_reparse_point(path):
+            return False
+        return _check_private_dacl(path)
+
+    def make_private(path: Path | str, *, directory: bool = False) -> None:
+        """Restrict path to owner-only (0600/0700 on POSIX, Protected DACL on Windows). Never follows symlinks."""
+        target = Path(path)
+        if is_reparse_point(target):
+            raise OSError(errno.ELOOP, "Refusing to change permissions on a symbolic link", str(target))
+        _set_private_dacl(target, directory=directory)
+
+    def make_executable(path: Path | str) -> None:
+        """Restrict a downloaded runtime binary to owner-only executable (0700 on POSIX, Protected DACL on Windows)."""
+        target = Path(path)
+        if is_reparse_point(target):
+            raise OSError(errno.ELOOP, "Refusing to change permissions on a symbolic link", str(target))
+        _set_private_dacl(target, directory=False)
+
+    def make_private_fd(fd: int, path: Path | str, *, directory: bool = False) -> None:
+        """Apply owner-only permissions to an already-open descriptor (fchmod on POSIX, DACL on Windows)."""
+        make_private(path, directory=directory)
+
+    def make_private_best_effort(path: Path | str, *, directory: bool = False) -> None:
+        """Best-effort equivalent of make_private for housekeeping (e.g. rotated logs)."""
+        target = Path(path)
+        try:
+            if not target.exists() or is_reparse_point(target):
+                return
+            if (target.is_dir() if directory else target.is_file()):
+                _set_private_dacl(target, directory=directory)
+        except (FileNotFoundError, PermissionError):
+            return
+
+    def ensure_private_dir(path: Path | str, *, error: str = "Directory must belong to the user and be private.") -> Path:
+        """Create a private directory atomically if absent, and verify ownership and permissions."""
+        target = Path(path)
+        if target.exists() or is_reparse_point(target):
+            if is_reparse_point(target) or not target.is_dir():
+                raise ValueError(error)
+            if not _check_private_dacl(target):
+                raise ValueError(error)
+            return target
+        if target.parent != target and not target.parent.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+        sd = _build_private_sd(directory=True)
+        try:
+            sa = _SECURITY_ATTRIBUTES(ctypes.sizeof(_SECURITY_ATTRIBUTES), sd, False)
+            created = _kernel32.CreateDirectoryW(str(target), ctypes.byref(sa))
+            if not created:
+                err = ctypes.get_last_error()
+                if err != _ERROR_ALREADY_EXISTS:
+                    raise ValueError(error) from ctypes.WinError(err)
+        finally:
+            _kernel32.LocalFree(sd)
+        if is_reparse_point(target) or not target.is_dir() or not _check_private_dacl(target):
+            raise ValueError(error)
+        return target
+
+    def open_no_follow(path: Path | str, flags: int, mode: int = 0o600, *, private_on_create: bool = True) -> int:
+        """Open path without following a symlink/reparse point.
+
+        On Windows, uses CreateFileW with FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ|WRITE|DELETE,
+        non-inheritable handles, and a Protected DACL SECURITY_ATTRIBUTES on creation (zero race window).
+        """
+        target = Path(path)
+        if is_reparse_point(target):
+            raise OSError(errno.ELOOP, "Symbolic link not followed", str(target))
+        access_mode = flags & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR)
+        if access_mode == os.O_WRONLY:
+            desired_access = _GENERIC_WRITE
+        elif access_mode == os.O_RDWR:
+            desired_access = _GENERIC_READ | _GENERIC_WRITE
+        else:
+            desired_access = _GENERIC_READ
+        creating = bool(flags & os.O_CREAT)
+        if creating and (flags & os.O_EXCL):
+            disposition = _CREATE_NEW
+        elif creating and (flags & os.O_TRUNC):
+            disposition = _CREATE_ALWAYS
+        elif creating:
+            disposition = _OPEN_ALWAYS
+        elif flags & os.O_TRUNC:
+            disposition = _TRUNCATE_EXISTING
+        else:
+            disposition = _OPEN_EXISTING
+        share_mode = _FILE_SHARE_READ | _FILE_SHARE_WRITE | _FILE_SHARE_DELETE
+        attrs = _FILE_ATTRIBUTE_NORMAL | _FILE_FLAG_OPEN_REPARSE_POINT
+        sd = _build_private_sd(directory=False) if (creating and private_on_create) else None
+        try:
+            sa = _SECURITY_ATTRIBUTES(ctypes.sizeof(_SECURITY_ATTRIBUTES), sd, False)
+            handle = _kernel32.CreateFileW(
+                str(target), desired_access, share_mode, ctypes.byref(sa), disposition, attrs, None
+            )
+            if handle == _INVALID_HANDLE_VALUE:
+                err = ctypes.get_last_error()
+                if err == _ERROR_ACCESS_DENIED and target.is_dir():
+                    raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), str(target))
+                raise ctypes.WinError(err)
+        finally:
+            if sd is not None:
+                _kernel32.LocalFree(sd)
+        try:
+            info = _BY_HANDLE_FILE_INFORMATION()
+            if not _kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if info.dwFileAttributes & _FILE_ATTRIBUTE_REPARSE_POINT:
+                raise OSError(errno.ELOOP, "Symbolic link not followed", str(target))
+            if info.dwFileAttributes & _FILE_ATTRIBUTE_DIRECTORY:
+                raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), str(target))
+            crt_flags = os.O_BINARY
+            if access_mode == os.O_RDONLY:
+                crt_flags |= os.O_RDONLY
+            if flags & os.O_APPEND:
+                crt_flags |= os.O_APPEND
+            fd = msvcrt.open_osfhandle(handle, crt_flags)
+        except BaseException:
+            _kernel32.CloseHandle(handle)
+            raise
+        return fd
+
+    def _fchmod_if_posix(fd: int, mode: int) -> None:
         return None
-    return _windows_current_user_sid()
 
+    def _win_posix_replace(src: Path | str, dst: Path | str) -> bool:
+        """Use NTFS FileRenameInfoEx with FILE_RENAME_FLAG_POSIX_SEMANTICS to atomically replace even an open file."""
+        dst_abs = os.path.abspath(str(dst))
+        name_bytes = dst_abs.encode("utf-16-le")
+        # FILE_RENAME_INFO layout: DWORD Flags (+ pad), HANDLE RootDirectory, DWORD FileNameLength, WCHAR FileName[1]
+        class _FILE_RENAME_INFO(ctypes.Structure):
+            _fields_ = [
+                ("Flags", wintypes.DWORD),
+                ("RootDirectory", wintypes.HANDLE),
+                ("FileNameLength", wintypes.DWORD),
+                ("FileName", wintypes.WCHAR * 1),
+            ]
+        name_offset = _FILE_RENAME_INFO.FileName.offset
+        total_size = max(ctypes.sizeof(_FILE_RENAME_INFO), name_offset + len(name_bytes) + 2)
+        buf = ctypes.create_string_buffer(total_size)
+        header = _FILE_RENAME_INFO.from_buffer(buf)
+        header.Flags = _FILE_RENAME_FLAG_REPLACE_IF_EXISTS | _FILE_RENAME_FLAG_POSIX_SEMANTICS
+        header.RootDirectory = None
+        header.FileNameLength = len(name_bytes)
+        ctypes.memmove(ctypes.addressof(buf) + name_offset, name_bytes, len(name_bytes))
+        handle = _kernel32.CreateFileW(
+            str(src), _DELETE,
+            _FILE_SHARE_READ | _FILE_SHARE_WRITE | _FILE_SHARE_DELETE,
+            None, _OPEN_EXISTING, _FILE_FLAG_OPEN_REPARSE_POINT, None,
+        )
+        if handle == _INVALID_HANDLE_VALUE:
+            return False
+        try:
+            return bool(_kernel32.SetFileInformationByHandle(handle, _FileRenameInfoEx, buf, total_size))
+        finally:
+            _kernel32.CloseHandle(handle)
 
-def is_reparse_point(path: Path | str) -> bool:
-    """True when path is a symlink (POSIX) or symlink/junction/reparse point (Windows)."""
-    path = Path(path)
-    if not IS_WINDOWS:
-        return path.is_symlink()
-    attrs = _kernel32.GetFileAttributesW(str(path))
-    if attrs == _INVALID_FILE_ATTRIBUTES:
-        return False
-    return bool(attrs & _FILE_ATTRIBUTE_REPARSE_POINT)
+    def atomic_replace(src: Path | str, dst: Path | str) -> None:
+        """Atomic file replacement: os.replace on POSIX; POSIX-semantics FileRenameInfoEx + bounded retry on Windows."""
+        if _win_posix_replace(src, dst):
+            return
+        delay = 0.01
+        for attempt in range(6):
+            try:
+                os.replace(src, dst)
+                return
+            except PermissionError as exc:
+                if attempt == 5 or getattr(exc, "winerror", None) not in _RETRYABLE_WINERRORS:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, 0.1)
 
+    def fsync_directory(path: Path | str) -> None:
+        """Fsync a directory descriptor on POSIX; no-op on Windows (NTFS does not support dir fsync)."""
+        return None
 
-def is_private_stat(info: os.stat_result, path: Path | None = None, *,
-                    directory: bool = False, strict: bool = True) -> bool:
-    """Check whether an open/statted file or directory is owned by this user and private."""
-    if directory and not stat.S_ISDIR(info.st_mode):
-        return False
-    if not directory and not stat.S_ISREG(info.st_mode):
-        return False
-    if not IS_WINDOWS:
+    def current_uid() -> int | None:
+        """os.getuid() on POSIX, None on Windows."""
+        return None
+
+    def owner_uid_mismatch(path: Path | str) -> tuple[int, int] | None:
+        """Return `(file_uid, effective_uid)` on POSIX when non-root euid differs from path owner; None on Windows."""
+        return None
+
+    def pread_at(fd: int, count: int, offset: int) -> bytes:
+        """Read up to count bytes at offset without moving the file position (POSIX os.pread fallback on Windows)."""
+        saved = os.lseek(fd, 0, os.SEEK_CUR)
+        try:
+            os.lseek(fd, offset, os.SEEK_SET)
+            return os.read(fd, count)
+        finally:
+            os.lseek(fd, saved, os.SEEK_SET)
+
+    def change_time_ns(path: Path | str, status: os.stat_result) -> int:
+        """Inode/metadata change time in Unix nanoseconds: st_ctime_ns on POSIX, NTFS ChangeTime on Windows."""
+        handle = _kernel32.CreateFileW(
+            str(path), 0x80,  # FILE_READ_ATTRIBUTES
+            _FILE_SHARE_READ | _FILE_SHARE_WRITE | _FILE_SHARE_DELETE,
+            None, _OPEN_EXISTING, 0x02200000,  # FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT
+            None,
+        )
+        if handle == _INVALID_HANDLE_VALUE:
+            return status.st_ctime_ns
+        try:
+            info = _FILE_BASIC_INFO()
+            if not _kernel32.GetFileInformationByHandleEx(handle, 0, ctypes.byref(info), ctypes.sizeof(info)):
+                return status.st_ctime_ns
+            # Windows FILETIME: 100ns ticks since 1601-01-01; Unix epoch offset is 11644473600s.
+            return (info.ChangeTime - 116444736000000000) * 100
+        finally:
+            _kernel32.CloseHandle(handle)
+
+else:
+    def current_user_sid() -> str | None:
+        """Return the current process user's Windows SID string on Windows, or None on POSIX."""
+        return None
+
+    def is_reparse_point(path: Path | str) -> bool:
+        """True when path is a symlink (POSIX) or symlink/junction/reparse point (Windows)."""
+        return Path(path).is_symlink()
+
+    def is_private_stat(info: os.stat_result, path: Path | None = None, *,
+                        directory: bool = False, strict: bool = True) -> bool:
+        """Check whether an open/statted file or directory is owned by this user and private."""
+        if directory and not stat.S_ISDIR(info.st_mode):
+            return False
+        if not directory and not stat.S_ISREG(info.st_mode):
+            return False
         if info.st_uid != os.getuid():
             return False
         mode = stat.S_IMODE(info.st_mode)
         if strict:
             return mode == (0o700 if directory else 0o600)
         return (mode & 0o077) == 0
-    if path is None:
-        return False
-    if is_reparse_point(path):
-        return False
-    return _check_private_dacl(path)
 
-
-def make_private(path: Path | str, *, directory: bool = False) -> None:
-    """Restrict path to owner-only (0600/0700 on POSIX, Protected DACL on Windows). Never follows symlinks."""
-    target = Path(path)
-    if is_reparse_point(target):
-        raise OSError(errno.ELOOP, "Refusing to change permissions on a symbolic link", str(target))
-    if not IS_WINDOWS:
+    def make_private(path: Path | str, *, directory: bool = False) -> None:
+        """Restrict path to owner-only (0600/0700 on POSIX, Protected DACL on Windows). Never follows symlinks."""
+        target = Path(path)
+        if is_reparse_point(target):
+            raise OSError(errno.ELOOP, "Refusing to change permissions on a symbolic link", str(target))
         os.chmod(target, 0o700 if directory else 0o600)
-        return
-    _set_private_dacl(target, directory=directory)
 
-
-def make_executable(path: Path | str) -> None:
-    """Restrict a downloaded runtime binary to owner-only executable (0700 on POSIX, Protected DACL on Windows)."""
-    target = Path(path)
-    if is_reparse_point(target):
-        raise OSError(errno.ELOOP, "Refusing to change permissions on a symbolic link", str(target))
-    if not IS_WINDOWS:
+    def make_executable(path: Path | str) -> None:
+        """Restrict a downloaded runtime binary to owner-only executable (0700 on POSIX, Protected DACL on Windows)."""
+        target = Path(path)
+        if is_reparse_point(target):
+            raise OSError(errno.ELOOP, "Refusing to change permissions on a symbolic link", str(target))
         os.chmod(target, 0o700)
-        return
-    _set_private_dacl(target, directory=False)
 
-
-def make_private_fd(fd: int, path: Path | str, *, directory: bool = False) -> None:
-    """Apply owner-only permissions to an already-open descriptor (fchmod on POSIX, DACL on Windows)."""
-    if not IS_WINDOWS:
+    def make_private_fd(fd: int, path: Path | str, *, directory: bool = False) -> None:
+        """Apply owner-only permissions to an already-open descriptor (fchmod on POSIX, DACL on Windows)."""
         os.fchmod(fd, 0o700 if directory else 0o600)
-        return
-    make_private(path, directory=directory)
 
-
-def make_private_best_effort(path: Path | str, *, directory: bool = False) -> None:
-    """Best-effort equivalent of make_private for housekeeping (e.g. rotated logs)."""
-    target = Path(path)
-    if not IS_WINDOWS:
+    def make_private_best_effort(path: Path | str, *, directory: bool = False) -> None:
+        """Best-effort equivalent of make_private for housekeeping (e.g. rotated logs)."""
+        target = Path(path)
         try:
             fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
         except (FileNotFoundError, PermissionError):
@@ -456,20 +659,10 @@ def make_private_best_effort(path: Path | str, *, directory: bool = False) -> No
             pass
         finally:
             os.close(fd)
-        return
-    try:
-        if not target.exists() or is_reparse_point(target):
-            return
-        if (target.is_dir() if directory else target.is_file()):
-            _set_private_dacl(target, directory=directory)
-    except (FileNotFoundError, PermissionError):
-        return
 
-
-def ensure_private_dir(path: Path | str, *, error: str = "Directory must belong to the user and be private.") -> Path:
-    """Create a private directory atomically if absent, and verify ownership and permissions."""
-    target = Path(path)
-    if not IS_WINDOWS:
+    def ensure_private_dir(path: Path | str, *, error: str = "Directory must belong to the user and be private.") -> Path:
+        """Create a private directory atomically if absent, and verify ownership and permissions."""
+        target = Path(path)
         try:
             target.mkdir(parents=True, exist_ok=True, mode=0o700)
         except FileExistsError:
@@ -478,92 +671,60 @@ def ensure_private_dir(path: Path | str, *, error: str = "Directory must belong 
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
             raise ValueError(error)
         return target
-    if target.exists() or is_reparse_point(target):
-        if is_reparse_point(target) or not target.is_dir():
-            raise ValueError(error)
-        if not _check_private_dacl(target):
-            raise ValueError(error)
-        return target
-    if target.parent != target and not target.parent.exists():
-        target.parent.mkdir(parents=True, exist_ok=True)
-    sd = _build_private_sd(directory=True)
-    try:
-        sa = _SECURITY_ATTRIBUTES(ctypes.sizeof(_SECURITY_ATTRIBUTES), sd, False)
-        created = _kernel32.CreateDirectoryW(str(target), ctypes.byref(sa))
-        if not created:
-            err = ctypes.get_last_error()
-            if err != _ERROR_ALREADY_EXISTS:
-                raise ValueError(error) from ctypes.WinError(err)
-    finally:
-        _kernel32.LocalFree(sd)
-    if is_reparse_point(target) or not target.is_dir() or not _check_private_dacl(target):
-        raise ValueError(error)
-    return target
 
+    def open_no_follow(path: Path | str, flags: int, mode: int = 0o600, *, private_on_create: bool = True) -> int:
+        """Open path without following a symlink/reparse point."""
+        return os.open(Path(path), flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), mode)
 
-def open_no_follow(path: Path | str, flags: int, mode: int = 0o600, *, private_on_create: bool = True) -> int:
-    """Open path without following a symlink/reparse point.
+    def _fchmod_if_posix(fd: int, mode: int) -> None:
+        os.fchmod(fd, mode)
 
-    On Windows, uses CreateFileW with FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ|WRITE|DELETE,
-    non-inheritable handles, and a Protected DACL SECURITY_ATTRIBUTES on creation (zero race window).
-    """
-    target = Path(path)
-    if not IS_WINDOWS:
-        return os.open(target, flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), mode)
-    if is_reparse_point(target):
-        raise OSError(errno.ELOOP, "Symbolic link not followed", str(target))
-    access_mode = flags & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR)
-    if access_mode == os.O_WRONLY:
-        desired_access = _GENERIC_WRITE
-    elif access_mode == os.O_RDWR:
-        desired_access = _GENERIC_READ | _GENERIC_WRITE
-    else:
-        desired_access = _GENERIC_READ
-    creating = bool(flags & os.O_CREAT)
-    if creating and (flags & os.O_EXCL):
-        disposition = _CREATE_NEW
-    elif creating and (flags & os.O_TRUNC):
-        disposition = _CREATE_ALWAYS
-    elif creating:
-        disposition = _OPEN_ALWAYS
-    elif flags & os.O_TRUNC:
-        disposition = _TRUNCATE_EXISTING
-    else:
-        disposition = _OPEN_EXISTING
-    share_mode = _FILE_SHARE_READ | _FILE_SHARE_WRITE | _FILE_SHARE_DELETE
-    attrs = _FILE_ATTRIBUTE_NORMAL | _FILE_FLAG_OPEN_REPARSE_POINT
-    sd = _build_private_sd(directory=False) if (creating and private_on_create) else None
-    try:
-        sa = _SECURITY_ATTRIBUTES(ctypes.sizeof(_SECURITY_ATTRIBUTES), sd, False)
-        handle = _kernel32.CreateFileW(
-            str(target), desired_access, share_mode, ctypes.byref(sa), disposition, attrs, None
-        )
-        if handle == _INVALID_HANDLE_VALUE:
-            err = ctypes.get_last_error()
-            if err == _ERROR_ACCESS_DENIED and target.is_dir():
-                raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), str(target))
-            raise ctypes.WinError(err)
-    finally:
-        if sd is not None:
-            _kernel32.LocalFree(sd)
-    try:
-        info = _BY_HANDLE_FILE_INFORMATION()
-        if not _kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
-            raise ctypes.WinError(ctypes.get_last_error())
-        if info.dwFileAttributes & _FILE_ATTRIBUTE_REPARSE_POINT:
-            raise OSError(errno.ELOOP, "Symbolic link not followed", str(target))
-        if info.dwFileAttributes & _FILE_ATTRIBUTE_DIRECTORY:
-            raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), str(target))
-        crt_flags = os.O_BINARY
-        if access_mode == os.O_RDONLY:
-            crt_flags |= os.O_RDONLY
-        if flags & os.O_APPEND:
-            crt_flags |= os.O_APPEND
-        fd = msvcrt.open_osfhandle(handle, crt_flags)
-    except BaseException:
-        _kernel32.CloseHandle(handle)
-        raise
-    return fd
+    def _win_posix_replace(src: Path | str, dst: Path | str) -> bool:
+        return False
+
+    def atomic_replace(src: Path | str, dst: Path | str) -> None:
+        """Atomic file replacement: os.replace on POSIX; POSIX-semantics FileRenameInfoEx + bounded retry on Windows."""
+        os.replace(src, dst)
+
+    def fsync_directory(path: Path | str) -> None:
+        """Fsync a directory descriptor on POSIX; no-op on Windows (NTFS does not support dir fsync)."""
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def current_uid() -> int | None:
+        """os.getuid() on POSIX, None on Windows."""
+        return os.getuid()
+
+    def owner_uid_mismatch(path: Path | str) -> tuple[int, int] | None:
+        """Return `(file_uid, effective_uid)` on POSIX when non-root euid differs from path owner; None on Windows."""
+        if not hasattr(os, "geteuid"):
+            return None
+        try:
+            st = Path(path).stat()
+            euid = os.geteuid()
+        except OSError:
+            return None
+        if st.st_uid != euid and euid != 0:
+            return st.st_uid, euid
+        return None
+
+    def pread_at(fd: int, count: int, offset: int) -> bytes:
+        """Read up to count bytes at offset without moving the file position (POSIX os.pread fallback on Windows)."""
+        if hasattr(os, "pread"):
+            return os.pread(fd, count, offset)
+        saved = os.lseek(fd, 0, os.SEEK_CUR)
+        try:
+            os.lseek(fd, offset, os.SEEK_SET)
+            return os.read(fd, count)
+        finally:
+            os.lseek(fd, saved, os.SEEK_SET)
+
+    def change_time_ns(path: Path | str, status: os.stat_result) -> int:
+        """Inode/metadata change time in Unix nanoseconds: st_ctime_ns on POSIX, NTFS ChangeTime on Windows."""
+        return status.st_ctime_ns
 
 
 def write_durable_private(path: Path | str, data: bytes | str, *, mode: int = 0o600,
@@ -578,107 +739,12 @@ def write_durable_private(path: Path | str, data: bytes | str, *, mode: int = 0o
             handle.write(raw)
             handle.flush()
             os.fsync(handle.fileno())
-            if not IS_WINDOWS:
-                os.fchmod(handle.fileno(), mode)
+            _fchmod_if_posix(handle.fileno(), mode)
         atomic_replace(tmp, target)
         fsync_directory(target.parent)
     finally:
         tmp.unlink(missing_ok=True)
     return target
-
-
-def _win_posix_replace(src: Path | str, dst: Path | str) -> bool:
-    """Use NTFS FileRenameInfoEx with FILE_RENAME_FLAG_POSIX_SEMANTICS to atomically replace even an open file."""
-    dst_abs = os.path.abspath(str(dst))
-    name_bytes = dst_abs.encode("utf-16-le")
-    # FILE_RENAME_INFO layout: DWORD Flags (+ pad), HANDLE RootDirectory, DWORD FileNameLength, WCHAR FileName[1]
-    class _FILE_RENAME_INFO(ctypes.Structure):
-        _fields_ = [
-            ("Flags", wintypes.DWORD),
-            ("RootDirectory", wintypes.HANDLE),
-            ("FileNameLength", wintypes.DWORD),
-            ("FileName", wintypes.WCHAR * 1),
-        ]
-    name_offset = _FILE_RENAME_INFO.FileName.offset
-    total_size = max(ctypes.sizeof(_FILE_RENAME_INFO), name_offset + len(name_bytes) + 2)
-    buf = ctypes.create_string_buffer(total_size)
-    header = _FILE_RENAME_INFO.from_buffer(buf)
-    header.Flags = _FILE_RENAME_FLAG_REPLACE_IF_EXISTS | _FILE_RENAME_FLAG_POSIX_SEMANTICS
-    header.RootDirectory = None
-    header.FileNameLength = len(name_bytes)
-    ctypes.memmove(ctypes.addressof(buf) + name_offset, name_bytes, len(name_bytes))
-    handle = _kernel32.CreateFileW(
-        str(src), _DELETE,
-        _FILE_SHARE_READ | _FILE_SHARE_WRITE | _FILE_SHARE_DELETE,
-        None, _OPEN_EXISTING, _FILE_FLAG_OPEN_REPARSE_POINT, None,
-    )
-    if handle == _INVALID_HANDLE_VALUE:
-        return False
-    try:
-        return bool(_kernel32.SetFileInformationByHandle(handle, _FileRenameInfoEx, buf, total_size))
-    finally:
-        _kernel32.CloseHandle(handle)
-
-
-def atomic_replace(src: Path | str, dst: Path | str) -> None:
-    """Atomic file replacement: os.replace on POSIX; POSIX-semantics FileRenameInfoEx + bounded retry on Windows."""
-    if not IS_WINDOWS:
-        os.replace(src, dst)
-        return
-    if _win_posix_replace(src, dst):
-        return
-    delay = 0.01
-    for attempt in range(6):
-        try:
-            os.replace(src, dst)
-            return
-        except PermissionError as exc:
-            if attempt == 5 or getattr(exc, "winerror", None) not in _RETRYABLE_WINERRORS:
-                raise
-            time.sleep(delay)
-            delay = min(delay * 2, 0.1)
-
-
-def fsync_directory(path: Path | str) -> None:
-    """Fsync a directory descriptor on POSIX; no-op on Windows (NTFS does not support dir fsync)."""
-    if IS_WINDOWS:
-        return
-    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def current_uid() -> int | None:
-    """os.getuid() on POSIX, None on Windows."""
-    return None if IS_WINDOWS else os.getuid()
-
-
-def owner_uid_mismatch(path: Path | str) -> tuple[int, int] | None:
-    """Return `(file_uid, effective_uid)` on POSIX when non-root euid differs from path owner; None on Windows."""
-    if IS_WINDOWS or not hasattr(os, "geteuid"):
-        return None
-    try:
-        st = Path(path).stat()
-        euid = os.geteuid()
-    except OSError:
-        return None
-    if st.st_uid != euid and euid != 0:
-        return st.st_uid, euid
-    return None
-
-
-def pread_at(fd: int, count: int, offset: int) -> bytes:
-    """Read up to count bytes at offset without moving the file position (POSIX os.pread fallback on Windows)."""
-    if hasattr(os, "pread"):
-        return os.pread(fd, count, offset)
-    saved = os.lseek(fd, 0, os.SEEK_CUR)
-    try:
-        os.lseek(fd, offset, os.SEEK_SET)
-        return os.read(fd, count)
-    finally:
-        os.lseek(fd, saved, os.SEEK_SET)
 
 
 _MAX_INT64 = (1 << 63) - 1
@@ -699,25 +765,3 @@ def encode_file_id(value: int | str) -> int | str:
     if parsed is None:
         raise ValueError("Invalid file identity value")
     return str(parsed) if parsed > _MAX_INT64 else parsed
-
-
-def change_time_ns(path: Path | str, status: os.stat_result) -> int:
-    """Inode/metadata change time in Unix nanoseconds: st_ctime_ns on POSIX, NTFS ChangeTime on Windows."""
-    if not IS_WINDOWS:
-        return status.st_ctime_ns
-    handle = _kernel32.CreateFileW(
-        str(path), 0x80,  # FILE_READ_ATTRIBUTES
-        _FILE_SHARE_READ | _FILE_SHARE_WRITE | _FILE_SHARE_DELETE,
-        None, _OPEN_EXISTING, 0x02200000,  # FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT
-        None,
-    )
-    if handle == _INVALID_HANDLE_VALUE:
-        return status.st_ctime_ns
-    try:
-        info = _FILE_BASIC_INFO()
-        if not _kernel32.GetFileInformationByHandleEx(handle, 0, ctypes.byref(info), ctypes.sizeof(info)):
-            return status.st_ctime_ns
-        # Windows FILETIME: 100ns ticks since 1601-01-01; Unix epoch offset is 11644473600s.
-        return (info.ChangeTime - 116444736000000000) * 100
-    finally:
-        _kernel32.CloseHandle(handle)

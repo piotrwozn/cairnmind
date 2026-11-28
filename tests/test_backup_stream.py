@@ -3,27 +3,26 @@ import gzip
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import signal
 import subprocess
 import sys
 import time
 import tracemalloc
+from pathlib import Path
 
 import pytest
+from conftest import as_person
 
+from cairnmind.agents.retrieval import Retriever
+from cairnmind.config import BACKUP_FORMATS
+from cairnmind.service import daily_backups
 from cairnmind.storage import store_backup
 from cairnmind.storage.arcade import ArcadeClient
-from cairnmind.config import BACKUP_FORMATS
 from cairnmind.storage.journal import JournalTransaction
-from cairnmind.agents.retrieval import Retriever
-from cairnmind.service import daily_backups
 from cairnmind.storage.sql import json_text
-from cairnmind.store import EXPORT_TYPES, Store
 from cairnmind.storage.store_size import _backups
-
-from conftest import as_person
+from cairnmind.store import EXPORT_TYPES, Store
 
 FIXTURE_0_10_0 = Path(__file__).parent / "fixtures" / "backup-0.10.0.cairnmind.json.gz"
 # A fixed limit for the Python memory a backup may use at its peak, and a store several times larger.

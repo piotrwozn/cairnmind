@@ -13,9 +13,9 @@ from pathlib import Path
 import pytest
 
 from cairnmind.memory import memory as portable
-from cairnmind.scip.ingest import index_project
 from cairnmind.memory.memory import MemoryManager, inspect_snapshot
 from cairnmind.memory.memory_view import show_snapshot
+from cairnmind.scip.ingest import index_project
 from cairnmind.store import Store
 from cairnmind.terminal.terminal_ui import summary_text
 

@@ -14,14 +14,14 @@ The English sentences are the source; MESSAGES is their Polish for the terminal 
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
 import os
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 from cairnmind.cli_cmds import upgrade_mark
+from cairnmind.cli_cmds.service_version import Sentence
 from cairnmind.pal.file_locks import lock_exclusive
 from cairnmind.pal.private_files import atomic_replace, open_no_follow
-from cairnmind.cli_cmds.service_version import Sentence
 
 MARK, LOCK, BEFORE = "setup-in-progress", "setup-change.lock", "setup-before.json"
 MODULE = "cairnmind.terminal.setup_change"
@@ -149,10 +149,8 @@ def held(data_dir):
         try:
             yield
         finally:
-            try:
+            with suppress(OSError):
                 if mark_path(data_dir).read_bytes() == own:
                     mark_path(data_dir).unlink()
-            except OSError:
-                pass
     finally:
         os.close(descriptor)

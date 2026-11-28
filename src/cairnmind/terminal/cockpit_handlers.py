@@ -3,23 +3,24 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections import OrderedDict
-from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass, field
 import hashlib
 import hmac
 import json
 import os
-from pathlib import Path
 import re
 import time
+from collections import OrderedDict
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import suppress
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
-import httpx
 
 from cairnmind import __version__
 from cairnmind.config import BROKER_NAMES
@@ -28,7 +29,6 @@ from cairnmind.pal.process_identity import start as process_start
 from cairnmind.pal.service_token import refused_token
 from cairnmind.terminal import person_proof
 from cairnmind.terminal.cockpit_state import CockpitState, ProjectDiscovery, _snapshot, normalize_path
-
 
 SESSION_SECONDS = 12 * 60 * 60
 TICKET_SECONDS = 60
@@ -49,6 +49,15 @@ def _birth(pid):
         return process_start(int(pid))
     except (ValueError, TypeError):
         return None
+
+
+def _resolve_path_str(raw: str) -> str:
+    return str(Path(raw).resolve(strict=False))
+
+
+def _data_dir_in_roots(data_dir: Path, roots: list[str]) -> bool:
+    resolved_data = data_dir.resolve()
+    return any(lies_in(resolved_data, Path(root).resolve()) for root in roots)
 
 
 @dataclass
@@ -429,7 +438,7 @@ def register_state_and_project_routes(app: FastAPI, ctx: CockpitContext) -> None
             if row.get("name") == chosen_name:
                 raise HTTPException(409, PROJECT_NAME_TAKEN.format(
                     name=safe_text(chosen_name), root=safe_text(row.get("root") or "")))
-            if row.get("root") and str(Path(row["root"]).resolve(strict=False)) == str(destination):
+            if row.get("root") and await asyncio.to_thread(_resolve_path_str, row["root"]) == str(destination):
                 raise HTTPException(409, PROJECT_ROOT_TAKEN.format(
                     name=safe_text(row.get("name") or ""), root=safe_text(str(destination))))
         try:
@@ -568,7 +577,7 @@ def register_profile_routes(app: FastAPI, ctx: CockpitContext) -> None:
                 if roots_response.is_error:
                     raise HTTPException(503, "The location of the key store could not be checked.")
                 roots = roots_response.json().get("roots", [registered["root"]])
-                if any(lies_in(ctx.settings.data_dir.resolve(), Path(root).resolve()) for root in roots):
+                if await asyncio.to_thread(_data_dir_in_roots, ctx.settings.data_dir, roots):
                     raise HTTPException(409, "The key store must be outside project folders.")
         await asyncio.to_thread(ctx.credentials.set, profile_id, value["key"], persist=value.get("persist", False))
         config = ctx.state.load()
@@ -824,11 +833,9 @@ def register_run_and_terminal_routes(app: FastAPI, ctx: CockpitContext) -> None:
         except WebSocketDisconnect:
             pass
         except (ValueError, RuntimeError, OSError):
-            try:
+            with suppress(WebSocketDisconnect, RuntimeError, OSError):
                 await websocket.send_json({"type": "error", "code": "terminal_protocol_error"})
                 await websocket.close(code=1008)
-            except (WebSocketDisconnect, RuntimeError, OSError):
-                pass
         finally:
             for task in tasks:
                 task.cancel()

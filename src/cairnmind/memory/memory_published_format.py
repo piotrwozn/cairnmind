@@ -12,14 +12,14 @@ version: local versions are compare-and-swap counters that differ between machin
 """
 from __future__ import annotations
 
-from copy import deepcopy
 import hashlib
 import json
 import re
+from copy import deepcopy
 from uuid import UUID
 
-from cairnmind.storage.sql import json_text
 from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.storage.sql import json_text
 
 FORMAT = "cairnmind-published-memory"
 VERSION = 1

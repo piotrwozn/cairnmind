@@ -10,19 +10,20 @@ from __future__ import annotations
 
 import asyncio
 import re
+from typing import TYPE_CHECKING, Any
 
 from rich.cells import cell_len
 from textual import work
 from textual.containers import Horizontal
 from textual.widgets import Button, Checkbox, DataTable, Input, Label
 
-from cairnmind.terminal import terminal_theme
-from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT
 from cairnmind.memory.confirmation import LIST_WORDS
-from cairnmind.terminal.terminal_i18n_messages import display_word
-from cairnmind.terminal.terminal_detail import BAR, evidence_parts, join_lines, joined, labelled, state_role
-from cairnmind.terminal.terminal_notices import about
 from cairnmind.pal.terminal_safe import plain
+from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT
+from cairnmind.terminal import terminal_theme
+from cairnmind.terminal.terminal_detail import BAR, evidence_parts, join_lines, joined, labelled, state_role
+from cairnmind.terminal.terminal_i18n_messages import display_word
+from cairnmind.terminal.terminal_notices import about
 from cairnmind.terminal.terminal_person_act import RECORD, agreed, typed
 from cairnmind.terminal.terminal_ui import ChoiceModal, Field, FormModal
 
@@ -136,12 +137,41 @@ class ImpactView:
     """
     impact_since = DEFAULT_SINCE
     impact_pending = False
-    impact_shown = None
-    impact_entries: dict = {}
-    impact_commit = None
+    impact_shown: tuple[Any, ...] | None = None
+    impact_entries: dict[str, Any] = {}
+    impact_commit: Any = None
     _columns_kind = "standard"
-    _impact_task = None
+    _impact_task: asyncio.Task[Any] | None = None
     _verdict_busy = False
+
+    if TYPE_CHECKING:
+        settings: Any
+        broker: Any
+        workspace_data: dict[str, Any]
+        language: str
+        view: str
+        rows: dict[str, Any]
+        entity: Any
+        entity_kind: str | None
+        history_owner: Any
+        next_cursor: Any
+        source_next: Any
+        size: Any
+        _scope_version: int
+        _entity_request: int
+
+        def t(self, text: Any, **values: Any) -> str: ...
+        def query_one(self, selector: Any, expect_type: Any = ...) -> Any: ...
+        def notice(self, value: Any, kind: str = "info") -> None: ...
+        def notice_for(self, about: Any, value: Any, kind: str = "info") -> None: ...
+        def tell(self, scope: Any, about: Any, value: Any, kind: str = "info") -> None: ...
+        def view_hint(self, text: str) -> None: ...
+        def render_rows(self, rows: list[Any]) -> None: ...
+        def show_detail(self, value: Any, *, kind: Any = None, text: Any = None, parts: Any = None, empty: bool = False) -> None: ...
+        def refresh_page(self) -> Any: ...
+        def params(self) -> dict[str, Any]: ...
+        def fit_proposed_columns(self, table: Any, free: int) -> list[int]: ...
+        async def push_screen_wait(self, screen: Any) -> Any: ...
 
     def compose_impact_bar(self):
         with Horizontal(id="impact-bar"):
@@ -307,11 +337,12 @@ class ImpactView:
     def open_impact(self, identifier):
         # Only an entry of the answer shown now, for the project, worktree and commit the view asks for now.
         row = self.impact_entries.get(identifier)
-        if self.view != "impact" or row is None or self.impact_shown != self.impact_key():
+        shown = self.impact_shown
+        if self.view != "impact" or row is None or shown is None or shown != self.impact_key():
             return
         self._entity_request += 1
         self.entity_kind, self.entity, self.history_owner, self.source_next = "impact", row, None, None
-        report = {"since": self.impact_shown[2], "commit": self.impact_commit}
+        report = {"since": shown[2], "commit": self.impact_commit}
         self.show_detail(row, kind="impact", parts=impact_parts(row, report, self.t))
         self.view_hint(self.t("Verdict saves your judgement of this entry as an audit note. It changes no record, "
                               "no status and no task."))

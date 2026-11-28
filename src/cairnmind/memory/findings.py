@@ -1,7 +1,7 @@
 """A finding a person types in the workspace, stored with a source that says where it came from."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from cairnmind.storage.storage_query import db_find
@@ -37,7 +37,7 @@ def key_error(key) -> str | None:
         if isinstance(key, str) and str(UUID(key)) == key:
             return None
     except ValueError:
-        pass
+        return "Invalid finding key"
     return "Invalid finding key"
 
 
@@ -80,7 +80,7 @@ def save_finding(store, project_id, key, content, kind, status, *, session_id=No
         # The key names a record or source that is not this kind of finding: never reuse or overwrite it.
         raise ValueError("Invalid finding key")
     # No scope-bearing key (root, worktree, worktree_root, path): a finding belongs to the whole project.
-    metadata["source_timestamp"] = (now or datetime.now(timezone.utc)).isoformat()
+    metadata["source_timestamp"] = (now or datetime.now(UTC)).isoformat()
     if not session_id:
         # Who typed it, on which branch and commit, read when it is saved: a confirmed form travels with
         # published memory (#170) under this name, never under one read at publish time.

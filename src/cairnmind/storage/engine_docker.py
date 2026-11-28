@@ -10,24 +10,25 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import replace
-from pathlib import Path
 import subprocess
 import sys
 import time
+from contextlib import suppress
+from dataclasses import replace
+from pathlib import Path
 from urllib.parse import urlparse
 
 from cairnmind import __version__, config
-from cairnmind.storage.arcade import ArcadeError
-from cairnmind.storage.database_mode import MODE_INVALID, connect_only, refusal
 from cairnmind.pal.file_locks import locked_path
 from cairnmind.pal.private_files import IS_WINDOWS, ensure_private_dir, make_private, open_no_follow
 from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.storage.arcade import ArcadeError
+from cairnmind.storage.database_mode import MODE_INVALID, connect_only, refusal
 
 LABEL_INSTALLATION = "io.cairnmind.installation"
 LABEL_DATA_DIR = "io.cairnmind.data-dir"
 CONTAINER_DATA = "/var/lib/arcadedb"
-CONTAINER_PASSWORD = "/run/secrets/arcadedb_root_password"
+CONTAINER_PASSWORD = "/run/secrets/arcadedb_root_password"  # noqa: S105 - container secret mount path, not a password
 JAVA_OPTIONS = "ARCADEDB_JAVA_OPTS=-Darcadedb.server.mode=development"  # like the native engine, see docs/DEPLOYMENT.md
 WAIT_ROUNDS, WAIT_STEP = 240, 0.25  # a first start of the JVM in a container is slower than the native 30 s
 STOP_SECONDS = 60
@@ -88,7 +89,7 @@ ROOT_REFUSED = ("Run Cairnmind as your own user, not as root: the engine contain
                 "belong to another user.")
 PATH_UNSAFE = ("Docker cannot mount the data directory {path}: its path contains ':' or a control character. Use a "
                "data directory without them.")
-SHORT_PASSWORD = ("The engine image needs a root password of at least 8 characters; the configured one is "
+SHORT_PASSWORD = ("The engine image needs a root password of at least 8 characters; the configured one is "  # noqa: S105 - validation message, not a password
                   "shorter.")
 BUILD_INVALID = "engine_docker_build in config.json is {value}; it must be true or false."
 MODE_SAVED = "Engine mode: {mode}, saved as engine_mode in {config}."
@@ -183,12 +184,25 @@ MESSAGES = {
 }
 
 
-def run_docker(arguments, *, timeout=15, show: bool = False) -> subprocess.CompletedProcess:
+def run_docker(arguments, *, timeout: int | float | None = 15, show: bool = False) -> subprocess.CompletedProcess:
     """The one place Docker is run. With show its output goes to this process's stderr (a pull or a build)."""
-    shown = {"stdout": 2, "stderr": 2} if show else {}
     try:
-        return subprocess.run(["docker", *arguments], stdin=subprocess.DEVNULL, capture_output=not show,
-                              text=True, timeout=timeout, **shown)
+        if show:
+            return subprocess.run(
+                ["docker", *arguments],
+                stdin=subprocess.DEVNULL,
+                stdout=2,
+                stderr=2,
+                text=True,
+                timeout=timeout,
+            )
+        return subprocess.run(
+            ["docker", *arguments],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
     except FileNotFoundError:
         raise ArcadeError(DOCKER_NOT_FOUND) from None
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -396,7 +410,7 @@ def start_docker_engine(settings, *, local: bool | None = None, build: bool = Fa
         raise ConnectOnly(refusal(settings, "start an engine"))
     settings = replace(settings, engine_mode="docker")
     state = _state(settings)
-    if not IS_WINDOWS and os.getuid() == 0:
+    if sys.platform != "win32" and os.getuid() == 0:
         raise ArcadeError(ROOT_REFUSED)
     if _unsafe_mount_path(state):
         raise ArcadeError(PATH_UNSAFE.format(path=safe_text(state, limit=200)))
@@ -486,7 +500,7 @@ def _start_locked(settings, image: str, local_image: bool, context: Path | None,
     run_args = ["run", "--detach", "--name", name,
                 "--label", f"{LABEL_INSTALLATION}={held[LABEL_INSTALLATION]}",
                 "--label", f"{LABEL_DATA_DIR}={held[LABEL_DATA_DIR]}"]
-    if not IS_WINDOWS:
+    if sys.platform != "win32":
         run_args.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
     run_args.extend(["--publish", f"{host}:{port}:2480"])
     if IS_WINDOWS:
@@ -523,14 +537,10 @@ def _abandon(created: str, name: str, problem: str) -> ArcadeError:
     if re.fullmatch(r"[0-9a-f]{64}", created) is None:
         return ArcadeError(AFTER_RUN_UNKNOWN.format(name=name, problem=problem))
     removed = False
-    try:
+    with suppress(ArcadeError):  # the removal below says whether the container is gone
         run_docker(["stop", "--time", str(STOP_SECONDS), created], timeout=STOP_SECONDS + 30)
-    except ArcadeError:
-        pass  # the removal below says whether the container is gone
-    try:
+    with suppress(ArcadeError):
         removed = run_docker(["rm", created], timeout=60).returncode == 0
-    except ArcadeError:
-        pass
     return ArcadeError((AFTER_RUN_REMOVED if removed else AFTER_RUN_LEFT).format(name=name, id=created, problem=problem))
 
 

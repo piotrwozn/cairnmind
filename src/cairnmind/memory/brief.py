@@ -8,17 +8,17 @@ they come last, after a ``|``.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import shlex
 import subprocess
+from datetime import UTC, datetime
+from pathlib import Path
 
 from cairnmind.cli_cmds.first_start import BRIEF_REVIEW, BRIEF_START
+from cairnmind.pal.terminal_safe import _line
 from cairnmind.storage.storage_query import db_find
 from cairnmind.store import DERIVED_RECORD_METADATA, degraded_origin
-from cairnmind.pal.terminal_safe import _line
 
 MAX_LINES = 40
 ACTIVE_STATES = ("in_progress", "needs_test", "needs_review")
@@ -37,7 +37,7 @@ def _time(value):
         parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
     except ValueError:
         return None
-    return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+    return parsed.astimezone(UTC) if parsed.tzinfo else None
 
 
 def _age(then, now):
@@ -227,8 +227,8 @@ def _proposed(records):
 
 def _scoped_records(store, project_id, root):
     """The same worktree rule as `context`: a record bound to another root is not part of this brief."""
-    from cairnmind.memory.memory_paths import bound_metadata, memory_bindings
     from cairnmind.agents.retrieval import Retriever
+    from cairnmind.memory.memory_paths import bound_metadata, memory_bindings
     roots = [Path(row["path"]).resolve() for row in db_find(
         store, "project_roots", {"project_id": project_id}, columns=("path",))]
     bindings = memory_bindings(store, project_id)
@@ -242,7 +242,7 @@ def build_brief(store, project_id, worktree=None, *, now=None):
     from cairnmind.memory.verification import _root
     project = store.resolve_project(project_id)
     root = _root(store, project["id"], worktree)
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     records = _scoped_records(store, project["id"], root)
     tasks = [r for r in records if r["kind"] == "task"]
     saved, lines = _checkpoint(store, records, now)

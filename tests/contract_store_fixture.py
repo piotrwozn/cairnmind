@@ -1,20 +1,20 @@
 """Deterministic fixed store, normalizer, and assertion helpers for #249 frozen contract examples."""
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import os
-from pathlib import Path
 import re
 import socket
 import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
-from typer.testing import CliRunner
 import uvicorn
+from typer.testing import CliRunner
 
 from cairnmind import __version__, cli
 from cairnmind.config import Settings
@@ -22,8 +22,8 @@ from cairnmind.memory.importers import add_importer
 from cairnmind.memory.memory import MemoryManager
 from cairnmind.memory.memory_published import Publisher
 from cairnmind.memory.plans import PlanManager
-from cairnmind.service import create_app
 from cairnmind.memory.sessions import SessionManager
+from cairnmind.service import create_app
 from cairnmind.store import Store
 
 _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
@@ -401,7 +401,7 @@ def normalize_contract_payload(value: Any, env: dict[str, Any], *, command_name:
             (str(env["settings"].url), "http://127.0.0.1:<PORT>"),
             (str(env["settings"].arcade_url), "http://127.0.0.1:<ARCADE_PORT>"),
             (str(env["settings"].arcade_database), "<ARCADE_DB>"),
-            *(([(env["head_sha"][:12], "<GIT_SHA_SHORT>")] if env.get("head_sha") else [])),
+            *([(env["head_sha"][:12], "<GIT_SHA_SHORT>")] if env.get("head_sha") else []),
         ],
         key=lambda item: len(item[0]),
         reverse=True,
@@ -435,15 +435,14 @@ def normalize_contract_payload(value: Any, env: dict[str, Any], *, command_name:
                 out = re.sub(r" +[0-9]+(?:\.[0-9]+)? (?:B|KiB|MiB|GiB|TiB)\b", " <SIZE>", out)
                 out = re.sub(r"Measured in [0-9.]+ s\.", "Measured in <SEC> s.", out)
             return out
-        if isinstance(obj, (int, float)) and not isinstance(obj, bool) and path:
-            if path[-1] in {
-                "port", "pid", "elapsed_ms", "elapsed_seconds", "duration_ms", "latency_ms",
-                "total_bytes", "package_size", "bytes",
-            } or (
-                "package_size" in path
-                and path[-1] in {"used", "fraction", "current", "replaced", "transcripts", "age_seconds"}
-            ):
-                return 0.0 if isinstance(obj, float) else 0
+        if isinstance(obj, (int, float)) and not isinstance(obj, bool) and path and (path[-1] in {
+            "port", "pid", "elapsed_ms", "elapsed_seconds", "duration_ms", "latency_ms",
+            "total_bytes", "package_size", "bytes",
+        } or (
+            "package_size" in path
+            and path[-1] in {"used", "fraction", "current", "replaced", "transcripts", "age_seconds"}
+        )):
+            return 0.0 if isinstance(obj, float) else 0
         return obj
 
     return walk(value)
@@ -466,7 +465,7 @@ def _diff_json(expected: Any, actual: Any, path: str = "$") -> list[str]:
     elif isinstance(expected, list):
         if len(expected) != len(actual):
             diffs.append(f"{path}: list length expected {len(expected)}, got {len(actual)}")
-        for idx, (e_item, a_item) in enumerate(zip(expected, actual)):
+        for idx, (e_item, a_item) in enumerate(zip(expected, actual, strict=False)):
             diffs.extend(_diff_json(e_item, a_item, f"{path}[{idx}]"))
     elif expected != actual:
         diffs.append(f"{path}: expected {expected!r}, got {actual!r}")

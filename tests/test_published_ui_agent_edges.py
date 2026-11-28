@@ -10,10 +10,10 @@ from textual.app import App
 from textual.widgets import Button, Input, Static
 
 from cairnmind.agents import agent as agent_mod
-from cairnmind.memory import memory_published as mp
-from cairnmind.terminal import terminal_ui
 from cairnmind.config import Settings
+from cairnmind.memory import memory_published as mp
 from cairnmind.memory.memory import MemoryConflict
+from cairnmind.terminal import terminal_ui
 
 
 def test_memory_published_helpers_close_and_publish_edges(tmp_path, monkeypatch):

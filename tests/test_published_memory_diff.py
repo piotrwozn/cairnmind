@@ -1,15 +1,15 @@
 """`memory diff`: what a change to published memory says, read from Git with no store or model (#172)."""
 from __future__ import annotations
 
-from copy import deepcopy
 import itertools
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import uuid
+from copy import deepcopy
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -18,7 +18,15 @@ from cairnmind import cli
 from cairnmind.memory.memory_published_check import format_bytes
 from cairnmind.memory.memory_published_diff import MARKER, compare, render_markdown, render_text
 from cairnmind.memory.memory_published_format import (
-    GITATTRIBUTES, GITIGNORE, TASK_DEFAULTS, J, definition_hash, identity_hash, path_of, plan_hash, render,
+    GITATTRIBUTES,
+    GITIGNORE,
+    TASK_DEFAULTS,
+    J,
+    definition_hash,
+    identity_hash,
+    path_of,
+    plan_hash,
+    render,
     sha256_text,
 )
 from cairnmind.memory.memory_published_git import published_files, resolve

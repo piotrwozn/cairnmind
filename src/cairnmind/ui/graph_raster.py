@@ -44,8 +44,8 @@ class _Raster:
         count = self.columns * self.rows
         self.inverse_depth = [0.0] * count
         self.glyphs = [" "] * count
-        self.inks = [None] * count
-        self.styles = {}
+        self.inks: list[tuple[tuple[int, int, int], int] | None] = [None] * count
+        self.styles: dict[tuple[tuple[int, int, int], int], Style] = {}
         self.rays_x = [(x + .5 - self.columns / 2) / self.focal for x in range(self.columns)]
         self.rays_y = [(self.rows / 2 - y - .5) * CELL_ASPECT / self.focal
                        for y in range(self.rows)]

@@ -3,16 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import importlib.metadata
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from cairnmind.agents import copilot_adapter as ca
-from cairnmind.config import Settings
 from cairnmind.agents.copilot_adapter import CopilotAdapter, CopilotError
+from cairnmind.config import Settings
 
 
 def test_runtime_status_prepare_and_worker_edge_cases(tmp_path, monkeypatch):

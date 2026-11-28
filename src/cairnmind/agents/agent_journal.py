@@ -5,19 +5,25 @@ permissions, restores an ACK, or interprets unfinished actions as retryable.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
-from copy import deepcopy
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
+from contextlib import contextmanager
+from copy import deepcopy
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from cairnmind.pal.file_locks import lock_exclusive
-from cairnmind.pal.private_files import ensure_private_dir, fsync_directory, is_private_stat, is_reparse_point, open_no_follow
-
+from cairnmind.pal.private_files import (
+    ensure_private_dir,
+    fsync_directory,
+    is_private_stat,
+    is_reparse_point,
+    open_no_follow,
+)
 
 MAX_EVENT_BYTES = 4 * 1024 * 1024
 MAX_JOURNAL_BYTES = 64 * 1024 * 1024
@@ -45,7 +51,7 @@ def _private_dir(path: Path):
         raise JournalError(str(exc)) from None
 
 
-def redact_secrets(value, secrets):
+def redact_secrets(value: Any, secrets: Any) -> Any:
     """``value`` with every non-empty secret, a truncated one at the end of a string, and sensitive fields
     replaced by [REDACTED]; also used by the answer log (#15). Raises JournalError for a non-JSON value."""
     from cairnmind.memory.secret_mask import ordered_secrets, replace_known
@@ -81,7 +87,7 @@ class AgentJournal:
         """Register in-memory credentials before recording any corresponding data."""
         self._secrets.update(value for value in values if isinstance(value, str) and value)
 
-    def redact(self, value):
+    def redact(self, value: Any) -> Any:
         return redact_secrets(value, self._secrets)
 
     def _initialize(self):
@@ -161,7 +167,7 @@ class AgentJournal:
         with self.lock():
             events = self._read_locked()
             event = {"version": 1, "id": uuid4().hex, "session_id": self.session_id, "seq": len(events) + 1,
-                     "created_at": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
+                     "created_at": datetime.now(UTC).isoformat(timespec="microseconds"),
                      "type": event_type, "data": clean,
                      "previous_hash": events[-1]["hash"] if events else ZERO_HASH}
             event["hash"] = hashlib.sha256(canonical(event)).hexdigest()

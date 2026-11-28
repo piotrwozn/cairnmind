@@ -5,15 +5,15 @@ Strictly read-only: creates no files or directories, starts no engine or service
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
-from cairnmind.pal import platform_hints, private_files
 from cairnmind.config import Settings
-from cairnmind.memory.memory_paths import MEMORY_RELATIVE, PUBLISHED_RELATIVE
 from cairnmind.mcp.mcp_presets import build_server_entry, discover_configured_presets
 from cairnmind.mcp.mcp_probe import probe_mcp_stdio
+from cairnmind.memory.memory_paths import MEMORY_RELATIVE, PUBLISHED_RELATIVE
+from cairnmind.pal import platform_hints, private_files
 
 _WSL_DRIVE_RE = re.compile(r"^/mnt/[a-z](/|$)")
 _NETWORK_FS_TYPES = frozenset({"nfs", "nfs4", "cifs", "smb", "smb3", "smbfs", "fuse.sshfs", "9p", "drvfs"})
@@ -45,10 +45,12 @@ def _mount_fs_type(path: Path) -> str | None:
                 continue
             mount_point = parts[1].replace("\\040", " ")
             fs_type = parts[2].lower()
-            if target == mount_point or target.startswith(mount_point.rstrip("/") + "/"):
-                if len(mount_point) > len(best_mount):
-                    best_mount = mount_point
-                    best_fs = fs_type
+            if (
+                (target == mount_point or target.startswith(mount_point.rstrip("/") + "/"))
+                and len(mount_point) > len(best_mount)
+            ):
+                best_mount = mount_point
+                best_fs = fs_type
         return best_fs
     except OSError:
         return None

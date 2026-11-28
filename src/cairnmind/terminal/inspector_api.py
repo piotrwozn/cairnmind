@@ -13,10 +13,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from cairnmind.memory import conflicts, impact_verdicts, project_forget
-from cairnmind.terminal import person_proof
 from cairnmind.memory import stale_proposed as proposed
-from cairnmind.storage.arcade import ArcadeError
 from cairnmind.memory.findings import MAX_FINDING_CHARS
+from cairnmind.storage.arcade import ArcadeError
+from cairnmind.terminal import person_proof
 from cairnmind.terminal.inspector import Inspector, InspectorNotFound
 
 

@@ -10,11 +10,10 @@ import subprocess
 
 import pytest
 
-from cairnmind.scip.ingest import import_history
 from cairnmind.memory.sessions import SessionManager
-from cairnmind.store import Store
+from cairnmind.scip.ingest import import_history
 from cairnmind.storage.sql import json_text
-
+from cairnmind.store import Store
 
 NATIVE_ID = "11111111-1111-4111-8111-111111111111"
 

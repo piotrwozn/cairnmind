@@ -21,23 +21,23 @@ Phases:
 """
 from __future__ import annotations
 
-from copy import deepcopy
-from dataclasses import dataclass
 import difflib
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
 import re
 import subprocess
+from copy import deepcopy
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import uuid4
 
 from cairnmind.memory.memory import MemoryConflict
 from cairnmind.memory.memory_paths import git_pathspec, is_reserved_memory
+from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.storage.sql import clean_row, json_text, utc_now
 from cairnmind.storage.storage_query import db_find, db_find_one, db_update_where, desc, eq, is_in
-from cairnmind.pal.terminal_safe import safe_text
 
 HEAL_AUDIT_PREFIX = "heal://"
 HEAL_AUDIT_ORIGIN = "quote_self_healing"
@@ -425,6 +425,7 @@ def _parse_tree_sitter(path: str, content: str):
         return None, None
     try:
         from tree_sitter import Parser
+
         from cairnmind.scip.parsing import _language
 
         tree = Parser(_language(lang_name)).parse(content.encode("utf-8"))
@@ -569,7 +570,7 @@ def _context_overlap(orig: list[str], cand: list[str], *, from_end: bool = False
         return 0
     left = list(reversed(orig)) if from_end else list(orig)
     right = list(reversed(cand)) if from_end else list(cand)
-    exact_aligned = sum(1 for a, b in zip(left, right) if a == b)
+    exact_aligned = sum(1 for a, b in zip(left, right, strict=False) if a == b)
     shared_set = len(set(orig) & set(cand))
     return exact_aligned * 2 + shared_set
 
@@ -724,8 +725,8 @@ def _detect_partial_modification(
         window = new_lines[start_1based - 1 : end_1based]
         if window == quote_lines:
             continue  # Exact matches are handled in Step A.
-        exact_lines = sum(1 for a, b in zip(quote_lines, window) if a == b)
-        partial_lines = sum(1 for a, b in zip(quote_lines, window) if _is_partial_line_edit(a, b))
+        exact_lines = sum(1 for a, b in zip(quote_lines, window, strict=True) if a == b)
+        partial_lines = sum(1 for a, b in zip(quote_lines, window, strict=True) if _is_partial_line_edit(a, b))
         if q_len == 1:
             is_partial = partial_lines == 1
             ratio = difflib.SequenceMatcher(a=quote_lines[0].strip(), b=window[0].strip(), autojunk=False).ratio()
@@ -1099,7 +1100,8 @@ def locate_and_validate_quote(
 
 def _relative_source_path(source: dict[str, Any], origin_roots: list[str]) -> str | None:
     """Resolve a file source's project-relative POSIX path without touching foreign host symlinks."""
-    metadata = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
+    raw_meta = source.get("metadata")
+    metadata = raw_meta if isinstance(raw_meta, dict) else {}
     rel = metadata.get("relative_path")
     if isinstance(rel, str) and rel.strip():
         candidate = PurePosixPath(rel.replace("\\", "/"))
@@ -1130,7 +1132,8 @@ def _select_quote_source(
     """Return `(source, relative_path, quote_text, old_start, old_end, old_commit)` for a record, or None."""
     if record.get("status") == "superseded":
         return None
-    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    raw_meta = record.get("metadata")
+    metadata = raw_meta if isinstance(raw_meta, dict) else {}
     quote = metadata.get("evidence")
     if not isinstance(quote, str) or not quote.strip():
         return None
@@ -1145,7 +1148,8 @@ def _select_quote_source(
             if source.get("kind") in _FILE_KINDS:
                 rel = existing_ref.get("path") or _relative_source_path(source, origin_roots)
                 if isinstance(rel, str) and rel:
-                    s_meta = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
+                    raw_s_meta = source.get("metadata")
+                    s_meta = raw_s_meta if isinstance(raw_s_meta, dict) else {}
                     old_commit = existing_ref.get("commit_sha") or s_meta.get("git_commit")
                     return (
                         source, rel, norm_quote,
@@ -1156,9 +1160,12 @@ def _select_quote_source(
 
     # Otherwise derive from the cited file source that literally contains the quote.
     pinned_lines = metadata.get("evidence_lines")
-    pinned_start = pinned_lines[0] if (isinstance(pinned_lines, list) and len(pinned_lines) == 2
-                                       and all(type(x) is int and x >= 1 for x in pinned_lines)) else None
-    pinned_end = pinned_lines[1] if pinned_start is not None else None
+    if (isinstance(pinned_lines, list) and len(pinned_lines) == 2
+            and all(type(x) is int and x >= 1 for x in pinned_lines)):
+        pinned_start: int | None = pinned_lines[0]
+        pinned_end: int | None = pinned_lines[1]
+    else:
+        pinned_start, pinned_end = None, None
 
     for source_id in dict.fromkeys(record.get("source_ids") or []):
         source = sources_by_id.get(source_id)
@@ -1170,7 +1177,8 @@ def _select_quote_source(
         body = normalize_newlines(str(source.get("content") or ""))
         if norm_quote not in body:
             continue
-        s_meta = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
+        raw_s_meta = source.get("metadata")
+        s_meta = raw_s_meta if isinstance(raw_s_meta, dict) else {}
         old_commit = s_meta.get("git_commit")
         return (source, rel, norm_quote, pinned_start, pinned_end, old_commit if isinstance(old_commit, str) else None)
     return None
@@ -1234,17 +1242,16 @@ def _plan_records_healing(
         # Check Git diff between old_commit and target_sha when old_commit is reachable.
         new_path: str | None = old_path
         hunks: list[DiffHunk] | None = None
-        if old_commit and commit_exists(resolved_root, old_commit):
-            if old_commit != target_sha:
-                changed = changes_since(old_commit)
-                entry = changed.get(old_path)
-                if entry is not None:
-                    new_path = entry.get("new_path")
-                    if new_path is not None:
-                        # Use Git unified diff hunks when the archived source matches old_commit's blob.
-                        committed_old = read_blob(old_commit, old_path)
-                        if committed_old is not None and normalize_newlines(committed_old) == old_norm:
-                            hunks = read_hunks(old_commit, old_path, new_path)
+        if old_commit and commit_exists(resolved_root, old_commit) and old_commit != target_sha:
+            changed = changes_since(old_commit)
+            entry = changed.get(old_path)
+            if entry is not None:
+                new_path = entry.get("new_path")
+                if new_path is not None:
+                    # Use Git unified diff hunks when the archived source matches old_commit's blob.
+                    committed_old = read_blob(old_commit, old_path)
+                    if committed_old is not None and normalize_newlines(committed_old) == old_norm:
+                        hunks = read_hunks(old_commit, old_path, new_path)
         new_content = read_blob(target_sha, new_path) if new_path is not None else None
 
         # If target file has identical content to the cited archived source, nothing drifted.
@@ -1325,7 +1332,8 @@ def _ensure_healed_file_source(
     """Create or reuse the current file source row for a healed quote location inside `tx`."""
     from cairnmind.scip.parsing import analyze_code, parser_identity
 
-    assert action.new_file_content is not None and action.outcome.new_path is not None
+    if action.new_file_content is None or action.outcome.new_path is None:
+        raise ValueError("Healed file source requires new_file_content and new_path")
     abs_path = (root / action.outcome.new_path).resolve()
     uri = str(abs_path)
     content = action.new_file_content
@@ -1561,11 +1569,11 @@ def heal_project_quotes(
 
     project, root = MemoryManager(store)._scope(project_id, worktree)
     pid = project["id"]
-    if expected_versions is not None:
-        if not isinstance(expected_versions, dict) or any(
-            not isinstance(k, str) or type(v) is not int or v < 1 for k, v in expected_versions.items()
-        ):
-            raise ValueError("expected_versions must map record IDs to positive integer versions")
+    if expected_versions is not None and (
+        not isinstance(expected_versions, dict)
+        or any(not isinstance(k, str) or type(v) is not int or v < 1 for k, v in expected_versions.items())
+    ):
+        raise ValueError("expected_versions must map record IDs to positive integer versions")
 
     records = [r for r in store.list_records(pid) if record_ids is None or r["id"] in set(record_ids)]
     source_ids = sorted({

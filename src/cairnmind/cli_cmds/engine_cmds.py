@@ -3,20 +3,19 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.cli_arguments import (
     ExportArg,
     ProjectArg,
     QuestionArg,
 )
-from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.io import JSON_FLAG, initialized
-
 
 TAKEOVER_NEXT = {
     "writer": "This installation is already the writer; nothing to do.",
@@ -77,9 +76,9 @@ def register(apps: dict[str, typer.Typer]) -> None:
     @initialized
     def engine_stop(ctx: typer.Context, as_json: JSON_FLAG = False):
         """Stop the database engine; a Docker engine's container is removed, the data stays, and `engine start` runs it again."""
+        from cairnmind.storage.database_mode import connect_only
         from cairnmind.storage.engine import local_process_recorded, stop_engine
         from cairnmind.storage.engine_docker import container_recorded
-        from cairnmind.storage.database_mode import connect_only
         # A connect-only installation without an engine of its own has nothing to stop, whether or not its
         # service runs: it says so, instead of asking to stop the service first (#68).
         nothing_here = (connect_only(ctx.obj) and not local_process_recorded(ctx.obj)
@@ -120,7 +119,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         Read-only: it never starts the engine or the service and changes nothing. Prints no record or source text."""
         from cairnmind.storage.store_size import measure
         store = _io.store_for_read(ctx.obj)
-        report = measure(store, store.resolve_project(project)["id"] if project is not None else None)
+        report = measure(store, _io.resolve_project(store, project)["id"] if project is not None else None)
         if as_json:
             _io.output(report)
         else:
@@ -191,10 +190,14 @@ def register(apps: dict[str, typer.Typer]) -> None:
             # A copy that the mark of an unfinished restore names is the only way back, however old it is (#362).
             # shortcut: no writer lock, so with --keep 0 a restore that has just written its copy but not yet its mark can
             # lose it here (it then fails closed as NO_UNDO); take database-writer.lock here if that ever matters.
-            from cairnmind.storage.store_prune import (KEPT_FOR_A_RESTORE, KEPT_FOR_AN_UNKNOWN_MARK, keep_what_a_restore_names,
-                                               named_by_a_restore)
-            from cairnmind.terminal.terminal_i18n import tr
             from cairnmind.pal.terminal_safe import safe_text
+            from cairnmind.storage.store_prune import (
+                KEPT_FOR_A_RESTORE,
+                KEPT_FOR_AN_UNKNOWN_MARK,
+                keep_what_a_restore_names,
+                named_by_a_restore,
+            )
+            from cairnmind.terminal.terminal_i18n import tr
             named = named_by_a_restore(ctx.obj)
             plan, held = keep_what_a_restore_names(plan, named)
             if held:
@@ -219,6 +222,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
     def rebuild_vectors(ctx: typer.Context, project: ProjectArg):
         """Rebuild the project's derived vectors, keeping sources and history."""
         import asyncio
+
         from cairnmind.memory.memory_models import from_settings
         from cairnmind.service import schedule_embeddings
         settings = ctx.obj
@@ -227,7 +231,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         if why:
             _io.refuse(why)  # no embedding model is configured; nothing is deleted or asked (#274)
         store = _io.store_for(settings)
-        pid = store.resolve_project(project)["id"]
+        pid = _io.resolve_project(store, project)["id"]
         from cairnmind.memory import memory_fingerprint
 
         async def identity():
@@ -258,7 +262,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
     def export(ctx: typer.Context, destination: ExportArg, project: str | None = None, markdown: bool = False):
         """Write the records and sources, of one project or all, as JSON or Markdown for reading. Not a backup."""
         store = _io.store_for(ctx.obj, notice=False)  # it only reads, so a reader is not shown the refusal-like notice
-        pid = store.resolve_project(project)["id"] if project else None
+        pid = _io.resolve_project(store, project)["id"] if project else None
         data = store.export(pid)
         if markdown:
             parts = ["# Cairnmind — memory export\n"]

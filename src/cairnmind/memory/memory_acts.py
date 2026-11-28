@@ -14,11 +14,17 @@ import subprocess
 from pathlib import Path
 from uuid import uuid4
 
-from cairnmind.memory.memory_published_format import (J, audit_covers, evidence_hash, identity_hash, plan_hash, row_definition_hash,
-                                      sha256_text)
+from cairnmind.memory.memory_published_format import (
+    J,
+    audit_covers,
+    evidence_hash,
+    identity_hash,
+    plan_hash,
+    row_definition_hash,
+    sha256_text,
+)
 from cairnmind.storage.sql import clean_row, utc_now
 from cairnmind.storage.storage_query import db_find, db_find_one
-
 
 DETACHED = "detached HEAD"  # Not a branch name: Git forbids the space.
 
@@ -27,15 +33,15 @@ def act_context(store, project_id, worktree=None) -> dict:
     """actor_name, branch and commit of the worktree the act happens in, read-only; each None when Git cannot say.
     No worktree named: the project's only root; with several roots the branch and commit are None, never a
     guess. A folder that is not a registered root is refused."""
-    from cairnmind.storage.sql import unregistered_root
     from cairnmind.memory.verification import _git
+    from cairnmind.storage.sql import unregistered_root
     rows = db_find(store, "projects", {"id": project_id}, columns=("id", "name", "root"))
     root = rows[0].get("root") if rows else None
     if worktree is not None and rows:
         root = str(Path(worktree).expanduser().resolve())
         if not db_find(store, "project_roots", {"project_id": project_id, "path": root}, columns=("path",)):
             raise ValueError(unregistered_root(root, rows[0]))
-    values = {"actor_name": None, "branch": None, "commit": None}
+    values: dict[str, str | None] = {"actor_name": None, "branch": None, "commit": None}
     if not root:
         return values
     several = worktree is None and len(db_find(store, "project_roots", {"project_id": project_id}, columns=("path",))) > 1
@@ -126,8 +132,8 @@ def adopt_group(store, project_id, group, task_versions, *, title=None, worktree
     the person confirms the plan (the store's rule for a person's act that changes what was confirmed).
     """
     from cairnmind.memory.confirmation import GROUP_CHANGED, ConfirmationRefused, person_source
-    from cairnmind.terminal.person_proof import PROOF_MISSING, present
     from cairnmind.memory.plans import PlanManager, _legacy_tasks
+    from cairnmind.terminal.person_proof import PROOF_MISSING, present
     if not present():
         raise ConfirmationRefused(PROOF_MISSING)  # a person's act needs the workspace's key (#305)
     if not isinstance(group, str) or not group.strip():

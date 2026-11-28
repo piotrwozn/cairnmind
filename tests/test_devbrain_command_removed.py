@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 
 from cairnmind.cli_cmds import first_start
-from cairnmind.memory import integrations
 from cairnmind.config import Settings
+from cairnmind.memory import integrations
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "install-wsl.sh"

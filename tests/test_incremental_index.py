@@ -5,20 +5,20 @@ whole graph would produce. Every scenario here ends by comparing the two.
 """
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
-from cairnmind.scip import ingest
-from cairnmind.storage.arcade import ArcadeClient
 from cairnmind.config import Settings
+from cairnmind.scip import ingest
 from cairnmind.scip.ingest import forget_index_signature, index_project, index_project_if_changed
+from cairnmind.storage.arcade import ArcadeClient
 from cairnmind.storage.journal import Journal, JournalTransaction
-from cairnmind.store import Store
 from cairnmind.storage.sql import clean_row
+from cairnmind.store import Store
 
 
 @pytest.fixture(autouse=True)

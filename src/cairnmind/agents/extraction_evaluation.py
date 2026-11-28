@@ -23,16 +23,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
 import re
 import time
+from pathlib import Path
 from uuid import uuid4
 
 from cairnmind import __version__
 from cairnmind.agents.agent_memory import extracted_message
+from cairnmind.agents.ollama import OllamaUnavailable
 from cairnmind.config import Settings
 from cairnmind.scip.ingest import _event_text
-from cairnmind.agents.ollama import OllamaUnavailable
 from cairnmind.storage.sql import json_text
 
 CLIENTS = {"api", "claude", "codex"}

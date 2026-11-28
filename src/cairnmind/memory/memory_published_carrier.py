@@ -18,10 +18,10 @@ from pathlib import Path
 from cairnmind.memory.memory_paths import PUBLISHED_RELATIVE, RESERVED_DIRECTORIES
 from cairnmind.memory.memory_published_format import canonical_uuid
 from cairnmind.pal.path_spelling import lies_in, path_identity
-from cairnmind.storage.sql import insert_document, utc_now
-from cairnmind.storage.storage_query import db_find, db_find_one, db_update_where
 from cairnmind.pal.system_links import system_spelling
 from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.storage.sql import insert_document, utc_now
+from cairnmind.storage.storage_query import db_find, db_find_one, db_update_where
 
 CARRIERS = ("repository", "checkout")
 SETTING = "publication_carrier"
@@ -141,7 +141,7 @@ def unbound_in_checkout(store, project, folder, existing, new_package):
 def carrier_status(store, project, root):
     """`memory status` → published: the carrier, and a package left at the repository place when it is not used."""
     carrier = carrier_of(store, project["id"])
-    result = {"carrier": carrier}
+    result: dict = {"carrier": carrier}
     in_repository = Path(root) / PUBLISHED_RELATIVE
     if carrier["kind"] != "repository":
         result["other_package"] = package_at(in_repository)

@@ -31,7 +31,8 @@ def record_origins(store, records: list[dict]) -> dict[str, str]:
         columns=("record_id", ("snapshot.metadata", "metadata")))} if ids else {}
     origins = {}
     for row in records:
-        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        raw_metadata = row.get("metadata")
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
         # The extraction worker's mark, or its label on the first version: an edit or a confirmation
         # later does not change who drafted the content.
         if _extracted(first.get(row["id"])) or (row["id"] not in first and _extracted(metadata)):

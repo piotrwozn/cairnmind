@@ -12,11 +12,10 @@ import pytest
 import cairnmind.agents.agent as agent_module
 import cairnmind.service as service_module
 from cairnmind.agents.agent import KnowledgeAgent
-from cairnmind.config import Settings
 from cairnmind.agents.ollama import OllamaUnavailable
-from cairnmind.store import Store
 from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
-
+from cairnmind.config import Settings
+from cairnmind.store import Store
 
 PRIVATE = "PRIVATE_METADATA_CREDENTIAL_DO_NOT_ECHO"
 BAD_RESPONSE = "PRIVATE_UNTRUSTED_MODEL_RESPONSE"

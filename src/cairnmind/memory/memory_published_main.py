@@ -17,10 +17,15 @@ from __future__ import annotations
 import hashlib
 
 from cairnmind.memory.memory_published_format import RECORD_KINDS, covered_quotes, ref_class, sha256_text
-from cairnmind.memory.memory_published_git import MAX_CHECKED_BYTES, project_files, published_files, read_blobs
+from cairnmind.memory.memory_published_git import (
+    MAX_CHECKED_BYTES,
+    project_files,
+    published_files,
+    read_blobs,
+)
+from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.storage.sql import clean_row
 from cairnmind.storage.storage_query import db_find, db_update_where, eq, is_in
-from cairnmind.pal.terminal_safe import safe_text
 
 
 def _rows(tx, collection, field, identifiers, *, where=(), columns=None):
@@ -98,8 +103,7 @@ def _claimed(record):
 def import_commit(store, project_id, revision, *, worktree=None, dry_run=False, bind=False, authorize=None,
                   replace_confirmed=False, expected_replaced=None):
     from cairnmind.memory.evidence import evidence_states
-    from cairnmind.memory.memory import MemoryConflict
-    from cairnmind.memory.memory import MemoryManager
+    from cairnmind.memory.memory import MemoryConflict, MemoryManager
     from cairnmind.memory.memory_paths import nested_reserved
     from cairnmind.memory.memory_published import _listing
     from cairnmind.memory.memory_published_carrier import carrier_of

@@ -9,16 +9,17 @@ HTTPS unless it is loopback, and a remote address needs the person's explicit co
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
-from pathlib import Path
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
 
-from cairnmind.config import Settings
 from cairnmind.agents.ollama import Ollama, OllamaUnavailable, validate_embeddings
+from cairnmind.config import Settings
 
 FINISH_REASONS = {"stop": "stop", "length": "length", "tool_calls": "tool_calls", "function_call": "tool_calls",
                   "content_filter": "other"}
@@ -65,7 +66,7 @@ def ollama_reply(data: dict) -> dict:
     choices = data.get("choices")
     choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
     message = choice.get("message") if choice else None
-    if not isinstance(message, dict):
+    if choice is None or not isinstance(message, dict):
         raise OllamaUnavailable("Model server returned no chat message", endpoint="/chat/completions",
                                 error_code="invalid_response")
     content = message.get("content")
@@ -78,10 +79,9 @@ def ollama_reply(data: dict) -> dict:
             continue
         arguments = function.get("arguments", {})
         if isinstance(arguments, str):
-            try:
+            # Kept as text on invalid JSON so the agent answers the call with an error.
+            with contextlib.suppress(ValueError):
                 arguments = json.loads(arguments) if arguments.strip() else {}
-            except ValueError:
-                pass  # kept as text: the agent answers the call with an error
         converted = {"function": {"name": function.get("name", ""), "arguments": arguments}}
         if isinstance(call.get("id"), str):
             converted = {"id": call["id"], **converted}
@@ -92,7 +92,8 @@ def ollama_reply(data: dict) -> dict:
     reason = choice.get("finish_reason")
     if isinstance(reason, str):
         reply["done_reason"] = FINISH_REASONS.get(reason, reason)
-    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    raw_usage = data.get("usage")
+    usage = raw_usage if isinstance(raw_usage, dict) else {}
     for source, target in (("prompt_tokens", "prompt_eval_count"), ("completion_tokens", "eval_count")):
         if type(usage.get(source)) is int:
             reply[target] = usage[source]

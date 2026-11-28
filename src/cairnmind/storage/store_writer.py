@@ -54,18 +54,18 @@ writer at all.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import socket
 import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from cairnmind.pal.file_locks import lock_exclusive
@@ -145,6 +145,8 @@ def _darwin_identity() -> str | None:
 
 def _win32_identity() -> str | None:
     """MachineGuid from the Windows registry: persists across reboots and hostname changes."""
+    if sys.platform != "win32":
+        return None
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as key:
@@ -288,7 +290,7 @@ def server_now(tx) -> str:
     milliseconds = db_server_time_ms(tx)
     if not isinstance(milliseconds, int) or isinstance(milliseconds, bool):
         raise ValueError("The database server gave no time; the writer row was not changed.")
-    return (datetime.fromtimestamp(0, timezone.utc) + timedelta(milliseconds=milliseconds)).isoformat(timespec="microseconds")
+    return (datetime.fromtimestamp(0, UTC) + timedelta(milliseconds=milliseconds)).isoformat(timespec="microseconds")
 
 
 def stamp(tx, installation_id: str) -> None:
@@ -586,7 +588,7 @@ def state(store) -> dict:
         result["copied_from"] = label(me.copied_from)
     if reason:
         result["reason"] = reason
-    if mixed:
+    if mixed and row is not None:
         result["head_writer"], result["problem"] = label(named), mixed_reason(row, named)
     if mixed or role in {"reader", "lost"}:
         result["next"] = TAKEOVER_COMMAND
@@ -596,9 +598,9 @@ def state(store) -> dict:
 def inspect(settings) -> dict:
     """The writer block of `doctor`: read without starting the engine or preparing the store."""
     from cairnmind.storage.arcade import ArcadeError
-    from cairnmind.store import Store
     from cairnmind.storage.restore_staged import RestoreUnfinished
     from cairnmind.storage.store_readonly import StoreNotReady
+    from cairnmind.store import Store
     try:
         store = Store.open_readonly(settings)
         store.installation = installation(settings.data_dir)

@@ -5,8 +5,8 @@ import json
 import subprocess
 import sys
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from cairnmind.config import Settings
 from cairnmind.service import create_app
@@ -56,8 +56,8 @@ def readback(packet):
 
 def test_codex_claude_fresh_codex_restore_plan_check_and_compaction(workspace, monkeypatch, tmp_path):
     from cairnmind.memory import integrations
-    from cairnmind.scip.ingest import import_history
     from cairnmind.memory.verification import run_check
+    from cairnmind.scip.ingest import import_history
 
     settings, store, project, root = workspace
     headers = {"Authorization": f"Bearer {settings.token}"}
@@ -168,6 +168,7 @@ def test_api_session_reads_and_writes_stay_in_selected_worktree(workspace, tmp_p
 
 def test_cli_read_views_inherit_session_worktree_before_ack(workspace, tmp_path, monkeypatch):
     from typer.testing import CliRunner
+
     from cairnmind.cli import app
     from cairnmind.memory.plans import PlanManager
     from cairnmind.memory.sessions import SessionManager

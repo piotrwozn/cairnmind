@@ -2,19 +2,24 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
-from cairnmind.scip.ingest import current_source, index_project
-from cairnmind.memory.memory_paths import (MEMORY_RELATIVE, bound_metadata, is_memory_path,
-                                  is_reserved_memory, memory_bindings)
 from cairnmind.agents.retrieval import Retriever
-from cairnmind.store import Store
+from cairnmind.memory.memory_paths import (
+    MEMORY_RELATIVE,
+    bound_metadata,
+    is_memory_path,
+    is_reserved_memory,
+    memory_bindings,
+)
 from cairnmind.memory.verification import capture_code_state, run_check, verification_status
+from cairnmind.scip.ingest import current_source, index_project
+from cairnmind.store import Store
 
 
 def git(root, *args):

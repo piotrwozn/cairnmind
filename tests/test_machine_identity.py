@@ -5,9 +5,9 @@ No Mac runs these tests here: the Darwin path is selected by setting ``sys.platf
 """
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 

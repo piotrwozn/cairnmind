@@ -1,16 +1,16 @@
 """Owner-local workspace selection; viewing never grants memory permissions."""
 from __future__ import annotations
 
-from copy import deepcopy
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import re
+from copy import deepcopy
+from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
-from cairnmind.terminal.cockpit_state import _atomic, _private_directory, _private_lock, normalize_path
 from cairnmind.pal.private_files import is_private_stat, is_reparse_point, open_no_follow
+from cairnmind.terminal.cockpit_state import _atomic, _private_directory, _private_lock, normalize_path
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 _PANES = {"sidebar", "client1", "client2", "inspector", "graph"}
@@ -163,7 +163,7 @@ class WorkspaceState:
         if all(proposed[key] == value[key] for key in changes):
             return value
         proposed["revision"] += 1
-        proposed["updated_at"] = datetime.now(timezone.utc).isoformat()
+        proposed["updated_at"] = datetime.now(UTC).isoformat()
         _atomic(self.path, proposed)
         return proposed
 

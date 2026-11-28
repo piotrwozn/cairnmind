@@ -10,12 +10,17 @@ entries are held to the same rules as a directory on disk: only the three static
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 from cairnmind.memory.memory_paths import PUBLISHED_RELATIVE, is_reserved_below, is_reserved_memory
 from cairnmind.memory.memory_published_check import DIRECTORIES, STATIC_FILES
-from cairnmind.memory.memory_published_format import MAX_FILE_BYTES, MAX_FILES, MAX_PACKAGE_BYTES, canonical_uuid
+from cairnmind.memory.memory_published_format import (
+    MAX_FILE_BYTES,
+    MAX_FILES,
+    MAX_PACKAGE_BYTES,
+    canonical_uuid,
+)
 from cairnmind.pal.terminal_safe import safe_text
 
 # The largest code file whose passages are compared; a larger one is left unchecked.

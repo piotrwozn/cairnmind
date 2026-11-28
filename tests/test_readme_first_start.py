@@ -1,7 +1,7 @@
 """The README's quick start is the whole first start: every command exists, and the first memory operation comes
 before anything that needs a coding client (#287)."""
-from pathlib import Path
 import re
+from pathlib import Path
 
 from test_deployment import cli_commands, unknown_commands
 

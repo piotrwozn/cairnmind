@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 import re
+from pathlib import Path
 
 # ``monkeypatch.setattr(module.time, "sleep", ...)`` changes the one ``time`` module every thread and every module shares:
 # in server mode the other code of the process sleeps too, and each of those calls ends in the stand-in.
@@ -36,9 +36,7 @@ def process_wide_patches(source):
             if _is_time(first, aliases) or (isinstance(first, ast.Constant) and isinstance(first.value, str)
                                             and TARGET.search(first.value)):
                 found.append(node.lineno)
-        elif isinstance(node, ast.Assign) and any(isinstance(t, ast.Attribute) and _is_time(t.value, aliases) for t in node.targets):
-            found.append(node.lineno)
-        elif isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and node.slice.value == "time" \
+        elif isinstance(node, ast.Assign) and any(isinstance(t, ast.Attribute) and _is_time(t.value, aliases) for t in node.targets) or isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and node.slice.value == "time" \
                 and getattr(node.value, "attr", "") == "modules":
             found.append(node.lineno)
     return found

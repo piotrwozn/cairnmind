@@ -69,12 +69,7 @@ UNIT_WORDS = ("per", "of", "seconds", "ms", "bytes", "chars", "tokens", "count")
 PREFIX_CHARS = 5
 MAX_PATTERN_WORDS = 8  # question words used to look up names by their words
 # Question words that do not name what a setting is about.
-NAME_STOPWORDS = frozenset("""
-about all and any are can could did does doing done for from get give has have how into its know
-least many may might more most much must need not one our please should some tell than that the
-their there these this those use used was were what when where which who why will with would you
-your
-""".split())
+NAME_STOPWORDS = frozenset(["about", "all", "and", "any", "are", "can", "could", "did", "does", "doing", "done", "for", "from", "get", "give", "has", "have", "how", "into", "its", "know", "least", "many", "may", "might", "more", "most", "much", "must", "need", "not", "one", "our", "please", "should", "some", "tell", "than", "that", "the", "their", "there", "these", "this", "those", "use", "used", "was", "were", "what", "when", "where", "which", "who", "why", "will", "with", "would", "you", "your"])
 
 
 def _stem(word: str) -> str:
@@ -106,7 +101,7 @@ def candidate_names(question: str, texts: list[str]) -> tuple[list[str], list[st
     code = list(dict.fromkeys(code))[:MAX_NAMES // 2]
     words = terms(question)
     plain: list[str] = []
-    for word in [*words, *("_".join(pair) for pair in zip(words, words[1:]))]:
+    for word in [*words, *("_".join(pair) for pair in zip(words, words[1:], strict=False))]:
         plain += [word, word.upper()]
     plain = [name for name in dict.fromkeys(plain) if len(name) >= 2 and name not in code]
     return code, plain[:MAX_NAMES - len(code)]

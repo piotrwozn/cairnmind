@@ -7,11 +7,9 @@ authoritative memory protocol; terminal delivery never manufactures an ACK.
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import signal
@@ -21,27 +19,34 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import contextmanager, suppress
+from pathlib import Path
 from uuid import uuid4
 
-try:
+if sys.platform != "win32":
     import fcntl
     import termios
-except ImportError:
-    fcntl = None  # type: ignore[assignment]
-    termios = None  # type: ignore[assignment]
+else:
+    fcntl = None
+    termios = None
 
 import httpx
 
-from cairnmind.pal import platform_hints
 from cairnmind.config import ENV_PREFIXES, Settings, tls_verify
+from cairnmind.pal import platform_hints
 from cairnmind.pal.file_locks import lock_exclusive
 from cairnmind.pal.private_files import (
-    IS_WINDOWS, atomic_replace, ensure_private_dir, is_private_stat, is_reparse_point,
-    make_private, open_no_follow,
+    IS_WINDOWS,
+    atomic_replace,
+    ensure_private_dir,
+    is_private_stat,
+    is_reparse_point,
+    make_private,
+    open_no_follow,
 )
 from cairnmind.pal.process_identity import start as process_start
-from cairnmind.terminal.runtime_selection import resolve_tmux
 from cairnmind.pal.runtime_sockets import MAX_SOCKET_PATH, prepare_socket_base, socket_directory
+from cairnmind.terminal.runtime_selection import resolve_tmux
 
 LIVE = {"starting", "running", "stopping"}
 
@@ -120,7 +125,7 @@ class NativeRuntime:
     capabilities = diagnostics
 
     def _initialize(self):
-        if IS_WINDOWS:
+        if sys.platform == "win32" or IS_WINDOWS:
             try:
                 ensure_private_dir(self.directory)
             except ValueError as exc:
@@ -198,7 +203,7 @@ class NativeRuntime:
             self._tmux("kill-server", check=False)
 
     def _pane(self, row):
-        if not self.binary or not self.socket.exists():
+        if sys.platform == "win32" or not self.binary or not self.socket.exists():
             return None
         info = self.socket.lstat()
         if info.st_uid != os.getuid() or not stat.S_ISSOCK(info.st_mode):
@@ -254,7 +259,8 @@ class NativeRuntime:
             if not row.get("process_start"):
                 # The durable starting intent precedes spawn. If the browser
                 # host died before recording exec, recover the same owned pane.
-                row.update(process_start=process_start(pane["pid"]), pgid=os.getpgid(pane["pid"]))
+                pgid = os.getpgid(pane["pid"]) if sys.platform != "win32" else pane["pid"]
+                row.update(process_start=process_start(pane["pid"]), pgid=pgid)
             lifecycle = "stopping" if row["lifecycle"] == "stopping" else "running"
             row.update(lifecycle=lifecycle, state=lifecycle, pid=pane["pid"], pane_id=pane["pane"])
         return row
@@ -479,7 +485,7 @@ class NativeRuntime:
                 with self._locked():
                     self._kill_session(row["tmux_session"])
             return dict(row)
-        if pane and not pane["dead"]:
+        if pane and not pane["dead"] and sys.platform != "win32":
             pid = pane["pid"]
             # Pane ownership plus the process start identity prevents PID reuse
             # from turning an old run's stop button into an unrelated signal.
@@ -493,18 +499,14 @@ class NativeRuntime:
                 current = next(r for r in rows if r["id"] == run_id)
                 current.update(lifecycle="stopping", state="stopping")
                 self._save(rows)
-            try:
+            with suppress(ProcessLookupError):
                 os.killpg(group, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
             deadline = time.monotonic() + 3
             while process_start(pid) == row["process_start"] and time.monotonic() < deadline:
                 time.sleep(.03)
             if process_start(pid) == row["process_start"]:
-                try:
+                with suppress(ProcessLookupError):
                     os.killpg(group, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
         with self._locked():
             if pane:
                 self._kill_session(row["tmux_session"])
@@ -549,9 +551,23 @@ class NativeRuntime:
 
 
 class _Channel:
+    runtime: NativeRuntime
+    row: dict
+    attachments: dict[str, TerminalAttachment]
+    controller: str | None
+    closed: bool
+    loop: asyncio.AbstractEventLoop
+    fd: int
+    tty: str
+    process: subprocess.Popen[bytes]
+
     def __init__(self, runtime, row):
+        if sys.platform == "win32" or fcntl is None or termios is None:
+            raise RuntimeError("Native PTY attachments are unavailable on Windows")
         self.runtime, self.row = runtime, row
-        self.attachments, self.controller, self.closed = {}, None, False
+        self.attachments = {}
+        self.controller = None
+        self.closed = False
         self.loop = asyncio.get_running_loop()
         master, slave = os.openpty()
         self.fd, self.tty = master, os.ttyname(slave)
@@ -650,6 +666,8 @@ class TerminalAttachment:
         self._writable()
         if any(type(v) is not int for v in (cols, rows)) or not 20 <= cols <= 500 or not 5 <= rows <= 200:
             raise ValueError("Terminal dimensions are outside supported bounds")
+        if sys.platform == "win32" or fcntl is None or termios is None:
+            raise RuntimeError("Native PTY resize is unavailable on Windows")
         fcntl.ioctl(self.channel.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
     async def close(self):

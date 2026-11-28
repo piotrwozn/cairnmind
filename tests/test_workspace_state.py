@@ -3,8 +3,8 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-
 from conftest import assert_private, make_symlink_or_skip
+
 from cairnmind.config import Settings
 from cairnmind.terminal.workspace_state import WorkspaceState
 

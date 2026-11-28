@@ -6,13 +6,12 @@ at 65536 characters and array limits at 1024 items.
 """
 from __future__ import annotations
 
-from itertools import islice
 import json
 import math
+from itertools import islice
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
-
 
 MAX_SCHEMA_BYTES = 8192
 MAX_SCHEMA_DEPTH = 6
@@ -132,9 +131,7 @@ def _is_json_value(value) -> bool:
             active.add(identity)
             stack.append((item, True))
             stack.extend((child, False) for child in (item.values() if isinstance(item, dict) else item))
-        elif type(item) not in {str, int, float, bool, type(None)}:
-            return False
-        elif isinstance(item, float) and not math.isfinite(item):
+        elif type(item) not in {str, int, float, bool, type(None)} or isinstance(item, float) and not math.isfinite(item):
             return False
     return True
 

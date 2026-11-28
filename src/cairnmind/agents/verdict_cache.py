@@ -15,16 +15,17 @@ Transient failures, timeouts and unparsed outputs are NEVER cached.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
-from pathlib import Path
 import sqlite3
 import time
+from pathlib import Path
 from typing import Any
 
-from cairnmind.pal.private_files import make_private
 from cairnmind.agents.retrieval import json_value, secondary_source
+from cairnmind.pal.private_files import make_private
 
 VERIFIER_VERSION = 1
 CACHE_FILENAME = "verdict_cache.sqlite3"
@@ -145,10 +146,8 @@ class VerdictCache:
                 ");"
             )
             if not existed:
-                try:
+                with contextlib.suppress(OSError):
                     make_private(self.path)
-                except OSError:
-                    pass
             return conn
         except (OSError, sqlite3.Error):
             return None

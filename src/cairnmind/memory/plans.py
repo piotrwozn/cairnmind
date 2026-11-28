@@ -5,15 +5,21 @@ memory-record mutation, with a compare-and-swap on both task and plan versions.
 """
 from __future__ import annotations
 
-from copy import deepcopy
 import hashlib
 import heapq
 import json
+from copy import deepcopy
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
-from cairnmind.memory.confirmation import PLAN_CONTEXT_KEPT, ConfirmationRefused, VerdictKept, kept_step_refusal, kept_verdict
-from cairnmind.store import ORIGIN_METADATA, outcome_changed
+from cairnmind.memory.confirmation import (
+    PLAN_CONTEXT_KEPT,
+    ConfirmationRefused,
+    VerdictKept,
+    kept_step_refusal,
+    kept_verdict,
+)
 from cairnmind.storage.sql import clean_row, json_text, unregistered_root, utc_now
 from cairnmind.storage.storage_query import (
     asc,
@@ -26,7 +32,7 @@ from cairnmind.storage.storage_query import (
     is_in,
     ne,
 )
-
+from cairnmind.store import ORIGIN_METADATA, outcome_changed
 
 _EVIDENCE_FIELDS = {
     "test_passed", "test_source_ids", "review_passed", "review_source_ids",
@@ -104,6 +110,8 @@ def _plan_graph(store, tx, plan, tasks):
     db_delete_where(tx, "edges", [eq("from_id", node_id), is_in("kind", ("has_step", "supported_by"))])
     for source_id in sources:
         source = db_find_one(tx, "sources", {"id": source_id}, required=True)
+        if source is None:
+            raise ValueError(f"Unknown source: {source_id}")
         target = f"source:{source_id}"
         store.upsert_node({"id": target, "project_id": plan["project_id"], "kind": "source",
                            "label": source["uri"], "source_id": source_id,
@@ -149,6 +157,8 @@ class PlanManager:
 
     def _worktree(self, tx, project_id, worktree):
         project = db_find_one(tx, "projects", {"id": project_id}, required=True)
+        if project is None:
+            raise ValueError(f"Unknown project: {project_id}")
         root = str(Path(worktree if worktree is not None else project["root"]).expanduser().resolve())
         if not db_find(tx, "project_roots", {"project_id": project_id, "path": root}, columns=("id",)):
             raise ValueError(unregistered_root(root, project))
@@ -326,7 +336,7 @@ class PlanManager:
             # Final keys are unique, but a valid simultaneous key swap must not
             # collide with the old ownership while records are being rewritten.
             for task in existing_by_id.values():
-                fields = {"active_key": None}
+                fields: dict[str, Any] = {"active_key": None}
                 if "worktree" in task["metadata"]:
                     fields["metadata"] = {key: value for key, value in task["metadata"].items()
                                           if key != "worktree"}
@@ -416,6 +426,8 @@ class PlanManager:
                 if request and request.get("result"):
                     original = db_find_one(
                         tx, "sources", {"id": request["result"]["plan"]["source_ids"][-1]}, required=True)
+                    if original is None:
+                        raise ValueError("Legacy adoption source is missing")
                     payload = json.loads(original["content"])
                     expected_plan = plan or {"title": group}
                     if payload.get("adoption") == group and payload["plan"] == expected_plan and payload["task_versions"] == task_versions and payload["worktree"] == (str(worktree) if worktree is not None else None) and payload["activate"] == activate:

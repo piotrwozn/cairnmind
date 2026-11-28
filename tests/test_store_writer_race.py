@@ -10,15 +10,14 @@ import json
 import threading
 
 import pytest
+from test_store_writer import head, project, second_installation, writer_row
 from typer.testing import CliRunner
 
+from cairnmind.cli import app
 from cairnmind.storage import store_writer
 from cairnmind.storage.arcade import ArcadeClient, ArcadeError
-from cairnmind.cli import app
-from cairnmind.store import Store
 from cairnmind.storage.store_writer import StoreNotWriter, StoreWriterLost, take_over
-
-from test_store_writer import head, project, second_installation, writer_row
+from cairnmind.store import Store
 
 runner = CliRunner()
 CONFLICT = "ConcurrentModificationException"
@@ -205,11 +204,10 @@ def test_a_writer_coming_back_while_the_new_writer_writes_fences_that_write(tmp_
     take_over(second)
     second = Store(second.data_dir)
     back = Store(first.data_dir)
-    with pytest.raises((StoreWriterLost, ArcadeError)):
-        with second.transaction() as tx:
-            tx.query("SELECT FROM journal_state WHERE id='current'")
-            assert take_over(back)["taken_over"] is True
-            tx.command("UPDATE projects SET name='renamed' WHERE id=:project", {"project": pid})
+    with pytest.raises((StoreWriterLost, ArcadeError)), second.transaction() as tx:
+        tx.query("SELECT FROM journal_state WHERE id='current'")
+        assert take_over(back)["taken_over"] is True
+        tx.command("UPDATE projects SET name='renamed' WHERE id=:project", {"project": pid})
     assert agreed_writer(first) == first.installation.id
     assert [row["name"] for row in Store(first.data_dir).list_projects()] == ["demo"]
     with pytest.raises(StoreWriterLost, match=first.installation.id[:8]):

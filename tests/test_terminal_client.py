@@ -1,17 +1,16 @@
 """Private terminal broker authentication, session renewal and event cursors."""
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 import json
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
-from cairnmind.terminal import cockpit
 from cairnmind.config import Settings
+from cairnmind.terminal import cockpit
 from cairnmind.terminal.terminal_client import BrokerClient, BrokerError
-
 
 ORIGIN = "http://127.0.0.1:8766"
 

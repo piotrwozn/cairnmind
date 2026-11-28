@@ -9,21 +9,20 @@ import asyncio
 import subprocess
 
 import pytest
-
-import cairnmind.memory.sessions as sessions_module
-from cairnmind.agents.agent import KnowledgeAgent
-from cairnmind.agents.extraction_input import source_text
-from cairnmind.scip.ingest import index_project
-from cairnmind.terminal.inspector import Inspector
-from cairnmind.memory.plans import PlanManager
-from cairnmind.agents.retrieval import json_value
-from cairnmind.memory.sessions import origin_mark
-
 from conftest import as_person
 from test_agent_own_extraction import ScriptedModel
 from test_external_session_writes import fixture as fixture  # noqa: F401 - a fixture
 from test_external_session_writes import post, readback
 from test_sessions import active_plan
+
+import cairnmind.memory.sessions as sessions_module
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.agents.extraction_input import source_text
+from cairnmind.agents.retrieval import json_value
+from cairnmind.memory.plans import PlanManager
+from cairnmind.memory.sessions import origin_mark
+from cairnmind.scip.ingest import index_project
+from cairnmind.terminal.inspector import Inspector
 
 NOTES = 5
 STALE = "state or code changed before ACK"

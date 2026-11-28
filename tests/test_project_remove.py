@@ -3,17 +3,16 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import as_person, plain_words
 
 from cairnmind.memory import project_removal as removal
-from cairnmind.scip.ingest import index_pending_sources, index_project, poll_imports
 from cairnmind.memory.memory import MemoryConflict, MemoryManager
 from cairnmind.memory.record_kinds import FIELD, doctor_view
-from cairnmind.service import schedule_embeddings
 from cairnmind.memory.sessions import SessionManager
+from cairnmind.scip.ingest import index_pending_sources, index_project, poll_imports
+from cairnmind.service import schedule_embeddings
 from cairnmind.storage.sql import insert_document
 from cairnmind.store import EXPORT_TYPES, Store
-
-from conftest import as_person, plain_words
 
 NOT_COUNTED = {"projects", "project_roots", "journal_state", "journal_events"}
 

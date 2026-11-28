@@ -5,8 +5,8 @@ import os
 import sys
 
 import pytest
-
 from conftest import make_symlink_or_skip
+
 from cairnmind.pal import private_files
 
 

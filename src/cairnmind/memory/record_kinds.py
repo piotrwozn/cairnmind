@@ -23,10 +23,10 @@ import json
 import re
 
 from cairnmind.memory.confirmation import PERSON_ROUTES, person_mark, person_source
+from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.scip.ingest import CLAUDE_TECHNICAL_RECORDS, CODEX_TECHNICAL_RECORDS
 from cairnmind.storage.sql import utc_now
 from cairnmind.storage.storage_query import asc, db_find, db_find_one, db_update_where, eq, gt, is_null
-from cairnmind.pal.terminal_safe import safe_text
 
 FIELD = "accepted_record_kinds"
 WITHDRAWN_FIELD = "withdrawn_record_kinds"
@@ -180,7 +180,7 @@ def set_acceptance(store, project_id, client, kind, note=None, *, withdraw=False
         else:
             if len(entries) >= MAX_ACCEPTED:
                 raise ValueError(f"A project keeps at most {MAX_ACCEPTED} accepted kinds; withdraw one first")
-            current = {"client": client, "kind": kind, "note": note.strip(), "accepted_at": at,
+            current = {"client": client, "kind": kind, "note": (note or "").strip(), "accepted_at": at,
                        "accepted_by": mark["actor_name"], "route": act["route"], "source_id": source["id"]}
             entries.append(current)
             result = {"status": "accepted", "acceptance": current}

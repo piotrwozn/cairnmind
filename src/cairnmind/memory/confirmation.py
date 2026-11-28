@@ -216,7 +216,8 @@ def local_verdict(head) -> bool:
     """
     if not isinstance(head, dict) or head.get("status") not in ("confirmed", "disputed"):
         return False
-    metadata = head.get("metadata") if isinstance(head.get("metadata"), dict) else {}
+    raw_metadata = head.get("metadata")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
     mark, publication = metadata.get(MARK), metadata.get("publication")
     if isinstance(mark, dict) and head.get("status") == "confirmed" and mark.get("by") in ("person", "import"):
         return mark["by"] == "person"
@@ -400,9 +401,11 @@ def confirmation_parts(record):
         return None
     by = found["by"]
     if by == "person":
+        route = found.get("route")
+        route_word = _ROUTE_WORDS.get(route, "by a person's act") if isinstance(route, str) else "by a person's act"
         return ("confirmed here by a person: {name}, {route}, {at}",
                 {"name": _or(found.get("actor_name"), "the local user"),
-                 "route": Fixed(_ROUTE_WORDS.get(found.get("route"), "by a person's act")),
+                 "route": Fixed(route_word),
                  "at": _or(str(found.get("at") or "")[:10], "time unknown")})
     if by == "import":
         where = _or(found.get("where"), "a memory package", 200)
@@ -415,9 +418,11 @@ def confirmation_parts(record):
                 return ("confirmed before only a person could confirm, as the backup says; " + tail,
                         {"where": where, "day": day})
             last = claims[-1]
+            action = last.get("action")
+            action_word = _ROUTE_WORDS.get(action, "by a person's act") if isinstance(action, str) else "by a person's act"
             return ("confirmed by {name}, {route}, {at}, as the backup says; " + tail,
                     {"name": _or(last.get("name"), "an unnamed person"),
-                     "route": Fixed(_ROUTE_WORDS.get(last.get("action"), "by a person's act")),
+                     "route": Fixed(action_word),
                      "at": _or(str(last.get("at") or "")[:10], "time unknown"), "where": where, "day": day})
         if not claims:
             return ("confirmed elsewhere, who confirmed it is not recorded; imported from {where} on {day}; "

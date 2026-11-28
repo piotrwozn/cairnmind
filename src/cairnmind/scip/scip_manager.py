@@ -15,23 +15,24 @@ Security invariants:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import gzip
 import hashlib
 import hmac
 import json
+import logging
 import os
-from pathlib import Path, PurePosixPath
 import secrets
 import shutil
 import subprocess
 import tarfile
 import time
+import urllib.request
+import zipfile
+from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
-import urllib.request
 from uuid import uuid4
-import zipfile
 
 from cairnmind.config import Settings
 from cairnmind.pal.file_locks import locked_path
@@ -57,6 +58,7 @@ MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024  # 256 MiB compressed asset ceiling
 MAX_EXTRACTED_BYTES = 512 * 1024 * 1024  # 512 MiB extracted binary ceiling
 _COPY_CHUNK_BYTES = 1024 * 1024
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+log = logging.getLogger(__name__)
 
 
 class ScipError(RuntimeError):
@@ -119,8 +121,8 @@ def _resolve_java_for_scip(settings: Settings) -> str | None:
         resolved = resolve_java(settings)
         if resolved:
             return resolved
-    except Exception:
-        pass
+    except (OSError, RuntimeError, ValueError) as exc:
+        log.debug("Managed Java lookup failed; falling back to PATH: %s", exc)
     return shutil.which("java")
 
 
@@ -329,8 +331,8 @@ def _run_managed_process(
         raise
     finally:
         job.close()
-    stdout = (stdout_b or b"").decode("utf-8", "replace")
-    stderr = (stderr_b or b"").decode("utf-8", "replace")
+    stdout = stdout_b.decode("utf-8", "replace") if isinstance(stdout_b, bytes) else (stdout_b or "")
+    stderr = stderr_b.decode("utf-8", "replace") if isinstance(stderr_b, bytes) else (stderr_b or "")
     return proc.returncode, stdout, stderr
 
 

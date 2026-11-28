@@ -25,20 +25,28 @@ a shared memory mapping. For a warning that is an accepted limit; a check run re
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import contextlib
 import hashlib
 import json
+import logging
 import os
-from pathlib import Path
+import re
+import sqlite3
 import stat
 import subprocess
-
-from cairnmind.pal.private_files import ensure_private_dir, write_durable_private
-from cairnmind.storage.storage_query import db_find, db_find_one
 import threading
 import time
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, TypeGuard
 
 import pathspec
+
+from cairnmind.pal.private_files import ensure_private_dir, write_durable_private
+from cairnmind.storage.arcade import ArcadeError
+from cairnmind.storage.storage_query import db_find, db_find_one
+
+log = logging.getLogger(__name__)
 
 MAX_REPORTED = 50
 ACTIVE_STATES = ("in_progress", "needs_test", "needs_review", "blocked")
@@ -126,7 +134,12 @@ def path_states(store, project_id: str, worktree=None, *, known: dict | None = N
     what it holds is not read again.
     """
     from cairnmind.memory.git_worktree import _git, _root, require_git_tree
-    from cairnmind.memory.memory_paths import git_pathspec, is_reserved_below, is_reserved_memory, nested_reserved
+    from cairnmind.memory.memory_paths import (
+        git_pathspec,
+        is_reserved_below,
+        is_reserved_memory,
+        nested_reserved,
+    )
     root = _root(store, project_id, worktree)
     result = {"status": "unknown", "worktree": str(root), "head": None, "reasons": [], "paths": {}}
     try:
@@ -167,8 +180,8 @@ def _read_note(path: Path, task_id: str, worktree: str) -> dict | None:
         if (isinstance(note, dict) and note.get("task_id") == task_id and note.get("worktree") == worktree
                 and isinstance(note.get("paths"), dict) and all(_whole(entry) for entry in note["paths"].values())):
             return note
-    except (OSError, ValueError):
-        pass
+    except (OSError, ValueError) as exc:
+        log.debug("Ignoring unreadable scope note %s: %s", path, exc)
     return None
 
 
@@ -179,11 +192,9 @@ def _write(store, path: Path, note: dict) -> None:
     write_durable_private(path, json.dumps(note), prefix=".note-")
     cutoff = time.time() - 86400
     for old in folder.glob(".note-*"):  # what an interrupted write left behind
-        try:
+        with contextlib.suppress(OSError):
             if old.stat().st_mtime < cutoff:
                 old.unlink()
-        except OSError:
-            pass
 
 
 def record_baseline(store, task: dict, worktree=None) -> bool:
@@ -209,7 +220,7 @@ def record_baseline(store, task: dict, worktree=None) -> bool:
     paths = {name: entry if _settled(entry, started) else [entry[0], -1, *entry[2:]]
              for name, entry in state["paths"].items()}
     _write(store, path, {"project_id": task["project_id"], "task_id": task["id"], "worktree": state["worktree"],
-                         "head": state["head"], "captured_at": datetime.now(timezone.utc).isoformat(),
+                         "head": state["head"], "captured_at": datetime.now(UTC).isoformat(),
                          "captured_ns": started, "paths": paths})
     current = db_find_one(store, "records", {"id": task["id"]})
     if current and current.get("metadata", {}).get("state") == "done":
@@ -236,10 +247,14 @@ def close_note(store, task: dict, worktree=None) -> bool:
             continue
         try:
             final = _compare(store, task, scope, root, note, refresh=False)
-        except Exception as exc:  # noqa: BLE001 - one unreadable worktree must not keep the others open
+        except (
+            OSError, ValueError, RuntimeError, KeyError, TypeError,
+            subprocess.SubprocessError, ArcadeError, sqlite3.Error,
+        ) as exc:
+            # One unreadable worktree must not keep the others open.
             final = {**_blank(scope), "reasons": [_shown(f"the final comparison failed: {type(exc).__name__}", 300)]}
         # The file map has served its purpose: a finished note is a few hundred bytes.
-        _write(store, path, {**note, "paths": {}, "final": {**final, "finished_at": datetime.now(timezone.utc).isoformat()}})
+        _write(store, path, {**note, "paths": {}, "final": {**final, "finished_at": datetime.now(UTC).isoformat()}})
         closed = True
     return closed
 
@@ -253,14 +268,18 @@ def note_progress(store, task: dict, worktree, change: str) -> None:
     def work():
         try:
             (record_baseline if change == "start" else close_note)(store, task, worktree)
-        except Exception:  # noqa: BLE001 - an advisory note must not turn a successful write into a failure
-            pass
+        except (
+            OSError, ValueError, RuntimeError, KeyError, TypeError,
+            subprocess.SubprocessError, ArcadeError, sqlite3.Error,
+        ) as exc:
+            # An advisory note must not turn a successful write into a failure.
+            log.debug("Advisory scope note failed for task %s: %s", task.get("id"), exc)
     try:
         thread = threading.Thread(target=work, name="cairnmind-scope-note")
         thread.start()
         thread.join(_WAIT_SECONDS)
-    except Exception:  # noqa: BLE001
-        pass
+    except (RuntimeError, OSError) as exc:
+        log.debug("Could not start scope note thread: %s", exc)
 
 
 def _blank(scope) -> dict:
@@ -272,7 +291,7 @@ def _compare(store, task: dict, scope: list[str], root: Path, note: dict, *, ref
     result = {**_blank(scope), "since": note.get("captured_at")}
     try:
         spec = pathspec.GitIgnoreSpec.from_lines(scope)
-    except Exception as exc:  # noqa: BLE001 - a pattern the library cannot read is not a ValueError
+    except (ValueError, TypeError, re.error) as exc:
         result["reasons"] = [_shown(f"a scope pattern cannot be read: {exc}", 300)]
         return result
     now_ns = time.time_ns()
@@ -306,12 +325,13 @@ def _compare(store, task: dict, scope: list[str], root: Path, note: dict, *, ref
                 latest = _read_note(path, task["id"], str(root))
                 if latest is not None and "final" not in latest and latest.get("captured_ns") == note.get("captured_ns"):
                     _write(store, path, {**latest, "paths": {**latest["paths"], **moved}})
-            except Exception:  # noqa: BLE001 - a read never fails because a note could not be refreshed
-                pass
+            except (OSError, ValueError, TypeError) as exc:
+                # A read never fails because a note could not be refreshed.
+                log.debug("Could not refresh scope note for task %s: %s", task.get("id"), exc)
     return result
 
 
-def _kept(final) -> bool:
+def _kept(final: Any) -> TypeGuard[dict[str, Any]]:
     return (isinstance(final, dict) and final.get("status") in ("in_scope", "out_of_scope", "unknown")
             and type(final.get("changed")) is int and type(final.get("out_of_scope_total")) is int
             and all(isinstance(final.get(key), list) and all(isinstance(item, str) for item in final[key])

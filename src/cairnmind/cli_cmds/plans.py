@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Annotated
 import uuid
+from pathlib import Path
+from typing import Annotated, Any
 
 import typer
 
+from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.cli_arguments import (
     GroupArg,
     PlanIdArg,
@@ -17,7 +18,6 @@ from cairnmind.cli_cmds.cli_arguments import (
     TaskIdArg,
     TitleArg,
 )
-from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.io import initialized
 from cairnmind.config import Settings
 
@@ -34,7 +34,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         store = _io.store_for_read(ctx.obj)
 
         def read():
-            pid = store.resolve_project(project)["id"]
+            pid = _io.resolve_project(store, project)["id"]
             scope = _io.actor_scope(store, pid, worktree)
             tasks = [r for r in store.list_records(pid) if r["kind"] == "task"]
             return pid, [{**task, "verification": verification_status(store, task, scope)} for task in tasks]
@@ -48,7 +48,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
                  depends_on: Annotated[list[str] | None, typer.Option("--depends-on")] = None,
                  requires_test: bool = False, requires_review: bool = False):
         store = _io.store_for(ctx.obj)
-        pid = store.resolve_project(project)["id"]
+        pid = _io.resolve_project(store, project)["id"]
         metadata = {"state": "todo", "plan_id": plan, "step_index": step,
                     "acceptance_criteria": criterion or [], "depends_on": depends_on or [],
                     "requires_test": requires_test, "requires_review": requires_review}
@@ -56,7 +56,9 @@ def register(apps: dict[str, typer.Typer]) -> None:
         from cairnmind.memory import confirmation
         # The command line confirms nothing (#214): the task is stored as proposed, and the command says so.
         with _io.actor_write(store, ctx.obj, pid):
-            from cairnmind.memory.secret_mask import note_metadata  # indexed with its known secrets replaced (#182)
+            from cairnmind.memory.secret_mask import (
+                note_metadata,  # indexed with its known secrets replaced (#182)
+            )
             src = store.snapshot(pid, f"manual://task/{uuid.uuid4()}", text, "manual",
                                  note_metadata(store.settings, text, {"role": "user"}))
             result = store.remember(pid, {"kind": "task", "content": title, "status": "proposed", "metadata": metadata},
@@ -73,14 +75,14 @@ def register(apps: dict[str, typer.Typer]) -> None:
                     plan_version: int | None = None,
                     check_run: Annotated[list[str] | None, typer.Option("--check-run")] = None):
         store = _io.store_for(ctx.obj)
-        pid = store.resolve_project(project)["id"]
+        pid = _io.resolve_project(store, project)["id"]
         task = next((r for r in store.list_records(pid) if r["id"] == task_id and r["kind"] == "task"), None)
         if task is None:
             raise ValueError("Task does not exist in this project")  # as the store says a missing row (#244)
         sources = task["source_ids"]
         if isinstance(sources, str):
             sources = json.loads(sources)
-        metadata = {"state": state}
+        metadata: dict[str, Any] = {"state": state}
         if check_run:
             metadata["check_run_ids"] = check_run
         evidence_text = None
@@ -91,7 +93,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
             if not evidence_text.strip():
                 _io.refuse("The evidence file must contain a non-empty check result")
         with _io.actor_write(store, ctx.obj, pid, worktree) as scope:
-            if evidence_text is not None:
+            if evidence_text is not None and evidence is not None:
                 src = store.snapshot(pid, f"verification://{uuid.uuid4()}", evidence_text, "verification",
                                      {"path": str(evidence.resolve()), "role": "user", "reported": True})
                 sources = [*sources, src["id"]]
@@ -134,7 +136,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         versions = (_io._json_file(task_versions) if task_versions
                     else document.get("task_versions"))
         store = _io.store_for(ctx.obj)
-        pid = store.resolve_project(project)["id"]
+        pid = _io.resolve_project(store, project)["id"]
         # A save is never a person's act (#214): the store refuses one that changes or removes a step a person
         # confirmed, with the step named.
         with _io.actor_write(store, ctx.obj, pid, worktree) as scope:
@@ -149,7 +151,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         store = _io.store_for_read(ctx.obj)
 
         def read():
-            pid = store.resolve_project(project)["id"]
+            pid = _io.resolve_project(store, project)["id"]
             return pid, PlanManager(store).list(pid)
 
         _io.output(store.read_consistently(read, _io.READ_KINDS["plan list"]))
@@ -160,7 +162,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         store = _io.store_for_read(ctx.obj)
 
         def read():
-            pid = store.resolve_project(project)["id"]
+            pid = _io.resolve_project(store, project)["id"]
             return pid, PlanManager(store).get(pid, plan_id)
 
         _io.output(store.read_consistently(read, _io.READ_KINDS["plan show"]))
@@ -171,7 +173,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         store = _io.store_for_read(ctx.obj)
 
         def read():
-            pid = store.resolve_project(project)["id"]
+            pid = _io.resolve_project(store, project)["id"]
             scope = _io.actor_scope(store, pid, worktree)
             result = PlanManager(store).next_task(pid, plan_id, scope)
             if result.get("task"):
@@ -190,7 +192,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
     def plan_activate(ctx: typer.Context, project: ProjectArg, plan_id: PlanIdArg, worktree: Path | None = None):
         from cairnmind.memory.plans import PlanManager
         store = _io.store_for(ctx.obj)
-        pid = store.resolve_project(project)["id"]
+        pid = _io.resolve_project(store, project)["id"]
         with _io.actor_write(store, ctx.obj, pid, worktree) as scope:
             result = PlanManager(store).activate(pid, plan_id, scope)
         _io.output(result)
@@ -202,7 +204,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
                    title: str | None = None, worktree: Path | None = None, activate: bool = False):
         from cairnmind.memory.plans import PlanManager
         store = _io.store_for(ctx.obj)
-        pid = store.resolve_project(project)["id"]
+        pid = _io.resolve_project(store, project)["id"]
         # Adoption gives each task a plan key: a task a person confirmed is refused here; the person adopts that group
         # in the workspace (#214, #305).
         with _io.actor_write(store, ctx.obj, pid, worktree) as scope:
@@ -226,7 +228,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         store = _io.store_for(ctx.obj) if write else _io.store_for_read(ctx.obj)
 
         def run_contract():
-            pid = store.resolve_project(project)["id"]
+            pid = _io.resolve_project(store, project)["id"]
             scope = _io.actor_scope(store, pid, worktree)
             return pid, (write_contract(store, pid, write, plan_id, scope) if write
                          else build_contract(store, pid, plan_id, scope))
@@ -244,7 +246,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         store = _io.store_for_read(ctx.obj)
 
         def read():
-            pid = store.resolve_project(project)["id"]
+            pid = _io.resolve_project(store, project)["id"]
             return pid, load_profiles(store, pid, _io.actor_scope(store, pid, worktree))
 
         _io.output(store.read_consistently(read, _io.READ_KINDS["check profiles"]))
@@ -255,7 +257,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
                   task: Annotated[str, typer.Option("--task")], worktree: Path | None = None):
         from cairnmind.memory.verification import run_check
         store = _io.store_for(ctx.obj)
-        pid = store.resolve_project(project)["id"]
+        pid = _io.resolve_project(store, project)["id"]
         with _io.actor_write(store, ctx.obj, pid, worktree) as scope:
             pass  # Validate receipt first; do not hold the database lock while executing a program.
         result = run_check(store, ctx.obj, pid, profile, task, scope)
@@ -269,14 +271,20 @@ def register(apps: dict[str, typer.Typer]) -> None:
                    as_json: Annotated[bool, typer.Option("--json", help="Print the decision as JSON.")] = False):
         """Show the next plan step's stage and what is mapped to it. Changes no task and starts nothing."""
         from cairnmind.agents.api_runtime import cli_stage_readiness
-        from cairnmind.terminal.cockpit_state import CockpitState
         from cairnmind.memory.plans import PlanManager
-        from cairnmind.terminal.stages import (FROM_WORKSPACE, check_declared, describe, next_command, project_routing,
-                                      resolve_stage)
-        from cairnmind.pal.terminal_safe import safe_text
         from cairnmind.memory.verification import declared_check_names
+        from cairnmind.pal.terminal_safe import safe_text
+        from cairnmind.terminal.cockpit_state import CockpitState
+        from cairnmind.terminal.stages import (
+            FROM_WORKSPACE,
+            check_declared,
+            describe,
+            next_command,
+            project_routing,
+            resolve_stage,
+        )
         store = _io.store_for(ctx.obj)
-        selected = store.resolve_project(project)
+        selected = _io.resolve_project(store, project)
         scope = _io.actor_scope(store, selected["id"], worktree)
         plans = PlanManager(store)
         stages, slots, profiles = project_routing(CockpitState(ctx.obj).load(), selected["id"])
@@ -310,7 +318,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
                    worktree: Path | None = None):
         from cairnmind.memory.verification import recover_interrupted_runs, verification_status
         store = _io.store_for(ctx.obj)
-        pid = store.resolve_project(project)["id"]
+        pid = _io.resolve_project(store, project)["id"]
         scope = _io.actor_scope(store, pid, worktree)
         recover_interrupted_runs(store, ctx.obj)
         from cairnmind.storage.storage_query import asc, db_find, db_find_one, desc
@@ -326,7 +334,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
             order_by=[desc("ended_at"), asc("id")],
             limit=100,
         )
-        result = {"checks": [{key: value for key, value in row.items() if not key.startswith("@")} for row in rows]}
+        result: dict[str, Any] = {"checks": [{key: value for key, value in row.items() if not key.startswith("@")} for row in rows]}
         if task:
             record = db_find_one(store, "records", {"id": task, "project_id": pid, "kind": "task"})
             if not record:

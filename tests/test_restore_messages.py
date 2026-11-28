@@ -3,9 +3,9 @@ import string
 
 import pytest
 
+from cairnmind.config import Settings
 from cairnmind.storage import engine_docker, restore_staged
 from cairnmind.storage.arcade import ArcadeError
-from cairnmind.config import Settings
 from cairnmind.storage.restore_staged import MESSAGES
 from cairnmind.terminal.terminal_i18n import CATALOG
 

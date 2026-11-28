@@ -8,6 +8,7 @@ import hashlib
 import json
 
 import pytest
+from test_backup_restore_stream import FIXTURE_0_10_0, _backup_payload, _variants, comparable
 
 from cairnmind.storage import arcade
 from cairnmind.storage.journal import JournalTransaction
@@ -15,8 +16,6 @@ from cairnmind.storage.restore_groups import DOCUMENT_BYTES_PER_REQUEST, GRAPH_B
 from cairnmind.storage.restore_staged import RestoreFailed
 from cairnmind.storage.sql import clean_row, insert_document, json_text, quote_name
 from cairnmind.store import DOCUMENT_TYPES, Store
-
-from test_backup_restore_stream import FIXTURE_0_10_0, _backup_payload, _variants, comparable
 
 NODES = 600
 CHUNKS = 300

@@ -12,10 +12,16 @@ from types import SimpleNamespace
 import pytest
 from consent_steps import consent_drawn
 from test_person_acts_consent import ACTS
-from test_project_forget_workspace import LOG, OPEN, choose, consent, notice_of, ui as forget_ui
+from test_project_forget_workspace import LOG, OPEN, choose, consent, notice_of
+from test_project_forget_workspace import ui as forget_ui
 from test_workspace_stage_scope import wait_until
 
-from cairnmind.terminal import terminal_legacy_groups, terminal_plan_confirm, terminal_published_import, terminal_release
+from cairnmind.terminal import (
+    terminal_legacy_groups,
+    terminal_plan_confirm,
+    terminal_published_import,
+    terminal_release,
+)
 from cairnmind.terminal import terminal_project_forget as view
 from cairnmind.terminal.terminal_client import BrokerError, BrokerUnreachable
 from cairnmind.terminal.terminal_i18n import CATALOG
@@ -203,8 +209,9 @@ async def test_a_listing_that_is_not_a_dict_is_not_a_deletion(tmp_path, monkeypa
 
 @pytest.mark.asyncio
 async def test_a_snapshot_saved_after_a_project_switch_is_told(tmp_path, monkeypatch):
+    from test_terminal_panels import settle, setup
+
     from cairnmind.terminal.terminal_inspector import InspectorApp
-    from test_terminal_panels import setup, settle
     settings, broker, workspace = setup(tmp_path, monkeypatch)
     monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: "en")
     app = InspectorApp(settings, broker=broker, workspace=workspace)
@@ -230,8 +237,9 @@ async def test_a_snapshot_saved_after_a_project_switch_is_told(tmp_path, monkeyp
 
 @pytest.mark.asyncio
 async def test_a_failed_snapshot_save_after_a_project_switch_is_told_for_its_project(tmp_path, monkeypatch):
+    from test_terminal_panels import settle, setup
+
     from cairnmind.terminal.terminal_inspector import InspectorApp
-    from test_terminal_panels import setup, settle
     settings, broker, workspace = setup(tmp_path, monkeypatch)
     monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: "en")
     app = InspectorApp(settings, broker=broker, workspace=workspace)

@@ -5,23 +5,28 @@ import builtins
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
-from fastapi.testclient import TestClient
 import pytest
-
 from conftest import own_time
-from cairnmind.scip import ingest
-from cairnmind.config import Settings
-from cairnmind.scip.ingest import forget_index_signature, index_project, index_project_if_changed, tree_signature
-from cairnmind.storage.journal import Journal
-from cairnmind.memory.plans import PlanManager
-from cairnmind.service import create_app
-from cairnmind.memory.sessions import SessionManager
+from fastapi.testclient import TestClient
+
 from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
-from cairnmind.terminal.inspector import Inspector
+from cairnmind.config import Settings
+from cairnmind.memory.plans import PlanManager
+from cairnmind.memory.sessions import SessionManager
+from cairnmind.scip import ingest
+from cairnmind.scip.ingest import (
+    forget_index_signature,
+    index_project,
+    index_project_if_changed,
+    tree_signature,
+)
+from cairnmind.service import create_app
+from cairnmind.storage.journal import Journal
 from cairnmind.store import Store
+from cairnmind.terminal.inspector import Inspector
 
 
 class LocalModel:

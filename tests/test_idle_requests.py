@@ -5,15 +5,14 @@ import json
 import time
 
 import pytest
-
-from cairnmind.storage import embed_jobs
-from cairnmind.scip import ingest
-from cairnmind.service import schedule_embeddings
-from cairnmind.store import Store
-from cairnmind.storage.store_writer import StoreNotWriter
-
 from test_index_batching import counted, tree
 from test_store_writer import second_installation
+
+from cairnmind.scip import ingest
+from cairnmind.service import schedule_embeddings
+from cairnmind.storage import embed_jobs
+from cairnmind.storage.store_writer import StoreNotWriter
+from cairnmind.store import Store
 
 NAMESPACE = "embedding-model@idle"
 
@@ -145,7 +144,7 @@ def test_jobs_written_in_groups_are_what_the_per_row_path_wrote(tmp_path):
             schedule_embeddings(store, NAMESPACE)
             embed_jobs.queue_embed_jobs(store, pid, ["c5", "c6"])
         found.append(stored_jobs(store, pid))
-    for left, right in zip(*found):
+    for left, right in zip(*found, strict=False):
         assert left == right, (left, right)
     assert len(found[0][0]) == 8 and ("job", "upsert", "embed:c6") in found[0][2]
 

@@ -10,11 +10,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from cairnmind.storage import database_credentials as dbcreds, engine
-from cairnmind.pal import person_pipe
 from cairnmind.agents import repository_evaluation as repeval
-from cairnmind.storage.arcade import ArcadeError
 from cairnmind.config import Settings
+from cairnmind.pal import person_pipe
+from cairnmind.storage import database_credentials as dbcreds
+from cairnmind.storage import engine
+from cairnmind.storage.arcade import ArcadeError
 
 
 def test_engine_install_status_and_managed_java_edges(tmp_path, monkeypatch):

@@ -6,17 +6,17 @@ import signal
 import time
 
 import pytest
-from textual.widgets import Static
-
-from cairnmind.terminal.terminal_graph import GraphApp
-from cairnmind.terminal.terminal_panels import SidebarApp
-from cairnmind.terminal.terminal_i18n import tr
 from test_terminal_activity import make as make_activity
 from test_terminal_graph import panel as panel  # noqa: F401  (fixture)
 from test_terminal_panels import settle
 from test_terminal_ux080 import screen_text, setup_ui
 from test_trial011_workspace import wait_until
 from test_workspace import manager as manager  # noqa: F401  (fixture)
+from textual.widgets import Static
+
+from cairnmind.terminal.terminal_graph import GraphApp
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_panels import SidebarApp
 
 
 def notice_text(app):
@@ -78,7 +78,9 @@ AGENT_LEAVE = ("Ctrl+Q does not end the agent. Ctrl+B, then d: leave the workspa
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_ctrl_q_never_ends_the_api_agent(tmp_path, monkeypatch, language):
-    from test_api_worker import make_app, settle as settle_agent
+    from test_api_worker import make_app
+    from test_api_worker import settle as settle_agent
+
     from cairnmind.terminal.terminal_agent_i18n import tr as agent_tr
     monkeypatch.setattr("cairnmind.agents.api_worker.language_for", lambda settings: language)
     app = make_app(tmp_path)
@@ -108,8 +110,9 @@ async def test_a_view_started_again_by_a_menu_request_runs_it(tmp_path, monkeypa
 
 def test_the_run_request_flag_reaches_the_view(tmp_path, monkeypatch):
     import sys
-    from cairnmind.terminal import terminal_panels
+
     from cairnmind.config import Settings
+    from cairnmind.terminal import terminal_panels
     Settings.load(tmp_path / "data", create=True)
     seen = []
     monkeypatch.setattr(terminal_panels.SidebarApp, "run", lambda self: seen.append(self.run_start_request))
@@ -141,8 +144,9 @@ async def test_activity_column_stays_and_its_popup_closes(tmp_path, monkeypatch)
                                                       ("pl", "Zapytaj", "ask"), ("en", "task", "inspector")])
 async def test_menu_lists_commands_whose_name_matches_first(tmp_path, language, typed, expected):
     from types import SimpleNamespace
-    from cairnmind.terminal.cockpit_state import CockpitState
+
     from cairnmind.config import Settings
+    from cairnmind.terminal.cockpit_state import CockpitState
     from cairnmind.terminal.terminal_commands import COMMANDS, CommandPaletteApp
     settings = Settings.load(tmp_path / "data", create=True)
     CockpitState(settings).update({"language": language})
@@ -161,8 +165,9 @@ async def test_menu_lists_commands_whose_name_matches_first(tmp_path, language, 
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_menu_shows_a_description_whole_or_marks_the_cut_at_80_columns(tmp_path, language):
     from types import SimpleNamespace
-    from cairnmind.terminal.cockpit_state import CockpitState
+
     from cairnmind.config import Settings
+    from cairnmind.terminal.cockpit_state import CockpitState
     from cairnmind.terminal.terminal_commands import COMMANDS, CommandPaletteApp
     settings = Settings.load(tmp_path / "data", create=True)
     CockpitState(settings).update({"language": language})
@@ -188,16 +193,19 @@ async def test_focus_on_a_stacked_primary_button_is_as_clear_as_on_the_others(co
     from textual.app import App
     from textual.containers import Horizontal, Vertical
     from textual.widgets import Button
+
     from cairnmind.terminal import terminal_theme
 
     class Stack(App):
         CSS = terminal_theme.BASE_CSS
 
         def compose(self):
-            with Vertical(classes="cm-dialog"):
-                with Horizontal(classes="cm-stack" if container == "cm-stack" else "actions"):
-                    yield Button("Add folder", id="primary", variant="primary")
-                    yield Button("Open", id="other")
+            with (
+                Vertical(classes="cm-dialog"),
+                Horizontal(classes="cm-stack" if container == "cm-stack" else "actions"),
+            ):
+                yield Button("Add folder", id="primary", variant="primary")
+                yield Button("Open", id="other")
 
     app = Stack()
     async with app.run_test(size=(30 if container == "narrow" else 80, 24)) as pilot:
@@ -225,6 +233,7 @@ async def test_focus_on_a_stacked_primary_button_is_as_clear_as_on_the_others(co
 @pytest.mark.parametrize("width", [80, 120])
 async def test_graph_key_footer_fits_and_hidden_keys_still_work(panel, monkeypatch, language, width):  # noqa: F811
     from textual.widgets._footer import FooterKey
+
     from cairnmind.terminal.terminal_commands import CommandPaletteApp
     from cairnmind.terminal.terminal_graph import TerminalGraph
     settings, workspace, broker = panel
@@ -250,6 +259,7 @@ async def test_graph_key_footer_fits_and_hidden_keys_still_work(panel, monkeypat
         assert app.query_one(TerminalGraph).has_focus
     # The keys no longer in the footer are named in the keyboard help.
     from types import SimpleNamespace
+
     from cairnmind.terminal.cockpit_state import CockpitState
     CockpitState(settings).update({"language": language})
     help_app = CommandPaletteApp(SimpleNamespace(settings=settings), help_only=True)
@@ -264,6 +274,7 @@ async def test_graph_key_footer_fits_and_hidden_keys_still_work(panel, monkeypat
 @pytest.mark.asyncio
 async def test_confirmation_and_consent_both_start_on_cancel(tmp_path, monkeypatch):
     from textual.widgets import Button
+
     from cairnmind.terminal.terminal_panels import ConfirmModal
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
@@ -368,6 +379,7 @@ async def test_keys_made_in_the_quiet_moment_move_nothing_however_late_they_are_
 @pytest.mark.asyncio
 async def test_a_click_made_before_the_dialog_was_drawn_never_approves(tmp_path, monkeypatch):
     from textual import events
+
     from cairnmind.terminal.terminal_panels import ConfirmModal
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
@@ -423,8 +435,10 @@ async def test_a_key_queued_below_a_consent_dialog_never_moves_its_focus(tmp_pat
 
 @pytest.mark.asyncio
 async def test_a_key_typed_in_the_agent_prompt_before_an_approval_never_moves_its_focus(tmp_path):
+    from test_api_worker import make_app
+    from test_api_worker import settle as settle_agent
+
     from cairnmind.terminal.terminal_panels import ConfirmModal
-    from test_api_worker import make_app, settle as settle_agent
     app = make_app(tmp_path)
     results = []
     async with app.run_test(size=(95, 42)) as pilot:
@@ -453,6 +467,7 @@ async def test_escape_refuses_a_consent_dialog_at_once_even_before_it_is_drawn(t
 @pytest.mark.asyncio
 async def test_input_reaching_a_consent_dialog_before_it_is_mounted_is_refused_without_a_crash(tmp_path, monkeypatch):
     from textual import events
+
     from cairnmind.terminal.terminal_panels import ConfirmModal
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
@@ -473,6 +488,7 @@ async def test_input_reaching_a_consent_dialog_before_it_is_mounted_is_refused_w
 @pytest.mark.asyncio
 async def test_a_click_on_cancel_refuses_at_once_but_a_click_on_approve_waits(tmp_path, monkeypatch):
     from textual import events
+
     from cairnmind.terminal.terminal_panels import ConfirmModal
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
@@ -502,6 +518,7 @@ async def test_a_click_on_cancel_refuses_at_once_but_a_click_on_approve_waits(tm
 @pytest.mark.asyncio
 async def test_the_dialogs_own_key_guard_holds_in_an_app_without_the_app_hook(tmp_path):
     from textual.app import App
+
     from cairnmind.terminal.terminal_panels import ConfirmModal
     results = []
 
@@ -561,6 +578,7 @@ async def test_a_resize_keeps_the_focus_on_cancel_of_a_consent_dialog(tmp_path, 
                                        ((100, 15), "A real request.")])
 async def test_consent_hint_fits_a_narrow_pane_and_focus_never_ends_on_a_text_that_fits(tmp_path, monkeypatch, language, size, text):
     from rich.cells import cell_len
+
     from cairnmind.terminal.terminal_panels import ConfirmModal
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
@@ -601,8 +619,9 @@ async def test_a_menu_command_during_an_open_dialog_says_so_and_changes_nothing(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("how", ["button", "keys"])
 async def test_after_an_agent_reply_typing_goes_to_the_prompt(tmp_path, how):
+    from test_api_worker import make_app
+    from test_api_worker import settle as settle_agent
     from textual.widgets import TextArea
-    from test_api_worker import make_app, settle as settle_agent
     app = make_app(tmp_path)
     async with app.run_test(size=(95, 42)) as pilot:
         await settle_agent(app, pilot)

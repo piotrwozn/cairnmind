@@ -6,13 +6,12 @@ have a complete dependency graph.
 """
 from __future__ import annotations
 
+import re
+import tomllib
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-import re
-import tomllib
 from typing import Any
-
 
 # Bump when syntax-to-fact semantics change, independently of grammar upgrades.
 # syntax-v2: Python module constants and class fields are symbols too.
@@ -328,9 +327,8 @@ def analyze_code(path: Path, content: str) -> dict[str, Any]:
         "type_alias_declaration": "type", "enum_declaration": "enum",
     }
     for node in _walk(tree.root_node):
-        if node.type == "ERROR" or node.is_missing:
-            if len(result["errors"]) < 20:
-                result["errors"].append(f"Syntax error at line {node.start_point.row + 1}")
+        if (node.type == "ERROR" or node.is_missing) and len(result["errors"]) < 20:
+            result["errors"].append(f"Syntax error at line {node.start_point.row + 1}")
 
         if node.type in symbol_kinds:
             label = _text(node.child_by_field_name("name"))
@@ -359,19 +357,23 @@ def analyze_code(path: Path, content: str) -> dict[str, Any]:
         elif node.type == "variable_declarator":
             value = node.child_by_field_name("value")
             label_node = node.child_by_field_name("name")
-            if value is not None and value.type in {"arrow_function", "function_expression", "generator_function"}:
-                if label_node is not None and label_node.type == "identifier":
-                    label = _text(label_node)
-                    chain = enclosing_chain(node)
-                    qualified = ".".join([*(part for _, part in chain), label]) if chain else label
-                    result["symbols"].append({
-                        "name": label,
-                        "kind": "function",
-                        "qualified_name": qualified,
-                        "body_hash": symbol_body_hash(node, name),
-                        "line_start": node.start_point.row + 1,
-                        "line_end": node.end_point.row + 1,
-                    })
+            if (
+                value is not None
+                and value.type in {"arrow_function", "function_expression", "generator_function"}
+                and label_node is not None
+                and label_node.type == "identifier"
+            ):
+                label = _text(label_node)
+                chain = enclosing_chain(node)
+                qualified = ".".join([*(part for _, part in chain), label]) if chain else label
+                result["symbols"].append({
+                    "name": label,
+                    "kind": "function",
+                    "qualified_name": qualified,
+                    "body_hash": symbol_body_hash(node, name),
+                    "line_start": node.start_point.row + 1,
+                    "line_end": node.end_point.row + 1,
+                })
 
         if name == "python" and node.type in {"import_statement", "import_from_statement"}:
             parts = [_import_part(child) for child in _field_children(node, "name")]

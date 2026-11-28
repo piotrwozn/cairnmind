@@ -5,11 +5,12 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from test_api_worker import Engine, settle
 from textual.widgets import RichLog, Static, TextArea
 
-from cairnmind.agents.api_worker import AgentApp, incomplete_streams, main as worker_main, usage_text
+from cairnmind.agents.api_worker import AgentApp, incomplete_streams, usage_text
+from cairnmind.agents.api_worker import main as worker_main
 from cairnmind.config import Settings
-from test_api_worker import Engine, settle
 
 
 class _RichJournal:

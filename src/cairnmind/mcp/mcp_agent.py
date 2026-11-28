@@ -10,9 +10,9 @@ interrupted call stays an uncertain action that only a person resolves, and it i
 """
 from __future__ import annotations
 
-from copy import deepcopy
 import inspect
 import json
+from copy import deepcopy
 from uuid import uuid4
 
 from cairnmind.agents.agent_write_guard import ChangeLedger, without_changed_files
@@ -93,7 +93,7 @@ class McpTools:
         return {"session_id": self.run["session_id"], "run_id": self.run["id"],
                 "generation": self.run["generation"], "tool_call_id": call_id}
 
-    async def call(self, name, arguments, call_id, timeout):
+    async def call(self, name, arguments, call_id, timeout):  # noqa: ASYNC109 - protocol method takes per-call timeout
         entry = self.catalogue[name]
         base = {"server_id": entry["server_id"], "tool": entry["tool"], "third_party_untrusted": True}
         try:

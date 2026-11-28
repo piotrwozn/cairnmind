@@ -8,12 +8,12 @@ The English sentences are the source; MESSAGES is their Polish for the terminal 
 """
 from __future__ import annotations
 
-from collections.abc import Callable
 import os
-from pathlib import Path
 import re
 import sys
 import time
+from collections.abc import Callable
+from pathlib import Path
 
 from cairnmind.pal import process_identity
 

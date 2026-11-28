@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from test_quick_finding import INTERRUPTED, KEY, FakeBroker, selected_workspace, text_of
+from test_quick_finding import stack as stack
 from textual.widgets import TextArea
 
 from cairnmind.terminal.terminal_client import BrokerClient, BrokerError
 from cairnmind.terminal.workspace_finding import ERROR_LIMIT, FindingApp
 from cairnmind.terminal.workspace_state import WorkspaceState
-from test_quick_finding import INTERRUPTED, KEY, FakeBroker, selected_workspace, stack as stack, text_of
 
 
 class LostReplyBroker:

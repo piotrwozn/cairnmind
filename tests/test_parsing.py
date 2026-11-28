@@ -1,5 +1,5 @@
-from pathlib import Path
 import re
+from pathlib import Path
 
 from cairnmind.scip.parsing import analyze_code
 

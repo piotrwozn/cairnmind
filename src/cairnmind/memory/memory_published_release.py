@@ -19,7 +19,14 @@ from uuid import uuid4
 from cairnmind.memory.memory import MemoryConflict
 from cairnmind.memory.memory_published_format import J, canonical_uuid, clean_text, ref_class
 from cairnmind.memory.memory_published_secrets import (
-    MAX_RELEASE_REASON, REGISTERED, Rules, SecretRulesError, described, load_rules, model_hits, release_problem,
+    MAX_RELEASE_REASON,
+    REGISTERED,
+    Rules,
+    SecretRulesError,
+    described,
+    load_rules,
+    model_hits,
+    release_problem,
     scan_text,
 )
 from cairnmind.storage.sql import clean_row, utc_now

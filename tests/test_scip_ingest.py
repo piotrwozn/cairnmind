@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import time
+from pathlib import Path
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from cairnmind.cli import app as cli_app

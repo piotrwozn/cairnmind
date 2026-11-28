@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+from typing import Any
 
 import httpx
 
@@ -56,14 +57,19 @@ class Sentence(str):
     """A formatted sentence that remembers its template and values: the workspace translates the template first and
     puts the values in after (terminal_i18n_messages.broker_error_text), as it does for FOREIGN_SERVICE."""
 
-    def __new__(cls, template: str, **values):
+    template: str
+    values: dict[str, Any]
+
+    def __new__(cls, template: str, **values: Any):
         text = super().__new__(cls, template.format(**values))
         text.template, text.values = template, values
         return text
 
 
 def _command(settings, verb: str) -> str:
-    from cairnmind.cli_cmds.io import _data_dir_arguments  # only when refusing: an MCP server does not import the command line otherwise
+    from cairnmind.cli_cmds.io import (
+        _data_dir_arguments,  # only when refusing: an MCP server does not import the command line otherwise
+    )
     from cairnmind.pal.process_control import format_command
     return format_command(["cairnmind", *_data_dir_arguments(settings.data_dir), verb])
 

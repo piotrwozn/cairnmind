@@ -10,24 +10,23 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from consent_steps import consent_drawn, form_ready
-from textual.widgets import Input, Static
-
-from cairnmind.terminal import person_proof
-from cairnmind.memory.confirmation import REPLACED_CHANGED
-from cairnmind.memory.memory import MemoryConflict, MemoryManager
-from cairnmind.store import Store
-from cairnmind.terminal.terminal_i18n import tr
-from cairnmind.terminal.terminal_inspector import InspectorApp
-from cairnmind.terminal.terminal_panels import SidebarApp
-from cairnmind.terminal import terminal_published_import as published
-
 from conftest import as_person
+from consent_steps import consent_drawn, form_ready
 from test_backup_restore_stream import comparable
 from test_confirmed_by_person import fixture  # noqa: F401 (the fixture)
 from test_confirmed_elsewhere import rows, two_computers  # noqa: F401 (a fixture and a helper)
-from test_terminal_panels import FakeBroker, setup, settle
+from test_terminal_panels import FakeBroker, settle, setup
 from test_trial011_workspace import wait_until
+from textual.widgets import Input, Static
+
+from cairnmind.memory.confirmation import REPLACED_CHANGED
+from cairnmind.memory.memory import MemoryConflict, MemoryManager
+from cairnmind.store import Store
+from cairnmind.terminal import person_proof
+from cairnmind.terminal import terminal_published_import as published
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_inspector import InspectorApp
+from cairnmind.terminal.terminal_panels import SidebarApp
 
 
 def verdicts_to_replace(two, count):

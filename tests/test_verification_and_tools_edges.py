@@ -9,8 +9,8 @@ from types import SimpleNamespace
 import pytest
 
 from cairnmind.agents import agent_tools
-from cairnmind.memory import verification as ver
 from cairnmind.config import Settings
+from cairnmind.memory import verification as ver
 
 
 class _MiniStore:

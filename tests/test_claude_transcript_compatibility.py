@@ -8,11 +8,10 @@ import subprocess
 
 import pytest
 
-from cairnmind.scip import ingest
 from cairnmind.agents.retrieval import Retriever
 from cairnmind.memory.sessions import SessionManager
+from cairnmind.scip import ingest
 from cairnmind.store import Store
-
 
 SESSION_ID = "10000000-0000-4000-8000-000000000001"
 CLAUDE_TYPES = (

@@ -11,13 +11,10 @@ Provides full behavioral parity with ArcadeBackend across all 28 collections:
 """
 from __future__ import annotations
 
-from array import array
-from collections import deque
-from contextlib import contextmanager
 import hashlib
 import json
+import logging
 import math
-from pathlib import Path
 import random
 import re
 import shutil
@@ -25,7 +22,12 @@ import sqlite3
 import struct
 import threading
 import time
-from typing import Any, Iterator
+from array import array
+from collections import deque
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
 
 from cairnmind.storage.sql import clean_row, json_text
 from cairnmind.storage.storage_backend import ALL_COLLECTIONS, META_COLLECTION
@@ -33,6 +35,7 @@ from cairnmind.storage.storage_backend import ALL_COLLECTIONS, META_COLLECTION
 SQLITE_SCHEMA_VERSION = 4
 BUSY_TIMEOUT_MS = 5000
 MAX_BUSY_RETRIES = 6
+log = logging.getLogger(__name__)
 
 # Indexed SQL columns per collection (all rows also keep full canonical JSON in ``doc``).
 _COLLECTION_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
@@ -452,8 +455,8 @@ class SQLiteBackend:
             from cairnmind.storage.sqlite_telemetry import record_sqlite_metrics
 
             record_sqlite_metrics(data_dir, self.metrics_snapshot())
-        except Exception:  # noqa: BLE001
-            pass
+        except (OSError, ValueError, TypeError) as exc:
+            log.debug("Failed to persist SQLite metrics: %s", exc)
 
     @property
     def backend_kind(self) -> str:
@@ -524,8 +527,8 @@ class SQLiteBackend:
             sqlite_vec.load(conn)
             conn.enable_load_extension(False)
             self._sqlite_vec_available = True
-        except Exception:  # noqa: BLE001
-            pass
+        except (ImportError, OSError, sqlite3.Error, AttributeError) as exc:
+            log.debug("Optional sqlite-vec extension unavailable: %s", exc)
         with self._all_conns_lock:
             self._all_conns.append(conn)
         return conn
@@ -553,8 +556,8 @@ class SQLiteBackend:
         for conn in conns:
             try:
                 conn.close()
-            except Exception:  # noqa: BLE001
-                pass
+            except (sqlite3.Error, OSError) as exc:
+                log.debug("Failed to close SQLite connection: %s", exc)
         self._memory_conn = None
         if hasattr(self._local, "conn"):
             delattr(self._local, "conn")
@@ -668,7 +671,7 @@ class SQLiteBackend:
                     if _is_busy_error(exc) and attempt < MAX_BUSY_RETRIES - 1:
                         self.busy_retries += 1
                         self._busy_timestamps.append(time.time())
-                        delay = (0.015 * (2 ** attempt)) + random.uniform(0.0, 0.025)
+                        delay = (0.015 * (2 ** attempt)) + random.uniform(0.0, 0.025)  # noqa: S311 - retry jitter, non-crypto
                         time.sleep(delay)
                         continue
                     raise
@@ -970,13 +973,17 @@ class SQLiteBackend:
         *,
         count_alias: str = "total",
     ) -> list[dict[str, Any]]:
-        from cairnmind.storage.storage_query import compile_sqlite_where, sqlite_field_expr, validate_field_path
+        from cairnmind.storage.storage_query import (
+            compile_sqlite_where,
+            sqlite_field_expr,
+            validate_field_path,
+        )
         table_cols = _table_column_names(collection)
         where_sql, params = compile_sqlite_where(conn, table_cols, where)
         fields = [validate_field_path(f) for f in group_by]
         exprs = [sqlite_field_expr(table_cols, f) for f in fields]
         out_names = [f.split(".")[-1] for f in fields]
-        select_expr = ", ".join(f'{expr} AS "{name}"' for expr, name in zip(exprs, out_names))
+        select_expr = ", ".join(f'{expr} AS "{name}"' for expr, name in zip(exprs, out_names, strict=True))
         group_expr = ", ".join(exprs)
         sql = (
             f'SELECT {select_expr}, count(*) AS "{count_alias}" FROM "{collection}"'
@@ -1723,7 +1730,7 @@ class SQLiteBackend:
         conn = self._conn()
         from cairnmind.storage.storage_query import extract_field_path
         extra_fields = [f.strip().strip("`") for f in fields.split(",") if f.strip()]
-        generator, seen, sample = random.Random(seed), set(), []
+        generator, seen, sample = random.Random(seed), set(), []  # noqa: S311 - deterministic non-crypto sampling
         part = rows / sample_points
         where = f' WHERE "{project_key}" = ?' if project_id is not None else ""
         base_params = [project_id] if project_id is not None else []
@@ -1760,7 +1767,7 @@ class SQLiteBackend:
         fields = [validate_field_path(f) for f in group_fields]
         exprs = [sqlite_field_expr(table_cols, f) for f in fields]
         out_names = [f.split(".")[-1] for f in fields]
-        select_expr = ", ".join(f'{expr} AS "{name}"' for expr, name in zip(exprs, out_names))
+        select_expr = ", ".join(f'{expr} AS "{name}"' for expr, name in zip(exprs, out_names, strict=True))
         group_expr = ", ".join(exprs)
         bytes_col = ", COALESCE(SUM(length(doc)), 0) AS b" if include_bytes else ""
         where = f' WHERE "{project_key}" = ?' if project_id is not None else ""

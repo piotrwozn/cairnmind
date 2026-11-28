@@ -9,7 +9,7 @@ sources stay with it: they never contained the new text.
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from cairnmind.memory.findings import FINDING_KINDS, finding_error
@@ -81,7 +81,7 @@ def replace_record(store, project_id, record_id, content, expected_version, *, r
         if pending:
             kept["possible_conflicts"] = pending  # a pending alarm does not vanish quietly
         facts = {"origin": "workspace_form", "role": "user",
-                 "source_timestamp": datetime.now(timezone.utc).isoformat(), **context}
+                 "source_timestamp": datetime.now(UTC).isoformat(), **context}
         note = store.snapshot(project_id, f"workspace://finding/{new_id}", content, "manual",
                               note_metadata(store.settings, content, facts))
         audit = {"actor": "local_user", **context, "action": "confirm", "record_id": new_id, "replaces": record_id,

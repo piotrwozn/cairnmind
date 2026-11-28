@@ -241,10 +241,7 @@ def fit_body(screen, body, chrome_rows: int = 10) -> None:
     """
     app = screen.app
     height = app.size.height
-    if is_short(app):
-        rows = height - (chrome_rows - 5)
-    else:
-        rows = int(height * .92) - chrome_rows
+    rows = height - (chrome_rows - 5) if is_short(app) else int(height * .92) - chrome_rows
     if app.size.width < NARROW_WIDTH:
         rows -= 4  # stacked buttons and a wrapped hint
     body.styles.max_height = max(3, rows)
@@ -273,7 +270,7 @@ def column_widths(table, widths) -> None:
     """Fix the width of each column, in order. The table crops a longer cell without a mark unless the
     cell is a `cropped()` text, which ends with "…"; the cell keeps its text."""
     changed = False
-    for column, width in zip(table.ordered_columns, widths):
+    for column, width in zip(table.ordered_columns, widths, strict=False):
         if (column.width, column.auto_width) != (width, False):
             column.width, column.auto_width = width, False
             changed = True
@@ -288,7 +285,7 @@ def column_labels(table, labels) -> None:
     Textual 8 keys its rendered lines by an update count that a new label does not change, so the
     rendered lines are dropped here and the heading is drawn again with the new labels.
     """
-    for column, label in zip(table.ordered_columns, labels):
+    for column, label in zip(table.ordered_columns, labels, strict=False):
         column.label = Text(str(label))
     table._clear_caches()
     table._require_update_dimensions = True

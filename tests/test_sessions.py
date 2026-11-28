@@ -1,18 +1,18 @@
 """Real ArcadeDB/Git control-plane checks; no mocked model claims comprehension."""
 import hashlib
 import json
-from contextlib import contextmanager
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 
 import pytest
 
-from cairnmind.scip.ingest import import_history
 from cairnmind.memory.plans import PlanManager
 from cairnmind.memory.sessions import MAX_PACKET_BYTES, SessionManager, format_packet
-from cairnmind.store import Store
+from cairnmind.scip.ingest import import_history
 from cairnmind.storage.sql import json_text
+from cairnmind.store import Store
 
 
 def git(root, *args):

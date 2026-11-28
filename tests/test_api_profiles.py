@@ -5,8 +5,8 @@ import json
 import pytest
 
 from cairnmind.agents.api_profiles import normalize_profile
-from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.config import Settings
+from cairnmind.terminal.cockpit_state import CockpitState
 
 
 def api(**changes):

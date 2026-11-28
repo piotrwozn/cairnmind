@@ -7,10 +7,10 @@ from typing import Annotated
 import httpx
 import typer
 
+from cairnmind.agents.ollama import OllamaUnavailable
 from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.io import initialized
 from cairnmind.config import tls_verify
-from cairnmind.agents.ollama import OllamaUnavailable
 
 
 def register(apps: dict[str, typer.Typer]) -> None:
@@ -20,6 +20,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
     @initialized
     def model_list(ctx: typer.Context):
         import asyncio
+
         from cairnmind.memory.memory_models import from_settings
         _io.output(asyncio.run(from_settings(ctx.obj).models()))
 
@@ -42,6 +43,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
                       "--allow-remote", help="Consent to send memory content to a server on another computer.")] = False):
         """Choose the knowledge agent's chat or embedding model and server, after a test call to it."""
         import asyncio
+
         from cairnmind.memory.memory_models import configure_role
         try:
             result = asyncio.run(configure_role(

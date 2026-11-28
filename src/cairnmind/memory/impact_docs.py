@@ -38,7 +38,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from cairnmind.memory.brief import _line
 from cairnmind.scip.ingest import _is_secret, excluded_directory
@@ -87,7 +87,7 @@ def _doc_names(root):
         parts = PurePosixPath(name).parts
         # The indexer never reads these directories or secret-looking files, so neither does this report.
         if not RESERVED & {part.lower() for part in parts} and not any(map(excluded_directory, parts[:-1])) \
-                and not _is_secret(PurePosixPath(name)):
+                and not _is_secret(Path(name)):
             names.append(name)
     return sorted(names, key=lambda name: PurePosixPath(name).parts)
 

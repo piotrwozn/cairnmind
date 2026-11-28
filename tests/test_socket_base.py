@@ -2,18 +2,24 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import shutil
 import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 
-from cairnmind.pal import runtime_sockets
 from cairnmind.agents.client_runtime import NativeRuntime
 from cairnmind.config import Settings
-from cairnmind.pal.runtime_sockets import (KINDS, MAX_SOCKET_PATH, SUN_PATH, prepare_socket_base, socket_base,
-                                       socket_directory)
+from cairnmind.pal import runtime_sockets
+from cairnmind.pal.runtime_sockets import (
+    KINDS,
+    MAX_SOCKET_PATH,
+    SUN_PATH,
+    prepare_socket_base,
+    socket_base,
+    socket_directory,
+)
 from cairnmind.terminal.workspace import WorkspaceManager
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX Unix domain socket directories")

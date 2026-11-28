@@ -10,7 +10,6 @@ import json
 from uuid import uuid4
 
 import pytest
-
 from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401  (workspace is a fixture)
 
 from cairnmind.agents.agent import EXCERPT_CHARS, WHOLE_PASSAGE_CHARS, KnowledgeAgent

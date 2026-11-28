@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import functools
 
-from cairnmind.terminal.setup_profiles import MODEL_OPTIONS, OPTION_NAMES, REMOTE_OPTIONS
 from cairnmind.pal.terminal_safe import plain, safe_text
+from cairnmind.terminal.setup_profiles import MODEL_OPTIONS, OPTION_NAMES, REMOTE_OPTIONS
 
 TITLE = "Storage and models"
 NOW = ("Where storage and the memory models run, as the running knowledge service loaded its settings when it "
@@ -174,7 +174,9 @@ def describe(status, language: str) -> str:
     """The screen's text from the service's /status answer. Any other shape raises ValueError(UNREADABLE): nothing
     is shown in its place, never the settings of this process."""
     from cairnmind.cli_cmds import topology
-    from cairnmind.terminal.terminal_i18n import tr  # imported here: terminal_i18n merges MESSAGES of this module
+    from cairnmind.terminal.terminal_i18n import (
+        tr,  # imported here: terminal_i18n merges MESSAGES of this module
+    )
     place = status.get("topology") if isinstance(status, dict) else None
     try:
         if not isinstance(place, dict) or place["storage"]["mode"] not in ("managed", "connect"):
@@ -188,9 +190,9 @@ def describe(status, language: str) -> str:
         raise ValueError(UNREADABLE) from None
     labels = (tr(topology.STATUS_STORAGE, language), tr(topology.STATUS_MODELS, language))
     chips = " | ".join(f"{label}:{safe_text(tr(word, language), limit=80)}"
-                       for label, (word, _) in zip(labels, marks))
+                       for label, (word, _) in zip(labels, marks, strict=True))
     paragraphs = [tr(NOW, language), *three, tr(CHIPS, language, chips=chips)]
-    bad = [label for label, (_, problem) in zip(labels, marks) if problem]
+    bad = [label for label, (_, problem) in zip(labels, marks, strict=True) if problem]
     if bad:
         paragraphs[-1] += " " + tr(CHIP_PROBLEM, language, marks=", ".join(bad))
     paragraphs += [tr(LOADED, language), tr(HERE, language), tr(HOW, language) + "\n\n  cairnmind stop",
@@ -244,7 +246,8 @@ def _screen_class():
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
             event.stop()
-            self.dismiss(event.button.id.removeprefix("change-") if event.button.id != "setup-close" else None)
+            button_id = event.button.id
+            self.dismiss(button_id.removeprefix("change-") if button_id and button_id != "setup-close" else None)
 
         def action_close(self) -> None:
             self.dismiss(None)

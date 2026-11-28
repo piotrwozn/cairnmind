@@ -15,18 +15,17 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from test_service import LocalModelFixture
 
-from cairnmind.memory import project_folders
-from cairnmind.storage.arcade import ArcadeError
+from cairnmind.agents.retrieval import Retriever
 from cairnmind.config import Settings
+from cairnmind.memory import project_folders
 from cairnmind.memory.evidence import evidence_states
 from cairnmind.scip.ingest import GRAPH_EDGE_KINDS, GRAPH_NODE_KINDS, index_project, index_project_if_changed
-from cairnmind.agents.retrieval import Retriever
 from cairnmind.service import create_app
-from cairnmind.store import Store
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.storage.store_writer import take_over
-
-from test_service import LocalModelFixture
+from cairnmind.store import Store
 
 
 @pytest.fixture(autouse=True)
@@ -302,14 +301,14 @@ def lost_folder(tmp_path):
 
 
 def test_status_doctor_and_index_name_the_unavailable_folder(tmp_path, monkeypatch):
+    from test_first_start_round2 import healthy
     from typer.testing import CliRunner
 
-    from cairnmind.agents import api_runtime
     from cairnmind import cli
+    from cairnmind.agents import api_runtime
     from cairnmind.cli_cmds import doctor_attention
     from cairnmind.memory import integrations
     from cairnmind.storage import store_writer
-    from test_first_start_round2 import healthy
     store, pid, root = lost_folder(tmp_path)
     sentence = project_folders.message(store.resolve_project(pid), {"root": str(root), "state": "missing"})
     entries = project_folders.unavailable(store)
@@ -475,8 +474,9 @@ def test_a_backup_restored_on_another_machine_keeps_the_old_machines_folders(tmp
     assert "unavailable" not in result and result["changed"] == 1
 def test_restore_on_another_machine_names_the_folders_it_leaves_with_the_old_one(tmp_path, monkeypatch):
     from typer.testing import CliRunner
-    from cairnmind.terminal import person_proof
+
     from cairnmind.cli import app
+    from cairnmind.terminal import person_proof
     store, pid, root, record = indexed(tmp_path)
     backup = store.backup(tmp_path / "old.cairnmind.json.gz")
     machine(monkeypatch, "b")
@@ -527,8 +527,9 @@ def test_the_machine_of_a_folder_is_not_in_a_snapshot_or_its_state_hash(tmp_path
 
 
 def test_an_acknowledgement_holds_while_another_machine_scans_the_project(tmp_path, monkeypatch):
-    from cairnmind.memory.sessions import SessionManager
     from test_sessions import acknowledge, git
+
+    from cairnmind.memory.sessions import SessionManager
     root = tmp_path / "repo"
     root.mkdir()
     git(root, "init", "-b", "main")

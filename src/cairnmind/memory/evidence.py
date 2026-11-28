@@ -127,8 +127,9 @@ def _file_verdicts(store, project_id, stale):
 def _symbol_and_comment_states(store, project_id, records, cited_sources, verdicts):
     """Derive symbol_state / symbol_change (#411) and comment_state (#412) in one bulk query."""
     from pathlib import Path
-    from cairnmind.scip.parsing import analyze_code
+
     from cairnmind.memory.symbol_anchor import find_symbol_in_analysis, posix_path, validate_symbol_anchor
+    from cairnmind.scip.parsing import analyze_code
 
     anchors: dict[str, dict] = {}
     comments: dict[str, dict] = {}
@@ -197,7 +198,7 @@ def _symbol_and_comment_states(store, project_id, records, cited_sources, verdic
             if row.get("project_id", project_id) == project_id:
                 register_current(row)
 
-    parsed_cache: dict[str, dict] = {}
+    parsed_cache: dict[str, dict | None] = {}
 
     def analysis_for(source_row, fallback_rel: str) -> dict | None:
         sid = source_row["id"]
@@ -402,7 +403,8 @@ def evidence_states(store, project_id, records, *, quotes=True):
             if verified:
                 survives = any(quote in body(replacement) for replacement in verified)
         own = _metadata(record)
-        quote_ref = own.get("quote_ref") if isinstance(own.get("quote_ref"), dict) else None
+        raw_quote_ref = own.get("quote_ref")
+        quote_ref = raw_quote_ref if isinstance(raw_quote_ref, dict) else None
         ref_failure = quote_ref.get("status") if (quote_ref and quote_ref.get("status") in (
             "stale_ref", "validation_failed", "ambiguous_context")) else None
         if ref_failure and state != "degraded" and counts["current"] == 0:
@@ -414,7 +416,7 @@ def evidence_states(store, project_id, records, *, quotes=True):
                  "sources_gone": counts["gone"], "sources_unverified": counts["pending"]}
         if extra:
             entry.update(extra)
-        if ref_failure and state == ref_failure:
+        if ref_failure and state == ref_failure and quote_ref is not None:
             entry["quote_ref_status"] = ref_failure
             entry["ref_status"] = quote_ref.get("ref_status", ref_failure)
             entry["requires_intervention"] = bool(quote_ref.get("requires_intervention", True))
@@ -441,13 +443,15 @@ def published_verdict(metadata, quote):
         return "pending"
     if checked.get("file") == "gone":
         return "gone"
-    quotes = checked.get("quotes") if isinstance(checked.get("quotes"), dict) else {}
+    raw_quotes = checked.get("quotes")
+    quotes = raw_quotes if isinstance(raw_quotes, dict) else {}
     if isinstance(quote, str) and quote.strip():
         from cairnmind.memory.memory_published_format import sha256_text
         found = quotes.get(sha256_text(quote.replace("\r\n", "\n")))
         if isinstance(found, bool):
             return "current" if found else "gone"
-    return {"same": "current", "changed": "replaced"}.get(checked.get("file"), "pending")
+    file_status = checked.get("file")
+    return {"same": "current", "changed": "replaced"}.get(file_status, "pending") if isinstance(file_status, str) else "pending"
 
 
 THIRD_PARTY_WRITTEN = ("Written after a third-party tool result in a built-in agent session, or resting only "

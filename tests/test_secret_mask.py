@@ -11,11 +11,11 @@ from pathlib import Path
 import pytest
 
 from cairnmind.agents.agent_journal import AgentJournal, redact_secrets
-from cairnmind.config import Settings
 from cairnmind.agents.extraction_evaluation import load_transcripts, transcript_sources
 from cairnmind.agents.extraction_input import extraction_request
-from cairnmind.scip.ingest import import_history, index_pending_sources, reparse_history_sources
+from cairnmind.config import Settings
 from cairnmind.memory.secret_mask import MASK, Masker, registered_secrets
+from cairnmind.scip.ingest import import_history, index_pending_sources, reparse_history_sources
 from cairnmind.store import Store
 
 GITHUB_SHAPE = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"  # the well-known shape, not a real token
@@ -286,8 +286,9 @@ def test_a_remember_note_is_indexed_masked_and_its_record_is_kept_as_written(wor
 
 def test_a_cli_remember_note_is_indexed_masked(tmp_path, monkeypatch):
     from typer.testing import CliRunner
-    from cairnmind.scip import ingest
+
     from cairnmind.cli import app
+    from cairnmind.scip import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     data, root = tmp_path / "memory", tmp_path / "repo"
     root.mkdir()
@@ -440,6 +441,7 @@ async def test_extraction_of_a_masked_source_fails_instead_of_skipping_when_secr
 
 def test_session_findings_checkpoints_and_tasks_are_indexed_masked(workspace, tmp_path, monkeypatch):
     from typer.testing import CliRunner
+
     from cairnmind.cli import app
     from cairnmind.memory.findings import save_finding
     store, project, _ = workspace

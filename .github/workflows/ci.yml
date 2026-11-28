@@ -55,7 +55,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
-      - run: uv run ruff check src tests
+      - run: uv run ruff check src tests hatch_build.py
+      - run: uv run pyright
 
   ui-tests-and-wheel:
     # Type-checks, tests, and builds the React Engineer Cockpit (`ui/`) and verifies the wheel bundles `cairnmind/ui_dist/`.
@@ -194,7 +195,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - run: uv sync --locked --extra dev
-      - run: uv run ruff check src tests
+      - run: uv run ruff check src tests hatch_build.py
+      - run: uv run pyright
       - name: Fast tier
         shell: pwsh
         timeout-minutes: 25

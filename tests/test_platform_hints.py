@@ -13,12 +13,12 @@ import types
 import httpx
 import pytest
 
-from cairnmind.storage import engine
-from cairnmind.memory import integrations
-from cairnmind.pal import platform_hints
-from cairnmind.terminal import workspace
 from cairnmind.agents.client_runtime import NativeRuntime
 from cairnmind.config import Settings
+from cairnmind.memory import integrations
+from cairnmind.pal import platform_hints
+from cairnmind.storage import engine
+from cairnmind.terminal import workspace
 from cairnmind.terminal.terminal_i18n import tr
 
 

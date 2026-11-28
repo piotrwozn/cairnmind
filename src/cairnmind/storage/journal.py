@@ -5,14 +5,13 @@ refetch authoritative rows; they never contain document, model or PTY content.
 """
 from __future__ import annotations
 
-from copy import deepcopy
-from datetime import datetime, timezone
 import json
 import re
+from copy import deepcopy
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from cairnmind.storage.sql import _arcade_ident, json_text, quote_name
-
 
 JOURNAL_TYPES = ("journal_state", "journal_events")
 MAX_EVENTS = 50_000
@@ -102,10 +101,7 @@ def _inserted(sql, params, result):
 def _event_key(table, row):
     entity_type = TABLE_TYPES.get(table, "embedding")
     identifier = row.get("id")
-    if table == "projects":
-        project = identifier
-    else:
-        project = row.get("project_id")
+    project = identifier if table == "projects" else row.get("project_id")
     if table == "record_revisions":
         identifier = row.get("record_id")
     elif table == "plan_revisions":
@@ -220,11 +216,17 @@ class JournalTransaction:
         remove_fields=(),
         where=(),
     ) -> list[dict]:
-        from cairnmind.storage.storage_query import compile_arcade_where, is_in, normalize_where, quote_arcade_field
+        from cairnmind.storage.storage_query import (
+            FieldCondition,
+            compile_arcade_where,
+            is_in,
+            normalize_where,
+            quote_arcade_field,
+        )
         self._invalidate_known(collection)
         project = None
         for cond in normalize_where(where):
-            if getattr(cond, "field", None) in {"project_id", "project"} and getattr(cond, "op", None) == "=":
+            if isinstance(cond, FieldCondition) and cond.field in {"project_id", "project"} and cond.op == "=":
                 project = cond.value
                 break
         tracked = (
@@ -271,11 +273,11 @@ class JournalTransaction:
         return result
 
     def delete_where(self, collection: str, where=(), *, limit: int | None = None) -> list[dict]:
-        from cairnmind.storage.storage_query import compile_arcade_where, normalize_where
+        from cairnmind.storage.storage_query import FieldCondition, compile_arcade_where, normalize_where
         self._invalidate_known(collection)
         project = None
         for cond in normalize_where(where):
-            if getattr(cond, "field", None) in {"project_id", "project"} and getattr(cond, "op", None) == "=":
+            if isinstance(cond, FieldCondition) and cond.field in {"project_id", "project"} and cond.op == "=":
                 project = cond.value
                 break
         tracked = (
@@ -607,7 +609,7 @@ class JournalTransaction:
             epoch, sequence = state[0]["epoch"], state[0]["seq"]
         if len(events) > MAX_TRANSACTION_EVENTS:
             events = {(project, entity_type, None): "reset" for project, entity_type, _ in events}
-        at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        at = datetime.now(UTC).isoformat(timespec="microseconds")
         rows = []
         for (project, entity_type, entity_id), operation in sorted(events.items(), key=lambda item: _json(item[0])):
             sequence += 1
@@ -618,7 +620,8 @@ class JournalTransaction:
         for offset in range(0, len(rows), EVENTS_PER_STATEMENT):
             part = rows[offset:offset + EVENTS_PER_STATEMENT]
             stored = db_insert_documents(self.native, "journal_events", part)
-            if not isinstance(stored, list) or sorted(row.get("seq") for row in stored if isinstance(row, dict)) != \
+            stored_seqs = [row["seq"] for row in stored if isinstance(row, dict) and row.get("seq") is not None] if isinstance(stored, list) else []
+            if not isinstance(stored, list) or len(stored_seqs) != len(stored) or sorted(stored_seqs) != \
                     [row["seq"] for row in part]:
                 raise RuntimeError("The journal did not store every event of the transaction")
         first = max(1, sequence - MAX_EVENTS + 1)
@@ -651,7 +654,16 @@ class Journal:
         tx.reset(reason)
 
     def read(self, after=None, project_id=None, limit=200):
-        from cairnmind.storage.storage_query import any_of, asc, db_find, db_find_one, eq, gt, is_null
+        from cairnmind.storage.storage_query import (
+            FilterNode,
+            any_of,
+            asc,
+            db_find,
+            db_find_one,
+            eq,
+            gt,
+            is_null,
+        )
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError("Journal limit must be between 1 and 1000")
         if project_id is not None and not isinstance(project_id, str):
@@ -673,12 +685,13 @@ class Journal:
                 raise ValueError("Invalid journal epoch") from exc
         with self.store.transaction() as tx:
             state = db_find_one(tx, "journal_state", {"id": "current"}, required=True)
-            assert state is not None
+            if state is None:
+                raise ValueError("Journal state is unavailable")
             head = {"epoch": state["epoch"], "seq": state["seq"]}
             if (after is None or after["epoch"] != head["epoch"] or after["seq"] > head["seq"]
                     or after["seq"] < state.get("first_seq", 1) - 1):
                 return {"epoch": head["epoch"], "cursor": head, "events": [], "reset_required": True}
-            conds = [eq("epoch", head["epoch"]), gt("seq", after["seq"])]
+            conds: list[FilterNode] = [eq("epoch", head["epoch"]), gt("seq", after["seq"])]
             if project_id is not None:
                 conds.append(any_of(eq("project_id", project_id), is_null("project_id")))
             rows = db_find(tx, "journal_events", conds, order_by=(asc("seq"),), limit=limit + 1)

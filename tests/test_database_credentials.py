@@ -8,19 +8,19 @@ from __future__ import annotations
 import http.server
 import json
 import os
-from pathlib import Path
 import shutil
 import ssl
 import subprocess
 import sys
 import threading
+from pathlib import Path
 
 import httpx
 import pytest
 
 from cairnmind.agents.agent_journal import AgentJournal
-from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 
 SECRET = "Db-secret-7f3a9c41e2b8d6"
 STORED = "Stored-secret-0b1c2d3e4f5a"
@@ -47,8 +47,9 @@ def config(root: Path, **values) -> Path:
 
 
 def private_file(path: Path, text: str, mode: int = 0o600) -> Path:
-    from cairnmind.pal import private_files
     from conftest import make_world_readable
+
+    from cairnmind.pal import private_files
     path.write_text(text, encoding="utf-8")
     if sys.platform == "win32":
         if (mode & 0o077) == 0:

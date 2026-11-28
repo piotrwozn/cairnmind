@@ -7,8 +7,9 @@ the underlying StorageBackend is ArcadeBackend (PR #6) or SQLiteBackend (PR #7).
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import AbstractContextManager
-from typing import Any, Iterator, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 # Canonical collections matching Store.EXPORT_TYPES (26 document types + nodes + edges).
 ALL_COLLECTIONS: tuple[str, ...] = (

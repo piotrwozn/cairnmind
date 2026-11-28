@@ -34,23 +34,24 @@ only when each of them was also refused, and an ask that failed is counted apart
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import tempfile
 import time
+from pathlib import Path
 from uuid import uuid4
 
 from cairnmind import __version__
-from cairnmind.storage.arcade import ArcadeClient, ArcadeError
-from cairnmind.config import Settings
 from cairnmind.agents.evaluation import MeasuredOllama, _fixture_settings, _git
-from cairnmind.memory.memory_models import from_settings
 from cairnmind.agents.ollama import OllamaUnavailable
+from cairnmind.config import Settings
+from cairnmind.memory.memory_models import from_settings
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.storage.storage_query import db_find
 
 PASS_SHARE = 0.8  # complete and right, of all questions
@@ -64,8 +65,7 @@ FAILED_CODES = frozenset({"timeout", "model_unavailable", "invalid_json", "tool_
 # (a settings class with a port and a cockpit port, a default timeout, answer tokens) with other values.
 NOT_INDEXED = ("docs/evaluation/", "tests/test_definitions.py", "tests/test_repository_evaluation.py",
                "tests/test_ask_budget.py")
-_NUMBER_WORDS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
-                 "fifteen sixteen seventeen eighteen nineteen twenty").split()
+_NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"]
 
 
 def _forms(value: str, forms: list[str]) -> list[str]:
@@ -110,7 +110,8 @@ def load_questions(path: Path, root: Path) -> list[dict]:
         raise ValueError("A question file needs format_version 1 and a nonempty questions list")
     resolved, seen = [], set()
     for item in questions:
-        answer = item.get("answer") if isinstance(item, dict) and isinstance(item.get("answer"), dict) else {}
+        raw_answer = item.get("answer") if isinstance(item, dict) else None
+        answer = raw_answer if isinstance(raw_answer, dict) else {}
         absent = answer.get("absent") is True
         if not isinstance(item, dict) or not all(isinstance(item.get(key), str) and item[key]
                                                   for key in ("id", "question", *(() if absent else ("file",)))):
@@ -125,18 +126,20 @@ def load_questions(path: Path, root: Path) -> list[dict]:
         forms = answer.get("forms", [])
         if not isinstance(forms, list) or not all(isinstance(form, str) and form for form in forms):
             raise ValueError(f"{item['id']}: forms must be a list of strings")
-        if isinstance(answer.get("pattern"), str):
+        pattern = answer.get("pattern")
+        accepted_values = answer.get("accepted")
+        if isinstance(pattern, str):
             try:
                 text = (root / item["file"]).read_text(encoding="utf-8")
             except OSError as exc:
                 raise ValueError(f"{item['id']}: cannot read {item['file']}: {exc}") from None
-            match = re.search(answer["pattern"], text, re.MULTILINE)
+            match = re.search(pattern, text, re.MULTILINE)
             if not match or not match.groups() or not match.group(1):
                 raise ValueError(f"{item['id']}: the pattern finds no value in {item['file']}")
             values = [match.group(1)]
-        elif isinstance(answer.get("accepted"), list) and answer["accepted"] and all(
-                isinstance(value, str) and value for value in answer["accepted"]):
-            values = list(answer["accepted"])
+        elif isinstance(accepted_values, list) and accepted_values and all(
+                isinstance(value, str) and value for value in accepted_values):
+            values = list(accepted_values)
         else:
             raise ValueError(f"{item['id']}: answer needs a pattern or a nonempty accepted list")
         accepted = list(dict.fromkeys(form for value in values for form in _forms(value, forms)))
@@ -163,10 +166,8 @@ def case_result(case: dict, result: dict, root: Path, calls: int, seconds: float
     citations = []
     for source in result.get("sources") or []:
         uri = str(source.get("uri", ""))
-        try:
+        with contextlib.suppress(ValueError):
             uri = Path(uri).relative_to(root).as_posix()
-        except ValueError:
-            pass
         citations.append({"path": uri, "line_start": source.get("line_start"),
                           "quote": str(source.get("quote", ""))[:300]})
     status = result.get("status")
@@ -240,9 +241,9 @@ def _copy(root: Path, copy: Path, files: list[str]) -> None:
 
 async def _ask_all(settings: Settings, root: Path, cases: list[dict], measured, report: dict) -> None:
     from cairnmind.agents.agent import KnowledgeAgent
-    from cairnmind.storage.engine import engine_status
-    from cairnmind.scip.ingest import index_project
     from cairnmind.agents.retrieval import Retriever
+    from cairnmind.scip.ingest import index_project
+    from cairnmind.storage.engine import engine_status
     from cairnmind.store import Store
 
     if not engine_status(settings)["available"]:

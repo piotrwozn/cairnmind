@@ -11,23 +11,23 @@ Exit codes (enforced by the CLI command):
 """
 from __future__ import annotations
 
-from pathlib import Path, PurePosixPath
 import re
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from cairnmind.memory.brief import _git_out, _line, _scoped_records, _title
 from cairnmind.memory.evidence import _metadata
-from cairnmind.memory.impact import _STATUS, _batches, _changes, _change_text, _new_text, _old_text, _relative
+from cairnmind.memory.impact import _STATUS, _batches, _change_text, _changes, _new_text, _old_text, _relative
 from cairnmind.memory.impact_docs import written_as_code
 from cairnmind.memory.memory_paths import bound_metadata, git_pathspec, memory_bindings, nested_reserved
-from cairnmind.scip.parsing import analyze_code
-from cairnmind.storage.storage_query import db_find, eq, is_in
 from cairnmind.memory.symbol_anchor import (
     SYMBOL_ANCHOR_KINDS,
     find_symbol_in_analysis,
     posix_path,
     validate_symbol_anchor,
 )
+from cairnmind.scip.parsing import analyze_code
+from cairnmind.storage.storage_query import db_find, eq, is_in
 
 _COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
 
@@ -251,7 +251,7 @@ def scan_diff(store, project_id: str, diff_rev: str, worktree=None) -> dict[str,
         if sym_kind and sym_kind not in SYMBOL_ANCHOR_KINDS:
             continue
         name = local_name(node_meta.get("path") or node.get("label"))
-        if name not in changed:
+        if not isinstance(name, str) or name not in changed:
             continue
         record_id = edge["from_id"][7:]
         record = records[record_id]

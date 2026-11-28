@@ -1,18 +1,17 @@
-from concurrent.futures import ThreadPoolExecutor
 import gzip
 import json
-from pathlib import Path
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
+from conftest import as_person, person_edit
 
+from cairnmind.memory.verification import run_check, verification_status
 from cairnmind.storage.embed_jobs import repair_embed_jobs
 from cairnmind.store import Store
-
-from conftest import as_person, person_edit
-from cairnmind.memory.verification import run_check, verification_status
 
 
 @pytest.fixture
@@ -82,10 +81,9 @@ def test_native_fulltext_update_delete_and_transaction_rollback(store, project):
     store.command("UPDATE chunks SET text='login session' WHERE id='chunk-one'")
     assert not store.query("SELECT id FROM chunks WHERE text CONTAINSTEXT :q", {"q": "refresh"})
     assert len(store.query("SELECT id FROM chunks WHERE text CONTAINSTEXT :q", {"q": "session"})) == 1
-    with pytest.raises(RuntimeError):
-        with store.transaction() as tx:
-            tx.command("DELETE FROM chunks WHERE id='chunk-one'")
-            raise RuntimeError("rollback")
+    with pytest.raises(RuntimeError), store.transaction() as tx:
+        tx.command("DELETE FROM chunks WHERE id='chunk-one'")
+        raise RuntimeError("rollback")
     assert store.query("SELECT count(*) AS total FROM chunks")[0]["total"] == 1
     store.forget_project(project["id"])
     assert not store.query("SELECT id FROM chunks WHERE text CONTAINSTEXT :q", {"q": "session"})

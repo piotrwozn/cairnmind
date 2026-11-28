@@ -4,7 +4,6 @@ import sys
 import threading
 
 import pytest
-
 from pty_drain import drain_pty
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX os.openpty PTY draining")

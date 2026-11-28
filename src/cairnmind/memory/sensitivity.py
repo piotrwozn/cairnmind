@@ -18,7 +18,8 @@ whatever it cites.
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from typing import Any
 
 from cairnmind.storage.storage_query import db_find, is_in
 
@@ -97,7 +98,11 @@ def rollup(record: Mapping, class_of: Callable[[str], str], earlier: Iterable[st
 
 def record_sensitivity(record: Mapping, sources: Mapping[str, Mapping | None], earlier: Iterable[str] = ()) -> str:
     """The highest class among the record's sources, given as rows by id; a missing one is conversation."""
-    return rollup(record, lambda i: source_sensitivity(sources[i]) if sources.get(i) else "conversation", earlier)
+    def _source_class(source_id: str) -> str:
+        source = sources.get(source_id)
+        return source_sensitivity(source) if source else "conversation"
+
+    return rollup(record, _source_class, earlier)
 
 
 def earlier_source_ids(reader, record_ids: Iterable[str]) -> dict[str, set[str]]:

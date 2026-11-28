@@ -9,27 +9,26 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-from pathlib import Path
 import re
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
+from conftest import as_person
 
 import cairnmind.agents.agent as agent_module
 import cairnmind.agents.extraction_input as extraction_input
 import cairnmind.memory.memory as memory_module
 import cairnmind.memory.memory_models as memory_models
 from cairnmind.agents.agent import KnowledgeAgent
-from cairnmind.config import Settings
 from cairnmind.agents.extraction_evaluation import run_extraction_evaluation
 from cairnmind.agents.extraction_input import EXTRACTOR_VERSION, extractor_fingerprint, extractor_stamp
-from cairnmind.memory.memory import MemoryManager
 from cairnmind.agents.ollama import Ollama, OllamaUnavailable
 from cairnmind.agents.retrieval import public_record
+from cairnmind.config import Settings
+from cairnmind.memory.memory import MemoryManager
 from cairnmind.store import EXTRACTOR_MODEL_CHARS, Store, validate_extractor_stamp
-
-from conftest import as_person
 
 # One line per extractor version. Changing an instruction or the schema changes the fingerprint: bump
 # EXTRACTOR_VERSION in extraction_input.py and add its fingerprint here; never edit an earlier line.

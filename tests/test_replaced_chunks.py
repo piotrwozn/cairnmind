@@ -9,17 +9,17 @@ import hashlib
 import json
 
 import pytest
-from typer.testing import CliRunner
-
-from cairnmind.scip import ingest
-from cairnmind.cli import app
-from cairnmind.scip.ingest import _write_chunks
-from cairnmind.storage.replaced_chunks import drop_replaced_chunks
-from cairnmind.agents.retrieval import Retriever
-from cairnmind.storage.sql import clean_row
-from cairnmind.store import Store
 from test_index_batching import rewrite, tree
 from test_portable_memory import destination, head_path, origin  # noqa: F401 (origin is a fixture)
+from typer.testing import CliRunner
+
+from cairnmind.agents.retrieval import Retriever
+from cairnmind.cli import app
+from cairnmind.scip import ingest
+from cairnmind.scip.ingest import _write_chunks
+from cairnmind.storage.replaced_chunks import drop_replaced_chunks
+from cairnmind.storage.sql import clean_row
+from cairnmind.store import Store
 
 
 class Vectors:

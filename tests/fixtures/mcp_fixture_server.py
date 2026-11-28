@@ -178,7 +178,7 @@ def main():
                 send({"jsonrpc": "2.0", "id": "s1", "method": "sampling/createMessage", "params": {"messages": []}})
                 send({"jsonrpc": "2.0", "id": "s2", "method": "roots/list"})
                 send({"jsonrpc": "2.0", "id": "s3", "method": "elicitation/create", "params": {}})
-                for reply in range(3):  # the host answers each request with an error and keeps going
+                for _reply in range(3):  # the host answers each request with an error and keeps going
                     answer = json.loads(sys.stdin.readline())
                     sys.stderr.write("answered " + json.dumps(answer) + "\n")
                     if "error" not in answer:

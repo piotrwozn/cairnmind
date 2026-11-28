@@ -35,7 +35,6 @@ import glob
 import json
 import math
 import os
-from pathlib import Path
 import shutil
 import signal
 import stat
@@ -44,6 +43,7 @@ import sys
 import threading
 import time
 import warnings
+from pathlib import Path
 
 import pytest
 
@@ -494,4 +494,4 @@ def leftover_processes_are_stopped(request):
     CLOCK.restart(max(CLOCK.limit, 120.0) if CLOCK.limit > 0 else 0, "stopping what the test left running")
     stopped = SPAWNED.stop_all(request.node)
     if stopped:
-        warnings.warn(LeftRunning("The test left running, and it was stopped: " + "; ".join(stopped)))
+        warnings.warn(LeftRunning("The test left running, and it was stopped: " + "; ".join(stopped)), stacklevel=2)

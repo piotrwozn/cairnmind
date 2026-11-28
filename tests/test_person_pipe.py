@@ -5,9 +5,9 @@ import sys
 
 import pytest
 
+from cairnmind.config import Settings
 from cairnmind.pal import person_pipe
 from cairnmind.terminal import person_proof
-from cairnmind.config import Settings
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows Named Pipe tests run on native Windows")
 
@@ -44,10 +44,12 @@ def test_person_pipe_single_instance_blocks_squatting(tmp_path):
     settings = Settings.load(tmp_path / "data", create=True)
     k1 = person_proof.new_key()
     k2 = person_proof.new_key()
-    with person_pipe.PersonPipeServer(settings.data_dir, k1):
-        with pytest.raises(OSError):
-            with person_pipe.PersonPipeServer(settings.data_dir, k2):
-                pass
+    with (
+        person_pipe.PersonPipeServer(settings.data_dir, k1),
+        pytest.raises(OSError),
+        person_pipe.PersonPipeServer(settings.data_dir, k2),
+    ):
+        pass
 
 
 def test_person_pipe_rejects_malformed_keys(tmp_path):

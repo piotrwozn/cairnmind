@@ -10,12 +10,12 @@ from datetime import datetime
 import pytest
 from rich.cells import cell_len
 from rich.style import Style
+from test_terminal_notice_feed import install, publish
 
+from cairnmind.config import Settings
 from cairnmind.terminal import terminal_activity, terminal_theme
 from cairnmind.terminal.cockpit_state import _private_directory
-from cairnmind.config import Settings
 from cairnmind.terminal.terminal_activity import ActivityList, activity_app
-from test_terminal_notice_feed import install, publish
 from cairnmind.terminal.terminal_notices import NoticeHistory
 
 PROJECT = {"id": "project-a", "name": "cairnmind", "root": "/work/cairnmind-144"}
@@ -149,7 +149,7 @@ async def until(pilot, condition, timeout=4.0, what=None):
 def requests(broker, since=0):
     """The requests made after the first `since`, with their seconds from the first of them."""
     first = broker.times[since] if len(broker.times) > since else 0
-    return [(f"{when - first:.2f}s", call[1]) for call, when in zip(broker.calls[since:], broker.times[since:])]
+    return [(f"{when - first:.2f}s", call[1]) for call, when in zip(broker.calls[since:], broker.times[since:], strict=False)]
 
 
 def loaded(app):

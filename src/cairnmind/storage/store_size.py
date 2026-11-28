@@ -27,15 +27,15 @@ What it costs, so that a large store is not slow to measure:
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import stat
 import time
+from pathlib import Path
 
-from cairnmind.memory.brief import _line
 from cairnmind.config import BACKUP_SUFFIXES
+from cairnmind.memory.brief import _line
+from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.storage.sql import IDENTIFIER
 from cairnmind.storage.store_backup import TEMPORARY_PREFIX
-from cairnmind.pal.terminal_safe import safe_text
 
 EXACT_ROWS = 1000
 SAMPLE_POINTS = 32
@@ -228,7 +228,7 @@ def _tree(path: Path) -> dict:
         return {"path": str(path), "exists": True, "files": 1, "bytes": path.stat().st_size}
     if not path.is_dir() or path.is_symlink():
         return {"path": str(path), "exists": False, "files": 0, "bytes": 0}
-    for root, directories, names in os.walk(path, followlinks=False):
+    for root, _directories, names in os.walk(path, followlinks=False):
         for name in names:
             try:
                 info = os.lstat(os.path.join(root, name))

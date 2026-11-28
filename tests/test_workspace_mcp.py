@@ -1,23 +1,23 @@
 """More → MCP servers: a person adds or removes a project's servers through the settings route (#126)."""
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 
 import pytest
+from test_terminal_panels import settle
+from test_terminal_ux080 import screen_text, setup_ui
+from test_workspace_stage import wait_for
 from textual.widgets import Button, Input, Static, TextArea
 
 from cairnmind import cli
 from cairnmind.agents.agent_memory import MEMORY_TOOLS
 from cairnmind.agents.agent_tools import FILE_TOOLS
+from cairnmind.mcp.mcp_servers import LOADER_ENV
 from cairnmind.terminal.terminal_i18n import CATALOG
 from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
 from cairnmind.terminal.terminal_ui import ChoiceModal, FormModal
-from cairnmind.mcp.mcp_servers import LOADER_ENV
 from cairnmind.terminal.workspace_mcp import LOADER_NOTE, NOTE, REMOVED, SAVED, SAVED_NOT_RUNNABLE, parse_form
-from test_terminal_panels import settle
-from test_terminal_ux080 import screen_text, setup_ui
-from test_workspace_stage import wait_for
 
 SERVER = {"id": "tracker", "command": "/usr/bin/env", "args": ["tracker-mcp", "--quiet"], "env": {"LOG_LEVEL": "warn"}}
 

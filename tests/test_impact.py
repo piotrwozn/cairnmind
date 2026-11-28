@@ -15,8 +15,8 @@ from cairnmind.cli import app
 from cairnmind.config import Settings
 from cairnmind.memory.impact import build_impact
 from cairnmind.scip.ingest import index_project
-from cairnmind.store import Store
 from cairnmind.storage.sql import clean_row
+from cairnmind.store import Store
 
 AUTH = '''SESSION_MINUTES = 30
 
@@ -688,6 +688,7 @@ def test_files_opened_but_not_usable_count_against_the_budgets(workspace, monkey
 def test_a_file_that_grew_after_the_size_check_is_read_with_a_cap(workspace, monkeypatch):
     store, pid, root, records = workspace
     from types import SimpleNamespace
+
     from cairnmind.memory import impact_docs
 
     class Liar(type(root)):

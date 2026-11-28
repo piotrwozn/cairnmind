@@ -12,9 +12,9 @@ if sys.platform != "win32":
     import termios
 
 import pytest
-
 from pty_drain import drain_pty
 from test_workspace import manager as manager  # noqa: F401 (fixture)
+
 import cairnmind.terminal.workspace as module
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX tmux/PTY workspace stop exit")

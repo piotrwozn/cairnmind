@@ -4,9 +4,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from test_terminal_graph import ControlledBroker, eventually
 
-from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.config import Settings
+from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.terminal.terminal_graph import (
     BrailleCanvas,
     GraphApp,
@@ -19,7 +20,6 @@ from cairnmind.terminal.terminal_graph import (
     tmux_visible,
 )
 from cairnmind.terminal.workspace_state import WorkspaceState
-from test_terminal_graph import ControlledBroker, eventually
 
 
 def test_braille_canvas_clipping_dotted_layout_model_and_selection():

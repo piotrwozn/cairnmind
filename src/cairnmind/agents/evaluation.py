@@ -8,26 +8,27 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from dataclasses import dataclass, replace
 import json
 import os
-from pathlib import Path
 import secrets
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from cairnmind import __version__
 from cairnmind.agents.agent import KnowledgeAgent, parse_object
-from cairnmind.config import Settings, env_names, set_env
-from cairnmind.scip.ingest import index_pending_sources
-from cairnmind.memory.memory_models import from_settings
 from cairnmind.agents.ollama import OllamaUnavailable
-from cairnmind.pal.private_files import ensure_private_dir, make_private
 from cairnmind.agents.retrieval import Retriever
+from cairnmind.config import Settings, env_names, set_env
+from cairnmind.memory.memory_models import from_settings
+from cairnmind.pal.private_files import ensure_private_dir, make_private
+from cairnmind.scip.ingest import index_pending_sources
 from cairnmind.storage.storage_query import db_find
 from cairnmind.store import Store
 
@@ -151,7 +152,7 @@ class MeasuredOllama:
     @staticmethod
     def _error(exc):
         # Never copy exception bodies, request messages or arbitrary response data.
-        result = {"type": type(exc).__name__}
+        result: dict[str, Any] = {"type": type(exc).__name__}
         status = getattr(exc, "status_code", None)
         if type(status) is int and 100 <= status <= 599:
             result["status_code"] = status
@@ -628,7 +629,7 @@ def _clients(store: Store, settings: Settings, project: dict, canonical: dict, r
                         "previous_ack_invalidated": invalidation,
                         "handoff_from": previous_client if runner_invoked else None,
                         "compaction_client": compaction_client, **result})
-        if result.get("status") == "passed":
+        if result.get("status") == "passed" and prepared is not None:
             previous_session = prepared["session_id"]
             previous_client = client
         else:
@@ -665,6 +666,7 @@ def run_evaluation(settings: Settings, *, clients: bool = False, skip_claude: bo
         store = Store(isolated.data_dir, settings=isolated)
         try:
             from contextlib import nullcontext
+
             from cairnmind.agents.vcr import VcrOllama, deterministic_uuid4
             seed_ctx = deterministic_uuid4("cairnmind-eval-recall-v1") if isinstance(ollama, VcrOllama) else nullcontext()
             with seed_ctx:
@@ -673,13 +675,14 @@ def run_evaluation(settings: Settings, *, clients: bool = False, skip_claude: bo
                                                 ollama or from_settings(isolated, credentials=settings)))
             # Deterministic checks are scored independently of model availability.
             stored = {r["id"]: r for r in store.list_records(project["id"])}
+            provenance_source = store.get_source(canonical["source_id"])
             deterministic = {
                 "separate_namespace": store.settings.arcade_database != settings.arcade_database,
                 "exact_current_version": stored[canonical["current_decision"]["id"]]["version"] == 2,
                 "exact_task_states": all(stored[t["id"]]["metadata"]["state"] == state
                                          for state, t in canonical["tasks"].items()),
                 "project_isolation": all(r["project_id"] == project["id"] for r in stored.values()),
-                "provenance_scope": store.get_source(canonical["source_id"])["project_id"] == project["id"],
+                "provenance_scope": provenance_source is not None and provenance_source["project_id"] == project["id"],
             }
             native = (_clients(store, isolated, project, canonical, client_runner or _native_client,
                                skip_claude=skip_claude)
@@ -712,7 +715,9 @@ def run_evaluation(settings: Settings, *, clients: bool = False, skip_claude: bo
         finally:
             # Drop only this invocation's randomly named namespace, never a name
             # loaded back from environment or supplied by a model/client.
-            store.client.server_command("drop database " + isolated.arcade_database)
+            server_command = getattr(store.client, "server_command", None)
+            if server_command is not None:
+                server_command("drop database " + isolated.arcade_database)
     path = output / ("recall-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid4().hex[:8] + ".json")
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     make_private(path)
@@ -755,7 +760,7 @@ def fixture_mcp(data_dir: Path, session_id: str | None = None) -> None:
             raise ValueError("Project differs from bound evaluation session")
         sessions.require_ack(session_id)
         project = store.resolve_project(project_id)
-        if project["name"] != "Recall fixture":
+        if project is None or project["name"] != "Recall fixture":
             raise ValueError("Only the recall fixture is exposed")
         return {"project": project["id"], "records": store.list_records(project["id"])}
 
@@ -763,7 +768,7 @@ def fixture_mcp(data_dir: Path, session_id: str | None = None) -> None:
     def read_source(project_id: str, source_id: str) -> dict:
         memory(project_id)
         source = store.get_source(source_id)
-        if source["project_id"] != project_id:
+        if source is None or source["project_id"] != project_id:
             raise ValueError("Source is outside fixture scope")
         return {key: source[key] for key in ("id", "uri", "content", "sha256")}
 

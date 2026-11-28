@@ -14,23 +14,22 @@ consent dialog and broker -> service -> Named Pipe verification path.
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 import sys
+from contextlib import suppress
 
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import (Button, DataTable, Footer, Header, Input, Select,
-                             Static, TabbedContent, TabPane)
+from textual.widgets import Button, DataTable, Footer, Header, Input, Select, Static, TabbedContent, TabPane
 
-from cairnmind.pal import person_pipe
-from cairnmind.terminal import person_proof, terminal_setup_change, terminal_theme
 from cairnmind.cli_cmds import topology
+from cairnmind.pal import person_pipe
+from cairnmind.pal.terminal_safe import plain, safe_text
+from cairnmind.terminal import person_proof, terminal_setup_change, terminal_theme
 from cairnmind.terminal.terminal_client import BrokerClient, BrokerError
 from cairnmind.terminal.terminal_i18n import tr
 from cairnmind.terminal.terminal_i18n_messages import broker_error_text
 from cairnmind.terminal.terminal_person_act import agreed, review_text
-from cairnmind.pal.terminal_safe import plain, safe_text
 from cairnmind.terminal.terminal_ui import ChoiceModal, Field, FormModal, MessageModal
 from cairnmind.terminal.workspace_state import WorkspaceState
 
@@ -102,43 +101,38 @@ class StandaloneWorkspaceApp(App[int]):
         yield Header()
         yield Static(plain(self.t("Loading workspace…")), id="notice-bar", markup=False)
         with TabbedContent(initial="tab-projects", id="workspace-tabs"):
-            with TabPane(self.t("Projects"), id="tab-projects"):
-                with Vertical(classes="pane-box"):
-                    with Horizontal(classes="action-bar"):
-                        yield Button(self.t("Add project"), id="btn-add-project", variant="primary")
-                        yield Button(self.t("Quick finding"), id="btn-finding")
-                        yield Button(self.t("Refresh"), id="btn-refresh")
-                        yield Button(self.t("Delete project memory"), id="btn-forget-project")
-                    yield DataTable(id="projects-table", cursor_type="row", zebra_stripes=True)
-            with TabPane(self.t("Memory"), id="tab-inspector"):
-                with Vertical(classes="pane-box"):
-                    with Horizontal(id="inspector-filter-bar"):
-                        yield Select([(self.t(lbl), val) for lbl, val in _INSPECTOR_VIEWS],
-                                     value="records", allow_blank=False, id="inspector-view")
-                        yield Input(placeholder=self.t("Filter loaded page…"), id="inspector-filter")
-                    yield DataTable(id="inspector-table", cursor_type="row", zebra_stripes=True)
-                    with Horizontal(classes="action-bar"):
-                        yield Button(self.t("Confirm"), id="btn-confirm", variant="primary")
-                        yield Button(self.t("Dispute"), id="btn-dispute")
-                        yield Button(self.t("Release"), id="btn-release")
-                        yield Button(self.t("Resolve"), id="btn-resolve")
-                    with VerticalScroll(id="inspector-detail-scroll"):
-                        yield Static("", id="inspector-detail", markup=False)
-            with TabPane(self.t("Activity"), id="tab-activity"):
-                with VerticalScroll(id="activity-body"):
-                    yield Static(plain(self.t("Select a project to view activity.")),
-                                 id="activity-text", markup=False)
-            with TabPane(self.t("Graph"), id="tab-graph"):
-                with VerticalScroll(id="graph-body"):
-                    yield Static(plain(self.t("Select a project to inspect the memory graph.")),
-                                 id="graph-text", markup=False)
-            with TabPane(self.t("Settings"), id="tab-settings"):
-                with Vertical(id="settings-body"):
-                    yield Static("", id="settings-summary", markup=False)
-                    with Horizontal(classes="action-bar"):
-                        yield Button(self.t("Change where storage and models run"),
-                                     id="btn-change-setup", variant="primary")
-                        yield Button("EN / PL", id="btn-toggle-lang")
+            with TabPane(self.t("Projects"), id="tab-projects"), Vertical(classes="pane-box"):
+                with Horizontal(classes="action-bar"):
+                    yield Button(self.t("Add project"), id="btn-add-project", variant="primary")
+                    yield Button(self.t("Quick finding"), id="btn-finding")
+                    yield Button(self.t("Refresh"), id="btn-refresh")
+                    yield Button(self.t("Delete project memory"), id="btn-forget-project")
+                yield DataTable(id="projects-table", cursor_type="row", zebra_stripes=True)
+            with TabPane(self.t("Memory"), id="tab-inspector"), Vertical(classes="pane-box"):
+                with Horizontal(id="inspector-filter-bar"):
+                    yield Select([(self.t(lbl), val) for lbl, val in _INSPECTOR_VIEWS],
+                                 value="records", allow_blank=False, id="inspector-view")
+                    yield Input(placeholder=self.t("Filter loaded page…"), id="inspector-filter")
+                yield DataTable(id="inspector-table", cursor_type="row", zebra_stripes=True)
+                with Horizontal(classes="action-bar"):
+                    yield Button(self.t("Confirm"), id="btn-confirm", variant="primary")
+                    yield Button(self.t("Dispute"), id="btn-dispute")
+                    yield Button(self.t("Release"), id="btn-release")
+                    yield Button(self.t("Resolve"), id="btn-resolve")
+                with VerticalScroll(id="inspector-detail-scroll"):
+                    yield Static("", id="inspector-detail", markup=False)
+            with TabPane(self.t("Activity"), id="tab-activity"), VerticalScroll(id="activity-body"):
+                yield Static(plain(self.t("Select a project to view activity.")),
+                             id="activity-text", markup=False)
+            with TabPane(self.t("Graph"), id="tab-graph"), VerticalScroll(id="graph-body"):
+                yield Static(plain(self.t("Select a project to inspect the memory graph.")),
+                             id="graph-text", markup=False)
+            with TabPane(self.t("Settings"), id="tab-settings"), Vertical(id="settings-body"):
+                yield Static("", id="settings-summary", markup=False)
+                with Horizontal(classes="action-bar"):
+                    yield Button(self.t("Change where storage and models run"),
+                                 id="btn-change-setup", variant="primary")
+                    yield Button("EN / PL", id="btn-toggle-lang")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -183,7 +177,7 @@ class StandaloneWorkspaceApp(App[int]):
         self._render_settings()
         self.load_all()
 
-    async def _req(self, method: str, path: str, *, params=None, json=None, timeout: int = 20):
+    async def _req(self, method: str, path: str, *, params=None, json=None, timeout: int = 20):  # noqa: ASYNC109 - broker request timeout forwarded to thread
         return await asyncio.to_thread(
             self.broker.request, method, path, params=params, json=json, timeout=timeout
         )
@@ -243,7 +237,7 @@ class StandaloneWorkspaceApp(App[int]):
         table = self.query_one("#inspector-table", DataTable)
         table.clear()
         self.selected_row = None
-        shown = []
+        shown: list[tuple[int, dict, str]] = []
         for idx, row in enumerate(self.inspector_rows):
             summary = str(row.get("content") or row.get("title") or row.get("summary")
                           or row.get("uri") or row.get("kind") or "")
@@ -259,8 +253,9 @@ class StandaloneWorkspaceApp(App[int]):
                 key=str(idx),
             )
         if shown:
-            self.selected_row = shown[0][1]
-            self._show_row_detail(self.selected_row)
+            selected = shown[0][1]
+            self.selected_row = selected
+            self._show_row_detail(selected)
         else:
             with suppress(Exception):
                 self.query_one("#inspector-detail", Static).update("")
@@ -271,7 +266,8 @@ class StandaloneWorkspaceApp(App[int]):
             self.query_one("#inspector-detail", Static).update(plain("\n".join(lines)))
 
     async def _load_activity(self, pid: str) -> None:
-        lines = [f"Project: {self.selected_project.get('name', pid)}", ""]
+        project_name = self.selected_project.get("name", pid) if self.selected_project else pid
+        lines = [f"Project: {project_name}", ""]
         try:
             plans = await self._req("GET", "/api/inspector/plans", params={"project": pid, "limit": 10})
             plan_items = plans.get("items") or []
@@ -298,8 +294,9 @@ class StandaloneWorkspaceApp(App[int]):
             graph = await self._req("GET", "/api/inspector/graph", params={"project": pid, "limit": 120})
             nodes = graph.get("nodes") or []
             edges = graph.get("edges") or []
+            project_name = self.selected_project.get("name", pid) if self.selected_project else pid
             lines = [
-                f"Memory graph · {self.selected_project.get('name', pid)}",
+                f"Memory graph · {project_name}",
                 f"Nodes: {len(nodes)} · Edges: {len(edges)}",
                 "",
             ]

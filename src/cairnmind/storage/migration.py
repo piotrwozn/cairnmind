@@ -21,30 +21,34 @@ Implements the 5-step crash-safe migration protocol (ADR-01, ADR-02, ADR-04, ADR
 """
 from __future__ import annotations
 
-from dataclasses import replace
-from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 import os
-from pathlib import Path
 import shutil
 import sqlite3
 import tempfile
-from typing import Any, Callable
+from collections.abc import Callable
+from contextlib import suppress
+from dataclasses import replace
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import httpx
 
-from cairnmind.storage import store_writer
 from cairnmind.config import Settings, resolved_backend, session_value, sqlite_db_path, tls_verify
 from cairnmind.pal.file_locks import lock_exclusive
 from cairnmind.pal.private_files import make_private
+from cairnmind.storage import store_writer
 from cairnmind.storage.restore_claims import BackupClaims
 from cairnmind.storage.sql import clean_row, utc_now
 from cairnmind.storage.sqlite_telemetry import DEFAULT_THRESHOLDS, evaluate_sqlite_health
 from cairnmind.storage.storage_backend import ALL_COLLECTIONS
 
 MIGRATION_LOCK_FILE = "migration.lock"
+log = logging.getLogger(__name__)
 MIGRATION_MARKER_FILE = "migration-in-progress"
 MIGRATION_STATE_REL = Path("runtime") / "migration-state.json"
 DEFAULT_BATCH_SIZE = 1000
@@ -91,10 +95,8 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.flush()
             os.fsync(handle.fileno())
-        try:
+        with suppress(OSError):
             make_private(tmp)
-        except OSError:
-            pass
         tmp.replace(path)
     finally:
         tmp.unlink(missing_ok=True)
@@ -143,12 +145,12 @@ def compute_store_parity(
                 effective = transform(collection, row) if transform is not None else row
                 norm = canonical_row(effective)
                 line = json.dumps(norm, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-                col_hash.update(f"{collection}\0{line}\n".encode("utf-8"))
+                col_hash.update(f"{collection}\0{line}\n".encode())
                 count += 1
         col_hex = col_hash.hexdigest()
         counts[collection] = count
         digests[collection] = col_hex
-        overall.update(f"{collection}:{count}:{col_hex}\n".encode("utf-8"))
+        overall.update(f"{collection}:{count}:{col_hex}\n".encode())
 
     return counts, digests, overall.hexdigest()
 
@@ -169,10 +171,8 @@ def _source_size_bytes(settings: Settings, source_backend: str, source_store: An
         total = 0
         for root, _, files in os.walk(db_dir):
             for fname in files:
-                try:
+                with suppress(OSError):
                     total += (Path(root) / fname).stat().st_size
-                except OSError:
-                    pass
         if total > 0:
             return total
     counts = source_store.backend.collection_counts(source_store.client)
@@ -272,7 +272,7 @@ def _archive_sqlite_file(db_path: Path) -> Path | None:
     """Archive migrated SQLite file to ``state.db.migrated-<timestamp>.bak`` (after all handles are closed)."""
     if not db_path.is_file():
         return None
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     backup = db_path.with_name(f"{db_path.name}.migrated-{stamp}.bak")
     counter = 1
     while backup.exists():
@@ -356,7 +356,8 @@ def abort_migration(settings: Settings) -> dict[str, Any]:
                         cleaned_target = True
                     finally:
                         t_store.close()
-                except Exception:  # noqa: BLE001
+                except (OSError, ValueError, RuntimeError, httpx.HTTPError) as exc:
+                    log.debug("Failed to wipe target ArcadeDB database during migration abort: %s", exc)
                     cleaned_target = False
 
         migration_state_path(data_dir).unlink(missing_ok=True)
@@ -701,10 +702,10 @@ def migrate(
             if source_store is not None:
                 try:
                     source_store.close()
-                except Exception:  # noqa: BLE001
-                    pass
+                except (OSError, RuntimeError, sqlite3.Error) as exc:
+                    log.debug("Failed to close source store during migration cleanup: %s", exc)
             if target_store is not None:
                 try:
                     target_store.close()
-                except Exception:  # noqa: BLE001
-                    pass
+                except (OSError, RuntimeError, sqlite3.Error) as exc:
+                    log.debug("Failed to close target store during migration cleanup: %s", exc)

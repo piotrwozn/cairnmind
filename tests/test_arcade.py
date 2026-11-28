@@ -7,8 +7,8 @@ import time
 import httpx
 import pytest
 
-from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 
 
 def test_client_uses_readonly_endpoint_and_named_json_parameters(tmp_path):
@@ -76,11 +76,10 @@ def test_the_engine_fixture_wraps_requests_in_the_stall_watch():
 def test_native_transaction_rolls_back_and_query_rejects_writes(tmp_path):
     from cairnmind.store import Store
     store = Store(tmp_path)
-    with pytest.raises(RuntimeError, match="abort"):
-        with store.transaction() as tx:
-            tx.command("INSERT INTO projects CONTENT :doc", {"doc": {
-                "id": "rollback-project", "name": "rollback", "root": "/tmp/rollback"}})
-            raise RuntimeError("abort")
+    with pytest.raises(RuntimeError, match="abort"), store.transaction() as tx:
+        tx.command("INSERT INTO projects CONTENT :doc", {"doc": {
+            "id": "rollback-project", "name": "rollback", "root": "/tmp/rollback"}})
+        raise RuntimeError("abort")
     assert store.query("SELECT FROM projects WHERE id=:id", {"id": "rollback-project"}) == []
     with pytest.raises(ArcadeError):
         store.query("DELETE FROM projects")

@@ -11,24 +11,32 @@ import string
 import types
 
 import pytest
+from consent_steps import consent_drawn, early_enter_sends_nothing, form_ready
+from test_setup_change import Rig, clean_environment  # noqa: F401 - clean_environment is an autouse fixture: an engine test leaves its variables set
+from test_setup_profiles import (
+    DB,
+    MODELS,
+    RELEASE_CHAT,
+    RELEASE_EMBEDDING,
+    config_bytes,
+    connect_only_installation,
+    make,
+    private,
+)
+from test_terminal_panels import settle
+from test_terminal_ux080 import UIBroker, screen_text, setup_ui
 from textual import work
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, Static
 
-from cairnmind.storage import database_credentials
-from cairnmind.terminal import setup_change, setup_mark, setup_profiles, terminal_setup_change
-from cairnmind.storage.arcade import ArcadeError
 from cairnmind.config import Settings
+from cairnmind.storage import database_credentials
+from cairnmind.storage.arcade import ArcadeError
+from cairnmind.terminal import setup_change, setup_mark, setup_profiles, terminal_setup_change
 from cairnmind.terminal.terminal_i18n import CATALOG, tr
 from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
 from cairnmind.terminal.terminal_setup_change import MESSAGES, change_setup, consent_text
 from cairnmind.terminal.terminal_ui import ChoiceModal, FormModal, MessageModal
-from consent_steps import consent_drawn, early_enter_sends_nothing, form_ready
-from test_setup_change import Rig, clean_environment  # noqa: F401 - clean_environment is an autouse fixture: an engine test leaves its variables set
-from test_setup_profiles import (DB, MODELS, RELEASE_CHAT, RELEASE_EMBEDDING, config_bytes, connect_only_installation,
-                                 make, private)
-from test_terminal_panels import settle
-from test_terminal_ux080 import UIBroker, screen_text, setup_ui
 
 
 class Broker(UIBroker):
@@ -683,7 +691,7 @@ async def test_the_flow_fits_at_80_by_24(ui):
         fields = app.screen.query_one("#form-fields")
         await until(pilot, lambda: fields.max_scroll_y > 0, what="the form fields to be scrollable")
         fields.scroll_end(animate=False)
-        await until(pilot, lambda: 0 <= last.region.y and last.region.bottom <= 24, what="the last field scrolled into view")
+        await until(pilot, lambda: last.region.y >= 0 and last.region.bottom <= 24, what="the last field scrolled into view")
         for name, value in remote(tmp).items():
             app.screen.query_one("#field-" + name, Input).value = value
         await pilot.press("ctrl+s")

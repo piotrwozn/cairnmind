@@ -9,20 +9,23 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 from typing import Any
 
-from cairnmind.scip.ignore_rules import IgnoreMatcher, is_git_worktree
 from cairnmind.memory.memory import _load_snapshot
 from cairnmind.memory.memory_paths import MEMORY_DIRECTORIES, PUBLISHED_RELATIVE
 from cairnmind.memory.memory_published_check import check_directory
 from cairnmind.memory.memory_published_release import checkout_rules, config_text
 from cairnmind.memory.memory_published_secrets import Rules, load_rules
 from cairnmind.memory.snapshot_privacy import (
-    FILE_SOURCE_KINDS, TRANSCRIPT_SOURCE_KINDS, _source_rel_path, scan_and_optionally_redact_payload,
+    FILE_SOURCE_KINDS,
+    TRANSCRIPT_SOURCE_KINDS,
+    _source_rel_path,
+    scan_and_optionally_redact_payload,
 )
 from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.scip.ignore_rules import IgnoreMatcher, is_git_worktree
 
 
 def _git_history_transcript_leaks(repo_root: Path) -> list[dict[str, Any]]:

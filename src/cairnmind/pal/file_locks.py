@@ -6,20 +6,31 @@ Handles opened via locked_path are marked non-inheritable.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
 import errno
 import os
-from pathlib import Path
 import sys
+from contextlib import contextmanager, suppress
+from pathlib import Path
 
 IS_WINDOWS = sys.platform == "win32"
 
-if not IS_WINDOWS:
+if sys.platform != "win32":
     import fcntl
+
+    def _lock_exclusive_fd(fd: int, *, blocking: bool) -> None:
+        flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+        fcntl.flock(fd, flags)
+
+    def _lock_shared_fd(fd: int, *, blocking: bool) -> None:
+        flags = fcntl.LOCK_SH | (0 if blocking else fcntl.LOCK_NB)
+        fcntl.flock(fd, flags)
+
+    def _unlock_fd(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
 else:
     import ctypes
-    from ctypes import wintypes
     import msvcrt
+    from ctypes import wintypes
 
     _LOCKFILE_FAIL_IMMEDIATELY = 0x00000001
     _LOCKFILE_EXCLUSIVE_LOCK = 0x00000002
@@ -85,6 +96,20 @@ else:
                 raise BlockingIOError(errno.EAGAIN, "Resource temporarily unavailable")
             raise ctypes.WinError(error)
 
+    def _lock_exclusive_fd(fd: int, *, blocking: bool) -> None:
+        _win_lock(msvcrt.get_osfhandle(fd), exclusive=True, blocking=blocking)
+
+    def _lock_shared_fd(fd: int, *, blocking: bool) -> None:
+        _win_lock(msvcrt.get_osfhandle(fd), exclusive=False, blocking=blocking)
+
+    def _unlock_fd(fd: int) -> None:
+        handle = msvcrt.get_osfhandle(fd)
+        while _kernel32.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(_overlapped())):
+            pass
+        error = ctypes.get_last_error()
+        if error not in (0, _ERROR_NOT_LOCKED):
+            raise ctypes.WinError(error)
+
 
 def _fileno(file_or_fd) -> int:
     return file_or_fd if isinstance(file_or_fd, int) else file_or_fd.fileno()
@@ -95,12 +120,7 @@ def lock_exclusive(file_or_fd, *, blocking: bool = True) -> None:
 
     Raises BlockingIOError when blocking=False and the lock is already held.
     """
-    fd = _fileno(file_or_fd)
-    if not IS_WINDOWS:
-        flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
-        fcntl.flock(fd, flags)
-        return
-    _win_lock(msvcrt.get_osfhandle(fd), exclusive=True, blocking=blocking)
+    _lock_exclusive_fd(_fileno(file_or_fd), blocking=blocking)
 
 
 def lock_shared(file_or_fd, *, blocking: bool = True) -> None:
@@ -108,26 +128,12 @@ def lock_shared(file_or_fd, *, blocking: bool = True) -> None:
 
     Raises BlockingIOError when blocking=False and an exclusive lock is held.
     """
-    fd = _fileno(file_or_fd)
-    if not IS_WINDOWS:
-        flags = fcntl.LOCK_SH | (0 if blocking else fcntl.LOCK_NB)
-        fcntl.flock(fd, flags)
-        return
-    _win_lock(msvcrt.get_osfhandle(fd), exclusive=False, blocking=blocking)
+    _lock_shared_fd(_fileno(file_or_fd), blocking=blocking)
 
 
 def unlock(file_or_fd) -> None:
     """Release an exclusive or shared lock on an open file object or file descriptor."""
-    fd = _fileno(file_or_fd)
-    if not IS_WINDOWS:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        return
-    handle = msvcrt.get_osfhandle(fd)
-    while _kernel32.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(_overlapped())):
-        pass
-    error = ctypes.get_last_error()
-    if error not in (0, _ERROR_NOT_LOCKED):
-        raise ctypes.WinError(error)
+    _unlock_fd(_fileno(file_or_fd))
 
 
 @contextmanager
@@ -139,7 +145,5 @@ def locked_path(path: Path, *, blocking: bool = True):
         try:
             yield handle
         finally:
-            try:
+            with suppress(OSError):
                 unlock(handle)
-            except OSError:
-                pass

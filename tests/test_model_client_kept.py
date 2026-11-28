@@ -9,9 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cairnmind import service
+from cairnmind.agents.ollama import Ollama, OllamaUnavailable
 from cairnmind.config import Settings
 from cairnmind.memory.memory_models import MemoryModels
-from cairnmind.agents.ollama import Ollama, OllamaUnavailable
 
 VECTOR = {"embeddings": [[0.5, 0.25]]}
 

@@ -7,35 +7,45 @@ execution snapshot: an edit followed by a revert between observations is not det
 """
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+import contextlib
 import hashlib
 import json
+import logging
 import math
 import os
-from pathlib import Path
 import queue
 import signal
 import stat
 import subprocess
+import threading
 import time
 import tomllib
-import threading
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from cairnmind.memory.check_profile_messages import unknown_profile_message
 from cairnmind.memory.git_worktree import (
     _file_hash as _file_hash,
+)
+from cairnmind.memory.git_worktree import (
     _git as _git,
+)
+from cairnmind.memory.git_worktree import (
     _root as _root,
+)
+from cairnmind.memory.git_worktree import (
     require_git_tree as _require_git_tree_impl,
 )
-from cairnmind.pal.private_files import atomic_replace, fsync_directory, make_private
-from cairnmind.pal.process_control import ProcessJob, group_popen_kwargs, terminate_group
-from cairnmind.storage.sql import clean_row, json_text, utc_now
-from cairnmind.storage.storage_query import asc, db_find, db_find_one, db_insert_document, desc, eq, ne
 from cairnmind.memory.memory_paths import git_pathspec, is_reserved_below, is_reserved_memory, nested_reserved
 from cairnmind.pal.path_spelling import lies_in
+from cairnmind.pal.private_files import atomic_replace, fsync_directory, make_private
+from cairnmind.pal.process_control import ProcessJob, group_popen_kwargs, terminate_group
 from cairnmind.pal.process_identity import start as process_start
+from cairnmind.storage.sql import clean_row, json_text, utc_now
+from cairnmind.storage.storage_query import asc, db_find, db_find_one, db_insert_document, desc, eq, ne
+
+logger = logging.getLogger(__name__)
 
 MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 PARALLEL_HASH_THRESHOLD = 64
@@ -315,19 +325,13 @@ def _stop_group(process, job: ProcessJob | None = None):
             process.kill()
             process.wait(timeout=3)
         return
-    try:
+    with contextlib.suppress(ProcessLookupError):
         terminate_group(process.pid, force=False)
-    except ProcessLookupError:
-        pass
-    try:
+    with contextlib.suppress(subprocess.TimeoutExpired):
         process.wait(timeout=0.3)
-    except subprocess.TimeoutExpired:
-        pass
     # A parent may already have exited while its children still hold the pipes.
-    try:
+    with contextlib.suppress(ProcessLookupError):
         terminate_group(process.pid, force=True)
-    except ProcessLookupError:
-        pass
     process.wait(timeout=3)
 
 
@@ -372,8 +376,8 @@ def _execute(profile, root, output_dir, on_start=None):
                     if not data:
                         break
                     chunks.put((stream_name, data))
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.debug("Check output pipe %s closed: %s", stream_name, exc)
             finally:
                 chunks.put((stream_name, None))
 
@@ -488,11 +492,9 @@ def _cleanup_run_artifacts(settings, active):
         path = directory / name
         if path.is_symlink() or path.is_file():
             path.unlink(missing_ok=True)
-    try:
+    # Unexpected files belong to the user until proven otherwise.
+    with contextlib.suppress(OSError):
         directory.rmdir()
-    except OSError:
-        # Unexpected files belong to the user until proven otherwise.
-        pass
 
 
 def _process_identity(pid):
@@ -548,11 +550,9 @@ def recover_interrupted_runs(store, settings) -> list[dict]:
             if (type(process_pid) is int and process_pid > 1 and active.get("process_identity")
                     and _process_identity(process_pid) == active["process_identity"]):
                 # This is the original group leader; do not signal a reused PID.
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     terminate_group(process_pid, force=False)
                     terminate_group(process_pid, force=True)
-                except ProcessLookupError:
-                    pass
             source_ids, total, rendered_total = {}, 0, 0
             for name in ("stdout", "stderr"):
                 log = path.parent / name
@@ -580,8 +580,8 @@ def recover_interrupted_runs(store, settings) -> list[dict]:
                 recovered.append(_cancelled_without_evidence(active, str(exc)))
                 try:
                     _cleanup_run_artifacts(settings, active)
-                except (OSError, ValueError, KeyError):
-                    pass
+                except (OSError, ValueError, KeyError) as exc:
+                    logger.debug("Failed to clean up interrupted run artifacts: %s", exc)
             # Corrupt spools are retained for repair; never converted into success.
             continue
     return recovered
@@ -632,8 +632,8 @@ def run_check(store, settings, project_id, profile_id, task_id, worktree=None) -
             "output_bytes": sum(len(b) for b in buffers.values())}, str(exc))
         try:
             _cleanup_run_artifacts(settings, active)
-        except (OSError, ValueError, KeyError):
-            pass
+        except (OSError, ValueError, KeyError) as exc:
+            logger.debug("Failed to clean up cancelled run artifacts: %s", exc)
         return run
     active_path.unlink(missing_ok=True)
     return run

@@ -5,8 +5,9 @@ clients, and end hooks only write independent durable filesystem events.
 """
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+import logging
 import math
 import os
 import platform
@@ -26,12 +27,31 @@ import httpx
 import tomlkit
 from tomlkit.items import Comment, Table
 
-from cairnmind.config import SESSION_NAMES, Settings, drop_env, env_names, session_value, set_env, tls_verify
-from cairnmind.cli_cmds.first_start import (CLIENT_SKIPPED, LAUNCH_REFUSED, PART_CONTRACT, PART_HOOKS, PART_INSTRUCTIONS, PART_MCP,
-                          REMOVED_COMMAND, REMOVED_COMMAND_BESIDE, TRUST_NOTE)
-from cairnmind.pal.private_files import IS_WINDOWS, atomic_replace, ensure_private_dir, fsync_directory, make_private, open_no_follow, pread_at
+from cairnmind.cli_cmds.first_start import (
+    CLIENT_SKIPPED,
+    LAUNCH_REFUSED,
+    PART_CONTRACT,
+    PART_HOOKS,
+    PART_INSTRUCTIONS,
+    PART_MCP,
+    REMOVED_COMMAND,
+    REMOVED_COMMAND_BESIDE,
+    TRUST_NOTE,
+)
 from cairnmind.cli_cmds.removed_command import bare_devbrain_entries
+from cairnmind.config import SESSION_NAMES, Settings, drop_env, env_names, session_value, set_env, tls_verify
+from cairnmind.pal.private_files import (
+    IS_WINDOWS,
+    atomic_replace,
+    ensure_private_dir,
+    fsync_directory,
+    make_private,
+    open_no_follow,
+    pread_at,
+)
 from cairnmind.storage.storage_query import db_find
+
+log = logging.getLogger(__name__)
 
 # The name of the MCP server in client configuration, and the markers around what install manages.
 # Entries and blocks written under the earlier name are recognised and converted in place.
@@ -83,7 +103,9 @@ def native_environment(environment: dict[str, str] | None = None) -> dict[str, s
 
 def _version_tuple(value: str) -> tuple[int, int, int] | None:
     match = re.search(r"\b(\d+)\.(\d+)\.(\d+)", value)
-    return tuple(map(int, match.groups())) if match else None
+    if not match:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
 # The `mcp` command word, not a flag or value such as --mcp-config, --debug=hooks,mcp
@@ -111,13 +133,16 @@ def _probe_cli(client: str, cwd: str | None = None, *, env: dict[str, str] | Non
         from cairnmind.pal.platform_hints import hint
         info["notes"].append(hint("client_note", client=client))
         return info
+    def _run_probe(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        if env is not None:
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=4, cwd=cwd, check=False, env=env)
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=4, cwd=cwd, check=False)
+
     try:
-        version = subprocess.run([binary, "--version"], capture_output=True, text=True,
-                                 timeout=4, cwd=cwd, check=False, **({"env": env} if env is not None else {}))
+        version = _run_probe([binary, "--version"])
         info["version"] = version.stdout.strip()[:200]
         semver = _version_tuple(info["version"] or "")
-        help_result = subprocess.run([binary, "--help"], capture_output=True, text=True,
-                                     timeout=4, cwd=cwd, check=False, **({"env": env} if env is not None else {}))
+        help_result = _run_probe([binary, "--help"])
         info["mcp"] = help_result.returncode == 0 and bool(re.search(MCP_COMMAND, help_result.stdout))
         info["packet_passing"] = help_result.returncode == 0 and bool(re.search(r"\bprompt\b", help_result.stdout, re.I))
         minimum = (0, 166, 0) if client == "codex" else (1, 0, 112)
@@ -125,8 +150,7 @@ def _probe_cli(client: str, cwd: str | None = None, *, env: dict[str, str] | Non
         info["isolated_process"] = client == "claude" or "--no-daemon" in help_result.stdout
         info["session_binding"] = supported and info["mcp"] and info["isolated_process"]
         if client == "codex":
-            features = subprocess.run([binary, "features", "list"], capture_output=True,
-                                      text=True, timeout=4, cwd=cwd, check=False, **({"env": env} if env is not None else {}))
+            features = _run_probe([binary, "features", "list"])
             info["hooks"] = features.returncode == 0 and bool(
                 re.search(r"^hooks\s+\S+\s+true\s*$", features.stdout, re.M))
             info["notes"].append("Review project/MCP trust and /hooks in Codex; Cairnmind never bypasses trust.")
@@ -208,13 +232,14 @@ def contract_text(probes: dict[str, dict[str, Any]]) -> str:
 
 def doctor(settings: Settings) -> dict[str, Any]:
     """Read-only diagnostics. No login, downloads, model sessions or secrets."""
-    from cairnmind.storage.arcade import ArcadeError
+    import ssl
+
+    from cairnmind.agents.client_runtime import NativeRuntime
     from cairnmind.config import resolved_backend
+    from cairnmind.pal import platform_hints
+    from cairnmind.storage.arcade import ArcadeError
     from cairnmind.storage.database_credentials import doctor_block
     from cairnmind.storage.engine import managed_java_executable, resolve_java
-    from cairnmind.agents.client_runtime import NativeRuntime
-    import ssl
-    from cairnmind.pal import platform_hints
     host_system = platform_hints.host_system()
     on_a_mac = host_system == "darwin"
     on_windows = host_system == "windows"
@@ -270,7 +295,8 @@ def doctor(settings: Settings) -> dict[str, Any]:
         result["java"] = {"needed": False, "reason": "This installation only connects to its database; no engine "
                                                      "runs on this machine."}
     elif in_docker:
-        from cairnmind.storage.engine_docker import JAVA_NOT_NEEDED, doctor_block as docker_block
+        from cairnmind.storage.engine_docker import JAVA_NOT_NEEDED
+        from cairnmind.storage.engine_docker import doctor_block as docker_block
         result["java"] = {"needed": False, "reason": JAVA_NOT_NEEDED}
         result["docker"] = docker_block(settings)
     elif settings.java_executable:
@@ -313,8 +339,8 @@ def doctor(settings: Settings) -> dict[str, Any]:
                 result["ollama"]["running"] = [
                     {k: model.get(k) for k in ("name", "size", "size_vram", "context_length")}
                     for model in running.json().get("models", [])]
-            except (httpx.HTTPError, ValueError, AttributeError, TypeError):
-                pass
+            except (httpx.HTTPError, ValueError, AttributeError, TypeError) as exc:
+                log.debug("Ollama /api/ps unavailable during doctor check: %s", exc)
         except RemoteServerRefused as exc:
             result["ollama"].update(error=str(exc), refused=True)
         except (httpx.HTTPError, ValueError, AttributeError, TypeError) as exc:  # a reply of another shape
@@ -364,7 +390,7 @@ def _write_changed(path: Path, text: str, *, new_mode: int = 0o666) -> bool:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(encoded)
             stream.flush()
-            if previous_mode is not None and not IS_WINDOWS:
+            if previous_mode is not None and sys.platform != "win32":
                 os.fchmod(stream.fileno(), previous_mode)
         if previous_mode is None and new_mode == 0o600:
             make_private(temporary)
@@ -735,7 +761,14 @@ def install_integrations(settings: Settings, project: dict[str, Any],
     root = Path(project["root"]).resolve()
     if not root.is_dir():
         raise ValueError(f"Project directory does not exist: {root}")
-    from cairnmind.agents.recorder_agent import RECORDER_OFF, RECORDER_ON, RECORDER_PATH, is_off as recorder_is_off, merge_recorder, remember
+    from cairnmind.agents.recorder_agent import (
+        RECORDER_OFF,
+        RECORDER_ON,
+        RECORDER_PATH,
+        merge_recorder,
+        remember,
+    )
+    from cairnmind.agents.recorder_agent import is_off as recorder_is_off
     if recorder is not None:
         remember(settings, project, recorder)
     told = False  # a changed choice is always answered by one recorder sentence
@@ -840,8 +873,8 @@ def _packet_file(settings: Settings, prepared: dict[str, Any], project: dict[str
                  client: str, root: Path) -> Path:
     packet = prepared.get("packet") or {}
     session_id, packet_id = prepared.get("session_id"), packet.get("id")
-    if not all(isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]+", value)
-               for value in (session_id, packet_id)):
+    if (not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", session_id)
+            or not isinstance(packet_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", packet_id)):
         raise ValueError("Prepared session has an invalid packet identity; native launch refused")
     if ((packet.get("session_id"), packet.get("project_id"), packet.get("client")) !=
             (session_id, project["id"], client) or Path(packet.get("worktree", "")).resolve() != root):
@@ -968,8 +1001,8 @@ def run_client(settings: Settings, project: dict[str, Any], client: str,
         from cairnmind.store import Store
         try:
             register_default_histories(Store(settings.data_dir), project["id"], root)
-        except (OSError, ValueError, RuntimeError):
-            pass
+        except (OSError, ValueError, RuntimeError) as exc:
+            log.debug("Post-exit history registration skipped for %s: %s", project["id"], exc)
 
 
 def hook(settings: Settings, payload: dict[str, Any], client: str) -> dict[str, Any]:

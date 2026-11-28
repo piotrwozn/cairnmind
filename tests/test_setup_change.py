@@ -6,6 +6,7 @@ procfs but through process_identity, and no tmux is started.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import string
@@ -16,20 +17,29 @@ import types
 
 import httpx
 import pytest
-
 from conftest import assert_private
+from test_setup_profiles import (
+    DB,
+    MODELS,
+    World,
+    config,
+    config_bytes,
+    config_without_password,
+    connect_only_installation,
+    make,
+    private,
+)
+
 from cairnmind import cli
-from cairnmind.pal import process_control
-from cairnmind.memory import project_removal
 from cairnmind.cli_cmds import service_version, upgrade_mark
-from cairnmind.terminal import setup_change, setup_mark, setup_profiles
-from cairnmind.storage import store_writer
 from cairnmind.config import Settings, is_own_variable
-from cairnmind.terminal.setup_profiles import Request, render_one, run
+from cairnmind.memory import project_removal
+from cairnmind.pal import process_control
+from cairnmind.storage import store_writer
 from cairnmind.store import Store
+from cairnmind.terminal import setup_change, setup_mark, setup_profiles
+from cairnmind.terminal.setup_profiles import Request, render_one, run
 from cairnmind.terminal.terminal_i18n import CATALOG, tr
-from test_setup_profiles import (DB, MODELS, World, config, config_bytes, config_without_password,
-                                 connect_only_installation, make, private)
 
 PASSWORD = "PRIVATE_DB_MARKER"
 
@@ -322,7 +332,7 @@ def test_each_final_state_is_written_in_both_languages_with_no_english_inside_po
     _, shown, other = reports[-1]
     english, polish = (shown, other) if language == "en" else (other, shown)
     assert len(english) == len(polish) and any(line.strip() for line in english)
-    for en, pl in zip(english, polish):
+    for en, pl in zip(english, polish, strict=False):
         assert not en.strip() or en != pl, en  # a Polish line that is the English one is an English sentence in Polish
     assert "knowledge service" not in " ".join(polish).lower()
 
@@ -617,10 +627,8 @@ def test_the_service_lock_is_waited_for_and_held(rig, monkeypatch):
             "refused", (setup_change.SERVICE_BACK, {}))
         assert config_bytes(rig.tmp) == before
     finally:
-        try:
+        with contextlib.suppress(OSError):
             file_locks.unlock(other)
-        except OSError:
-            pass
         other.close()
     assert setup_change._stop(settings) is None
 

@@ -3,16 +3,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
+from test_published_memory_acts import workspace  # noqa: F401 (a fixture)
 
 from cairnmind.terminal.inspector import Inspector
 from cairnmind.terminal.inspector_api import attach_inspector_routes
 from cairnmind.terminal.terminal_i18n import tr
 from cairnmind.terminal.terminal_i18n_messages import broker_error_text
-
-from test_published_memory_acts import workspace  # noqa: F401 (a fixture)
 
 
 def test_confirming_a_record_already_confirmed_here_says_so_and_not_version_conflict(workspace,  # noqa: F811
@@ -118,9 +117,10 @@ def test_a_plan_save_that_changes_a_confirmed_plan_says_where_a_person_changes_i
 
 
 def test_adopting_a_confirmed_legacy_task_names_it_by_its_text_and_its_id_once(workspace):  # noqa: F811
+    from conftest import as_person
+
     from cairnmind.memory.confirmation import ConfirmationRefused
     from cairnmind.memory.plans import PlanManager
-    from conftest import as_person
     store, pid, _, _ = workspace
     source = store.snapshot(pid, "note://legacy", "Ship the importer", "note")
     task = as_person(store, pid, {"kind": "task", "content": "Ship the importer",

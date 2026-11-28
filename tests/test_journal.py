@@ -2,16 +2,16 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 
+from cairnmind.memory.memory import MemoryManager
 from cairnmind.storage import journal as module
 from cairnmind.storage.arcade import ArcadeClient
 from cairnmind.storage.journal import Journal
-from cairnmind.memory.memory import MemoryManager
 from cairnmind.store import Store
 
 
@@ -43,10 +43,9 @@ def test_domain_and_direct_sql_changes_are_coalesced_and_metadata_only(workspace
 def test_rollback_reads_and_final_noops_emit_nothing(workspace):
     store, project, _, journal = workspace
     before = journal.cursor()
-    with pytest.raises(RuntimeError):
-        with store.transaction():
-            store.snapshot(project["id"], "manual://rollback", "not committed")
-            raise RuntimeError("abort")
+    with pytest.raises(RuntimeError), store.transaction():
+        store.snapshot(project["id"], "manual://rollback", "not committed")
+        raise RuntimeError("abort")
     assert journal.cursor() == before
     assert not store.query("SELECT FROM sources")
     with store.transaction() as tx:

@@ -1,10 +1,10 @@
 """Valid-checksum packages must still preserve history, identity and atomicity."""
 from __future__ import annotations
 
-from copy import deepcopy
 import hashlib
-from pathlib import Path
 import shutil
+from copy import deepcopy
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -45,7 +45,7 @@ def fixture(tmp_path):
 def database_state(store):
     state = store.export()
     state.pop("exported_at", None)
-    for key, rows in state.items():
+    for _key, rows in state.items():
         if isinstance(rows, list):
             rows.sort(key=lambda row: str(row.get("id")))
     return state

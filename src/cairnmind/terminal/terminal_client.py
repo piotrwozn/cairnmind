@@ -5,22 +5,24 @@ Credentials live only in memory. Neither a display URL nor a browser is needed.
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 import json as jsonlib
 import threading
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
+from typing import Any
 from urllib.parse import urlencode, urlparse
 
 import httpx
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus
 
-from cairnmind.terminal import person_proof
 from cairnmind.config import tls_verify
 from cairnmind.pal.service_token import foreign_service, foreign_service_text, refused_token
+from cairnmind.terminal import person_proof
 
 
 class BrokerError(ValueError):
-    foreign = None  # {"url", "data_dir"} when the service refused this directory's token (service_token)
+    foreign: dict[str, Any] | None = None  # {"url", "data_dir"} when the service refused this directory's token (service_token)
 
     def __init__(self, status_code, detail):
         self.status_code = status_code
@@ -36,9 +38,9 @@ class BrokerClient:
     def __init__(self, settings, ensure=False, *, transport=None, async_transport=None):
         self.settings = settings
         self._lock = threading.RLock()
-        self._client = None
-        self._url = None
-        self._csrf = None
+        self._client: httpx.Client | None = None
+        self._url: str | None = None
+        self._csrf: str | None = None
         self._transport = transport
         self._async_transport = async_transport if async_transport is not None else transport
         self._allow_start = False
@@ -95,9 +97,13 @@ class BrokerClient:
         return value
 
     def _authenticate(self):
+        client = self._client
+        url = self._url
+        if client is None or url is None:
+            raise BrokerError(503, "The local broker is not connected.")
         # The CLI control endpoint deliberately receives no Origin header.
         try:
-            ticket_response = self._client.post("/_control/ticket", timeout=5,
+            ticket_response = client.post("/_control/ticket", timeout=5,
                 headers={"Authorization": f"Bearer {self.settings.token}"})
         except httpx.HTTPError:
             raise BrokerError(503, "The local session could not be authenticated.") from None
@@ -105,8 +111,8 @@ class BrokerClient:
         if not isinstance(ticket, dict) or not isinstance(ticket.get("ticket"), str):
             raise BrokerError(503, "The local session ticket is invalid.")
         try:
-            session_response = self._client.post("/auth/exchange", timeout=5,
-                json={"ticket": ticket["ticket"]}, headers={"Origin": self._url})
+            session_response = client.post("/auth/exchange", timeout=5,
+                json={"ticket": ticket["ticket"]}, headers={"Origin": url})
         except httpx.HTTPError:
             raise BrokerError(503, "The local session could not be authenticated.") from None
         session = self._decode(session_response)
@@ -139,10 +145,15 @@ class BrokerClient:
             proof = person_proof.workspace_headers(self.settings)
         with self._lock:
             self._ready()
+            client = self._client
+            url = self._url
+            if client is None or url is None:
+                raise BrokerError(503, "The local broker is not connected.")
             for attempt in range(2):
+                headers: dict[str, str] = {"Origin": url, "X-CSRF-Token": self._csrf or "", **proof}
                 try:
-                    response = self._client.request(method, path, params=params, json=json, timeout=timeout,
-                        headers={"Origin": self._url, "X-CSRF-Token": self._csrf, **proof})
+                    response = client.request(method, path, params=params, json=json, timeout=timeout,
+                        headers=headers)
                 except httpx.HTTPError:
                     # Never retry a mutation after a transport error: its
                     # outcome may already have committed on the server.
@@ -161,14 +172,19 @@ class BrokerClient:
                     error = BrokerError(401, foreign_service_text(self.settings))
                     error.foreign = foreign_service(self.settings)
                     raise error from None
+            raise BrokerError(503, "The local broker did not answer.")
 
-    def _session(self, renew=False):
+    def _session(self, renew=False) -> tuple[str, dict[str, str]]:
         with self._lock:
             self._ready()
             if renew:
                 self._authenticate()
-            cookie = "; ".join(f"{key}={value}" for key, value in self._client.cookies.items())
-            return self._url, {"Cookie": cookie, "Origin": self._url, "X-CSRF-Token": self._csrf}
+            client = self._client
+            url = self._url
+            if client is None or url is None:
+                raise BrokerError(503, "The local broker is not connected.")
+            cookie = "; ".join(f"{key}={value}" for key, value in client.cookies.items())
+            return url, {"Cookie": cookie, "Origin": url, "X-CSRF-Token": self._csrf or ""}
 
     def reconnect(self):
         with self._lock:
@@ -207,56 +223,56 @@ class BrokerClient:
             return f"{after.get('epoch')}:{after.get('seq')}"
         return str(after) if after is not None else None
 
-    async def events(self, after=None, project=None):
+    async def events(self, after=None, project=None) -> AsyncIterator[dict[str, Any]]:
         cursor = self._cursor(after)
         while True:
             try:
                 url, headers = await asyncio.to_thread(self._session)
                 if cursor:
                     headers["Last-Event-ID"] = cursor
-                async with httpx.AsyncClient(base_url=url, transport=self._async_transport, trust_env=False,
-                    timeout=httpx.Timeout(10, read=None), verify=tls_verify(url)) as client:
-                    async with client.stream("GET", "/api/events", headers=headers,
-                                             params={"project": project} if project else {}) as response:
-                        if response.status_code == 401:
-                            await asyncio.to_thread(self._session, True)
-                            continue
-                        if response.is_error:
-                            raise BrokerError(response.status_code, "The event stream is unavailable.")
-                        event, data, identifier = "message", [], None
-                        size = 0
-                        async for line in response.aiter_lines():
-                            size += len(line)
-                            if size > 256 * 1024:
-                                raise BrokerError(503, "The event exceeds the size limit.")
-                            if not line:
-                                if data:
-                                    raw = "\n".join(data)
-                                    try:
-                                        value = jsonlib.loads(raw)
-                                    except ValueError:
-                                        value = raw
-                                    if identifier:
-                                        cursor = identifier
-                                    yield {"event": event, "data": value, "id": identifier}
-                                event, data, identifier, size = "message", [], None, 0
-                            elif not line.startswith(":"):
-                                field, _, value = line.partition(":")
-                                value = value.removeprefix(" ")
-                                if field == "event":
-                                    event = value
-                                elif field == "data":
-                                    data.append(value)
-                                elif field == "id" and "\0" not in value:
-                                    identifier = value
+                async with (
+                    httpx.AsyncClient(base_url=url, transport=self._async_transport, trust_env=False,
+                        timeout=httpx.Timeout(10, read=None), verify=tls_verify(url)) as client,
+                    client.stream("GET", "/api/events", headers=headers,
+                                  params={"project": project} if project else {}) as response,
+                ):
+                    if response.status_code == 401:
+                        await asyncio.to_thread(self._session, True)
+                        continue
+                    if response.is_error:
+                        raise BrokerError(response.status_code, "The event stream is unavailable.")
+                    event, data, identifier = "message", [], None
+                    size = 0
+                    async for line in response.aiter_lines():
+                        size += len(line)
+                        if size > 256 * 1024:
+                            raise BrokerError(503, "The event exceeds the size limit.")
+                        if not line:
+                            if data:
+                                raw = "\n".join(data)
+                                try:
+                                    value = jsonlib.loads(raw)
+                                except ValueError:
+                                    value = raw
+                                if identifier:
+                                    cursor = identifier
+                                yield {"event": event, "data": value, "id": identifier}
+                            event, data, identifier, size = "message", [], None, 0
+                        elif not line.startswith(":"):
+                            field, _, value = line.partition(":")
+                            value = value.removeprefix(" ")
+                            if field == "event":
+                                event = value
+                            elif field == "data":
+                                data.append(value)
+                            elif field == "id" and "\0" not in value:
+                                identifier = value
             except asyncio.CancelledError:
                 raise
             except (OSError, ValueError, httpx.HTTPError):
                 yield {"event": "unavailable", "data": {"reason": "broker"}, "id": cursor}
-                try:
+                with suppress(OSError, ValueError, httpx.HTTPError):
                     await asyncio.to_thread(self.reconnect)
-                except (OSError, ValueError, httpx.HTTPError):
-                    pass
             await asyncio.sleep(1)
 
     def close(self):

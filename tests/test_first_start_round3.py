@@ -9,19 +9,18 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import plain_words
+from test_first_start_round2 import healthy
 from typer.testing import CliRunner
 
-from conftest import plain_words
-
 from cairnmind import cli
-from cairnmind.cli_cmds import doctor_attention, first_start
-from cairnmind.scip import ingest
 from cairnmind.agents import knowledge_mode
+from cairnmind.cli_cmds import doctor_attention, first_start
+from cairnmind.cli_cmds.topology import FROM_VARIABLE, WRITER_YES, _storage_line
 from cairnmind.memory import project_removal
+from cairnmind.scip import ingest
 from cairnmind.terminal.terminal_commands import ask_summary
 from cairnmind.terminal.terminal_i18n import tr
-from cairnmind.cli_cmds.topology import FROM_VARIABLE, WRITER_YES, _storage_line
-from test_first_start_round2 import healthy
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "install-wsl.sh"
 BASH = "/bin/bash" if Path("/bin/bash").exists() else shutil.which("bash")

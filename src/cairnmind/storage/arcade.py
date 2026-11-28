@@ -5,13 +5,13 @@ addresses are allowed is decided in database_credentials.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
-from dataclasses import replace
 import os
 import re
 import ssl
 import threading
-from typing import Iterator
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
+from dataclasses import replace
 from urllib.parse import quote
 
 import httpx
@@ -19,7 +19,6 @@ import httpx
 from cairnmind.config import Settings
 from cairnmind.storage.database_credentials import problem, tls_context
 from cairnmind.storage.database_mode import connect_only, missing_database, sign_in_refused, unavailable
-
 
 REQUEST_TIMEOUT = 30  # seconds the client waits for the answer to one request
 # A commit is the one request whose work grows with what the transaction changed. The transactions of a restore and
@@ -60,9 +59,12 @@ class _Connections:
                 # For https, verify is a context that checks the certificate and the host name, always.
                 # For http, which the caller allows only on loopback, no TLS peer exists: verify=False
                 # only skips loading authorities that would never be used. Redirects are never followed.
-                options = {"transport": self._transport} if self._transport is not None else {}
-                self._client = httpx.Client(base_url=self._base_url, auth=self._auth, verify=self._verify,
-                                            follow_redirects=False, trust_env=False, **options)
+                if self._transport is not None:
+                    self._client = httpx.Client(base_url=self._base_url, auth=self._auth, verify=self._verify,
+                                                follow_redirects=False, trust_env=False, transport=self._transport)
+                else:
+                    self._client = httpx.Client(base_url=self._base_url, auth=self._auth, verify=self._verify,
+                                                follow_redirects=False, trust_env=False)
                 self._pid = os.getpid()
             return self._client
 
@@ -73,20 +75,19 @@ class _Connections:
                 client.close()
 
     def __del__(self):
-        try:
+        with suppress(Exception):  # nothing useful can be done while an object is collected
             self.close()
-        except Exception:  # noqa: BLE001 - nothing useful can be done while an object is collected
-            pass
 
 
 def _certificate_refused(exc: BaseException) -> bool:
     """Whether a connection failed because the server's certificate was not trusted."""
-    seen = set()
-    while exc is not None and id(exc) not in seen:
-        seen.add(id(exc))
-        if isinstance(exc, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(exc):
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(current):
             return True
-        exc = exc.__cause__ or exc.__context__
+        current = current.__cause__ or current.__context__
     return False
 
 
@@ -171,8 +172,11 @@ class ArcadeClient:
                         # The usual first run of a connect-only installation (#68): the user does not exist yet.
                         safe_message += sign_in_refused(self.settings)
                     else:
+                        from cairnmind.cli_cmds.first_start import (  # (#313)
+                            FOREIGN_ENGINE,
+                            OWN_ENGINE_REFUSED,
+                        )
                         from cairnmind.storage.engine import own_engine_recorded
-                        from cairnmind.cli_cmds.first_start import FOREIGN_ENGINE, OWN_ENGINE_REFUSED  # (#313)
                         # Another data directory's engine is named only when this one's own is not the answer.
                         sentence = OWN_ENGINE_REFUSED if own_engine_recorded(self.settings) else FOREIGN_ENGINE
                         safe_message = (safe_message.rstrip(".") + ". "
@@ -241,6 +245,7 @@ class ArcadeClient:
     ) -> Iterator[str]:
         """Every row of ``collection`` as canonical JSON text, paged by ArcadeDB ``@rid``."""
         import gc
+
         from cairnmind.storage.sql import clean_row, json_text, quote_name
         limit, last = page_rows, None
         while True:
@@ -312,8 +317,6 @@ class ArcadeClient:
             child._request("POST", f"/api/v1/{'commit' if commit else 'rollback'}/{quote(self.database)}",
                            timeout=commit_timeout if commit else REQUEST_TIMEOUT)
         except BaseException:
-            try:
+            with suppress(ArcadeError):
                 child._request("POST", f"/api/v1/rollback/{quote(self.database)}")
-            except ArcadeError:
-                pass
             raise

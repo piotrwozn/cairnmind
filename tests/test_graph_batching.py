@@ -6,10 +6,10 @@ import threading
 import pytest
 from test_index_batching import code_tree, counted, dump, graph_row_by_row, rewrite
 
-from cairnmind.storage import graph_transactions
 from cairnmind.scip import ingest
-from cairnmind.storage.arcade import ArcadeError
 from cairnmind.scip.code_graph import code_graph_pending
+from cairnmind.storage import graph_transactions
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.storage.journal import Journal, JournalTransaction
 from cairnmind.store import GRAPH_ROWS_PER_REQUEST, Store
 
@@ -146,31 +146,28 @@ def test_a_group_the_database_did_not_write_in_full_fails_its_transaction(tmp_pa
     edges = [{"id": "e0", "project_id": pid, "from_id": "n0", "to_id": "n1", "kind": "calls"},
              {"id": "e1", "project_id": pid, "from_id": "n1", "to_id": "gone", "kind": "calls"}]
     # The checks refuse an edge without its endpoint before anything of its group is sent.
-    with pytest.raises(ValueError, match="endpoints must exist"):
-        with store.transaction() as tx:
-            Journal.touch(tx, pid, "graph", op="reset")
-            store.write_graph(tx, pid, nodes, edges)
+    with pytest.raises(ValueError, match="endpoints must exist"), store.transaction() as tx:
+        Journal.touch(tx, pid, "graph", op="reset")
+        store.write_graph(tx, pid, nodes, edges)
     real = Store._checked_edge
     # Past the checks, CREATE EDGE writes nothing and says nothing when an endpoint is missing: the count catches it.
     monkeypatch.setattr(Store, "_checked_edge", lambda self, tx, edge: (
         {"status": "observed", "is_current": True, **edge}, None) if edge["to_id"] == "gone" else real(self, tx, edge))
-    with pytest.raises(RuntimeError, match="every graph edge"):
-        with store.transaction() as tx:
-            Journal.touch(tx, pid, "graph", op="reset")
-            store.write_graph(tx, pid, nodes, edges)
+    with pytest.raises(RuntimeError, match="every graph edge"), store.transaction() as tx:
+        Journal.touch(tx, pid, "graph", op="reset")
+        store.write_graph(tx, pid, nodes, edges)
     assert not store.query("SELECT id FROM nodes WHERE project_id=:p", {"p": pid})
     assert not store.query("SELECT id FROM edges WHERE project_id=:p", {"p": pid})
 
     # The engine refuses a statement in the middle of a script, after the one before it was applied.
     source = store.snapshot(pid, "note://a", "a", "note")
-    with pytest.raises(ArcadeError):
-        with store.transaction() as tx:
-            Journal.touch(tx, pid, "graph", op="reset")
-            store.write_graph(tx, pid, nodes, edges[:1])
-            tx.script(["UPDATE nodes SET label=:label WHERE id=:node",
-                       "CREATE EDGE edges FROM (SELECT FROM sources WHERE id=:source) TO (SELECT FROM nodes WHERE id=:node) "
-                       "CONTENT :edge", "UPDATE nodes SET label=:label WHERE id='n2'"],
-                      {"label": "changed", "node": "n1", "source": source["id"], "edge": {**edges[0], "id": "e9"}}, pid)
+    with pytest.raises(ArcadeError), store.transaction() as tx:
+        Journal.touch(tx, pid, "graph", op="reset")
+        store.write_graph(tx, pid, nodes, edges[:1])
+        tx.script(["UPDATE nodes SET label=:label WHERE id=:node",
+                   "CREATE EDGE edges FROM (SELECT FROM sources WHERE id=:source) TO (SELECT FROM nodes WHERE id=:node) "
+                   "CONTENT :edge", "UPDATE nodes SET label=:label WHERE id='n2'"],
+                  {"label": "changed", "node": "n1", "source": source["id"], "edge": {**edges[0], "id": "e9"}}, pid)
     assert not store.query("SELECT id FROM nodes WHERE project_id=:p", {"p": pid})
     assert not store.query("SELECT id FROM edges WHERE project_id=:p", {"p": pid})
     with store.transaction() as tx:  # and the next transaction is an ordinary one
@@ -451,10 +448,9 @@ def test_a_removal_group_the_database_did_not_delete_in_full_fails_its_transacti
     real = JournalTransaction.command
     monkeypatch.setattr(JournalTransaction, "command", lambda self, sql, params=None: real(
         self, sql, {**params, "ids": params["ids"][:-1]}) if sql.startswith(GROUPED_REMOVAL[1]) else real(self, sql, params))
-    with pytest.raises(RuntimeError, match="every graph vertex"):
-        with store.transaction() as tx:
-            Journal.touch(tx, pid, "graph", op="reset")
-            store.remove_graph_nodes(tx, pid, ["n0", "n1", "n2"])
+    with pytest.raises(RuntimeError, match="every graph vertex"), store.transaction() as tx:
+        Journal.touch(tx, pid, "graph", op="reset")
+        store.remove_graph_nodes(tx, pid, ["n0", "n1", "n2"])
     assert len(store.query("SELECT id FROM nodes WHERE project_id=:p", {"p": pid})) == 3
 
 
@@ -497,7 +493,7 @@ def test_two_projects_indexed_at_once_each_get_their_own_graph(tmp_path, monkeyp
         for thread in threads:
             thread.join(120)
         assert not failures and not any(thread.is_alive() for thread in threads)
-        for pid, reference in zip(projects, references):
+        for pid, reference in zip(projects, references, strict=False):
             assert graph(grouped, pid) == graph(single, reference), round_
         # No edge joins vertices of another project.
         assert not grouped.query("SELECT id FROM edges WHERE out.project_id != project_id OR in.project_id != project_id")

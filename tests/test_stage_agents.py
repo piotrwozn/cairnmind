@@ -12,21 +12,21 @@ import json
 
 import httpx
 import pytest
+from test_api_agent import ScriptedProvider, call, reply
+from test_brief import repository
+from test_stage_router import move
 
 from cairnmind.agents.agent_memory import AgentMemoryClient
 from cairnmind.agents.api_agent import AgentEngine
 from cairnmind.agents.api_credentials import CredentialStore
 from cairnmind.agents.api_profiles import normalize_profile
 from cairnmind.agents.api_runtime import RuntimeSupervisor, stage_readiness
-from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.memory.plans import PlanManager
-from cairnmind.service import create_app
 from cairnmind.memory.sessions import SessionManager
-from cairnmind.terminal.stages import project_routing, resolve_stage
+from cairnmind.service import create_app
 from cairnmind.store import Store
-from test_api_agent import ScriptedProvider, call, reply
-from test_brief import repository
-from test_stage_router import move
+from cairnmind.terminal.cockpit_state import CockpitState
+from cairnmind.terminal.stages import project_routing, resolve_stage
 
 PROFILES = [{"id": "codex", "client": "codex", "label": "Codex"},
             {"id": "claude", "client": "claude", "label": "Claude"},

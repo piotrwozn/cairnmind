@@ -1,9 +1,15 @@
 import pytest
 
 from cairnmind.memory.plans import PlanManager
-from cairnmind.terminal.stages import (confirmed_choice, describe, project_routing, resolve_stage, validate_project_stages,
-                              validate_stage_map)
 from cairnmind.store import Store
+from cairnmind.terminal.stages import (
+    confirmed_choice,
+    describe,
+    project_routing,
+    resolve_stage,
+    validate_project_stages,
+    validate_stage_map,
+)
 
 SLOTS = [{"id": "codex", "profile_id": "codex"}, {"id": "claude", "profile_id": "claude"},
          {"id": "helper", "profile_id": "api-helper"}, {"id": "orphan", "profile_id": "gone"},
@@ -142,8 +148,8 @@ def test_an_old_map_with_an_agent_slot_must_be_confirmed(slot):
 
 
 def test_both_shapes_of_a_client_stage_are_valid_and_old_preferences_load(tmp_path):
-    from cairnmind.terminal.cockpit_state import CockpitState
     from cairnmind.config import Settings
+    from cairnmind.terminal.cockpit_state import CockpitState
     both = {"implement": "codex", "review": chosen("helper"), "test": "unit"}
     assert validate_stage_map(both) == both
     for bad in ({"implement": {"slot": "codex"}}, {"implement": {**chosen("codex"), "client": "cursor"}},

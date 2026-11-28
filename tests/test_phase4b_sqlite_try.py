@@ -5,21 +5,27 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import sqlite3
 import subprocess
 import sys
 import tomllib
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.scip import ingest
 from cairnmind.cli_cmds import try_demo
 from cairnmind.config import Settings, resolved_backend, sqlite_db_path
-from cairnmind.storage.sqlite_backend import SQLiteBackend, cosine_distance, pack_vector, quote_fts5_query, unpack_vector
+from cairnmind.scip import ingest
+from cairnmind.storage.sqlite_backend import (
+    SQLiteBackend,
+    cosine_distance,
+    pack_vector,
+    quote_fts5_query,
+    unpack_vector,
+)
 from cairnmind.storage.storage_backend import ALL_COLLECTIONS, StorageBackend
 from cairnmind.store import Store
 

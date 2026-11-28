@@ -7,9 +7,9 @@ import sys
 
 from typer.testing import CliRunner
 
-from cairnmind.pal import file_locks
 from cairnmind.cli import app
 from cairnmind.config import Settings
+from cairnmind.pal import file_locks
 from cairnmind.store import Store
 
 # What Store.remember returns, and so what `cairnmind remember` and `task update` print in a pipe.

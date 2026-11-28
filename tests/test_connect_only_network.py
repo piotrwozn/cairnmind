@@ -7,22 +7,22 @@ whole transactions only, and the same command run again finishes the work.
 """
 from __future__ import annotations
 
-from contextlib import closing
 import hashlib
+from contextlib import closing
 
 import pytest
-
-from cairnmind.scip import ingest
-from cairnmind.storage.arcade import ArcadeClient, ArcadeError
-from cairnmind.config import Settings
-from cairnmind.storage.sql import clean_row
-from cairnmind.storage.restore_staged import RestoreFailed, RestoreUnfinished
-from cairnmind.store import SCHEMA_VERSION, Store
-from cairnmind.storage.store_readonly import StoreNotReady
 from database_relay import Relay
 from test_connect_only import connect, data_directory, no_engine_files, test_engine  # noqa: F401 - a fixture
 from test_index_batching import dump, tree
 from test_migrations import assert_legacy_preserved, schema_one_fixture
+
+from cairnmind.config import Settings
+from cairnmind.scip import ingest
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
+from cairnmind.storage.restore_staged import RestoreFailed, RestoreUnfinished
+from cairnmind.storage.sql import clean_row
+from cairnmind.storage.store_readonly import StoreNotReady
+from cairnmind.store import SCHEMA_VERSION, Store
 
 
 @pytest.fixture

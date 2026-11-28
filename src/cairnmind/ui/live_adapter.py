@@ -1,11 +1,12 @@
 """Live Cairnmind store adapter and Engineer Cockpit endpoints."""
 from __future__ import annotations
 
+import logging
+import re
+import time
 from contextlib import suppress
 from copy import deepcopy
 from pathlib import Path
-import re
-import time
 from typing import Any
 from uuid import uuid4
 
@@ -53,6 +54,8 @@ from cairnmind.ui.schemas import (
     utc_now,
 )
 
+log = logging.getLogger(__name__)
+
 
 class LiveCockpitMixin:
     """Adds Phases 1-4 Engineer Cockpit endpoints onto `LiveUiAdapter`."""
@@ -92,7 +95,8 @@ class LiveCockpitMixin:
         try:
             from cairnmind.agents import knowledge_mode
             return bool(knowledge_mode.enabled(self.settings))
-        except Exception:  # noqa: BLE001
+        except Exception as exc:
+            log.debug("Unable to determine LLM knowledge mode status: %s", exc)
             return False
 
     def capabilities(self) -> dict[str, Any]:
@@ -115,7 +119,7 @@ class LiveCockpitMixin:
             limit=50,
         )
         active_plan_id: str | None = None
-        with suppress(Exception):
+        try:
             wt_rows = db_find(
                 self.store,
                 "worktree_states",
@@ -125,6 +129,8 @@ class LiveCockpitMixin:
             )
             if wt_rows:
                 active_plan_id = wt_rows[0].get("active_plan_id")
+        except Exception as exc:
+            log.debug("Failed to read active plan from worktree_states for %s: %s", pid, exc)
 
         tasks_by_plan: dict[str, list[dict[str, Any]]] = {}
         for t in tasks_out:
@@ -133,7 +139,8 @@ class LiveCockpitMixin:
         out: list[dict[str, Any]] = []
         for row in rows:
             plan_id = row["id"]
-            meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            raw_meta = row.get("metadata")
+            meta = raw_meta if isinstance(raw_meta, dict) else {}
             raw_status = row.get("status") or meta.get("status")
             if raw_status in {"draft", "active", "archived"}:
                 plan_status = raw_status
@@ -489,7 +496,7 @@ class LiveCockpitMixin:
         }
         with self.store.transaction() as tx:
             db_insert_document(tx, "plans", doc)
-            with suppress(Exception):
+            try:
                 db_insert_document(tx, "plan_revisions", {
                     "id": f"{plan_id}:1",
                     "project_id": pid,
@@ -499,6 +506,8 @@ class LiveCockpitMixin:
                     "snapshot": {"plan": doc, "tasks": []},
                     "recorded_at": now,
                 })
+            except Exception as exc:
+                log.debug("Optional plan_revisions insert skipped for %s: %s", plan_id, exc)
         rev = self._state_rev(pid)
         self.bus.publish("state.updated", {"state_rev": rev, "reason": "plan_created", "plan_id": plan_id})
         plan_out = {
@@ -603,7 +612,7 @@ class LiveCockpitMixin:
                 set_fields={k: v for k, v in updated.items() if not k.startswith("@")},
                 where={"id": plan_id},
             )
-            with suppress(Exception):
+            try:
                 db_insert_document(tx, "plan_revisions", {
                     "id": f"{plan_id}:{updated['version']}",
                     "project_id": pid,
@@ -613,6 +622,8 @@ class LiveCockpitMixin:
                     "snapshot": {"plan": updated, "tasks": []},
                     "recorded_at": now,
                 })
+            except Exception as exc:
+                log.debug("Optional plan_revisions update skipped for %s: %s", plan_id, exc)
         rev = self._state_rev(pid)
         self.bus.publish("state.updated", {"state_rev": rev, "reason": "plan_updated", "plan_id": plan_id})
         return {"ok": True, "plan": project_plan(updated, meta), "state_rev": rev}
@@ -962,9 +973,11 @@ class LiveCockpitMixin:
         started = time.perf_counter()
         self.bus.publish("reindex.progress", {"job_id": job_id, "percent": 20, "stage": "scanning", "message": "Scanning repository tree"})
         changed = 0
-        with suppress(Exception):
+        try:
             result = index_project_if_changed(self.store, pid)
             changed = int((result or {}).get("changed", 0))
+        except Exception as exc:
+            log.debug("Repository re-index failed for %s: %s", pid, exc)
         self.bus.publish("reindex.progress", {"job_id": job_id, "percent": 75, "stage": "indexing", "message": "Refreshing claims and fingerprints"})
         snap = self.snapshot(pid)
         self.bus.publish("reindex.progress", {"job_id": job_id, "percent": 100, "stage": "complete", "message": "Repository re-index completed"})
@@ -1104,8 +1117,8 @@ class LiveUiAdapter(LiveCockpitMixin):
             seq = int(cursor.get("seq", 0))
             if seq > 0:
                 return seq
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:
+            log.debug("Journal cursor unavailable; falling back to record count: %s", exc)
         return db_count(self.store, "records", {"project_id": project_id})
 
     def snapshot(self, project_arg: str | None = None) -> dict[str, Any]:
@@ -1119,8 +1132,10 @@ class LiveUiAdapter(LiveCockpitMixin):
         now = _utc_now()
 
         code = {"branch": None, "head": None, "fingerprint": None}
-        with suppress(Exception):
+        try:
             code = capture_code_state(self.store, pid, str(root_path))
+        except Exception as exc:
+            log.debug("Code state capture unavailable for %s: %s", pid, exc)
 
         # 1. Sessions & OCC sync status
         session_rows = db_find(
@@ -1217,7 +1232,8 @@ class LiveUiAdapter(LiveCockpitMixin):
         for rec in claim_records:
             st = states.get(rec["id"], {})
             ev_state = st.get("evidence_state", "unverified")
-            meta = rec.get("metadata") if isinstance(rec.get("metadata"), dict) else {}
+            raw_meta = rec.get("metadata")
+            meta = raw_meta if isinstance(raw_meta, dict) else {}
             quote = str(meta.get("evidence") or "")
             file_src = next(
                 (sources_by_id[sid] for sid in (rec.get("source_ids") or [])
@@ -1229,7 +1245,8 @@ class LiveUiAdapter(LiveCockpitMixin):
             disk_sha = ""
             line_start, line_end = 1, 20
             if file_src:
-                smeta = file_src.get("metadata") if isinstance(file_src.get("metadata"), dict) else {}
+                raw_smeta = file_src.get("metadata")
+                smeta = raw_smeta if isinstance(raw_smeta, dict) else {}
                 raw_path = smeta.get("path") or file_src.get("uri") or ""
                 try:
                     p = Path(raw_path)
@@ -1287,14 +1304,17 @@ class LiveUiAdapter(LiveCockpitMixin):
         # 3. Tasks & Test Gates
         tasks_out: list[dict[str, Any]] = []
         for task in task_records:
-            meta = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+            raw_meta = task.get("metadata")
+            meta = raw_meta if isinstance(raw_meta, dict) else {}
             plan_id = meta.get("plan_ref") or ""
             plan = plans_by_id.get(plan_id)
             task_checks = checks_by_task.get(task["id"], [])
             latest_check = task_checks[0] if task_checks else None
             ver = None
-            with suppress(Exception):
+            try:
                 ver = verification_status(self.store, task, str(root_path))
+            except Exception as exc:
+                log.debug("Verification status unavailable for task %s: %s", task["id"], exc)
 
             gate_status = "MISSING"
             profile_name = (meta.get("required_profiles") or ["default"])[0]
@@ -1443,8 +1463,10 @@ class LiveUiAdapter(LiveCockpitMixin):
         self._require_writable()
         proj = self._resolve_project(project_arg)
         pid = proj["id"]
-        with suppress(Exception):
+        try:
             index_project_if_changed(self.store, pid)
+        except Exception as exc:
+            log.debug("Re-index during reverify failed for %s: %s", pid, exc)
         snap = self.snapshot(pid)
         stale = [c["id"] for c in snap["claims"] if c["provenance_status"] == "STALE"]
         verified = [c["id"] for c in snap["claims"] if c["provenance_status"] == "VERIFIED"]

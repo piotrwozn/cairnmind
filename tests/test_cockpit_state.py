@@ -4,10 +4,10 @@ import sys
 import time
 
 import pytest
-
 from conftest import assert_private, make_symlink_or_skip, make_world_readable
-from cairnmind.terminal.cockpit_state import CockpitState, ProjectDiscovery, normalize_path
+
 from cairnmind.config import Settings
+from cairnmind.terminal.cockpit_state import CockpitState, ProjectDiscovery, normalize_path
 
 
 def test_preferences_are_local_private_and_validate_native_profiles(tmp_path):

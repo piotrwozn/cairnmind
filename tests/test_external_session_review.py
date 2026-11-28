@@ -2,8 +2,10 @@
 
 Real HTTP service, ArcadeDB and Git; no model is asked.
 """
+from test_external_session_writes import fixture as fixture
+from test_external_session_writes import post
+
 from cairnmind.store import ORIGIN_METADATA
-from test_external_session_writes import fixture as fixture, post
 
 
 def checkpoint(fixture, client, state):
@@ -133,9 +135,9 @@ def test_an_external_plan_save_marks_only_what_it_changes(fixture):
 
 
 def test_an_external_plan_and_task_reach_a_native_session_marked(fixture):
+    from cairnmind.agents.retrieval import Retriever
     from cairnmind.mcp.mcp_server import _next_task_view, _plan_header
     from cairnmind.memory.plans import PlanManager
-    from cairnmind.agents.retrieval import Retriever
     from cairnmind.memory.sessions import format_packet
 
     native = fixture.manager.prepare(fixture.project["id"], "codex", timeout=0)["packet"]
@@ -161,8 +163,8 @@ def test_an_external_plan_and_task_reach_a_native_session_marked(fixture):
 
 def test_a_search_hit_from_an_external_source_carries_the_mark(fixture):
     from cairnmind.agents.agent import KnowledgeAgent
-    from cairnmind.scip.ingest import index_pending_sources
     from cairnmind.agents.retrieval import Retriever
+    from cairnmind.scip.ingest import index_pending_sources
 
     checkpoint(fixture, "external", {"summary": "zephyrquill migration was decided in the editor"})
     fixture.store.snapshot(fixture.project["id"], "manual://native-zephyrquill", "zephyrquill notes by a person",

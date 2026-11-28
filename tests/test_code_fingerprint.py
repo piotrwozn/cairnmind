@@ -9,18 +9,18 @@ import builtins
 import io
 import mmap
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
 from cairnmind.memory import verification
 from cairnmind.memory.memory_paths import is_reserved_memory
 from cairnmind.memory.sessions import SessionManager
-from cairnmind.store import Store
 from cairnmind.memory.verification import capture_code_state
+from cairnmind.store import Store
 
 
 def git(root, *args):

@@ -3,6 +3,7 @@ TLS machinery a plain http address never uses (#415). What the client may reach 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import socket
 import ssl
@@ -13,10 +14,10 @@ import httpx
 import pytest
 
 from cairnmind import cli
-from cairnmind.mcp import mcp_server
-from cairnmind.config import Settings, tls_verify
-from cairnmind.mcp.mcp_server import ServiceClient, create_server
 from cairnmind.agents.ollama import Ollama
+from cairnmind.config import Settings, tls_verify
+from cairnmind.mcp import mcp_server
+from cairnmind.mcp.mcp_server import ServiceClient, create_server
 
 UNAVAILABLE = "Cairnmind service is unavailable (ConnectError); start `cairnmind serve` or use the launcher."
 
@@ -147,10 +148,8 @@ class Restartable:
         self.server.shutdown()
         self.server.server_close()
         for connection in self.connections:  # a stopped service takes its kept connections with it
-            try:
+            with contextlib.suppress(OSError):
                 connection.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
 
 
 async def test_a_service_restarted_between_two_requests_is_reconnected_to(settings, monkeypatch):
@@ -208,7 +207,7 @@ def test_a_command_builds_its_client_without_the_certificate_store_for_the_servi
 
 def test_the_kept_client_drops_an_idle_connection_before_the_service_closes_it(settings):
     import uvicorn
-    assert mcp_server.KEEPALIVE_EXPIRY < uvicorn.Config(lambda *a: None).timeout_keep_alive  # what cli.py serves with
+    assert uvicorn.Config(lambda *a: None).timeout_keep_alive > mcp_server.KEEPALIVE_EXPIRY  # what cli.py serves with
 
     async def expiry():
         return bridge(settings)._client()._transport._pool._keepalive_expiry
@@ -221,6 +220,7 @@ def test_requests_at_the_moment_the_service_closes_an_idle_connection_are_never_
     import time
 
     import uvicorn
+
     from cairnmind import __version__
     from cairnmind.cli_cmds.service_version import instance_id
     keep = 0.2

@@ -5,20 +5,30 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 import time
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
 from cairnmind.agents.citation_match import locate_quote, quote_weight
-from cairnmind.config import Settings
 from cairnmind.agents.extraction_evaluation import run_extraction_evaluation
-from cairnmind.agents.vcr import CassetteMissError, VcrOllama, deterministic_uuid4, normalize_for_key, request_key
-from cairnmind.agents.verdict_cache import (
-    VERIFIER_VERSION, VerdictCache, context_window_text, prompt_fingerprint, verdict_cache_key,
+from cairnmind.agents.vcr import (
+    CassetteMissError,
+    VcrOllama,
+    deterministic_uuid4,
+    normalize_for_key,
+    request_key,
 )
+from cairnmind.agents.verdict_cache import (
+    VERIFIER_VERSION,
+    VerdictCache,
+    context_window_text,
+    prompt_fingerprint,
+    verdict_cache_key,
+)
+from cairnmind.config import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
 CASSETTE_EXTRACTION = ROOT / "tests" / "cassettes" / "eval_extraction.json"

@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import suppress
 import hashlib
 import json
+import logging
 import os
-from pathlib import Path
 import re
 import shlex
 import signal
@@ -15,25 +14,33 @@ import subprocess
 import sys
 import time
 import unicodedata
+from contextlib import suppress
+from pathlib import Path
 from uuid import uuid4
 
 from rich.cells import cell_len
 
-from cairnmind.terminal.cockpit_state import CockpitState, _atomic, _private_directory, _private_lock
-from cairnmind.config import SESSION_NAMES, Settings, drop_env
 from cairnmind.cli_cmds.first_start import workspace_refusal
-from cairnmind.pal.process_identity import start as process_start
-from cairnmind.terminal.runtime_selection import resolve_tmux
-from cairnmind.pal.runtime_sockets import MAX_SOCKET_PATH, prepare_socket_base, socket_directory, workspace_namespace
-from cairnmind.terminal import person_proof
+from cairnmind.config import SESSION_NAMES, Settings, drop_env
 from cairnmind.pal import platform_hints
+from cairnmind.pal.process_identity import start as process_start
+from cairnmind.pal.runtime_sockets import (
+    MAX_SOCKET_PATH,
+    prepare_socket_base,
+    socket_directory,
+    workspace_namespace,
+)
+from cairnmind.terminal import person_proof
 from cairnmind.terminal import workspace_activity as column
 from cairnmind.terminal import workspace_border as border
+from cairnmind.terminal.cockpit_state import CockpitState, _atomic, _private_directory, _private_lock
+from cairnmind.terminal.runtime_selection import resolve_tmux
 from cairnmind.terminal.terminal_theme import TMUX
 from cairnmind.terminal.workspace_activity import ACTIVITY_WIDTH, COCKPIT_MIN_WIDTH  # noqa: F401 (re-exported)
 from cairnmind.terminal.workspace_state import UI_COMMANDS, WorkspaceState
 
 SESSION = "cairnmind-ui"
+log = logging.getLogger(__name__)
 MINIMUM = (140, 42)
 DEFAULT_SIZE = (180, 55)
 _ROLES = ("sidebar", "client1", "client2", "inspector", "graph")
@@ -168,7 +175,7 @@ def workspace_status_lines(selected, cached, slot, control, language="en", place
     if place is not None:
         from cairnmind.cli_cmds.topology import STATUS_MODELS, STATUS_STORAGE, status_words
         chips = "".join(separator + chip(label, _hint(tr(word, language)), problem if bad else neutral)
-                        for label, (word, bad) in zip((STATUS_STORAGE, STATUS_MODELS), status_words(place)))
+                        for label, (word, bad) in zip((STATUS_STORAGE, STATUS_MODELS), status_words(place), strict=True))
         width = cell_len(re.sub(r"#\[[^]]*\]", "", first + chips))
         first += "#{?#{e|>=:#{client_width}," + str(width) + "}," + chips + ",}"
 
@@ -256,7 +263,7 @@ class WorkspaceManager:
             return {"available": False, "code": "tmux_unavailable", "minimum_version": "3.4"}
 
     def _initialize(self):
-        if not self.diagnostics()["available"]:
+        if sys.platform == "win32" or not self.diagnostics()["available"]:
             raise ValueError(platform_hints.hint("tmux_workspace"))
         _private_directory(self.directory.parent)
         _private_directory(self.directory)
@@ -280,7 +287,7 @@ class WorkspaceManager:
         if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
             raise ValueError("The workspace configuration must be a private file of the user.")
 
-    def tmux(self, *args, check=True, timeout=8, input=None):
+    def tmux(self, *args, check: bool = True, timeout: float | None = 8, input: str | None = None):
         if not self.binary:
             raise ValueError("tmux is unavailable.")
         # Machine-readable formats require literal tabs and Unicode even when
@@ -371,8 +378,11 @@ class WorkspaceManager:
         process/TTY identity is observed under the private attach lock. The
         broker still independently enforces control between this UI and web.
         """
-        if type(takeover) is not bool or not sys.stdin.isatty() or not sys.stdout.isatty():
+        if sys.platform == "win32" or type(takeover) is not bool or not sys.stdin.isatty() or not sys.stdout.isatty():
             raise ValueError("Attaching needs an interactive terminal.")
+        binary = self.binary
+        if not binary:
+            raise ValueError("tmux is unavailable.")
         terminal = os.ttyname(sys.stdin.fileno())
         process = None
         try:
@@ -380,7 +390,7 @@ class WorkspaceManager:
                 if not self.exists():
                     raise ValueError("The terminal workspace is not running.")
                 (self.directory / STOP_ASKED).unlink(missing_ok=True)
-                process = subprocess.Popen([self.binary, "-S", str(self.socket), "attach-session", "-r",
+                process = subprocess.Popen([binary, "-S", str(self.socket), "attach-session", "-r",
                                             "-f", "ignore-size", "-t", SESSION], env=_clean_env())
                 deadline = time.monotonic() + 8
                 while time.monotonic() < deadline and process.poll() is None:
@@ -515,18 +525,18 @@ class WorkspaceManager:
 
     def _supervisor_info(self):
         path = self.directory / "supervisor.json"
-        try:
+        with suppress(OSError, ValueError, KeyError):
             if path.is_symlink():
                 return None
             info = json.loads(path.read_text(encoding="utf-8"))
             if (info.get("workspace_id") == self.workspace_id and info.get("birth")
                     and process_start(info["pid"]) == info["birth"]):
                 return info
-        except (OSError, ValueError, KeyError):
-            pass
         return None
 
     def _start_supervisor(self):
+        if sys.platform == "win32" or not self.binary:
+            raise ValueError("tmux is unavailable.")
         if self._supervisor_info():
             return
         current = self.state.read()
@@ -544,10 +554,12 @@ class WorkspaceManager:
         _atomic(self.directory / "supervisor.json", {"pid": process.pid, "birth": process_start(process.pid),
                                                     "workspace_id": self.workspace_id})
 
-    def _fetch(self, *, force=False):
+    def _fetch(self, *, force=False) -> dict:
         if self._broker_state is not None and not force and time.monotonic() - self._last_fetch < 2:
             return self._broker_state
         value = self.broker.request("GET", "/api/state")
+        if not isinstance(value, dict):
+            raise ValueError("Broker state response was not a JSON object.")
         self._last_fetch, self._broker_state = time.monotonic(), value
         return value
 
@@ -590,6 +602,8 @@ class WorkspaceManager:
                     result = self.broker.request("POST", "/api/client-runs", json={
                         "project": selected["project_id"], "worktree": selected["worktree"], "slots": wanted,
                         "idempotency_key": "workspace:" + hashlib.sha256((self.workspace_id + str(selected["work_request"])).encode()).hexdigest()})
+                    if not isinstance(result, dict):
+                        raise ValueError("Invalid client-run launch response.")
                     runs = [*runs, *result.get("runs", [])]
                     self._adopt([run["id"] for run in result.get("runs", [])])
                     self._save_if_current(selected, {"launch_errors": result.get("errors", [])})
@@ -630,17 +644,18 @@ class WorkspaceManager:
                     visible = list(dict.fromkeys([*requested_now, *visible]))[:2]
                 selected = self._save_if_current(selected, {"cached_projects": projects, "slots": slots,
                     "visible_slot_ids": visible, "broker_available": True, "last_error": None})
-            except Exception:
+            except Exception as exc:
                 # Keep every existing bridge and native child alive when the
                 # memory service/broker is unavailable. Never dump credentials.
+                log.debug("Workspace refresh could not reach broker: %s", type(exc).__name__)
                 selected = self._save_if_current(selected, {"broker_available": False,
                     "last_error": "The client service is unavailable; running sessions are kept."})
                 reconnect = getattr(self.broker, "reconnect", None)
                 if reconnect is not None:
                     try:
                         reconnect()
-                    except Exception:
-                        pass
+                    except Exception as reconnect_exc:
+                        log.debug("Broker reconnect failed during workspace refresh: %s", type(reconnect_exc).__name__)
             with _private_lock(self.directory / "layout.lock"):
                 self._reconcile_views(selected)
                 self._arrange()
@@ -953,9 +968,11 @@ class WorkspaceManager:
     def open_auth(self, client):
         if client not in {"codex", "claude", "copilot"} or not self.exists():
             raise ValueError("Choose a supported client in the open workspace.")
-        run = (self.broker.request("POST", "/api/copilot/login", json={}) if client == "copilot"
-               else self.broker.request("POST", "/api/auth/login", json={"client": client}))["run"]
-        return self.show_auth_run(run)
+        response = (self.broker.request("POST", "/api/copilot/login", json={}) if client == "copilot"
+                    else self.broker.request("POST", "/api/auth/login", json={"client": client}))
+        if not isinstance(response, dict) or "run" not in response:
+            raise ValueError("Invalid sign-in response from broker.")
+        return self.show_auth_run(response["run"])
 
     def show_auth_run(self, run):
         client = run.get("client")
@@ -1005,8 +1022,8 @@ class WorkspaceManager:
                 while self.exists():
                     try:
                         self.refresh()
-                    except (OSError, ValueError, subprocess.SubprocessError):
-                        pass
+                    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                        log.debug("Workspace supervisor refresh failed: %s", type(exc).__name__)
                     time.sleep(.5)
         finally:
             self.close()
@@ -1115,6 +1132,8 @@ def stop_workspace(settings, stop_clients=False):
                         unknown.append(run_id)
                         continue
                     raise
+                if not isinstance(run, dict):
+                    raise ValueError("Invalid client run response.")
                 if run.get("lifecycle") in _ENDED:
                     # Its process has already ended: there is nothing to stop, and that is not an error. The stop
                     # still clears the dead pane tmux keeps for it, and keeps the run's own end (NativeRuntime.stop).
@@ -1128,16 +1147,19 @@ def stop_workspace(settings, stop_clients=False):
                 stopped.append(run_id)
                 lifecycle = result.get("lifecycle") if isinstance(result, dict) else None
                 finished[run_id] = lifecycle if lifecycle in _ENDED else "exited"
-            except Exception:
+            except Exception as exc:
+                log.debug("Client stop failed for %s: %s", run_id, type(exc).__name__)
                 errors.append({"run_id": run_id, "code": "client_stop_unavailable"})
     running = manager.exists()
     if running:
         # tmux ends its clients with code 1 when the server goes; this tells the attached launcher the person asked.
         marker = manager.directory / STOP_ASKED
-        try:  # without the marker the attached process just reports tmux's code 1, so a failed write must not block the stop
-            os.close(os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600))
-        except OSError:
-            pass
+        with suppress(OSError):
+            # without the marker the attached process just reports tmux's code 1, so a failed write must not block the stop
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            if sys.platform != "win32":
+                flags |= os.O_NOFOLLOW
+            os.close(os.open(marker, flags, 0o600))
         try:
             manager.tmux("kill-server")
         except BaseException:  # the server lives on: a later real failure must not read as a stop
@@ -1145,10 +1167,8 @@ def stop_workspace(settings, stop_clients=False):
             raise
     info = manager._supervisor_info()
     if info:
-        try:
+        with suppress(ProcessLookupError):
             os.kill(info["pid"], signal.SIGTERM)
-        except ProcessLookupError:
-            pass
     if finished:
         _forget_finished(manager, finished)
     if unknown:
@@ -1173,6 +1193,8 @@ def take_control(settings, run_id, workspace_id="default"):
 def select_run(settings, run_id, workspace_id="default"):
     manager = WorkspaceManager(settings, workspace_id)
     run = manager.broker.request("GET", "/api/client-runs/" + run_id)
+    if not isinstance(run, dict):
+        raise ValueError("Invalid client run response.")
     if run.get("purpose") == "auth":
         try:
             return manager.show_auth_run(run)
@@ -1187,6 +1209,8 @@ def select_run(settings, run_id, workspace_id="default"):
 def resume_run(settings, run_id, workspace_id="default"):
     manager = WorkspaceManager(settings, workspace_id)
     run = manager.broker.request("GET", "/api/client-runs/" + run_id)
+    if not isinstance(run, dict):
+        raise ValueError("Invalid client run response.")
     result = manager.broker.request("POST", "/api/client-runs", json={"project": run["project_id"], "worktree": run["worktree"],
         "profile_id": run.get("profile_id", run["client"]), "slot_id": run["slot_id"], "resume": True, "idempotency_key": str(uuid4())})
     manager.refresh()

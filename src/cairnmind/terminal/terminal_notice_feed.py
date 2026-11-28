@@ -16,12 +16,13 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import os
 import re
 from datetime import datetime, timedelta
 
-from cairnmind.terminal.terminal_notices import KINDS
 from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.terminal.terminal_notices import KINDS
 
 ROLES = ("sidebar", "inspector", "graph")
 OPTION = "@cairnmind_notices"
@@ -30,6 +31,7 @@ TEXT_CHARS = 200        # one notice text is cut here: the panel shows one row o
 MAX_BYTES = 8000        # the encoded copy, well inside one tmux command
 AHEAD = timedelta(minutes=2)
 _PANE = re.compile(r"^%[0-9]{1,9}$")
+log = logging.getLogger(__name__)
 
 
 def snapshot(history) -> list:
@@ -110,7 +112,8 @@ class TmuxChannel:
         # tagged with that role (anyone with the socket can tag one) cannot hide or replace its copy.
         try:
             recorded = self.manager.state.read().get("pane_ids") or {}
-        except Exception:
+        except Exception as exc:
+            log.debug("Failed to read workspace pane_ids for notice feed: %s", type(exc).__name__)
             recorded = {}
         result = self.manager.tmux("list-panes", "-a", "-F", "#{pane_id}\t#{@cairnmind_workspace}\t"
                                    "#{@cairnmind_role}\t#{" + OPTION + "}", check=False)
@@ -144,7 +147,8 @@ def read_all(settings, workspace_id, limit=KEEP) -> list:
     """The entries of every panel, newest first. Nothing raises."""
     try:
         values = channel(settings, workspace_id).read()
-    except Exception:
+    except Exception as exc:
+        log.debug("Failed to read tmux notice feed: %s", type(exc).__name__)
         return []
     found = [entry for role in ROLES for entry in decode(role, values.get(role))]
     found.sort(key=lambda entry: (entry["when"], entry["seq"]), reverse=True)

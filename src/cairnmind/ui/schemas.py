@@ -1,11 +1,11 @@
 """Engineer Cockpit request schemas, provenance origin helpers, diffs, and redaction."""
 from __future__ import annotations
 
-from copy import deepcopy
-from datetime import datetime, timezone
 import hashlib
-from pathlib import Path
 import re
+from copy import deepcopy
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -22,7 +22,7 @@ SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def sha256_text(text: str) -> str:
@@ -60,7 +60,8 @@ def classify_record_origin(
     provenance_status: str = "VERIFIED",
 ) -> dict[str, Any]:
     """Derive unified `OriginMetadata` from a Cairnmind record or plan row."""
-    meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    raw_meta = record.get("metadata")
+    meta = raw_meta if isinstance(raw_meta, dict) else {}
     origin_evidence = str(
         record.get("origin_evidence") or meta.get("origin_evidence") or ""
     ).lower()

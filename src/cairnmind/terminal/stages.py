@@ -350,7 +350,8 @@ def describe(decision: dict, translate=lambda text: text, *, head=False) -> str:
         lines.append(translate("Required checks") + ": " + ", ".join(decision["required_profiles"]))
     problem = decision.get("problem")
     if problem == "no_task":
-        lines.append(translate(_REASONS.get(decision.get("reason"), _PROBLEMS["no_task"])))
+        reason = decision.get("reason")
+        lines.append(translate(_REASONS.get(reason, _PROBLEMS["no_task"]) if isinstance(reason, str) else _PROBLEMS["no_task"]))
     elif problem == "unknown_check_profile":
         # The sentence `check run` would give, before anything is run, and where the mapping is changed.
         lines.append(check_error_text(unknown_profile_message(decision.get("check_profile"),

@@ -18,13 +18,13 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
-from cairnmind.storage import database_mode
 from cairnmind.agents import knowledge_mode
-from cairnmind.memory import memory_egress
-from cairnmind.terminal import setup_change, setup_mark, setup_profiles
 from cairnmind.config import Settings
-from cairnmind.terminal.setup_profiles import Request, render_one, run
+from cairnmind.memory import memory_egress
 from cairnmind.pal.terminal_safe import plain, safe_text
+from cairnmind.storage import database_mode
+from cairnmind.terminal import setup_change, setup_mark, setup_profiles
+from cairnmind.terminal.setup_profiles import Request, render_one, run
 
 CHOOSE = "Change where storage and models run"
 LOCAL = "Everything on this computer (local)"
@@ -34,7 +34,7 @@ DATABASE_FORM = "Where storage and models will run"
 F_URL = "Database address (https://host:2480)"
 F_USER = "Database user"
 F_DATABASE = "Database name"
-F_PASSWORD_FILE = "Password file (a private file you created, mode 0600)"
+F_PASSWORD_FILE = "Password file (a private file you created, mode 0600)"  # noqa: S105 - UI field label, not a secret
 F_CA_FILE = "Certificate authority file (optional)"
 F_ADMIN_FILE = "Root password file (optional, never saved)"
 F_MODELS_URL = "Model server address (https://...)"

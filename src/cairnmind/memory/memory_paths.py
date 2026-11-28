@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 from cairnmind.pal.path_spelling import relative_on_disk
-from cairnmind.storage.storage_query import db_find
 from cairnmind.pal.system_links import system_spelling
-
+from cairnmind.storage.storage_query import db_find
 
 # Snapshots are written to the first directory. The second is where versions up to 0.9.0 wrote
 # them: it is still read, and still reserved, so that a package left there is neither indexed

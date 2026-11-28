@@ -8,20 +8,21 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from textual import _time as textual_time, events
+from consent_steps import form_ready, form_state
+from test_terminal_panels import FakeBroker, settle, setup
+from test_trial011_workspace import wait_until
+from textual import _time as textual_time
+from textual import events
 from textual.widgets import Button, Input, Static, TextArea
 
-from cairnmind.terminal import person_proof
 from cairnmind.memory.confirmation import REPLACED_CHANGED
+from cairnmind.terminal import person_proof
+from cairnmind.terminal import terminal_published_import as published
 from cairnmind.terminal.terminal_client import BrokerError
 from cairnmind.terminal.terminal_i18n import CATALOG, tr
 from cairnmind.terminal.terminal_i18n_messages import BROKER_MESSAGES
 from cairnmind.terminal.terminal_inspector import InspectorApp
-from cairnmind.terminal import terminal_published_import as published
-from cairnmind.terminal.terminal_published_import import MESSAGES, folder_error, taken_ids, take_error
-from consent_steps import form_ready, form_state
-from test_terminal_panels import FakeBroker, setup, settle
-from test_trial011_workspace import wait_until
+from cairnmind.terminal.terminal_published_import import MESSAGES, folder_error, take_error, taken_ids
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 

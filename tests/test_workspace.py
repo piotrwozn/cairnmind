@@ -1,18 +1,18 @@
 """Actual private outer tmux; no native models or browser are started."""
 from __future__ import annotations
 
-from copy import deepcopy
-from concurrent.futures import ThreadPoolExecutor
 import json
 import os
-from pathlib import Path
-from types import SimpleNamespace
 import shlex
 import shutil
 import signal
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 

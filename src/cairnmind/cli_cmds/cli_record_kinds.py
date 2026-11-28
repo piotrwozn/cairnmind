@@ -17,14 +17,14 @@ def register(app, initialized):
     @record_kind_app.command("list")
     def record_kind_list(ctx: typer.Context, project: ProjectArg):
         """The unknown kinds in the project's transcripts, each with one example, and what was accepted."""
-        from cairnmind.memory import record_kinds
         from cairnmind.cli_cmds import io as _io
+        from cairnmind.memory import record_kinds
         store = _io.store_for_read(ctx.obj)
-        _io.output(record_kinds.overview(store, store.resolve_project(project)["id"]))
+        _io.output(record_kinds.overview(store, _io.resolve_project(store, project)["id"]))
 
     def act():
-        from cairnmind.memory import record_kinds
         from cairnmind.cli_cmds import io as _io
+        from cairnmind.memory import record_kinds
         # The command line confirms nothing (#214). The arguments stay so that a script gets this sentence.
         _io.refuse(record_kinds.CLI_REFUSED)
 

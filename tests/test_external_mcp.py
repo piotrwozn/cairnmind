@@ -7,22 +7,22 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
+from pathlib import Path
 
+import pytest
+import test_resume_mcp_protocol
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-import pytest
+from test_resume_mcp_protocol import ack_arguments, local_service, rejected, tool_result
 from typer.testing import CliRunner
 
 from cairnmind.cli import app
 from cairnmind.config import Settings, env_names
 from cairnmind.mcp.mcp_server import ServiceClient, create_server
 from cairnmind.store import ORIGIN_METADATA, Store
-import test_resume_mcp_protocol
-from test_resume_mcp_protocol import ack_arguments, local_service, rejected, tool_result
 
 LAUNCHER_VARIABLES = [key for name in ("SESSION_ID", "PACKET_ID", "PROJECT", "CLIENT", "CONTEXT_FILE")
                       for key in env_names(name)]
@@ -133,37 +133,36 @@ async def test_the_cursor_scenario_ask_packet_ack_remember(tmp_path, clean_env, 
     # The in-thread service answers `ask` with the fixture model instead of refusing every model call.
     monkeypatch.setattr(test_resume_mcp_protocol, "NoGeneration", FixtureModel)
     with local_service(settings):
-        async with stdio_client(parameters) as (reader, writer):
-            async with ClientSession(reader, writer) as client:
-                initialized = await client.initialize()
-                assert "history: unarchived" in (initialized.instructions or "")
-                answer = tool_result(await client.call_tool("ask", {"project": project["id"],
-                                                                    "question": "What is decided about VALUE?"}))
-                assert "answer" in answer
-                assert not store.query("SELECT FROM sessions")
-                rejected(await client.call_tool("remember", {"project": project["id"], "record": record,
-                                                             "sources": [note["id"]]}))
-                assert not store.query("SELECT FROM sessions")
+        async with stdio_client(parameters) as (reader, writer), ClientSession(reader, writer) as client:
+            initialized = await client.initialize()
+            assert "history: unarchived" in (initialized.instructions or "")
+            answer = tool_result(await client.call_tool("ask", {"project": project["id"],
+                                                                "question": "What is decided about VALUE?"}))
+            assert "answer" in answer
+            assert not store.query("SELECT FROM sessions")
+            rejected(await client.call_tool("remember", {"project": project["id"], "record": record,
+                                                         "sources": [note["id"]]}))
+            assert not store.query("SELECT FROM sessions")
 
-                context = tool_result(await client.call_tool("resume_context", {}))
-                packet = context["packet"]
-                assert context["status"] == "ready", context
-                assert (packet["client"], packet["history"], packet["evidence"]) == ("external", "unarchived",
-                                                                                      "degraded")
-                assert packet["worktree"] == str(root.resolve())
-                rejected(await client.call_tool("remember", {"project": project["id"], "record": record,
-                                                             "sources": [note["id"]]}))
-                again = tool_result(await client.call_tool("resume_context", {}))
-                assert again["session_id"] == context["session_id"] and again["packet"]["id"] == packet["id"]
-                assert len(store.query("SELECT FROM sessions")) == 1
+            context = tool_result(await client.call_tool("resume_context", {}))
+            packet = context["packet"]
+            assert context["status"] == "ready", context
+            assert (packet["client"], packet["history"], packet["evidence"]) == ("external", "unarchived",
+                                                                                  "degraded")
+            assert packet["worktree"] == str(root.resolve())
+            rejected(await client.call_tool("remember", {"project": project["id"], "record": record,
+                                                         "sources": [note["id"]]}))
+            again = tool_result(await client.call_tool("resume_context", {}))
+            assert again["session_id"] == context["session_id"] and again["packet"]["id"] == packet["id"]
+            assert len(store.query("SELECT FROM sessions")) == 1
 
-                acknowledged = tool_result(await client.call_tool("ack_resume", ack_arguments(packet)))
-                assert acknowledged["packet_id"] == packet["id"]
-                short = tool_result(await client.call_tool("resume_context", {}))  # #325
-                assert short["unchanged"] is True and short["packet_id"] == packet["id"] and "packet" not in short
-                assert (short["history"], short["evidence"]) == ("unarchived", "degraded")
-                saved = tool_result(await client.call_tool("remember", {"project": project["id"], "record": record,
-                                                                        "sources": [note["id"]]}))
+            acknowledged = tool_result(await client.call_tool("ack_resume", ack_arguments(packet)))
+            assert acknowledged["packet_id"] == packet["id"]
+            short = tool_result(await client.call_tool("resume_context", {}))  # #325
+            assert short["unchanged"] is True and short["packet_id"] == packet["id"] and "packet" not in short
+            assert (short["history"], short["evidence"]) == ("unarchived", "degraded")
+            saved = tool_result(await client.call_tool("remember", {"project": project["id"], "record": record,
+                                                                    "sources": [note["id"]]}))
     assert "content" not in saved and "metadata" not in saved and saved["origin_client"] == "external"
     assert saved["metadata_not_stored_as_sent"] == ["origin_client", "origin_evidence"]
     stored = store.query("SELECT FROM records WHERE id=:id", {"id": saved["id"]})[0]
@@ -192,14 +191,13 @@ async def test_an_unknown_native_transcript_keeps_the_external_client_from_writi
         args=["-m", "cairnmind", "--data-dir", str(settings.data_dir), "mcp", "--client", "external"],
         env=clean_environment())
     with local_service(settings):
-        async with stdio_client(parameters) as (reader, writer):
-            async with ClientSession(reader, writer) as client:
-                await client.initialize()
-                context = tool_result(await client.call_tool("resume_context", {}))
-                assert context["status"] == "partial"
-                assert any("Unparsed or conflicting" in text for text in context["unknowns"])
-                rejected(await client.call_tool("ack_resume", ack_arguments(context["packet"])))
-                rejected(await client.call_tool("checkpoint", {"project": project["id"], "state": {"x": 1}}))
+        async with stdio_client(parameters) as (reader, writer), ClientSession(reader, writer) as client:
+            await client.initialize()
+            context = tool_result(await client.call_tool("resume_context", {}))
+            assert context["status"] == "partial"
+            assert any("Unparsed or conflicting" in text for text in context["unknowns"])
+            rejected(await client.call_tool("ack_resume", ack_arguments(context["packet"])))
+            rejected(await client.call_tool("checkpoint", {"project": project["id"], "state": {"x": 1}}))
     assert not store.query("SELECT FROM resume_acks")
     assert not store.query("SELECT FROM records WHERE kind='checkpoint'")
 
@@ -256,10 +254,9 @@ async def test_a_name_equal_to_a_local_folder_binds_the_named_project(tmp_path, 
               "--project", "web"],
         env=clean_environment())
     with local_service(settings):
-        async with stdio_client(parameters) as (reader, writer):
-            async with ClientSession(reader, writer) as client:
-                await client.initialize()
-                context = tool_result(await client.call_tool("resume_context", {}))
+        async with stdio_client(parameters) as (reader, writer), ClientSession(reader, writer) as client:
+            await client.initialize()
+            context = tool_result(await client.call_tool("resume_context", {}))
     assert context["packet"]["project_id"] == named["id"]
     assert context["packet"]["worktree"] == str(web.resolve())
 
@@ -278,10 +275,9 @@ async def test_a_relative_project_names_the_project_seen_from_the_editor(tmp_pat
               "--project", "../repo"],
         env=clean_environment())
     with local_service(settings):
-        async with stdio_client(parameters) as (reader, writer):
-            async with ClientSession(reader, writer) as client:
-                await client.initialize()
-                context = tool_result(await client.call_tool("resume_context", {}))
+        async with stdio_client(parameters) as (reader, writer), ClientSession(reader, writer) as client:
+            await client.initialize()
+            context = tool_result(await client.call_tool("resume_context", {}))
     assert context["packet"]["worktree"] == str(root.resolve())
     assert store.query("SELECT client FROM sessions")[0]["client"] == "external"
 
@@ -301,10 +297,9 @@ async def test_a_relative_folder_is_read_from_the_editor_not_from_the_service(tm
               "--project", "packages/api"],
         env=clean_environment())
     with local_service(settings):
-        async with stdio_client(parameters) as (reader, writer):
-            async with ClientSession(reader, writer) as client:
-                await client.initialize()
-                await client.call_tool("resume_context", {})
+        async with stdio_client(parameters) as (reader, writer), ClientSession(reader, writer) as client:
+            await client.initialize()
+            await client.call_tool("resume_context", {})
     sessions = store.query("SELECT project_id,worktree FROM sessions")
     assert [(row["project_id"], row["worktree"]) for row in sessions] == [(editor_project["id"], str(mono.resolve()))]
     assert service_side["id"] != editor_project["id"]

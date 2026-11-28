@@ -1,15 +1,14 @@
 """Terminal entry points and lifecycle diagnostics share one global workspace."""
 from __future__ import annotations
 
-import re
 import json
+import re
 import sys
 from types import ModuleType
 
 import pytest
-from typer.testing import CliRunner
-
 from conftest import plain_words
+from typer.testing import CliRunner
 
 from cairnmind import cli
 
@@ -193,7 +192,7 @@ def test_no_message_in_non_i18n_modules_is_polish():
     all_modules = {
         p.name: p for p in sorted(pkg_dir.rglob("*.py")) if p.name != "__init__.py"
     }
-    assert ENGLISH_ONLY_GUARDED_MODULES <= set(all_modules)
+    assert set(all_modules) >= ENGLISH_ONLY_GUARDED_MODULES
     assert ENGLISH_ONLY_GUARDED_MODULES.isdisjoint(POLISH_ALLOWED_MODULES)
 
     unexpected: dict[str, list[tuple[int, str]]] = {}

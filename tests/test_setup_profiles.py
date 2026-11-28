@@ -15,25 +15,32 @@ from pathlib import Path
 
 import httpx
 import pytest
+from conftest import make_symlink_or_skip, make_world_readable, plain_words
 from typer.testing import CliRunner
 
-from conftest import make_symlink_or_skip, make_world_readable, plain_words
-from cairnmind.storage import backup_reader, database_credentials, engine, engine_docker, store_writer
 from cairnmind import cli
-from cairnmind.pal import file_locks
-from cairnmind.memory import memory_models
-from cairnmind.terminal import person_proof, setup_profiles
+from cairnmind.agents.ollama import Ollama, OllamaUnavailable
 from cairnmind.cli_cmds import topology as topology_module
-from cairnmind.storage.arcade import ArcadeError
 from cairnmind.config import Settings, derived_database, is_own_variable
+from cairnmind.memory import memory_models
+from cairnmind.memory.memory_openai import OpenAICompatible
+from cairnmind.pal import file_locks
+from cairnmind.storage import backup_reader, database_credentials, engine, engine_docker, store_writer
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.storage.database_mode import connect_only
 from cairnmind.storage.restore_claims import BackupClaims, restore_notice
-from cairnmind.store import Store
 from cairnmind.storage.store_readonly import StoreNotReady
-from cairnmind.memory.memory_openai import OpenAICompatible
-from cairnmind.agents.ollama import Ollama, OllamaUnavailable
+from cairnmind.store import Store
+from cairnmind.terminal import person_proof, setup_profiles
 from cairnmind.terminal.setup_profiles import (
-    MESSAGES, Request, render, render_one, run, SetupRefused, TEST_STORAGE_OK)
+    MESSAGES,
+    TEST_STORAGE_OK,
+    Request,
+    SetupRefused,
+    render,
+    render_one,
+    run,
+)
 
 REMOTE = {"provider": "openai_compatible", "base_url": "https://models.example/v1", "allow_remote": True}
 DB = "https://db.example:2490"

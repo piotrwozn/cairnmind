@@ -25,8 +25,8 @@ line asks first and runs only for a person (``cairnmind store prune-backups``).
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from cairnmind.config import BACKUP_SUFFIXES
@@ -66,7 +66,7 @@ def compact_old_jobs(store, older_than_days: int, *, now: datetime | None = None
         raise ValueError(f"older_than_days must be a whole number from 1 to {MAX_JOB_HISTORY_DAYS}")
     if type(batch) is not int or not 1 <= batch <= 1000:
         raise ValueError("batch must be a whole number from 1 to 1000")
-    cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=older_than_days)).isoformat(timespec="microseconds")
+    cutoff = ((now or datetime.now(UTC)) - timedelta(days=older_than_days)).isoformat(timespec="microseconds")
     report = {"compacted": 0, "events": 0, "transactions": 0, "cutoff": cutoff}
     after = ""
     not_compacted = _not_compacted_filter()
@@ -141,7 +141,7 @@ def safety_backups(directory) -> list[dict]:
         if not path.is_file() or path.is_symlink():
             continue
         found.append({"name": path.name, "kind": kind, "bytes": info.st_size, "mtime": info.st_mtime,
-                      "modified": datetime.fromtimestamp(info.st_mtime, timezone.utc).isoformat(timespec="seconds")})
+                      "modified": datetime.fromtimestamp(info.st_mtime, UTC).isoformat(timespec="seconds")})
     return sorted(found, key=lambda entry: (-entry["mtime"], entry["name"]))
 
 

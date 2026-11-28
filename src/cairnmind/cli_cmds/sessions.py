@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
-from pathlib import Path
 import shutil
 import sys
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.cli_arguments import (
     ClientArg,
     PacketHashArg,
@@ -19,9 +21,10 @@ from cairnmind.cli_cmds.cli_arguments import (
     SessionClientArg,
     SessionIdArg,
 )
-from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.io import JSON_FLAG, initialized
 from cairnmind.config import Settings
+
+_log = logging.getLogger(__name__)
 
 
 def register(apps: dict[str, typer.Typer]) -> None:
@@ -76,10 +79,11 @@ def register(apps: dict[str, typer.Typer]) -> None:
         if recorder and no_recorder:
             raise typer.BadParameter("Choose one of --recorder and --no-recorder.")
         store = _io.store_for(ctx.obj)
-        selected = store.resolve_project(project)
+        selected = _io.resolve_project(store, project)
         result = install_integrations(ctx.obj, selected, recorder=True if recorder else False if no_recorder else None,
                                       pre_commit=pre_commit)
         import shlex
+
         from cairnmind.cli_cmds import first_start
         from cairnmind.pal.terminal_safe import safe_text
         root = Path(selected["root"]).resolve()
@@ -104,7 +108,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         name = shlex.quote(safe_text(selected["name"]))
         if connected:
             lines = [first_start.INSTALL_DONE.format(
-                clients=", ".join(first_start.CLIENT_NAMES.get(client, client) for client in connected), files=files,
+                clients=", ".join(first_start.CLIENT_NAMES.get(str(client), str(client)) for client in connected), files=files,
                 project=name, command=connected[0])]
             if unconnected:
                 lines.append(first_start.INSTALL_ALSO.format(clients=unconnected))
@@ -124,7 +128,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         from cairnmind.memory.integrations import run_client
         _io._refuse_during_upgrade()
         _io._ensure_service_or_refuse(ctx.obj)
-        selected = _io.store_for(ctx.obj).resolve_project(project)
+        selected = _io.resolve_project(_io.store_for(ctx.obj), project)
         if worktree:
             store = _io.store_for(ctx.obj)
             root = str(worktree.expanduser().resolve())
@@ -157,9 +161,10 @@ def register(apps: dict[str, typer.Typer]) -> None:
             return candidate.resolve()
         # Try resolving a registered project name/id read-only when the store is available.
         try:
-            selected = _io.store_for_read(settings).resolve_project(project)
+            selected = _io.resolve_project(_io.store_for_read(settings), project)
             return Path(selected["root"]).expanduser().resolve()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - best-effort read-only lookup before path fallback
+            _log.debug("Read-only project lookup failed for MCP root %r: %s", project, exc)
             if candidate.is_absolute() or "/" in project or "\\" in project or project.startswith((".", "~")):
                 return candidate.resolve()
             raise ValueError(
@@ -325,7 +330,10 @@ def register(apps: dict[str, typer.Typer]) -> None:
                         typer.echo(preset["content"].rstrip("\n"))
             return
 
-        assert client is not None
+        if client is None:
+            raise typer.BadParameter(
+                f"Specify --client <name> ({', '.join(SUPPORTED_CLIENTS)}) or --auto."
+            )
         preset = generate_preset(
             client,
             ctx.obj,
@@ -395,6 +403,8 @@ def register(apps: dict[str, typer.Typer]) -> None:
 
         Fails hard if any non-JSON-RPC byte is emitted on stdout or if the handshake exceeds `--timeout`.
         """
+        import tomllib
+
         from cairnmind.mcp.mcp_presets import (
             CLIENT_SPECS,
             build_server_entry,
@@ -402,7 +412,6 @@ def register(apps: dict[str, typer.Typer]) -> None:
             parse_json_or_jsonc,
         )
         from cairnmind.mcp.mcp_probe import probe_mcp_stdio
-        import tomllib
 
         project_root = _resolve_mcp_project_root(ctx.obj, project)
         command = ""

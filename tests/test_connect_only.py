@@ -1,35 +1,35 @@
 """Connect-only mode (#68): an installation that uses a database it never installs, starts or stops."""
 from __future__ import annotations
 
-from contextlib import closing
-from dataclasses import replace
 import json
 import os
 import secrets
-from pathlib import Path
 import shutil
 import socket
 import subprocess
 import sys
 import threading
 import uuid
+from contextlib import closing, suppress
+from dataclasses import replace
+from pathlib import Path
 
 import httpx
 import pytest
-from typer.testing import CliRunner
-
-from cairnmind.storage import engine, store_writer
-from cairnmind.storage.arcade import ArcadeClient, ArcadeError
-from cairnmind.cli import app
-from cairnmind.config import Settings
-from cairnmind.storage.database_mode import connect_only, mode
-from cairnmind.scip.ingest import index_project
-from cairnmind.store import Store
-from cairnmind.storage.store_readonly import StoreNotReady
-from cairnmind.storage.store_writer import StoreNotWriter, StoreWriterLost
 from database_relay import Relay
 from test_database_credentials import certificate_authority
 from test_database_user import this_machine_address
+from typer.testing import CliRunner
+
+from cairnmind.cli import app
+from cairnmind.config import Settings
+from cairnmind.scip.ingest import index_project
+from cairnmind.storage import engine, store_writer
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
+from cairnmind.storage.database_mode import connect_only, mode
+from cairnmind.storage.store_readonly import StoreNotReady
+from cairnmind.storage.store_writer import StoreNotWriter, StoreWriterLost
+from cairnmind.store import Store
 
 runner = CliRunner()
 ROOT = Path(__file__).resolve().parents[1]
@@ -534,12 +534,12 @@ def test_a_database_that_does_not_exist_is_never_created_and_the_message_names_t
             assert made.exit_code == 0, (made.output, made.exception)
             assert cli(data, "init").exit_code == 0
         finally:
-            with closing(ArcadeClient(replace(settings, arcade_user="root", arcade_password=secret,
-                                              arcade_connect_url="", arcade_url=f"http://127.0.0.1:{port}"))) as root:
-                try:
-                    root.server_command(f"drop user {name}")
-                except ArcadeError:
-                    pass
+            with (
+                closing(ArcadeClient(replace(settings, arcade_user="root", arcade_password=secret,
+                                             arcade_connect_url="", arcade_url=f"http://127.0.0.1:{port}"))) as root,
+                suppress(ArcadeError),
+            ):
+                root.server_command(f"drop user {name}")
     assert no_engine_files(data)
 
 
@@ -668,10 +668,8 @@ def test_two_installations_on_two_hosts_one_writes_the_other_reads_and_can_take_
             assert not (desktop / "arcade").exists() and not (laptop / "arcade").exists()
         finally:
             for command in (f"drop database {database}", f"drop user {name}"):
-                try:
+                with suppress(ArcadeError):
                     root_client.server_command(command)
-                except ArcadeError:
-                    pass
             root_client.close()
 
 

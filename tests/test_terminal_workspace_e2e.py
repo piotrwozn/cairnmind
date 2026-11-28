@@ -5,13 +5,11 @@ model, request paid inference, or open a browser.
 """
 from __future__ import annotations
 
-import base64
 import asyncio
-from dataclasses import dataclass
+import base64
 import inspect
 import json
 import os
-from pathlib import Path
 import shutil
 import signal
 import socket
@@ -20,6 +18,8 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from uuid import uuid4
 
 if sys.platform != "win32":
@@ -29,17 +29,16 @@ if sys.platform != "win32":
 import httpx
 import pytest
 import uvicorn
+from conftest import status_flags, terminal_attributes, time_budget
 from websockets.sync.client import connect
 
-from conftest import status_flags, terminal_attributes, time_budget
 from cairnmind.agents import client_auth
 from cairnmind.agents.client_runtime import NativeRuntime
-from cairnmind.terminal.cockpit import _birth, create_cockpit_app, instance_id
-from cairnmind.terminal.cockpit_state import _atomic
 from cairnmind.config import Settings
 from cairnmind.service import create_app
 from cairnmind.store import Store
-
+from cairnmind.terminal.cockpit import _birth, create_cockpit_app, instance_id
+from cairnmind.terminal.cockpit_state import _atomic
 
 AUTH_CANARY = "QA060_PRIVATE_DEVICE_CODE_MUST_NOT_BE_ARCHIVED"
 FAKE_NATIVE = r'''

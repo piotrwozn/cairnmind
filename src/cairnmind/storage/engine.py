@@ -1,11 +1,9 @@
 """Pinned, checksum-verified ArcadeDB distribution and local Java process lifecycle."""
 from __future__ import annotations
 
-from dataclasses import replace
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import signal
@@ -14,22 +12,45 @@ import sys
 import tarfile
 import tempfile
 import time
-from urllib.parse import urlparse
 import urllib.request
+from dataclasses import replace
+from pathlib import Path
+from urllib.parse import urlparse
 
-from cairnmind.pal import process_identity
-from cairnmind.storage.arcade import ArcadeClient, ArcadeError
-from cairnmind.config import Settings
-from cairnmind.pal.file_locks import locked_path
 from cairnmind.cli_cmds.first_start import (
-    ENGINE_EXITED, ENGINE_NOT_INSTALLED, ENGINE_STARTED, ENGINE_STARTING, ENGINE_TIMED_OUT, JAVA_NEEDED)
-from cairnmind.storage.database_mode import (address, connect_only, describe, engine_mode, is_managed_url, refusal,  # noqa: F401
-                            server_version, supported_versions, version_problem)
+    ENGINE_EXITED,
+    ENGINE_NOT_INSTALLED,
+    ENGINE_STARTED,
+    ENGINE_STARTING,
+    ENGINE_TIMED_OUT,
+    JAVA_NEEDED,
+)
+from cairnmind.config import Settings
+from cairnmind.pal import process_identity
+from cairnmind.pal.file_locks import locked_path
 from cairnmind.pal.private_files import (
-    IS_WINDOWS, atomic_replace, ensure_private_dir, is_reparse_point,
-    make_private, make_private_best_effort, make_private_fd, open_no_follow,
+    IS_WINDOWS,
+    atomic_replace,
+    ensure_private_dir,
+    is_reparse_point,
+    make_private,
+    make_private_best_effort,
+    make_private_fd,
+    open_no_follow,
 )
 from cairnmind.pal.process_control import detached_popen_kwargs, terminate_pid
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
+from cairnmind.storage.database_mode import (  # noqa: F401
+    address,
+    connect_only,
+    describe,
+    engine_mode,
+    is_managed_url,
+    refusal,
+    server_version,
+    supported_versions,
+    version_problem,
+)
 
 
 def runtime_dir(settings: Settings) -> Path:
@@ -182,11 +203,15 @@ def install_engine(settings: Settings, distribution: Path | None = None) -> Path
         with tempfile.TemporaryDirectory(prefix="arcade-install-", dir=destination.parent) as temp:
             temp = Path(temp)
             archive = temp / name
+            sha_url = base + name + ".sha256"
+            archive_url = base + name
+            if not sha_url.startswith("https://") or not archive_url.startswith("https://"):
+                raise ValueError("ArcadeDB download URL must use https://")
             # Keep the environment's proxy and CA trust for release downloads.
-            with urllib.request.urlopen(base + name + ".sha256", timeout=30) as response:
+            with urllib.request.urlopen(sha_url, timeout=30) as response:  # noqa: S310 - scheme validated as https:// above
                 expected = response.read().decode().strip().split()[0]
             digest = hashlib.sha256()
-            with urllib.request.urlopen(base + name, timeout=120) as response, archive.open("wb") as handle:
+            with urllib.request.urlopen(archive_url, timeout=120) as response, archive.open("wb") as handle:  # noqa: S310 - scheme validated as https:// above
                 while chunk := response.read(1024 * 1024):
                     digest.update(chunk)
                     handle.write(chunk)
@@ -422,10 +447,7 @@ def start_command(settings: Settings, *, docker: bool = False, native: bool = Fa
     mode = "docker" if docker else "native" if native else engine_mode(settings)
     # --docker names the image too: the published one, or with --build the one built here.
     chosen = replace(settings, engine_mode=mode, **({"engine_docker_build": build} if docker else {}))
-    if mode == "docker":
-        status = start_docker_engine(chosen, build=build, pull=True)
-    else:
-        status = start_engine(chosen)
+    status = start_docker_engine(chosen, build=build, pull=True) if mode == "docker" else start_engine(chosen)
     if (docker or native) and store_engine_mode(settings, mode, build=bool(docker and build)):
         print(f"cairnmind: {MODE_SAVED.format(mode=mode, config=settings.data_dir / 'config.json')}", file=sys.stderr)
     return status

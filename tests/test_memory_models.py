@@ -8,14 +8,13 @@ import json
 
 import httpx
 import pytest
+from conftest import plain_words
 from typer.testing import CliRunner
 
-from conftest import plain_words
-from cairnmind.memory import memory_models
-from cairnmind.config import Settings
-from cairnmind.memory.memory_openai import OpenAICompatible
 from cairnmind.agents.ollama import Ollama, OllamaUnavailable
-
+from cairnmind.config import Settings
+from cairnmind.memory import memory_models
+from cairnmind.memory.memory_openai import OpenAICompatible
 
 LMSTUDIO = {"provider": "openai_compatible", "base_url": "http://127.0.0.1:1234/v1"}
 

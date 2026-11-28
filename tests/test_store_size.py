@@ -9,10 +9,10 @@ import time
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind.storage.arcade import ArcadeClient
+from cairnmind.agents.retrieval import Retriever
 from cairnmind.cli import app
 from cairnmind.scip.ingest import _write_chunks
-from cairnmind.agents.retrieval import Retriever
+from cairnmind.storage.arcade import ArcadeClient
 from cairnmind.store import EXPORT_TYPES, Store
 
 SECRET = "SECRET-PASSAGE-184"

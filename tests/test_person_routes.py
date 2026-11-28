@@ -8,22 +8,21 @@ from __future__ import annotations
 import logging
 from uuid import uuid4
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
+from conftest import TEST_KEY, as_person, person_proven
+from fastapi.testclient import TestClient
+from test_cockpit_server import ORIGIN, Runtime, login
+from test_confirmed_by_person import fixture  # noqa: F401 (the fixture)
+from test_confirmed_elsewhere import rows, two_computers  # noqa: F401 (a fixture and a helper)
 
 from cairnmind.memory import confirmation
-from cairnmind.terminal import person_proof
-from cairnmind.terminal.cockpit import create_cockpit_app
 from cairnmind.memory.confirmation import ConfirmationRefused, VerdictKept, confirmation_of
 from cairnmind.memory.memory import MemoryManager
 from cairnmind.memory.plans import PlanManager
 from cairnmind.memory.record_kinds import act_as_person
-
-from conftest import TEST_KEY, as_person, person_proven
-from test_cockpit_server import ORIGIN, Runtime, login
-from test_confirmed_by_person import fixture  # noqa: F401 (the fixture)
-from test_confirmed_elsewhere import rows, two_computers  # noqa: F401 (a fixture and a helper)
+from cairnmind.terminal import person_proof
+from cairnmind.terminal.cockpit import create_cockpit_app
 
 KIND = {"client": "claude", "kind": "future-claude-record"}
 

@@ -28,7 +28,7 @@ def test_stop_names_the_broker_it_leaves_running(stop):
 
 
 def test_stop_says_nothing_about_a_broker_that_is_not_running(stop):
-    assert all(first_start.BROKER_LEFT_RUNNING != line for line in stop(False))
+    assert all(line != first_start.BROKER_LEFT_RUNNING for line in stop(False))
 
 
 def test_the_broker_sentence_has_polish():

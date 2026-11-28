@@ -3,19 +3,18 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from copy import deepcopy
 import json
-from pathlib import Path
 import time
+from copy import deepcopy
+from pathlib import Path
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from cairnmind.terminal.cockpit import BrowserSessions, create_cockpit_app
 from cairnmind.config import Settings
-
+from cairnmind.terminal.cockpit import BrowserSessions, create_cockpit_app
 
 ORIGIN = "http://127.0.0.1:8766"
 
@@ -354,10 +353,14 @@ def test_terminal_websocket_requires_cookie_origin_generation_and_transmits_lite
     headers = login(app, client)
     client.post("/api/client-runs", json={"project": project["id"], "idempotency_key": "launch"}, headers=headers)
     csrf = headers["X-CSRF-Token"]
-    with pytest.raises(Exception):
-        with client.websocket_connect(f"ws://127.0.0.1:8766/api/client-runs/run-codex/terminal?csrf={csrf}&generation=generation-one",
-                                      headers={"Origin": "https://evil.invalid"}):
-            pass
+    with (
+        pytest.raises(Exception),
+        client.websocket_connect(
+            f"ws://127.0.0.1:8766/api/client-runs/run-codex/terminal?csrf={csrf}&generation=generation-one",
+            headers={"Origin": "https://evil.invalid"},
+        ),
+    ):
+        pass
     with client.websocket_connect(f"ws://127.0.0.1:8766/api/client-runs/run-codex/terminal?csrf={csrf}&generation=generation-one",
                                   headers={"Origin": ORIGIN}) as ws:
         assert ws.receive_json() == {"type": "control", "controller": True}

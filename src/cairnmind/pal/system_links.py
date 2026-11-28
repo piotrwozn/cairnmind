@@ -17,18 +17,18 @@ Linux has no such links: its table is empty and every rule answers as before.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
-from functools import cache
 import os
-from pathlib import Path
 import stat
 import sys
+from collections.abc import Callable, Iterable
+from functools import cache
+from pathlib import Path
 
 Links = tuple[tuple[Path, Path], ...]
 
 # The links each platform ships, as (link, target). Nothing else is ever accepted.
 SYSTEM_LINKS: dict[str, tuple[tuple[str, str], ...]] = {
-    "darwin": (("/tmp", "/private/tmp"), ("/var", "/private/var"), ("/etc", "/private/etc")),
+    "darwin": (("/tmp", "/private/tmp"), ("/var", "/private/var"), ("/etc", "/private/etc")),  # noqa: S108 - macOS OS-shipped symlink table
 }
 
 

@@ -14,15 +14,26 @@ import time
 from pathlib import Path
 
 import pytest
+from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401 - workspace is a fixture
 
 from cairnmind.agents.agent import NAMES_TIMEOUT, KnowledgeAgent
-from cairnmind.agents.repository_evaluation import load_questions
 from cairnmind.agents.ollama import OllamaUnavailable
+from cairnmind.agents.repository_evaluation import load_questions
+from cairnmind.agents.subject import (
+    NAMES_GAP,
+    SUBJECT_GAP,
+    _matcher,
+    found_names,
+    inflecting,
+    mentions,
+    missing_subject,
+    name_in,
+    names_directory,
+    subject_terms,
+    unnamed_answer_names,
+    unnamed_subject,
+)
 from cairnmind.agents.support import NAMES_SYSTEM
-from cairnmind.agents.subject import (NAMES_GAP, SUBJECT_GAP, _matcher, found_names, inflecting, mentions, missing_subject,
-                               name_in, names_directory, subject_terms, unnamed_answer_names, unnamed_subject)
-
-from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401 - workspace is a fixture
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 

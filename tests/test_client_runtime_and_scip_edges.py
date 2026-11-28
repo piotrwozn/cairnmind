@@ -7,9 +7,9 @@ from types import SimpleNamespace
 import pytest
 
 from cairnmind.agents import client_runtime as cr
-from cairnmind.scip import scip_manager as sm
 from cairnmind.config import Settings
 from cairnmind.pal.private_files import ensure_private_dir
+from cairnmind.scip import scip_manager as sm
 from cairnmind.scip.scip_registry import INDEXERS
 
 

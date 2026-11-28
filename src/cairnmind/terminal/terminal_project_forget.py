@@ -10,9 +10,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.terminal.terminal_notices import about
 from cairnmind.terminal.terminal_person_act import agreed, refused
-from cairnmind.pal.terminal_safe import safe_text
 
 TITLE = "Delete project memory"
 NONE = "No project keeps memory in this store."

@@ -6,22 +6,23 @@ travels: not its output, not its error output.
 """
 from __future__ import annotations
 
-from copy import deepcopy
 import json
 import logging
+from copy import deepcopy
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
-
-from cairnmind.terminal.cockpit_state import CockpitState
-from cairnmind.mcp.mcp_host import McpHost
-from cairnmind.terminal.terminal_panels import SidebarApp
+from fastapi.testclient import TestClient
 from test_api_runtime import local_profile, mcp_server, runtime  # noqa: F401  (runtime is a fixture)
-from test_mcp_agent import server as fixture_server, worker
+from test_mcp_agent import server as fixture_server
+from test_mcp_agent import worker
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, setup_ui
 from test_workspace_stage_scope import notice_of, wait_until
+
+from cairnmind.mcp.mcp_host import McpHost
+from cairnmind.terminal.cockpit_state import CockpitState
+from cairnmind.terminal.terminal_panels import SidebarApp
 
 SECRET = "SERVER_SAID_PRIVATE_TEXT"
 REASON_EN = "its program did not start or stopped during its start"
@@ -356,7 +357,7 @@ def test_every_code_the_host_reports_has_a_reason_in_both_languages():
     produced = set(mcp_host._START_CODES.values()) | {"start_failed", "start_timeout", "protocol_unsupported",
                                                       "catalogue_invalid", "definition_refused",
                                                       "program_unavailable"}
-    assert produced == START_FAILURE_CODES and START_FAILURE_CODES <= set(REASONS)
+    assert produced == START_FAILURE_CODES and set(REASONS) >= START_FAILURE_CODES
     for code in REASONS:
         for translate in (tr, agent_tr):
             assert translate(REASONS[code], "pl") != REASONS[code]

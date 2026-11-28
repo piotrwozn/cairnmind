@@ -6,8 +6,8 @@ import json
 import os
 from pathlib import Path
 
-from cairnmind.scip.parsing import analyze_code
 from cairnmind.pal.private_files import open_no_follow
+from cairnmind.scip.parsing import analyze_code
 from cairnmind.storage.sql import json_text
 from cairnmind.storage.storage_query import db_find, eq
 
@@ -186,11 +186,13 @@ def annotate(store, project_id, root, changed, records, rows):
     for row in rows:
         row["fingerprint"] = prints[row["id"]]
         source, document = saved.get(_uri(row["id"], row["fingerprint"]), (None, None))
-        matches = (document is not None and document.get("record_id") == row["id"]
-                   and document.get("fingerprint") == row["fingerprint"])
-        row["verdict"] = None if not matches else {
-            "verdict": document["verdict"], "at": document.get("at"), "note": document.get("note") or "",
-            "source_id": source["id"]}
+        if (source is not None and document is not None and document.get("record_id") == row["id"]
+                and document.get("fingerprint") == row["fingerprint"]):
+            row["verdict"] = {
+                "verdict": document["verdict"], "at": document.get("at"), "note": document.get("note") or "",
+                "source_id": source["id"]}
+        else:
+            row["verdict"] = None
 
 
 def verdict_line(row, line):

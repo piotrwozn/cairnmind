@@ -13,11 +13,11 @@ Every direct binary download is pinned to an exact version and SHA-256 digest.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import platform
 import sys
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pathspec
@@ -267,10 +267,7 @@ def host_platform() -> tuple[str, str]:
     else:
         os_name = "linux"
     machine = platform.machine().lower()
-    if machine in {"arm64", "aarch64"}:
-        arch = "arm64"
-    else:
-        arch = "x64"
+    arch = "arm64" if machine in {"arm64", "aarch64"} else "x64"
     return os_name, arch
 
 

@@ -9,17 +9,17 @@ itself only reads files.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
 import math
 import os
-from pathlib import Path
 import re
 import stat
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
-from cairnmind.agents.agent_journal import MAX_EVENT_BYTES, _ID
-from cairnmind.memory.brief import _line
+from cairnmind.agents.agent_journal import _ID, MAX_EVENT_BYTES
 from cairnmind.cli_cmds.codex_usage import codex_units
+from cairnmind.memory.brief import _line
 
 MAX_ROWS = 60
 MAX_DAYS = 366
@@ -54,7 +54,7 @@ def _period(at: datetime, by: str) -> str:
 def _time(value):
     try:
         parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
-        return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+        return parsed.astimezone(UTC) if parsed.tzinfo else None
     except (ValueError, OverflowError):
         return None
 
@@ -169,7 +169,7 @@ def _fold(acc: dict, summary) -> None:
     complete, incoming, outgoing, cost = summary
     acc["turns"] += 1
     acc["complete_turns"] += complete
-    for key, value in zip(_KEYS, (incoming, outgoing)):
+    for key, value in zip(_KEYS, (incoming, outgoing), strict=True):
         if value is not None:
             acc[key] = (acc[key] or 0) + value
     if cost is None:
@@ -268,10 +268,10 @@ def build_usage(data_dir, project: dict, since="7d", *, by="day", codex_records=
     if warn_over is not None and (type(warn_over) is not int or warn_over < 1):
         raise ValueError("warn_over must be a whole number of tokens, at least 1")
     span, data_dir = parse_since(since), Path(data_dir)
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
-    now = now.astimezone(timezone.utc)
+    now = now.astimezone(UTC)
     start = now - span
     runs, registry = _registry(data_dir)
     by_run = {row["id"]: row for row in runs if row.get("id")}
@@ -295,7 +295,7 @@ def build_usage(data_dir, project: dict, since="7d", *, by="day", codex_records=
         # counted as skipped or as another client's: an old stray folder must not make every report partial.
         path = Path(folder.path) / "events.jsonl"
         try:
-            if datetime.fromtimestamp(path.stat().st_mtime, timezone.utc) < start:
+            if datetime.fromtimestamp(path.stat().st_mtime, UTC) < start:
                 continue
         except (OSError, OverflowError, ValueError):
             continue

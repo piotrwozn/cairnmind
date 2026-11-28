@@ -8,14 +8,21 @@ import shutil
 import signal
 import time
 
-from fastapi.testclient import TestClient
 import pytest
+from conftest import time_budget
+from fastapi.testclient import TestClient
 from textual.widgets import DataTable
 
-from conftest import time_budget
-
-from cairnmind.terminal.terminal_preview import (FixtureData, PreviewBroker, PreviewServer, PreviewTerminal, PreviewWorkspace,
-                                      capture_workspace, create_preview_app, preview_settings)
+from cairnmind.terminal.terminal_preview import (
+    FixtureData,
+    PreviewBroker,
+    PreviewServer,
+    PreviewTerminal,
+    PreviewWorkspace,
+    capture_workspace,
+    create_preview_app,
+    preview_settings,
+)
 
 
 @pytest.fixture
@@ -84,9 +91,11 @@ def test_auth_and_native_websocket_fail_closed(preview):
         assert client.post("/auth/exchange", json={"ticket": ticket}).status_code == 401
         assert client.get("/api/state").status_code == 200
         from starlette.websockets import WebSocketDisconnect
-        with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect("/api/client-runs/example/terminal"):
-                pass
+        with (
+            pytest.raises(WebSocketDisconnect),
+            client.websocket_connect("/api/client-runs/example/terminal"),
+        ):
+            pass
 
 
 @pytest.mark.parametrize("scenario", ["normal", "empty", "unicode-many"])

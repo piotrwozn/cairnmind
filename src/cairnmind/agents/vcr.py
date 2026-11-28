@@ -9,14 +9,14 @@ Under `--replay`, any request missing from the cassette raises `CassetteMissErro
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
-from copy import deepcopy
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import tempfile
+from contextlib import contextmanager
+from copy import deepcopy
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -41,7 +41,7 @@ class DeterministicIdGenerator:
 
     def next_uuid(self) -> str:
         self._counter += 1
-        digest = hashlib.sha256(f"{self._seed}:uuid:{self._counter}".encode("utf-8")).digest()
+        digest = hashlib.sha256(f"{self._seed}:uuid:{self._counter}".encode()).digest()
         raw = bytearray(digest[:16])
         raw[6] = (raw[6] & 0x0F) | 0x40
         raw[8] = (raw[8] & 0x3F) | 0x80
@@ -49,7 +49,7 @@ class DeterministicIdGenerator:
 
     def next_hex(self, length: int = 12) -> str:
         self._counter += 1
-        digest = hashlib.sha256(f"{self._seed}:hex:{self._counter}".encode("utf-8")).hexdigest()
+        digest = hashlib.sha256(f"{self._seed}:hex:{self._counter}".encode()).hexdigest()
         return digest[:length]
 
 
@@ -70,10 +70,10 @@ def deterministic_uuid4(seed: str = "cairnmind-vcr-seed-v1"):
         "cairnmind.agents.evaluation", "cairnmind.agents.memory_evaluation", "cairnmind.store",
         "cairnmind.memory.plans", "cairnmind.memory.confirmation", "cairnmind.memory.memory",
     ):
-        mod = sys.modules.get(mod_name)
+        mod: Any = sys.modules.get(mod_name)
         if mod is not None and hasattr(mod, "uuid4"):
-            patched.append((mod, "uuid4", getattr(mod, "uuid4")))
-            setattr(mod, "uuid4", fake_uuid4)
+            patched.append((mod, "uuid4", mod.uuid4))
+            mod.uuid4 = fake_uuid4
     try:
         yield gen
     finally:
@@ -213,6 +213,11 @@ class VcrOllama:
         if self.inner is not None and hasattr(self.inner, "aclose"):
             await self.inner.aclose()
 
+    def _require_inner(self) -> Any:
+        if self.inner is None:
+            raise ValueError("VCR record mode requires a live inner model client.")
+        return self.inner
+
     async def models(self) -> dict[str, Any]:
         if self.mode == "replay":
             if self.models_payload is not None:
@@ -223,7 +228,7 @@ class VcrOllama:
                     for name, digest in sorted(self.model_digests.items())
                 ]
             }
-        data = await self.inner.models()
+        data = await self._require_inner().models()
         self.models_payload = deepcopy(data)
         return data
 
@@ -234,12 +239,11 @@ class VcrOllama:
             digest = self.model_digests.get(name)
             if digest:
                 return f"{name}@{digest}"
-            if self.model_identities:
-                # Match by role fallback when test switches chat_model setting name
-                if len(self.model_identities) == 1:
-                    return next(iter(self.model_identities.values()))
+            # Match by role fallback when test switches chat_model setting name
+            if self.model_identities and len(self.model_identities) == 1:
+                return next(iter(self.model_identities.values()))
             raise CassetteMissError(f"VCR cassette {self.cassette_path.name} has no model_identity for {name!r}.")
-        identity = await self.inner.model_identity(name)
+        identity = await self._require_inner().model_identity(name)
         self.model_identities[name] = identity
         if "@" in identity:
             self.model_digests.setdefault(name, identity.split("@", 1)[1])
@@ -253,7 +257,8 @@ class VcrOllama:
             if isinstance(ident, str) and "@" in ident:
                 return ident.split("@", 1)[1]
             return None
-        digest = await self.inner.model_digest(name) if hasattr(self.inner, "model_digest") else None
+        inner = self._require_inner()
+        digest = await inner.model_digest(name) if hasattr(inner, "model_digest") else None
         self.model_digests[name] = digest
         return digest
 
@@ -276,7 +281,7 @@ class VcrOllama:
                 )
             self.replay_hits += 1
             return deepcopy(entry["response"])
-        response = await self.inner.chat(messages, tools=tools, **kwargs)
+        response = await self._require_inner().chat(messages, tools=tools, **kwargs)
         self.entries[slot] = {"op": "chat", "key": slot, "response": deepcopy(response)}
         self.recorded_count += 1
         return response
@@ -296,7 +301,7 @@ class VcrOllama:
                 )
             self.replay_hits += 1
             return deepcopy(entry["response"])
-        vectors = await self.inner.embed(texts)
+        vectors = await self._require_inner().embed(texts)
         self.entries[slot] = {"op": "embed", "key": slot, "response": deepcopy(vectors)}
         self.recorded_count += 1
         return vectors

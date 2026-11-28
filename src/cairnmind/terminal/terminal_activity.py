@@ -13,11 +13,13 @@ colour and goes through `terminal_safe`; a state is told by a word.
 from __future__ import annotations
 
 import asyncio
+import logging
 import textwrap
 import time
 from contextlib import suppress
 from datetime import datetime
 from pathlib import PurePath
+from typing import Any
 
 from rich.cells import cell_len
 from textual import on, work
@@ -27,8 +29,20 @@ from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
 from cairnmind.terminal import terminal_notice_feed, terminal_theme
-from cairnmind.terminal.terminal_activity_data import (KIND_WORDS, STAGES, finished_plans, first_line, fit, group_tasks, items_of,
-                                     live_tasks, notice_parts, plan_progress, running_rows, task_summary)
+from cairnmind.terminal.terminal_activity_data import (
+    KIND_WORDS,
+    STAGES,
+    finished_plans,
+    first_line,
+    fit,
+    group_tasks,
+    items_of,
+    live_tasks,
+    notice_parts,
+    plan_progress,
+    running_rows,
+    task_summary,
+)
 from cairnmind.terminal.terminal_client import BrokerUnreachable
 from cairnmind.terminal.terminal_theme import assemble, state_style, styled
 from cairnmind.terminal.terminal_ui import BasePanel
@@ -39,7 +53,8 @@ COLUMNS = 110                # from this width (the popup) Notices get a column 
 NARROW = 40                  # below this width a notice takes two rows: time and kind, then the text
 THROTTLE, DEBOUNCE, FALLBACK, TIMEOUT = 2.0, .5, 15.0, 5
 ROUTES = ("/api/inspector/tasks", "/api/inspector/plans", "/api/stage")
-PARTS = dict(zip(("tasks", "plans", "stage"), ROUTES))
+PARTS = dict(zip(("tasks", "plans", "stage"), ROUTES, strict=True))
+log = logging.getLogger(__name__)
 # What a journal event can change; a reset or an event of no project may have changed anything.
 EVENT_PARTS = {"record": {"tasks", "stage"}, "check": {"tasks", "stage"}, "plan": {"plans", "stage"},
                "scope": {"stage"}}
@@ -207,12 +222,14 @@ class ActivityApp(BasePanel):
             from cairnmind.terminal.terminal_i18n_messages import setup_mark_text
             self.down_reason = (setup_mark_text(getattr(got.get("tasks"), "detail", None), self.t)
                                 if down else None)
-            if isinstance(got.get("tasks"), dict):
-                self.tasks = items_of(got["tasks"])
-                total = got["tasks"].get("total")
+            tasks_res = got.get("tasks")
+            if isinstance(tasks_res, dict):
+                self.tasks = items_of(tasks_res)
+                total = tasks_res.get("total")
                 self.tasks_total = total if type(total) is int and total >= len(self.tasks) else len(self.tasks)
-            if isinstance(got.get("plans"), dict):
-                self.plans = items_of(got["plans"])
+            plans_res = got.get("plans")
+            if isinstance(plans_res, dict):
+                self.plans = items_of(plans_res)
             if "stage" in got and not down:
                 # 404 / 409 (no registered worktree, no active plan) is "No active plan.", not a failure.
                 self.stage = got["stage"] if isinstance(got["stage"], dict) else None
@@ -231,7 +248,8 @@ class ActivityApp(BasePanel):
                 if event.get("event") == "unavailable":  # the stream reconnects by itself
                     self._stream_down = True
                     continue
-                data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                raw_data = event.get("data")
+                data = raw_data if isinstance(raw_data, dict) else {}
                 project = (self._scope or (None,))[0]
                 if self._stream_down:  # back after an outage: what was missed is fetched again
                     self._stream_down = False
@@ -240,7 +258,8 @@ class ActivityApp(BasePanel):
                     self._journal(tuple(PARTS))
                 elif project and data.get("project_id") == project and data.get("entity_type") in EVENT_PARTS:
                     self._journal(EVENT_PARTS[data["entity_type"]])
-        except Exception:  # the stream is gone: the 15 s poll goes on; try the stream again later
+        except Exception as exc:  # the stream is gone: the 15 s poll goes on; try the stream again later
+            log.debug("Activity journal stream interrupted: %s", type(exc).__name__)
             self.set_timer(FALLBACK, self.watch_journal)
 
     def _journal(self, parts):
@@ -280,7 +299,7 @@ class ActivityApp(BasePanel):
                 *self._task_rows(width, small, extra)]
 
     def _running_rows(self, width, small):
-        rows = [self._title("Running now")]
+        rows: list[tuple[Any, Any]] = [self._title("Running now")]
         sessions = running_rows(self.workspace_data.get("slots"))
         if not any(live for _, _, live in sessions):
             rows.append(self._sentence("No assistant is running.", width))
@@ -298,14 +317,15 @@ class ActivityApp(BasePanel):
                 running = " · " + self.t("{client} running", client=first_line(slot.get("client") or ""))
                 line += running if cell_len(line + running) <= width else ""  # the session row says it already
             rows.append((styled(fit(line, width), "label"), ROW))
-            task = stage.get("task") if isinstance(stage.get("task"), dict) else {}
+            raw_task = stage.get("task")
+            task = raw_task if isinstance(raw_task, dict) else {}
             if first_line(task.get("content")) and not small:
                 rows.append((styled(fit("  " + first_line(task.get("content")), width), "stored"),
                              ("record", task.get("id"))))
         return rows
 
     def _plan_rows(self, width, small):
-        rows = [self._title("Plan")]
+        rows: list[tuple[Any, Any]] = [self._title("Plan")]
         if self.status in {"loading", "unavailable"}:  # said once here; Tasks shows a dash
             if self.down_reason:
                 lines = textwrap.wrap(self.down_reason, max(8, width - 2), break_on_hyphens=False) or [""]
@@ -332,7 +352,7 @@ class ActivityApp(BasePanel):
         return rows
 
     def _task_rows(self, width, small, extra):
-        rows = [self._title("Tasks")]
+        rows: list[tuple[Any, Any]] = [self._title("Tasks")]
         if self.status in {"loading", "unavailable"}:
             return rows + [(styled("  –", "muted"), None)]
         if not live_tasks(self.tasks):
@@ -460,7 +480,7 @@ class ActivityApp(BasePanel):
             widget = self.query_one("#" + identifier, ActivityList)
             payloads = self._payloads.get(identifier, {})
             titles = sorted(index for index, payload in payloads.items() if payload == TITLE)
-            for start, end in zip(titles, [*titles[1:], widget.option_count]):
+            for start, end in zip(titles, [*titles[1:], widget.option_count], strict=False):
                 target = next((index for index in range(start + 1, end) if len(payloads.get(index) or ()) == 2), None)
                 if target is not None:
                     stops.append(((order, target), widget))
@@ -499,9 +519,14 @@ class ActivityPopup(ActivityApp):
     BINDINGS = [("r", "refresh", "Refresh"), ("escape", "close", "Close"), ("q", "close", "Close"),
                 ("a", "close", "Close")]
 
-    def action_close(self):
+    def action_close(self) -> None:
         self.exit()
-    action_quit = action_help_quit = action_close  # a popup: Ctrl+Q and Ctrl+C close it like Esc
+
+    async def action_quit(self) -> None:
+        self.action_close()
+
+    def action_help_quit(self) -> None:
+        self.action_close()
 
 
 def activity_app(settings, workspace_id="default", *, popup=False, **kwargs):

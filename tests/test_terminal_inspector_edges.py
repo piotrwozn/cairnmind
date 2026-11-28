@@ -5,12 +5,12 @@ import asyncio
 from copy import deepcopy
 
 import pytest
+from test_terminal_panels import FakeBroker, FakeWorkspace, settle
 from textual.widgets import Button, DataTable, Input, Select, Static
 
 from cairnmind.config import Settings
 from cairnmind.terminal.terminal_client import BrokerError
 from cairnmind.terminal.terminal_inspector import InspectorApp
-from test_terminal_panels import FakeBroker, FakeWorkspace, settle
 
 
 class InspectorBroker(FakeBroker):

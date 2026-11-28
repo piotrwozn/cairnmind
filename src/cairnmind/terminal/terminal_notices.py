@@ -90,7 +90,9 @@ class NoticeHistory:
         The head of an entry (time, project, folder, count) is one line; a stored text can never start a
         line of its own, because every continuation line of a notice is indented.
         """
-        from cairnmind.memory.brief import _line  # the one-line helper of the other panels; imported when the list is opened
+        from cairnmind.memory.brief import (
+            _line,  # the one-line helper of the other panels; imported when the list is opened
+        )
         scope = scope if isinstance(scope, dict) else {}
         now = _now()
         out = []

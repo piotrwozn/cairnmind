@@ -6,13 +6,14 @@ workspace's inspection selection; it never starts a coding client or ACKs it.
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
-from dataclasses import dataclass, replace
 import hashlib
 import math
 import os
 import subprocess
 import time
+from contextlib import suppress
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 from rich.segment import Segment
@@ -29,13 +30,13 @@ from textual.widget import Widget
 from textual.widgets import Button, Footer, OptionList, Static
 from textual.widgets.option_list import Option
 
-from cairnmind.terminal import terminal_theme
-from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT
-from cairnmind.pal.terminal_safe import plain, safe_text
 from cairnmind.config import Settings
+from cairnmind.pal.terminal_safe import plain, safe_text
+from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT
+from cairnmind.terminal import terminal_theme
+from cairnmind.terminal.runtime_selection import resolve_tmux
 from cairnmind.terminal.terminal_i18n import localize_bindings
 from cairnmind.terminal.terminal_i18n_messages import display_word
-from cairnmind.terminal.runtime_selection import resolve_tmux
 from cairnmind.terminal.terminal_ui import BasePanel
 from cairnmind.ui.graph_raster import render_scene
 
@@ -200,7 +201,7 @@ class GraphModel:
         self.truncated = False
         self.motion = motion
         self.paused = not motion
-        self.topology = None
+        self.topology: Any = None
         self.orbit_time = 0.0
 
     def set_scope(self, scope):
@@ -315,6 +316,9 @@ def tmux_visible(settings=None):
 
 
 class TerminalGraph(Widget, can_focus=True):
+    if TYPE_CHECKING:
+        @property
+        def app(self) -> GraphApp: ...
     DEFAULT_CSS = terminal_theme.css("TerminalGraph { height: 1fr; min-height: 3; background: $cm-bg; }")
     BINDINGS = [Binding("left", "left", show=False), Binding("right", "right", show=False),
                 Binding("up", "up", show=False), Binding("down", "down", show=False),

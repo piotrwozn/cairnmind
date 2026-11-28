@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import pytest
+from consent_steps import consent_drawn, form_ready
+from test_terminal_panels import FakeBroker, settle, setup
 from textual.widgets import Button, Select, Static, TextArea
 
 from cairnmind.terminal.terminal_client import BrokerError
 from cairnmind.terminal.terminal_i18n import tr
 from cairnmind.terminal.terminal_inspector import InspectorApp
-from consent_steps import consent_drawn, form_ready
-from test_terminal_panels import FakeBroker, setup, settle
 
 
 class PlanBroker(FakeBroker):

@@ -14,8 +14,8 @@ import os
 import socket
 from pathlib import Path
 
-from cairnmind.storage.storage_query import db_find, db_update_where, is_in, is_null
 from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.storage.storage_query import db_find, db_update_where, is_in, is_null
 
 STATES = ("available", "missing", "unreadable", "elsewhere")
 
@@ -82,12 +82,12 @@ def folder_states(store, project: dict, rows: list[dict] | None = None) -> list[
     from cairnmind.storage.store_writer import label
     if rows is None:
         rows = db_find(store, "project_roots", {"project_id": project["id"]}, columns=("id", "path", "machine", "host"))
-    rows = {str(Path(row["path"]).resolve()): row for row in rows}
+    rows_by_path = {str(Path(row["path"]).resolve()): row for row in rows}
     # The order and resolution of ingest._roots, written out here so that module can import this one.
-    roots = list(dict.fromkeys([Path(project["root"]).resolve(), *[Path(path) for path in rows]]))
+    roots = list(dict.fromkeys([Path(project["root"]).resolve(), *[Path(path) for path in rows_by_path]]))
     here, found = this_machine(), []
     for root in roots:
-        row = rows.get(str(root)) or {}
+        row = rows_by_path.get(str(root)) or {}
         state, error = "available", None
         if here and row.get("machine") and row["machine"] != here:
             state = "elsewhere"  # decided before the disk is touched

@@ -7,10 +7,11 @@ from __future__ import annotations
 import subprocess
 
 import pytest
+from conftest import as_person, person_edit
+from test_published_memory import commit, folder_of, published_bytes, repository, reviewed, teammate
 
 from cairnmind.memory.confirmation import confirmation_of, confirmation_text
 from cairnmind.memory.evidence import evidence_states
-from cairnmind.terminal.inspector import Inspector
 from cairnmind.memory.memory import MemoryManager
 from cairnmind.memory.memory_acts import covered_by_local_act
 from cairnmind.memory.memory_published import Publisher
@@ -18,11 +19,9 @@ from cairnmind.memory.memory_published_import import PublishedImporter
 from cairnmind.memory.memory_view import show_snapshot
 from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
+from cairnmind.terminal.inspector import Inspector
 from cairnmind.terminal.terminal_detail import joined, record_parts
 from cairnmind.terminal.terminal_i18n import tr
-
-from conftest import as_person, person_edit
-from test_published_memory import commit, folder_of, published_bytes, repository, reviewed, teammate
 
 
 def git(root, *args):

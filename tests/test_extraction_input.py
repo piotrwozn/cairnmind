@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 
 from cairnmind.agents.agent import KnowledgeAgent
-from cairnmind.config import Settings
 from cairnmind.agents.extraction_evaluation import load_transcripts, transcript_sources
 from cairnmind.agents.extraction_input import ASSISTANT_RULE, CONVERSATION_RULE, SYSTEM, extraction_request
+from cairnmind.config import Settings
 from cairnmind.memory.integrations import DATA_NOT_INSTRUCTIONS, launch_prompt
 
 SET = Path(__file__).resolve().parents[1] / "docs" / "evaluation" / "extraction-transcripts.json"

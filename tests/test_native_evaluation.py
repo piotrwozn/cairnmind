@@ -4,19 +4,18 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import tomllib
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from cairnmind.config import Settings
 from cairnmind.agents import evaluation
-
+from cairnmind.config import Settings
 
 FIXTURE_TOOLS = {"memory", "read_source", "resume_context", "ack_resume"}
 

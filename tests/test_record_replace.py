@@ -7,23 +7,22 @@ from __future__ import annotations
 import json
 
 import pytest
+from conftest import confirmed_before_rule
+from test_confirmed_by_person import fixture  # noqa: F401 (the fixture)
+from test_published_conflict_decision import EXTERNAL, head
+from test_published_memory import ada, commit, folder_of, reviewed, teammate  # noqa: F401 (ada is a fixture)
 
 from cairnmind.memory import conflicts, record_replace
-from cairnmind.terminal import person_proof
 from cairnmind.memory.confirmation import ConfirmationRefused, confirmation_of
-from cairnmind.terminal.inspector import Inspector
+from cairnmind.memory.memory import MemoryManager
 from cairnmind.memory.memory_published import Publisher
 from cairnmind.memory.memory_published_check import check_directory
 from cairnmind.memory.memory_published_format import identity_hash, reviewed_by
 from cairnmind.memory.memory_published_import import PublishedImporter
 from cairnmind.memory.memory_published_parse import parse_file
-from cairnmind.memory.memory import MemoryManager
 from cairnmind.store import Store
-
-from conftest import confirmed_before_rule
-from test_confirmed_by_person import fixture  # noqa: F401 (the fixture)
-from test_published_conflict_decision import EXTERNAL, head
-from test_published_memory import ada, commit, folder_of, reviewed, teammate  # noqa: F401 (ada is a fixture)
+from cairnmind.terminal import person_proof
+from cairnmind.terminal.inspector import Inspector
 
 NEW = "Use WAL mode with a short checkpoint."
 

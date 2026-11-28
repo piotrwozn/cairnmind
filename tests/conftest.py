@@ -21,11 +21,9 @@ CAIRNMIND_TEST_SCHEMA_TEMPLATE=0 builds every database from nothing instead.
 from __future__ import annotations
 
 import contextlib
-from dataclasses import replace
 import json
 import os
 import re
-from pathlib import Path
 import shutil
 import socket
 import subprocess
@@ -34,21 +32,23 @@ import tempfile
 import threading
 import time
 import types
-from urllib.parse import quote, urlparse
 import uuid
 import zlib
+from dataclasses import replace
+from pathlib import Path
+from urllib.parse import quote, urlparse
 
 if sys.platform != "win32":
     import fcntl
     import termios
 
 import pytest
+import stall_watch
 
+from cairnmind.config import SESSION_NAMES, Settings, env_names, env_value
 from cairnmind.pal import file_locks, private_files, process_control, process_identity
 from cairnmind.storage.arcade import ArcadeClient, ArcadeError
-from cairnmind.config import SESSION_NAMES, Settings, env_names, env_value
 from cairnmind.storage.engine import install_engine, start_engine, stop_engine
-import stall_watch
 
 # Keep existing test suites completely offline/deterministic unless a SCIP test opts in.
 os.environ.setdefault("CAIRNMIND_SCIP_MODE", "off")
@@ -801,10 +801,8 @@ def no_mcp_server_outlives_its_test(request):
             process_control.terminate_pid(pid, force=True)
         else:
             for kill in (lambda: os.killpg(pid, signal.SIGKILL), lambda: os.kill(pid, signal.SIGKILL)):
-                try:
+                with contextlib.suppress(OSError):
                     kill()
-                except OSError:
-                    pass
     if left:
         pytest.fail(f"A fixture MCP server outlived its test and was killed: {left}")
 
@@ -815,7 +813,7 @@ def start_test_engine(settings):
     When it fails twice the whole run stops with the cause named once: a fixture that raises is raised
     again for every test that uses it, which would be a thousand identical setup errors.
     """
-    for attempt in range(2):
+    for _attempt in range(2):
         try:
             start_engine(settings)
             return

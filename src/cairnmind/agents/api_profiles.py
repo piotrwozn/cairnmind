@@ -5,12 +5,11 @@ normalizing a profile does not initialize a service or make a network request.
 """
 from __future__ import annotations
 
-from copy import deepcopy
 import ipaddress
 import math
 import re
+from copy import deepcopy
 from urllib.parse import urlsplit, urlunsplit
-
 
 PROFILE_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,199}$")

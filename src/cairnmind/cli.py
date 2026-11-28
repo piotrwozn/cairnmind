@@ -7,6 +7,7 @@ import shutil as shutil
 import subprocess as subprocess
 import sys
 import types
+from typing import Any
 
 import httpx as httpx
 import typer
@@ -15,73 +16,203 @@ from typer.core import TyperArgument, TyperGroup
 from cairnmind.agents.ollama import OllamaUnavailable
 from cairnmind.cli_cmds import (
     cli_importers as _cli_importers,
+)
+from cairnmind.cli_cmds import (
     cli_published as _cli_published,
+)
+from cairnmind.cli_cmds import (
     cli_record_kinds as _cli_record_kinds,
+)
+from cairnmind.cli_cmds import (
     diagnostics as _diagnostics,
+)
+from cairnmind.cli_cmds import (
     engine_cmds as _engine_cmds,
+)
+from cairnmind.cli_cmds import (
     eval_cmds as _eval_cmds,
+)
+from cairnmind.cli_cmds import (
     io as _io,
+)
+from cairnmind.cli_cmds import (
     memory_cmds as _memory_cmds,
+)
+from cairnmind.cli_cmds import (
     models_cmds as _models_cmds,
+)
+from cairnmind.cli_cmds import (
     plans as _plans,
+)
+from cairnmind.cli_cmds import (
     projects as _projects,
+)
+from cairnmind.cli_cmds import (
     scip_cmds as _scip_cmds,
+)
+from cairnmind.cli_cmds import (
     sessions as _sessions,
 )
 from cairnmind.cli_cmds.io import (
-    JSON_FLAG as JSON_FLAG,
-    READ_KINDS as READ_KINDS,
-    SNAPSHOT_WAIT_SECONDS as SNAPSHOT_WAIT_SECONDS,
-    ServiceDidNotStart as ServiceDidNotStart,
-    ServiceOfOtherVersion as ServiceOfOtherVersion,
-    ServiceRefusal as ServiceRefusal,
-    SetupInProgress as SetupInProgress,
-    UpgradeInProgress as UpgradeInProgress,
     _INVOCATION as _INVOCATION,
+)
+from cairnmind.cli_cmds.io import (
     _NOTICES_SHOWN as _NOTICES_SHOWN,
+)
+from cairnmind.cli_cmds.io import (
     _RESOLVE as _RESOLVE,
+)
+from cairnmind.cli_cmds.io import (
+    JSON_FLAG as JSON_FLAG,
+)
+from cairnmind.cli_cmds.io import (
+    READ_KINDS as READ_KINDS,
+)
+from cairnmind.cli_cmds.io import (
+    SNAPSHOT_WAIT_SECONDS as SNAPSHOT_WAIT_SECONDS,
+)
+from cairnmind.cli_cmds.io import (
+    ServiceDidNotStart as ServiceDidNotStart,
+)
+from cairnmind.cli_cmds.io import (
+    ServiceOfOtherVersion as ServiceOfOtherVersion,
+)
+from cairnmind.cli_cmds.io import (
+    ServiceRefusal as ServiceRefusal,
+)
+from cairnmind.cli_cmds.io import (
+    SetupInProgress as SetupInProgress,
+)
+from cairnmind.cli_cmds.io import (
+    UpgradeInProgress as UpgradeInProgress,
+)
+from cairnmind.cli_cmds.io import (
     _bind_failed as _bind_failed,
+)
+from cairnmind.cli_cmds.io import (
     _data_dir_arguments as _data_dir_arguments,
+)
+from cairnmind.cli_cmds.io import (
     _engine_command as _engine_command,
+)
+from cairnmind.cli_cmds.io import (
     _ensure_service_or_refuse as _ensure_service_or_refuse,
+)
+from cairnmind.cli_cmds.io import (
     _format_cli_stderr as _format_cli_stderr,
+)
+from cairnmind.cli_cmds.io import (
     _human_or_json as _human_or_json,
+)
+from cairnmind.cli_cmds.io import (
     _interactive_terminal as _interactive_terminal,
+)
+from cairnmind.cli_cmds.io import (
     _json_file as _json_file,
+)
+from cairnmind.cli_cmds.io import (
     _launch_terminal_workspace as _launch_terminal_workspace,
+)
+from cairnmind.cli_cmds.io import (
     _managed_only as _managed_only,
+)
+from cairnmind.cli_cmds.io import (
     _not_run_without_models as _not_run_without_models,
+)
+from cairnmind.cli_cmds.io import (
     _os_error_text as _os_error_text,
+)
+from cairnmind.cli_cmds.io import (
     _pasteable as _pasteable,
+)
+from cairnmind.cli_cmds.io import (
     _project_handle as _project_handle,
+)
+from cairnmind.cli_cmds.io import (
     _record_evaluation as _record_evaluation,
+)
+from cairnmind.cli_cmds.io import (
     _refuse_during_upgrade as _refuse_during_upgrade,
+)
+from cairnmind.cli_cmds.io import (
     _refuse_other_version as _refuse_other_version,
+)
+from cairnmind.cli_cmds.io import (
     _refuse_unknown_project as _refuse_unknown_project,
+)
+from cairnmind.cli_cmds.io import (
     _retry_jobs as _retry_jobs,
+)
+from cairnmind.cli_cmds.io import (
     _service_stopped as _service_stopped,
+)
+from cairnmind.cli_cmds.io import (
     _service_unavailable as _service_unavailable,
+)
+from cairnmind.cli_cmds.io import (
     _shortened as _shortened,
+)
+from cairnmind.cli_cmds.io import (
     _stderr_is_terminal as _stderr_is_terminal,
+)
+from cairnmind.cli_cmds.io import (
     _stdout_is_terminal as _stdout_is_terminal,
+)
+from cairnmind.cli_cmds.io import (
     _stop_started as _stop_started,
+)
+from cairnmind.cli_cmds.io import (
     _wait_for_start as _wait_for_start,
+)
+from cairnmind.cli_cmds.io import (
     actor_scope as actor_scope,
+)
+from cairnmind.cli_cmds.io import (
     actor_write as actor_write,
+)
+from cairnmind.cli_cmds.io import (
     caller_path as caller_path,
+)
+from cairnmind.cli_cmds.io import (
     ensure_no_upgrade as ensure_no_upgrade,
+)
+from cairnmind.cli_cmds.io import (
     ensure_service as ensure_service,
+)
+from cairnmind.cli_cmds.io import (
     initialized as initialized,
+)
+from cairnmind.cli_cmds.io import (
     last_log_line as last_log_line,
+)
+from cairnmind.cli_cmds.io import (
     output as output,
+)
+from cairnmind.cli_cmds.io import (
     refuse as refuse,
+)
+from cairnmind.cli_cmds.io import (
     registered_projects as registered_projects,
+)
+from cairnmind.cli_cmds.io import (
     request as request,
+)
+from cairnmind.cli_cmds.io import (
     say_service_started as say_service_started,
+)
+from cairnmind.cli_cmds.io import (
     service_alive as service_alive,
+)
+from cairnmind.cli_cmds.io import (
     session_value as session_value,
+)
+from cairnmind.cli_cmds.io import (
     store_for as store_for,
+)
+from cairnmind.cli_cmds.io import (
     store_for_read as store_for_read,
+)
+from cairnmind.cli_cmds.io import (
     time as time,
 )
 from cairnmind.storage.arcade import ArcadeError
@@ -98,12 +229,13 @@ class _ProjectFirstGroup(TyperGroup):
             # By name: newer Typer carries its own copy of Click, so click.MissingParameter would not match.
             if type(exc).__name__ != "MissingParameter":
                 raise
-            arguments = [p for p in exc.ctx.command.params if isinstance(p, TyperArgument)] if exc.ctx else []
-            if (len(arguments) > 1 and arguments[0].metavar == "PROJECT" and isinstance(exc.param, TyperArgument)
-                    and exc.param is not arguments[0]):
+            missing_exc: Any = exc
+            arguments = [p for p in missing_exc.ctx.command.params if isinstance(p, TyperArgument)] if missing_exc.ctx else []
+            if (len(arguments) > 1 and arguments[0].metavar == "PROJECT" and isinstance(missing_exc.param, TyperArgument)
+                    and missing_exc.param is not arguments[0]):
                 from cairnmind.cli_cmds.first_start import PROJECT_FIRST
-                exc.message = PROJECT_FIRST.format(
-                    missing=" ".join(a.metavar or a.name for a in arguments[1:]))
+                missing_exc.message = PROJECT_FIRST.format(
+                    missing=" ".join(a.metavar or a.name or "" for a in arguments[1:]))
             raise
 
 

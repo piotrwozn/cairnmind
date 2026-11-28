@@ -24,7 +24,14 @@ from __future__ import annotations
 
 import json
 
-from cairnmind.memory.confirmation import MARK, PERSON_ROUTES, confirmation_of, local_verdict, person_mark, said
+from cairnmind.memory.confirmation import (
+    MARK,
+    PERSON_ROUTES,
+    confirmation_of,
+    local_verdict,
+    person_mark,
+    said,
+)
 from cairnmind.memory.memory_acts import record_evidence, record_identity
 from cairnmind.memory.memory_published_format import audit_covers, row_definition_hash
 from cairnmind.storage.sql import clean_row, insert_document, utc_now
@@ -70,7 +77,10 @@ def _review(tx, record, source):
     kind, text, key, replaced record, quote and every covered metadata field. An audit written by 0.10.0
     hashes only the text, so the revision is what shows that nothing else changed since."""
     audit = _audit(source)
-    route = _AUDIT_ROUTES.get(audit.get("action")) if audit else None
+    if audit is None:
+        return None
+    action = audit.get("action")
+    route = _AUDIT_ROUTES.get(action) if isinstance(action, str) else None
     if route is None:
         return None
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
@@ -183,7 +193,8 @@ def mark_confirmed_before_rule(store, *, force=False) -> dict | None:
                     continue
                 route, source, at = act
                 mark = {**person_mark(route, source, record["version"], at), "marked_at_upgrade": now}
-                metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+                raw_meta = record.get("metadata")
+                metadata = raw_meta if isinstance(raw_meta, dict) else {}
                 metadata = {**metadata, MARK: mark}
                 db_update_where(tx, "records", set_fields={"metadata": metadata}, where={"id": record["id"]})
                 revision = db_find_one(
@@ -194,7 +205,8 @@ def mark_confirmed_before_rule(store, *, force=False) -> dict | None:
                 )
                 snapshot = (revision or {}).get("snapshot")
                 if isinstance(snapshot, dict):
-                    kept = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+                    raw_kept = snapshot.get("metadata")
+                    kept = raw_kept if isinstance(raw_kept, dict) else {}
                     snapshot = {**snapshot, "metadata": {**kept, MARK: mark}}
                     db_update_where(
                         tx,

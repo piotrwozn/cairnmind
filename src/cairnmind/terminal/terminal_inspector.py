@@ -9,19 +9,41 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, DataTable, Footer, Header, Input, Select, Static
 
+from cairnmind.pal.terminal_safe import plain, safe_text
 from cairnmind.terminal import terminal_theme
-from cairnmind.terminal.terminal_detail import (EVIDENCE_LABELS, conflict_parts, conflict_text, joined, record_parts,  # noqa: F401
-                              sensitivity_parts, task_state)
+from cairnmind.terminal.terminal_detail import (  # noqa: F401
+    EVIDENCE_LABELS,
+    conflict_parts,
+    conflict_text,
+    joined,
+    record_parts,
+    sensitivity_parts,
+    task_state,
+)
 from cairnmind.terminal.terminal_i18n import tr_count
 from cairnmind.terminal.terminal_i18n_messages import broker_error_text
 from cairnmind.terminal.terminal_impact import COLUMNS, ImpactView
 from cairnmind.terminal.terminal_notices import about
-from cairnmind.terminal.terminal_person_act import agreed, refused, reloaded, resolve_text, review_text, tell_saved
+from cairnmind.terminal.terminal_person_act import (
+    agreed,
+    refused,
+    reloaded,
+    resolve_text,
+    review_text,
+    tell_saved,
+)
 from cairnmind.terminal.terminal_proposed import ProposedView
 from cairnmind.terminal.terminal_published_import import archive_replaced, archive_text
-from cairnmind.pal.terminal_safe import plain, safe_text
-from cairnmind.terminal.terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal, relabel_select, replaces_here,
-                          summary_text)
+from cairnmind.terminal.terminal_ui import (
+    BasePanel,
+    ChoiceModal,
+    Field,
+    FieldError,
+    FormModal,
+    relabel_select,
+    replaces_here,
+    summary_text,
+)
 
 _VIEWS = [("Records", "records"), ("Sources", "sources"), ("Plans", "plans"),
           ("Tasks", "tasks"), ("Checks", "checks"), ("Queue", "jobs"),
@@ -488,15 +510,21 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
     @work(group="inspector-review", exclusive=True, exit_on_error=False)
     async def review(self, action):
         if action == "confirm" and self.entity_kind == "plans" and self.entity:
-            from cairnmind.terminal.terminal_plan_confirm import confirm_plan  # a person confirms a plan here (#214)
+            from cairnmind.terminal.terminal_plan_confirm import (
+                confirm_plan,  # a person confirms a plan here (#214)
+            )
             await confirm_plan(self)
             return
         if action == "release":
-            from cairnmind.terminal.terminal_release import release_record  # a person releases a record here (#306)
+            from cairnmind.terminal.terminal_release import (
+                release_record,  # a person releases a record here (#306)
+            )
             await release_record(self)
             return
         if action == "replace":
-            from cairnmind.terminal.terminal_replace import replace_record  # a person replaces a record with a new text (#222)
+            from cairnmind.terminal.terminal_replace import (
+                replace_record,  # a person replaces a record with a new text (#222)
+            )
             await replace_record(self)
             return
         if self.entity_kind != "records" or not self.entity:
@@ -753,7 +781,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                     self.query_one("#memory-apply", Button).disabled = False
                     self.show_memory("import", result)
             elif action == "apply":
-                if not self.pending_import:
+                if not self.pending_import or self.import_check is None:
                     raise ValueError(self.t("Check the import with its source and destination folders first."))
                 pending = self.pending_import
                 # The check the person read is the consent dialog's text; only its Import memory sends (#332).
@@ -776,7 +804,9 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                 self.show_memory("applied", result)
                 self.notice(self.t("Memory imported. No client was started automatically."))
             elif action == "published":
-                from cairnmind.terminal.terminal_published_import import import_published  # team memory (#304)
+                from cairnmind.terminal.terminal_published_import import (
+                    import_published,  # team memory (#304)
+                )
                 await import_published(self)
             else:
                 await self.load_memory()

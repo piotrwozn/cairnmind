@@ -1,10 +1,12 @@
 """CLI entry callback, workspace/cockpit/TUI launchers, init, doctor, setup, migrate, serve, stop, ui."""
 from __future__ import annotations
 
+import logging
 import os
-from pathlib import Path
 import sys
-from typing import Annotated
+from contextlib import suppress
+from pathlib import Path
+from typing import Annotated, Any
 
 import typer
 
@@ -12,6 +14,8 @@ from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.io import JSON_FLAG, initialized
 from cairnmind.config import Settings
 from cairnmind.pal.file_locks import lock_exclusive, unlock
+
+_log = logging.getLogger(__name__)
 
 
 def register(apps: dict[str, typer.Typer]) -> None:
@@ -156,7 +160,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         said = choose(ctx.obj)  # the first run chooses whether the knowledge agent has models, and says which (#274)
         if said:
             typer.echo(f"Cairnmind: {said}", err=True)
-        result = {
+        result: dict[str, Any] = {
             "data_dir": str(ctx.obj.data_dir),
             "storage_backend": active_backend,
             "next": "cairnmind doctor, then cairnmind project add NAME FOLDER",
@@ -216,10 +220,11 @@ def register(apps: dict[str, typer.Typer]) -> None:
         result["service_running"] = _io.service_alive(ctx.obj)
         result["data_dir"] = str(ctx.obj.data_dir)
         result["service_url"] = ctx.obj.url  # the address every command here talks to, so a collision is visible
-        from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, env_names, session_conflicts
         from cairnmind.cli_cmds.service_version import refusal as other_version
-        from cairnmind.terminal.setup_mark import note as setup_note, unchecked as setup_unchecked
         from cairnmind.cli_cmds.upgrade_mark import note as upgrade_note
+        from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, env_names, session_conflicts
+        from cairnmind.terminal.setup_mark import note as setup_note
+        from cairnmind.terminal.setup_mark import unchecked as setup_unchecked
         # Shown here and nowhere else: a hook or an MCP server must not print notes of its own.
         # The notes of a shell whose commands are refused are also listed as blockers: the summary counts them as missing.
         blockers = [
@@ -272,6 +277,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
             blockers.append(str(exc))
             result.setdefault("accepted_record_kinds", {"unavailable": "RestoreUnfinished"})
         except Exception as exc:  # noqa: BLE001 - doctor reports a store it cannot read, it does not stop
+            _log.debug("Doctor read-only store inspection failed: %s", exc)
             result["restore_unfinished"] = {"unavailable": type(exc).__name__}
             result.setdefault("accepted_record_kinds", {"unavailable": type(exc).__name__})
         from cairnmind.cli_cmds.doctor_preflight import (
@@ -287,8 +293,8 @@ def register(apps: dict[str, typer.Typer]) -> None:
             if store is not None and hasattr(store, "client") and hasattr(store.client, "close"):
                 try:
                     store.client.close()
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001 - best-effort close of diagnostic client
+                    _log.debug("Failed to close doctor read-only store client: %s", exc)
         result["pulse"] = pulse_report
         result["mcp_presets"] = doctor_mcp_presets(project_root=project_root or Path.cwd())
         result["storage_preflight"] = storage_preflight(ctx.obj, project_root=project_root)
@@ -427,7 +433,8 @@ def register(apps: dict[str, typer.Typer]) -> None:
         """Migrate all Cairnmind data losslessly between embedded SQLite and ArcadeDB server.
 
         Verifies exact per-collection counts and canonical SHA-256 parity before atomically switching config.json. Refused inside coding sessions."""
-        from cairnmind.storage.migration import MigrationError, abort_migration, migrate as run_migration
+        from cairnmind.storage.migration import MigrationError, abort_migration
+        from cairnmind.storage.migration import migrate as run_migration
 
         if abort and (resume or to is not None):
             raise typer.BadParameter("Use --abort by itself, without --to or --resume.")
@@ -487,8 +494,10 @@ def register(apps: dict[str, typer.Typer]) -> None:
     ):
         """Serve the local Engineer Cockpit & Provenance Inspector web UI on localhost."""
         import threading
-        import uvicorn
         import webbrowser
+
+        import uvicorn
+
         from cairnmind.ui.ui_auth import UiSessionAuth
         from cairnmind.ui.ui_server import create_ui_app
 
@@ -528,6 +537,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
     def serve(ctx: typer.Context, defer_background_inference: bool = False):
         """Run the local service (the single owner of the GPU and the queue)."""
         import uvicorn
+
         from cairnmind.service import create_app
         settings = ctx.obj
         with (settings.data_dir / "service.lock").open("a", encoding="utf-8") as lock:
@@ -541,10 +551,8 @@ def register(apps: dict[str, typer.Typer]) -> None:
                 api.state.shutdown = lambda: setattr(server, "should_exit", True)
                 server.run()
             finally:
-                try:
+                with suppress(OSError):
                     unlock(lock)
-                except OSError:
-                    pass
 
     @app.command()
     @initialized

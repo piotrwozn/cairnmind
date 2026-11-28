@@ -6,17 +6,18 @@ message or a historical revision does not promote it to confirmed knowledge.
 from __future__ import annotations
 
 import base64
-from collections import Counter
 import hashlib
 import json
+from collections import Counter
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from cairnmind.agents.agent import source_text
-from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
-from cairnmind.memory.memory_paths import bound_metadata, memory_bindings
 from cairnmind.agents.retrieval import Retriever, public_record, public_source_metadata
+from cairnmind.memory.memory_paths import bound_metadata, memory_bindings
 from cairnmind.memory.sensitivity import record_classes, source_sensitivity
+from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
 from cairnmind.storage.sql import clean_row, json_text, unregistered_root, utc_now
 from cairnmind.storage.storage_query import (
     asc,
@@ -28,7 +29,6 @@ from cairnmind.storage.storage_query import (
     gt,
     is_in,
 )
-
 
 TABLES = {"records", "sources", "plans", "check_runs", "jobs"}
 NODE_LIMIT = 2000
@@ -244,7 +244,7 @@ class Inspector:
                 row = clean_row(row)
             if not row or not self._matches(scope, row):
                 raise InspectorNotFound("Unknown record in requested scope")
-            result = {"record": row, "cursor": _cursor(reader, self.store)}
+            result: dict[str, Any] = {"record": row, "cursor": _cursor(reader, self.store)}
             if row["status"] == "superseded":
                 # The record that replaced it (#222, #239): read here, never stored on this row.
                 later = (row.get("metadata") or {}).get("superseded_by")
@@ -415,7 +415,7 @@ class Inspector:
                     columns=["version"],
                     required=True,
                 )
-                if type(expected_plan_version) is not int or current["version"] != expected_plan_version:
+                if current is None or type(expected_plan_version) is not int or current["version"] != expected_plan_version:
                     raise ValueError("Review plan version conflict; read the current plan")
             audit = {"actor": "local_user", **context, "action": action, "record_id": record_id, "previous_version": expected_version,
                 "previous_status": old["status"], "status": status, "reason": (reason or "").strip(), "at": utc_now(),

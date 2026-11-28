@@ -8,7 +8,15 @@ import typer
 
 from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.cli_arguments import (
-    AuditPathArg, BaseArg, HeadArg, OursSnapshotArg, PlanArg, ProjectArg, PublishedArg, RecordArg, RevisionArg,
+    AuditPathArg,
+    BaseArg,
+    HeadArg,
+    OursSnapshotArg,
+    PlanArg,
+    ProjectArg,
+    PublishedArg,
+    RecordArg,
+    RevisionArg,
     TheirsSnapshotArg,
 )
 
@@ -77,7 +85,7 @@ def register(memory_app, initialized):
         tree, errors = check_directory(selected, rules)
         for location, reason in errors:
             typer.echo(safe_text(f"{location or '(tree)'}: {reason}"))
-        if errors:
+        if errors or tree is None:
             raise typer.Exit(1)
         typer.echo(f"valid: {len(tree['records'])} records and {len(tree['plans'])} plans of {tree['project_id']}")
         # A release is a claim in the file, like an audit: listed so that a reviewer sees every one.
@@ -146,7 +154,7 @@ def register(memory_app, initialized):
         from cairnmind.memory.memory_view import render_snapshot
         selected = path.expanduser().absolute()
         tree, errors = check_directory(selected)
-        if errors:
+        if errors or tree is None:
             from cairnmind.memory.memory_published import _listing
             _io.refuse("The published memory was refused: " + _listing(errors), 1)
         payload = tree["payload"]

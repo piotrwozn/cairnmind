@@ -7,11 +7,10 @@ from the command line outside any coding session. Converted sources are stamped 
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
 import hashlib
 import json
+import logging
 import os
-from pathlib import Path
 import queue
 import re
 import subprocess
@@ -19,18 +18,22 @@ import sys
 import tempfile
 import threading
 import time
+from contextlib import contextmanager, suppress
+from pathlib import Path
 from typing import Any
 
 from cairnmind.config import Settings, env_names
-from cairnmind.pal.file_locks import lock_exclusive, unlock
-from cairnmind.scip.ingest import _identifier, _now, _source_project, _write_chunks
 from cairnmind.mcp.mcp_host import INHERITED
+from cairnmind.memory.secret_mask import ingest_masker, masked_metadata
+from cairnmind.pal.file_locks import lock_exclusive, unlock
 from cairnmind.pal.path_spelling import lies_in
 from cairnmind.pal.private_files import open_no_follow, write_durable_private
 from cairnmind.pal.process_control import ProcessJob, group_popen_kwargs, terminate_group
-from cairnmind.memory.secret_mask import ingest_masker, masked_metadata
+from cairnmind.scip.ingest import _identifier, _now, _source_project, _write_chunks
 from cairnmind.storage.storage_query import db_upsert_document
 from cairnmind.storage.store_writer import require_writer
+
+log = logging.getLogger(__name__)
 
 IMPORTERS_FILENAME = "importers.json"
 IMPORTERS_LOCK = "importers.lock"
@@ -323,21 +326,15 @@ def clean_converter_env(environ=None) -> dict[str, str]:
 
 
 def _stop_process_group(process: subprocess.Popen, job: ProcessJob | None) -> None:
-    try:
+    with suppress(OSError):
         terminate_group(process.pid, force=False)
-    except OSError:
-        pass
     try:
         process.wait(timeout=1.0)
     except subprocess.TimeoutExpired:
-        try:
+        with suppress(OSError):
             terminate_group(process.pid, force=True)
-        except OSError:
-            pass
-        try:
+        with suppress(subprocess.TimeoutExpired):
             process.wait(timeout=2.0)
-        except subprocess.TimeoutExpired:
-            pass
     if job is not None:
         job.close()
 
@@ -384,8 +381,8 @@ def execute_converter(entry: dict[str, Any], input_path: Path) -> bytes:
                     if not chunk:
                         break
                     chunks.put((name, chunk))
-            except OSError:
-                pass
+            except OSError as exc:
+                log.debug("Importer %s pipe closed during read: %s", name, exc)
             finally:
                 chunks.put((name, None))
 
@@ -445,7 +442,8 @@ def execute_converter(entry: dict[str, Any], input_path: Path) -> bytes:
         raise ImporterExecutionError(
             f"Importer '{entry['name']}' exceeded its output limit of {output_limit_bytes} bytes."
         )
-    assert process is not None
+    if process is None:
+        raise ImporterExecutionError(f"Importer '{entry['name']}' did not start.")
     if process.returncode != 0:
         err_preview = " ".join(bytes(stderr_buf[:300]).decode("utf-8", errors="replace").split())
         suffix = f": {err_preview}" if err_preview else ""

@@ -14,21 +14,20 @@ import time
 from uuid import uuid4
 
 import pytest
-
-from cairnmind.memory import confirmation, conflicts
-from cairnmind.agents.agent import KnowledgeAgent
-from cairnmind.memory.confirmation import VerdictKept, confirmation_of, confirmation_text, kept_verdict
-from cairnmind.agents.extraction_input import extractor_stamp
-from cairnmind.terminal.inspector import Inspector
-from cairnmind.memory.memory_acts import confirm_plan
-from cairnmind.memory.plans import PlanManager
-from cairnmind.agents.retrieval import public_record
-from cairnmind.storage.sql import update_document
-from cairnmind.store import Store, degraded_origin
-
 from conftest import as_person, confirmed_before_rule, plain_words
 from test_confirmed_by_person import cli, fixture  # noqa: F401
 from test_confirmed_stays import marked_as_imported
+
+from cairnmind.agents.agent import KnowledgeAgent
+from cairnmind.agents.extraction_input import extractor_stamp
+from cairnmind.agents.retrieval import public_record
+from cairnmind.memory import confirmation, conflicts
+from cairnmind.memory.confirmation import VerdictKept, confirmation_of, confirmation_text, kept_verdict
+from cairnmind.memory.memory_acts import confirm_plan
+from cairnmind.memory.plans import PlanManager
+from cairnmind.storage.sql import update_document
+from cairnmind.store import Store, degraded_origin
+from cairnmind.terminal.inspector import Inspector
 
 KEPT = "Only a person takes a confirmation away"
 TEXT = "Never push to main without review."

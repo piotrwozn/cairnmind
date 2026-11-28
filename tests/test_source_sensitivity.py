@@ -9,9 +9,9 @@ import json
 
 import pytest
 
-from cairnmind.terminal.inspector import Inspector
 from cairnmind.memory.memory_view import render_snapshot
 from cairnmind.store import Store, record_sensitivity, source_sensitivity
+from cairnmind.terminal.inspector import Inspector
 from cairnmind.terminal.terminal_detail import joined, record_parts
 from cairnmind.terminal.terminal_i18n import tr
 

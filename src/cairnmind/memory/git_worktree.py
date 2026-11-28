@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 from cairnmind.storage.sql import unregistered_root
 from cairnmind.storage.storage_query import db_find

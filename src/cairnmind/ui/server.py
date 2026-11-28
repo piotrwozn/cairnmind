@@ -6,13 +6,13 @@ requested; live production servers never import mock state.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 import json
 import os
-from pathlib import Path
 import sys
 import threading
 import time
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
@@ -112,6 +112,11 @@ def _bind_cockpit_routes(
     def _pick_project(project_id: str | None, project: str | None) -> str | None:
         return project_id or project
 
+    def _require_live() -> LiveUiAdapter:
+        if live_adapter is None:
+            raise RuntimeError("Live UI adapter is not configured")
+        return live_adapter
+
     p = "/projects/{project_id}" if project_path_param else ""
 
     @router.get(f"{p}/snapshot")
@@ -122,8 +127,8 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().snapshot()
-        assert live_adapter is not None
-        return await asyncio.to_thread(live_adapter.snapshot, _pick_project(project_id, project))
+        adapter = _require_live()
+        return await asyncio.to_thread(adapter.snapshot, _pick_project(project_id, project))
 
     @router.get(f"{p}/file-context")
     async def ui_file_context(
@@ -136,9 +141,9 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().file_context(path, lineStart, lineEnd)
-        assert live_adapter is not None
+        adapter = _require_live()
         return await asyncio.to_thread(
-            live_adapter.file_context, path, lineStart, lineEnd, _pick_project(project_id, project)
+            adapter.file_context, path, lineStart, lineEnd, _pick_project(project_id, project)
         )
 
     @router.get(f"{p}/events")
@@ -159,8 +164,8 @@ def _bind_cockpit_routes(
                 if use_mock:
                     snap = _mock().snapshot()
                 else:
-                    assert live_adapter is not None
-                    snap = await asyncio.to_thread(live_adapter.snapshot, selected_project)
+                    adapter = _require_live()
+                    snap = await asyncio.to_thread(adapter.snapshot, selected_project)
                 init_payload = {
                     "id": "ui-init",
                     "type": "state.updated",
@@ -205,8 +210,8 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().ask(body)
-        assert live_adapter is not None
-        return await asyncio.to_thread(live_adapter.ask, body, _pick_project(project_id, project))
+        adapter = _require_live()
+        return await asyncio.to_thread(adapter.ask, body, _pick_project(project_id, project))
 
     @router.get(f"{p}/drift")
     async def ui_drift(
@@ -227,9 +232,9 @@ def _bind_cockpit_routes(
                 page=page,
                 page_size=page_size,
             )
-        assert live_adapter is not None
+        adapter = _require_live()
         return await asyncio.to_thread(
-            live_adapter.drift_monitor,
+            adapter.drift_monitor,
             project_arg=_pick_project(project_id, project),
             source=source,
             directory=directory,
@@ -248,9 +253,9 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().decide_detected_decision(decision_id, body)
-        assert live_adapter is not None
+        adapter = _require_live()
         return await asyncio.to_thread(
-            live_adapter.decide_detected_decision,
+            adapter.decide_detected_decision,
             decision_id,
             body,
             _pick_project(project_id, project),
@@ -265,8 +270,8 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().create_plan(body)
-        assert live_adapter is not None
-        return await asyncio.to_thread(live_adapter.create_plan, body, _pick_project(project_id, project))
+        adapter = _require_live()
+        return await asyncio.to_thread(adapter.create_plan, body, _pick_project(project_id, project))
 
     @router.patch(f"{p}/plans/{{plan_id}}")
     async def ui_update_plan(
@@ -278,9 +283,9 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().update_plan(plan_id, body)
-        assert live_adapter is not None
+        adapter = _require_live()
         return await asyncio.to_thread(
-            live_adapter.update_plan, plan_id, body, _pick_project(project_id, project)
+            adapter.update_plan, plan_id, body, _pick_project(project_id, project)
         )
 
     @router.post(f"{p}/plans/{{plan_id}}/promote")
@@ -293,9 +298,9 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().promote_plan(plan_id, body)
-        assert live_adapter is not None
+        adapter = _require_live()
         return await asyncio.to_thread(
-            live_adapter.promote_plan, plan_id, body, _pick_project(project_id, project)
+            adapter.promote_plan, plan_id, body, _pick_project(project_id, project)
         )
 
     @router.post(f"{p}/tasks")
@@ -307,8 +312,8 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().create_task(body)
-        assert live_adapter is not None
-        return await asyncio.to_thread(live_adapter.create_task, body, _pick_project(project_id, project))
+        adapter = _require_live()
+        return await asyncio.to_thread(adapter.create_task, body, _pick_project(project_id, project))
 
     @router.post(f"{p}/facts")
     async def ui_create_fact(
@@ -319,8 +324,8 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().create_fact(body)
-        assert live_adapter is not None
-        return await asyncio.to_thread(live_adapter.create_fact, body, _pick_project(project_id, project))
+        adapter = _require_live()
+        return await asyncio.to_thread(adapter.create_fact, body, _pick_project(project_id, project))
 
     @router.get(f"{p}/versions/{{entity_kind}}/{{entity_id}}")
     async def ui_get_versions(
@@ -334,9 +339,9 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().get_versions(entity_kind, entity_id, from_version=from_version, to_version=to_version)
-        assert live_adapter is not None
+        adapter = _require_live()
         return await asyncio.to_thread(
-            live_adapter.get_versions,
+            adapter.get_versions,
             entity_kind,
             entity_id,
             from_version=from_version,
@@ -355,9 +360,9 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().clone_version_as_draft(entity_kind, entity_id, body)
-        assert live_adapter is not None
+        adapter = _require_live()
         return await asyncio.to_thread(
-            live_adapter.clone_version_as_draft,
+            adapter.clone_version_as_draft,
             entity_kind,
             entity_id,
             body,
@@ -372,8 +377,8 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().reverify()
-        assert live_adapter is not None
-        return await asyncio.to_thread(live_adapter.reverify, _pick_project(project_id, project))
+        adapter = _require_live()
+        return await asyncio.to_thread(adapter.reverify, _pick_project(project_id, project))
 
     @router.post(f"{p}/actions/reindex")
     async def ui_reindex(
@@ -383,8 +388,8 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().reindex()
-        assert live_adapter is not None
-        return await asyncio.to_thread(live_adapter.reindex, _pick_project(project_id, project))
+        adapter = _require_live()
+        return await asyncio.to_thread(adapter.reindex, _pick_project(project_id, project))
 
     @router.get(f"{p}/doctor")
     async def ui_doctor(
@@ -394,8 +399,8 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().doctor()
-        assert live_adapter is not None
-        return await asyncio.to_thread(live_adapter.doctor, _pick_project(project_id, project))
+        adapter = _require_live()
+        return await asyncio.to_thread(adapter.doctor, _pick_project(project_id, project))
 
     @router.post(f"{p}/actions/export-snapshot")
     async def ui_export_snapshot(
@@ -406,8 +411,8 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().export_snapshot(body)
-        assert live_adapter is not None
-        return await asyncio.to_thread(live_adapter.export_snapshot, body, _pick_project(project_id, project))
+        adapter = _require_live()
+        return await asyncio.to_thread(adapter.export_snapshot, body, _pick_project(project_id, project))
 
     @router.post(f"{p}/actions/sessions/{{session_id}}/drop")
     async def ui_drop_session(
@@ -418,9 +423,9 @@ def _bind_cockpit_routes(
     ):
         if _use_mock(mock):
             return _mock().drop_session(session_id)
-        assert live_adapter is not None
+        adapter = _require_live()
         return await asyncio.to_thread(
-            live_adapter.drop_session, session_id, _pick_project(project_id, project)
+            adapter.drop_session, session_id, _pick_project(project_id, project)
         )
 
     @router.post(f"{p}/mock/simulate-conflict")
@@ -579,11 +584,12 @@ def create_ui_app(
                 return FileResponse(candidate)
             return FileResponse(dist / "index.html")
     else:
+        parents = Path(__file__).resolve().parents
+        repo_root = parents[3] if len(parents) > 3 else parents[-1]
+        has_source_ui = (repo_root / "ui" / "package.json").is_file()
+
         @app.get("/", include_in_schema=False)
         async def missing_bundle():
-            parents = Path(__file__).resolve().parents
-            repo_root = parents[3] if len(parents) > 3 else parents[-1]
-            has_source_ui = (repo_root / "ui" / "package.json").is_file()
             hint = (
                 "Run <code>cd ui &amp;&amp; npm ci &amp;&amp; npm run build</code>, then restart <code>cairnmind ui</code>."
                 if has_source_ui

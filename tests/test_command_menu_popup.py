@@ -12,8 +12,8 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import DataTable
 
-from cairnmind.terminal import workspace
 from cairnmind.config import Settings
+from cairnmind.terminal import workspace
 from cairnmind.terminal.terminal_commands import COMMANDS, CommandPaletteApp
 from cairnmind.terminal.terminal_i18n import tr
 

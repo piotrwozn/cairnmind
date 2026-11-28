@@ -9,17 +9,16 @@ import subprocess
 from uuid import uuid4
 
 import pytest
+from conftest import as_person, confirmed_before_rule, person_edit
 
 from cairnmind.memory.confirmation import confirmation_of, confirmation_text
 from cairnmind.memory.confirmation_upgrade import META_NAME, mark_confirmed_before_rule
 from cairnmind.memory.findings import save_finding
-from cairnmind.terminal.inspector import Inspector
 from cairnmind.memory.memory import MemoryManager
 from cairnmind.memory.memory_acts import confirm_plan
 from cairnmind.memory.plans import PlanManager
 from cairnmind.store import Store
-
-from conftest import as_person, confirmed_before_rule, person_edit
+from cairnmind.terminal.inspector import Inspector
 
 
 def git(root, *args):

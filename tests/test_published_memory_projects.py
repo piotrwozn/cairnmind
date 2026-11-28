@@ -7,16 +7,14 @@ and what one project's memory writes changes no other project's code state, chec
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from cairnmind.config import Settings
 from cairnmind.memory.impact import build_impact
-from cairnmind.scip.ingest import index_project
-from cairnmind.terminal.inspector import Inspector
 from cairnmind.memory.memory import MemoryConflict
 from cairnmind.memory.memory_paths import is_reserved_below, nested_reserved
 from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
@@ -24,8 +22,10 @@ from cairnmind.memory.memory_published_import import PublishedImporter
 from cairnmind.memory.memory_published_parse import parse_file
 from cairnmind.memory.scope import path_states
 from cairnmind.memory.sessions import SessionManager
-from cairnmind.store import Store
 from cairnmind.memory.verification import capture_code_state, run_check, verification_status
+from cairnmind.scip.ingest import index_project
+from cairnmind.store import Store
+from cairnmind.terminal.inspector import Inspector
 
 GUIDE = "# Guide\n\nThe active backend is ArcadeDB.\nNothing else stores memory.\n"
 PUBLISHED = Path(".memory/cairnmind-published")

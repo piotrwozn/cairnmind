@@ -20,13 +20,14 @@ the bytes read with the first pass, so a file that changes during a restore is r
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
 import gzip
 import hashlib
 import io
 import json
 import sys
-from typing import Callable, Iterator
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack, contextmanager
+from typing import Any
 
 from cairnmind.config import BACKUP_FORMATS
 from cairnmind.storage.sql import json_text
@@ -299,7 +300,7 @@ class StreamedBackup:
     def __init__(self, handle, collections, types):
         self._handle, self._collections, self._types = handle, frozenset(collections), types
         index, canonical = _Index(types), _Canonical()
-        self._digest = None
+        self._digest: str | None = None
         for event in self._pass(canonical):
             index.add(*event)
         self._digest = self._last_digest
@@ -318,12 +319,15 @@ class StreamedBackup:
     @property
     def digest(self) -> str:
         """The SHA-256 of the file's bytes, as the first pass read them."""
+        if self._digest is None:
+            raise RuntimeError("Backup digest has not been computed")
         return self._digest
 
     def _pass(self, canonical=None) -> Iterator[tuple]:
         self._handle.seek(0)
         raw = _Hashed(self._handle)
-        with gzip.GzipFile(fileobj=raw, mode="rb") as compressed:
+        stream: Any = raw
+        with gzip.GzipFile(fileobj=stream, mode="rb") as compressed:
             text = io.TextIOWrapper(compressed, encoding="utf-8")
             yield from _walk(_Text(text), canonical or _Ignored(), self._collections)
         while raw.read(1 << 20):
@@ -491,11 +495,11 @@ def opened_backup(path, load_whole: Callable, types: dict):
 
     Everything is checked before this yields, so nothing in the store has changed when it refuses a file.
     """
-    try:
-        handle = open(path, "rb")
-    except OSError as exc:
-        raise ValueError(CORRUPT) from exc
-    with handle:
+    with ExitStack() as stack:
+        try:
+            handle = stack.enter_context(open(path, "rb"))
+        except OSError as exc:
+            raise ValueError(CORRUPT) from exc
         try:
             source = StreamedBackup(handle, types["export"], types)
         except Unusual:

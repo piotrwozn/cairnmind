@@ -9,6 +9,10 @@ finished text, so stored text that imitates a label keeps the plain colour.
 from __future__ import annotations
 
 from datetime import date
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from rich.style import Style
 
 from cairnmind.terminal.terminal_i18n_messages import display_word
 from cairnmind.terminal.terminal_theme import evidence_style, state_style
@@ -51,7 +55,7 @@ def join_lines(lines, separator="\n"):
     return parts
 
 
-def labelled(label, value, role="value"):
+def labelled(label: str, value: str, role: str | Style = "value"):
     """`Label: value`: the label up to its colon is ours; `role` is the style of the value."""
     return [("label", label + ":"), ("value", " "), (role, value)]
 
@@ -83,8 +87,10 @@ def symbol_parts(item, translate):
         return []
     lines = []
     sym_state = item.get("symbol_state")
-    anchor = item.get("symbol_anchor") if isinstance(item.get("symbol_anchor"), dict) else {}
-    change = item.get("symbol_change") if isinstance(item.get("symbol_change"), dict) else {}
+    raw_anchor = item.get("symbol_anchor")
+    anchor = raw_anchor if isinstance(raw_anchor, dict) else {}
+    raw_change = item.get("symbol_change")
+    change = raw_change if isinstance(raw_change, dict) else {}
     sym = str(change.get("symbol") or anchor.get("symbol") or "")
     path = str(change.get("path") or anchor.get("path") or "")
     if sym_state == "unchanged" and sym:
@@ -113,7 +119,8 @@ def symbol_parts(item, translate):
             "danger",
         ))
     if item.get("comment_state") == "tag_removed":
-        ca = item.get("comment_anchor") if isinstance(item.get("comment_anchor"), dict) else {}
+        raw_ca = item.get("comment_anchor")
+        ca = raw_ca if isinstance(raw_ca, dict) else {}
         tag = str(ca.get("tag") or "DECISION")
         cpath = str(ca.get("path") or path)
         lines.append(labelled(
@@ -126,7 +133,8 @@ def symbol_parts(item, translate):
 
 def sensitivity_parts(value, translate):
     """The `Sensitivity:` line of a source or record detail; nothing for a value that is not a class."""
-    label = SENSITIVITY_LABELS.get(value.get("sensitivity")) if isinstance(value, dict) else None
+    sens = value.get("sensitivity") if isinstance(value, dict) else None
+    label = SENSITIVITY_LABELS.get(sens) if isinstance(sens, str) else None
     return [labelled(translate("Sensitivity"), translate(label))] if label else []
 
 

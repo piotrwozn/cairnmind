@@ -7,16 +7,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from pathlib import Path
 import stat
+import sys
 import tempfile
+from pathlib import Path
 
-try:
+if sys.platform != "win32":
     import fcntl
     import termios
-except ImportError:
-    fcntl = None  # type: ignore[assignment]
-    termios = None  # type: ignore[assignment]
+else:
+    fcntl = None
+    termios = None
 
 from cairnmind.config import Settings
 from cairnmind.pal.process_identity import start as process_start
@@ -24,6 +25,8 @@ from cairnmind.terminal.runtime_selection import resolve_tmux
 
 
 def main():
+    if sys.platform == "win32":
+        raise SystemExit("native_worker is only supported on POSIX platforms")
     parser = argparse.ArgumentParser()
     parser.add_argument("--spec", type=Path)
     parser.add_argument("--attach", action="store_true")
@@ -32,14 +35,18 @@ def main():
     parser.add_argument("--session")
     args = parser.parse_args()
     if args.attach:
-        if not all((args.tmux_bin, args.socket, args.session)):
+        if not (isinstance(args.tmux_bin, str) and args.tmux_bin
+                and isinstance(args.socket, str) and args.socket
+                and isinstance(args.session, str) and args.session):
             raise SystemExit(2)
         binary = resolve_tmux(Settings(Path("/")), override=args.tmux_bin)
+        if not binary:
+            raise SystemExit(2)
         # Popen(start_new_session=True) has already created our session. Claim
         # its slave PTY here, avoiding preexec_fn in the threaded web server.
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
         environment = {k: v for k, v in os.environ.items() if k not in {"TMUX", "TMUX_PANE"}}
-        os.execve(binary, [binary, "-S", args.socket, "attach-session", "-t", args.session], environment)
+        os.execve(binary, [binary, "-S", args.socket, "attach-session", "-t", args.session], environment)  # noqa: S606 - validated argv without shell
     if args.spec is None:
         raise SystemExit(2)
     fd = os.open(args.spec, os.O_RDONLY | os.O_NOFOLLOW)
@@ -71,7 +78,7 @@ def main():
         os.fsync(handle.fileno())
     os.replace(temporary, marker)
     os.chdir(spec["cwd"])
-    os.execve(command[0], command, environment)
+    os.execve(command[0], command, environment)  # noqa: S606 - validated absolute binary and argv without shell
 
 
 if __name__ == "__main__":

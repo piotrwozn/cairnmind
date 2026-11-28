@@ -1,22 +1,23 @@
 """Unit tests for snapshot, store, verification and hook CLI performance optimizations."""
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 
-from cairnmind.storage import arcade, sql
 from cairnmind.cli_cmds import cli_entry
-from cairnmind.memory import memory, verification
 from cairnmind.config import Settings
+from cairnmind.memory import memory, verification
+from cairnmind.storage import arcade, sql
 from cairnmind.store import Store
 
 
@@ -400,10 +401,8 @@ def test_memory_and_store_optimization_edge_branches(tmp_path, monkeypatch):
     real_obj = tmp_path / "outside_obj"
     real_obj.mkdir()
     if hasattr(os, "symlink"):
-        try:
+        with contextlib.suppress(OSError):
             (base / "objects").symlink_to(real_obj, target_is_directory=True)
-        except OSError:
-            pass
         if (base / "objects").is_symlink():
             empty = {t: [] for t in memory.TABLES}
             m = {

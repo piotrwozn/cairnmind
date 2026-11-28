@@ -2,19 +2,19 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
 import hashlib
 import json
+from contextlib import contextmanager
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
-from cairnmind.scip import ingest
 from cairnmind import service
 from cairnmind.config import Settings
-from cairnmind.store import JobNotFoundError
+from cairnmind.scip import ingest
 from cairnmind.storage.store_writer import StoreNotWriter
+from cairnmind.store import JobNotFoundError
 
 
 def test_ingest_helpers_reparse_and_import_edges(tmp_path, monkeypatch):
@@ -34,9 +34,11 @@ def test_ingest_helpers_reparse_and_import_edges(tmp_path, monkeypatch):
     # _ingestion_lock deadline expired and BlockingIOError retry
     fake_store = SimpleNamespace(data_dir=tmp_path / "data")
     fake_store.data_dir.mkdir()
-    with pytest.raises(TimeoutError, match="deadline exceeded"):
-        with ingest._ingestion_lock(fake_store, "history", "x", deadline=0.0):
-            pass
+    with (
+        pytest.raises(TimeoutError, match="deadline exceeded"),
+        ingest._ingestion_lock(fake_store, "history", "x", deadline=0.0),
+    ):
+        pass
 
     attempts = {"n": 0}
     orig_lock = ingest.lock_exclusive

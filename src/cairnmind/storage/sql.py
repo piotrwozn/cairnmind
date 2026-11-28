@@ -1,9 +1,9 @@
 """Small helpers for the SQL the store and its sibling modules run: JSON text, row cleaning, id-checked writes."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import re
+from datetime import UTC, datetime
 
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PROFILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -22,7 +22,7 @@ def _arcade_ident(name: str) -> str:
 
 
 def utc_now():
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+    return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
 def parse_utc(value):
@@ -33,7 +33,7 @@ def parse_utc(value):
         parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
-    return parsed.astimezone(timezone.utc) if parsed.tzinfo is not None else None
+    return parsed.astimezone(UTC) if parsed.tzinfo is not None else None
 
 
 # Origins of the notes that record an act on a record (a review, a review published elsewhere, a command

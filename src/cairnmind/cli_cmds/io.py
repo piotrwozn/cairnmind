@@ -1,15 +1,16 @@
 """Shared CLI runtime, HTTP service, store-opening, and output helpers."""
 from __future__ import annotations
 
-from contextlib import contextmanager
-from functools import wraps
 import json
+import logging
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
-from typing import Annotated
+from contextlib import contextmanager, suppress
+from functools import wraps
+from pathlib import Path
+from typing import Annotated, Any, NoReturn
 
 import httpx
 import typer
@@ -19,10 +20,14 @@ from cairnmind.pal.file_locks import lock_exclusive, unlock
 from cairnmind.pal.process_control import detached_popen_kwargs
 from cairnmind.pal.service_token import (
     PORT_ADVICE as _PORT_ADVICE,
+)
+from cairnmind.pal.service_token import (
     foreign_service_text,
     refused_token,
 )
 from cairnmind.storage.arcade import ArcadeError
+
+_log = logging.getLogger(__name__)
 
 
 def output(value) -> None:
@@ -111,7 +116,7 @@ def _pasteable(message: str) -> str:
     return message
 
 
-def _json_file(path: Path):
+def _json_file(path: Path) -> Any:
     """A JSON file named on the command line. One that is not JSON is refused in one line that names it, as one of
     another shape is, not as the parser's bare message (#244)."""
     try:
@@ -163,6 +168,14 @@ def store_for_read(settings: Settings):
     configuration, engine, database or schema is not ready it fails at once, saying what to run."""
     from cairnmind.store import Store
     return Store.open_readonly(settings)
+
+
+def resolve_project(store, identifier: Any, *, recorded: bool = False) -> dict[str, Any]:
+    """Resolve a project via ``store.resolve_project``, narrowing its return type for callers."""
+    selected = store.resolve_project(identifier, recorded=recorded) if recorded else store.resolve_project(identifier)
+    if selected is None:
+        raise ValueError(f"Unknown project: {identifier}")
+    return selected
 
 
 _RESOLVE = frozenset({"project", "scope"})
@@ -222,7 +235,9 @@ def actor_write(store, settings: Settings, project_id: str, worktree: Path | str
 
 
 def service_alive(settings: Settings) -> bool:
-    from cairnmind.cli_cmds import service_version  # not cairnmind.service: that imports the web framework (#405)
+    from cairnmind.cli_cmds import (
+        service_version,  # not cairnmind.service: that imports the web framework (#405)
+    )
     try:
         with httpx.Client(trust_env=False, timeout=0.7, verify=tls_verify(settings.url)) as client:
             result = client.get(settings.url + "/health")
@@ -253,10 +268,8 @@ def _service_stopped(settings: Settings, held: str, running: str):
                 refuse(running)
             yield
         finally:
-            try:
+            with suppress(OSError):
                 unlock(lock)
-            except OSError:
-                pass
 
 
 def last_log_line(path: Path) -> str:
@@ -320,17 +333,15 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
         return _wait_for_start(settings, process, log, started_at)
     except KeyboardInterrupt:
         # An interrupted start does not leave behind the service it spawned: nobody would know it runs (#339).
-        try:
+        with suppress(OSError):
             process.terminate()
-        except OSError:
-            pass
         raise
 
 
 def _wait_for_start(settings: Settings, process, log: Path, started_at: int) -> bool:
     """ensure_service's wait for the process it spawned: True when the service answers, else it raises."""
-    from cairnmind.terminal import setup_mark
     from cairnmind.cli_cmds import upgrade_mark
+    from cairnmind.terminal import setup_mark
     seen = None  # an installer that began at any moment of this start, even one that has ended by the time it answers
     for _ in range(300):
         seen = seen or upgrade_mark.refusal()
@@ -355,10 +366,8 @@ def _wait_for_start(settings: Settings, process, log: Path, started_at: int) -> 
     if seen:
         # Still starting when the installer began: its stop found nothing to stop. This start's own process goes.
         if process is not None:
-            try:
+            with suppress(OSError):
                 process.terminate()
-            except OSError:
-                pass
         raise UpgradeInProgress(upgrade_mark.refusal() or upgrade_mark.UPGRADE_ENDED)
     reason = setup_mark.refusal(settings.data_dir)
     if reason:
@@ -458,7 +467,7 @@ def _refuse_other_version(settings: Settings) -> None:
         refuse(reason)
 
 
-def refuse(message: str, code: int = 2):
+def refuse(message: str, code: int = 2) -> NoReturn:
     """A refusal that is not about the command line: no usage line and no "Invalid value" (#154)."""
     typer.echo(_format_cli_stderr("Error: ", message), err=True)
     raise typer.Exit(code)
@@ -470,7 +479,8 @@ def _service_unavailable(settings: Settings) -> str:
     from cairnmind.storage.store_writer import inspect
     try:
         role = inspect(settings)
-    except Exception:  # noqa: BLE001 - the role only chooses the advice; the refusal is given either way
+    except Exception as exc:  # noqa: BLE001 - the role only chooses the advice; the refusal is given either way
+        _log.debug("Failed to inspect store writer role for service-unavailable advice: %s", exc)
         role = {}
     if role.get("role") in {"reader", "lost"}:
         from cairnmind.pal.terminal_safe import safe_text
@@ -659,7 +669,7 @@ def _not_run_without_models(settings, command: str) -> None:
 
 def _record_evaluation(settings, kind: str, result: dict) -> None:
     """A passing evaluation is recorded for the pair of models it ran with (doctor and answers read it)."""
-    if result.get("status") == "passed" and not result.get("inference") == "injected_adapter":
+    if result.get("status") == "passed" and result.get("inference") != "injected_adapter":
         from cairnmind.memory.memory_models import record_passed
         result["models_evaluation_recorded"] = record_passed(settings, kind, result.get("model_identities"))
 

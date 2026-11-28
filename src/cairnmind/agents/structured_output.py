@@ -17,9 +17,9 @@ model requests) can name it; nothing reads it to skip ``format``.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 from cairnmind.pal.file_locks import lock_exclusive
@@ -99,9 +99,9 @@ def unwrap(reply: dict) -> dict:
     """The reply, its content without one enclosing ```json fence; anything else is left for the caller's
     validation as it is."""
     message = reply.get("message")
-    content = message.get("content") if isinstance(message, dict) else None
-    if isinstance(content, str):
-        fenced = _FENCE.match(content.strip())
+    if isinstance(message, dict):
+        content = message.get("content")
+        fenced = _FENCE.match(content.strip()) if isinstance(content, str) else None
         if fenced:
             reply = {**reply, "message": {**message, "content": fenced.group(1).strip()}}
     return {**reply, "structured_output": "prompted"}

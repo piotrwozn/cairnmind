@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from cairnmind.storage.sql import clean_row, json_text, utc_now
 from cairnmind.storage.storage_query import (
+    FilterNode,
     all_of,
     any_of,
     asc,
@@ -176,7 +177,7 @@ def claim_job(store, worker, lease_seconds=60, kinds=None, *, project_ids=None):
     with store.transaction() as tx:
         # The jobs of a removed project wait until it is back (#327).
         removed = [r["id"] for r in db_find(tx, "projects", is_not_null("removed_at"), columns=("id",))]
-        conds = [any_of(eq("state", "pending"), all_of(eq("state", "running"), lt("lease_until", time.time())))]
+        conds: list[FilterNode] = [any_of(eq("state", "pending"), all_of(eq("state", "running"), lt("lease_until", time.time())))]
         if kinds is not None:
             conds.append(is_in("kind", list(kinds)))
         if project_ids is not None:

@@ -9,8 +9,8 @@ import pytest
 from cairnmind.scip import ingest
 from cairnmind.storage.arcade import ArcadeClient
 from cairnmind.storage.journal import MAX_TRANSACTION_EVENTS
-from cairnmind.store import Store
 from cairnmind.storage.sql import clean_row
+from cairnmind.store import Store
 
 
 def tree(root, files=24):

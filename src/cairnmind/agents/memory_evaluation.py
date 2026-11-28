@@ -9,21 +9,22 @@ import asyncio
 import hashlib
 import json
 import os
-from pathlib import Path
 import tempfile
 import time
+from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from cairnmind import __version__
 from cairnmind.agents.agent import KnowledgeAgent, parse_object
-from cairnmind.storage.arcade import ArcadeClient, ArcadeError
-from cairnmind.config import Settings
 from cairnmind.agents.evaluation import MeasuredOllama, _fixture_settings, _git
-from cairnmind.scip.ingest import index_pending_sources
-from cairnmind.memory.memory_models import from_settings, inference_report
 from cairnmind.agents.ollama import OllamaUnavailable
-from cairnmind.memory.plans import PlanManager
 from cairnmind.agents.retrieval import Retriever
+from cairnmind.config import Settings
+from cairnmind.memory.memory_models import from_settings, inference_report
+from cairnmind.memory.plans import PlanManager
+from cairnmind.scip.ingest import index_pending_sources
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.storage.storage_query import asc, db_find, db_find_one
 from cairnmind.store import EXTRACTION_MARK, Store
 
@@ -74,7 +75,7 @@ def _semantic_rows(rows: list[dict]) -> list[dict]:
     return [{key: value for key, value in row.items() if not key.startswith("@")} for row in rows]
 
 
-def _revision_value(value):
+def _revision_value(value: Any) -> Any:
     # Active-key indexes and physical addresses are regenerated at the target.
     if isinstance(value, dict):
         return {key: _revision_value(item) for key, item in value.items()
@@ -140,7 +141,8 @@ async def _evaluate(stores: list[Store], roots: list[Path], settings: list[Setti
                                 worker=job["worker"], expected_attempts=job["attempts"])
         records = source_store.list_records(project["id"])
         matches = [row for row in records if _expected_record(case, row, source["id"], case["text"])]
-        diagnostic = db_find_one(source_store, "jobs", {"id": job_id}, columns=("diagnostics",), required=True)["diagnostics"]
+        job_row = db_find_one(source_store, "jobs", {"id": job_id}, columns=("diagnostics",), required=True)
+        diagnostic = job_row["diagnostics"] if job_row is not None else {}
         passed = error is None and bool(matches) and diagnostic.get("counts", {}).get("written_records", 0) > 0
         report["extraction"].append({"id": case["id"], "status": "passed" if passed else "failed",
             "source_id": source["id"], "matching_record_ids": [row["id"] for row in matches],
@@ -279,6 +281,7 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
             report["model_identities"][field] = await measured.model_identity(model)
 
     from contextlib import nullcontext
+
     from cairnmind.agents.vcr import CassetteMissError, VcrOllama, deterministic_uuid4
 
     try:

@@ -8,10 +8,12 @@ is also the recovery source; restarting this class never replays a tool.
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
+import contextlib
 import inspect
 import json
+import logging
 import math
+from copy import deepcopy
 from typing import Any
 from uuid import uuid4
 
@@ -20,6 +22,7 @@ from jsonschema import Draft202012Validator
 from cairnmind.agents.agent_reads import ReadLedger, projected_read
 from cairnmind.memory.memory_egress import coding_held_classes, coding_read, coding_written
 
+log = logging.getLogger(__name__)
 
 SYSTEM = """You are Cairnmind's programming agent. Answer in the user's language.
 The user selected one registered project/worktree. Use only the supplied tools.
@@ -102,7 +105,7 @@ class AgentEngine:
     def __init__(self, settings, run, profile, *, key=None, provider=None, memory=None,
                  journal=None, approve=None, on_delta=None, on_event=None, tools=None, mcp_servers=None):
         from cairnmind.agents.agent_journal import AgentJournal
-        from cairnmind.agents.agent_memory import AgentMemoryClient, MEMORY_TOOLS, READ_MEMORY_TOOLS
+        from cairnmind.agents.agent_memory import MEMORY_TOOLS, READ_MEMORY_TOOLS, AgentMemoryClient
         from cairnmind.agents.agent_tools import FILE_TOOLS, ToolExecutor
 
         required = {"id", "generation", "project_id", "worktree", "session_id", "client"}
@@ -140,7 +143,7 @@ class AgentEngine:
                 self._ollama_window = (normal["context_window_tokens"], normal["max_output_tokens"])
             except (ValueError, KeyError, TypeError):
                 pass  # the provider refuses an invalid profile itself
-        self.provider = provider
+        self.provider: Any = provider
         if self.provider is None:
             if run["client"] == "copilot":
                 from cairnmind.agents.copilot_adapter import CopilotAdapter
@@ -169,7 +172,7 @@ class AgentEngine:
         self._acknowledged = False
         self._last_packet = None
         self._acked_packet = None
-        self._context = []
+        self._context: list[dict[str, Any]] = []
         # What file content the current model context has seen (#157). Only an API run renews its context
         # at CONTEXT_BUDGET_CHARS; Copilot keeps its own.
         self._reads = ReadLedger(CONTEXT_BUDGET_CHARS if run["client"] == "api" else None)
@@ -188,7 +191,7 @@ class AgentEngine:
         self._model_calls = 0
         self._tool_calls = 0
         self._seen_calls = set()
-        self._memory_partial = None
+        self._memory_partial: dict[str, Any] | None = None
         self._stream_buffer = ""
         self._display_pending = ""
         self._stream_secrets = {value for value in (key, getattr(settings, "token", None),
@@ -205,7 +208,7 @@ class AgentEngine:
     def _limit(value, default, low, high):
         return value if type(value) is int and low <= value <= high else default
 
-    def _redact(self, value):
+    def _redact(self, value: Any) -> Any:
         if hasattr(self.journal, "redact"):
             return self.journal.redact(value)
         return value
@@ -217,10 +220,10 @@ class AgentEngine:
         if self.on_event is not None:
             try:
                 await _await(self.on_event({"type": event_type, "data": self._redact(data)}))
-            except Exception:
+            except Exception as exc:
                 # A rendering failure neither changes the durable result nor
                 # grants permission. Approval failures are handled by tools.
-                pass
+                log.debug("Event callback failed for %s (%s)", event_type, type(exc).__name__)
 
     async def _delta(self, text):
         if not isinstance(text, str):
@@ -252,8 +255,8 @@ class AgentEngine:
         if self.on_delta is not None:
             try:
                 await _await(self.on_delta(text))
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("Stream delta callback failed (%s)", type(exc).__name__)
 
     async def _finish_stream(self):
         if self._display_pending:
@@ -274,10 +277,10 @@ class AgentEngine:
         self._flush_stream()
         try:
             await self._checked_archive()
-        except Exception:
+        except Exception as exc:
             # The durable local journal remains the captured recovery source.
             # A later prepare cannot claim complete history without it.
-            pass
+            log.debug("Post-stop archive skipped (%s)", type(exc).__name__)
 
     async def _checked_archive(self):
         result = await self.memory.archive(self.journal)
@@ -517,7 +520,8 @@ class AgentEngine:
             return False
         try:
             status = await self.memory.status()
-        except Exception:
+        except Exception as exc:
+            log.debug("Memory status check failed (%s)", type(exc).__name__)
             self._acknowledged = False
             self._prepared = False
             self._memory_partial = {"status": "unavailable", "unknowns": [
@@ -532,6 +536,8 @@ class AgentEngine:
         return valid
 
     async def _approve_command(self, request):
+        if self._approve_callback is None:
+            return False
         decision = await _await(self._approve_callback(deepcopy(request)))
         if decision is not True:
             return False
@@ -655,7 +661,8 @@ class AgentEngine:
         except asyncio.CancelledError:
             raise
         except _ArchiveIncomplete:
-            return self._error("archive_incomplete", unknowns=self._memory_partial["unknowns"])
+            unknowns = self._memory_partial.get("unknowns", []) if isinstance(self._memory_partial, dict) else []
+            return self._error("archive_incomplete", unknowns=unknowns)
         except Exception as exc:
             from cairnmind.agents.agent_memory import MemoryRefusal
             if isinstance(exc, MemoryRefusal):
@@ -711,14 +718,15 @@ class AgentEngine:
             self._turn_usage["copilot"] = deepcopy(usage["copilot"])
         for key in ("cost", "cache_read_tokens", "cache_write_tokens", "premium_requests", "credits"):
             value = usage.get(key)
-            if type(value) in (float, int) and math.isfinite(value) and 0 <= value <= 10**15:
+            if isinstance(value, (int, float)) and type(value) in (float, int) and math.isfinite(value) and 0 <= value <= 10**15:
                 observed = self._turn_usage.setdefault("provider_observations", {})
                 observed[key] = observed.get(key, 0) + value
         pricing = self.profile.get("pricing")
         self._turn_usage["estimated_cost"] = None
         if isinstance(pricing, dict) and self._turn_usage["usage_complete"]:
             incoming, outgoing = pricing.get("input_per_million"), pricing.get("output_per_million")
-            if (type(incoming) in (float, int) and type(outgoing) in (float, int)
+            if (isinstance(incoming, (int, float)) and isinstance(outgoing, (int, float))
+                    and type(incoming) in (float, int) and type(outgoing) in (float, int)
                     and math.isfinite(incoming) and math.isfinite(outgoing) and incoming >= 0 and outgoing >= 0):
                 self._turn_usage["estimated_cost"] = (
                     self._turn_usage.get("input_tokens", 0) * incoming
@@ -992,9 +1000,10 @@ class AgentEngine:
                 self._prepared = self._acknowledged = False
                 await self._notify("error", {"code": code, **diagnostic})
                 if code == "archive_incomplete":
+                    unknowns = self._memory_partial.get("unknowns", []) if isinstance(self._memory_partial, dict) else []
                     return self._result("partial", result.get("text", "") if result else "",
                                         effects_status=result.get("status") if result else None,
-                                        unknowns=self._memory_partial["unknowns"],
+                                        unknowns=unknowns,
                                         pending_actions=self.pending_actions())
                 await self._archive_stopped()
                 if code == "context_limit":
@@ -1061,8 +1070,8 @@ class AgentEngine:
         if stop is not None:
             try:
                 await _await(stop())
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("Tool interrupt failed (%s)", type(exc).__name__)
 
     async def interrupt(self):
         self._execution_epoch += 1
@@ -1075,8 +1084,8 @@ class AgentEngine:
         if stop is not None:
             try:
                 await _await(stop())
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("Provider interrupt failed (%s)", type(exc).__name__)
         return {"interrupted": task is not None}
 
     cancel = interrupt
@@ -1086,22 +1095,20 @@ class AgentEngine:
         task = self._turn_task
         await self.interrupt()
         if task is not None and task is not asyncio.current_task() and not task.done():
-            try:
+            with contextlib.suppress(TimeoutError, asyncio.CancelledError):
                 await asyncio.wait_for(asyncio.shield(task), timeout=5)
-            except (TimeoutError, asyncio.CancelledError):
-                pass
         # No server process and no command outlives the run.
         for closer in (lambda: self.mcp.close(self._record), getattr(self.tools, "close", None)):
             try:
                 if closer is not None:
                     await _await(closer())
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("Agent resource close failed (%s)", type(exc).__name__)
         for target in (self.provider, self.memory):
             closer = getattr(target, "aclose", None) or getattr(target, "close", None)
             if closer is not None:
                 try:
                     await _await(closer())
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.debug("Agent backend close failed (%s)", type(exc).__name__)
 

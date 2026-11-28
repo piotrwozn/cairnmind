@@ -49,7 +49,8 @@ class InferenceQueue:
                 if not future.done():
                     future.set_result(result)
             except asyncio.CancelledError:
-                if asyncio.current_task().cancelling():
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
                     if not future.done():
                         future.cancel()
                     raise
@@ -313,6 +314,7 @@ async def run_scanner(ctx: ServiceContext) -> None:
                         expected_attempts=job["attempts"],
                     )
                 except Exception as exc:
+                    log.warning("Import job %s failed: %s", job["id"], exc)
                     await asyncio.to_thread(
                         finish_job_if_present,
                         ctx.store,
@@ -428,6 +430,7 @@ async def run_scip_worker(ctx: ServiceContext) -> None:
                     expected_attempts=job["attempts"],
                 )
             except Exception as exc:
+                log.warning("SCIP job %s failed: %s", job["id"], exc)
                 ctx.background_status["scip_error"] = str(exc) or type(exc).__name__
                 await asyncio.to_thread(
                     finish_job_if_present,
@@ -465,6 +468,7 @@ async def run_fingerprint_start(ctx: ServiceContext) -> None:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - a server that is down is checked again later
+            log.debug("Embedding fingerprint check deferred (%s); retrying", type(exc).__name__)
             ctx.background_status["embedding_fingerprint"] = {"status": "unchecked", "error": type(exc).__name__}
             await asyncio.sleep(30)
             continue
@@ -509,24 +513,23 @@ async def run_model_worker(ctx: ServiceContext) -> None:
                     # Other weights behind the same name, or not checked yet: embed jobs wait (#212).
                     kinds = [kind for kind in kinds if kind != "embed"]
                     role_error = role_error or exc
-            if namespace is not None:
-                if (
-                    namespace != last_namespace
-                    or selected != last_projects
-                    or time.monotonic() - last_repair > 60
-                ):
-                    held: dict = {}
-                    missing = await asyncio.to_thread(
-                        ctx.schedule_embeddings_fn,
-                        ctx.store,
-                        namespace,
-                        project_ids=selected,
-                        settings=ctx.settings,
-                        report=held,
-                        known_held=known_held,
-                    )
-                    ctx.background_status.update(embedding_namespace=namespace, embedding_missing=missing, **held)
-                    last_namespace, last_repair, last_projects = namespace, time.monotonic(), selected
+            if namespace is not None and (
+                namespace != last_namespace
+                or selected != last_projects
+                or time.monotonic() - last_repair > 60
+            ):
+                held: dict = {}
+                missing = await asyncio.to_thread(
+                    ctx.schedule_embeddings_fn,
+                    ctx.store,
+                    namespace,
+                    project_ids=selected,
+                    settings=ctx.settings,
+                    report=held,
+                    known_held=known_held,
+                )
+                ctx.background_status.update(embedding_namespace=namespace, embedding_missing=missing, **held)
+                last_namespace, last_repair, last_projects = namespace, time.monotonic(), selected
             ctx.background_status["model_error"] = str(role_error) if role_error else None
             job = await asyncio.to_thread(
                 ctx.store.claim_job,
@@ -539,13 +542,16 @@ async def run_model_worker(ctx: ServiceContext) -> None:
             if job:
                 try:
 
-                    async def process():
-                        if job["kind"] == "embed":
-                            return await ctx.retriever.embed_pending(job)
-                        return await ctx.agent.extract(job)
+                    async def process(current_job=job):
+                        if current_job["kind"] == "embed":
+                            return await ctx.retriever.embed_pending(current_job)
+                        return await ctx.agent.extract(current_job)
 
                     timeout = 30 if job["kind"] == "embed" else extraction_outer_timeout()
-                    await ctx.inference.submit(lambda: asyncio.wait_for(process(), timeout), priority=10)
+                    await ctx.inference.submit(
+                        lambda proc=process, limit=timeout: asyncio.wait_for(proc(), limit),
+                        priority=10,
+                    )
                     await asyncio.to_thread(
                         finish_job_if_present,
                         ctx.store,
@@ -554,6 +560,7 @@ async def run_model_worker(ctx: ServiceContext) -> None:
                         expected_attempts=job["attempts"],
                     )
                 except Exception as exc:
+                    log.warning("Model job %s (%s) failed: %s", job["id"], job["kind"], exc)
                     await asyncio.to_thread(
                         finish_job_if_present,
                         ctx.store,
@@ -571,4 +578,5 @@ async def run_model_worker(ctx: ServiceContext) -> None:
             continue
         except Exception as exc:
             ctx.background_status["model_error"] = str(exc)
+            log.exception("Model worker loop failed")
             await asyncio.sleep(10)

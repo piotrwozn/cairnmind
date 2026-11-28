@@ -8,12 +8,12 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
-
-from cairnmind.terminal.terminal_panels import SidebarApp
-from cairnmind.terminal.terminal_ui import ChoiceModal
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, setup_ui
 from test_workspace_stage_scope import notice_of
+
+from cairnmind.terminal.terminal_panels import SidebarApp
+from cairnmind.terminal.terminal_ui import ChoiceModal
 
 LIST, ACTIONS = "Sessions on this computer", "Session actions"
 

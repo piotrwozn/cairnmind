@@ -12,27 +12,26 @@ import sys
 import time
 
 import pytest
-from typer.testing import CliRunner
-
 from conftest import counted_waits
-from cairnmind.agents import api_runtime
-from cairnmind.storage import arcade, restore_staged, store_writer
-from cairnmind import cli
-from cairnmind.pal import file_locks
-from cairnmind.memory import integrations
-from cairnmind.storage.journal import Journal, JournalTransaction
-from cairnmind.memory.memory import MemoryManager
-from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
-from cairnmind.storage.restore_staged import RestoreFailed, RestoreUnfinished
-from cairnmind.store import GRAPH_ROWS_PER_REQUEST, Store
-from cairnmind.storage.store_readonly import StoreNotReady
-from cairnmind.storage.sql import utc_now
-
-from cairnmind.storage.restore_claims import VECTORS_REBUILT, VECTORS_UNDECIDED, VECTORS_WAIT
 from test_backup_restore_stream import comparable
 from test_backup_without_vectors import embedded  # noqa: F401 - a fixture
 from test_restore_groups import _large
 from test_store_writer import second_installation
+from typer.testing import CliRunner
+
+from cairnmind import cli
+from cairnmind.agents import api_runtime
+from cairnmind.memory import integrations
+from cairnmind.memory.memory import MemoryManager
+from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
+from cairnmind.pal import file_locks
+from cairnmind.storage import arcade, restore_staged, store_writer
+from cairnmind.storage.journal import Journal, JournalTransaction
+from cairnmind.storage.restore_claims import VECTORS_REBUILT, VECTORS_UNDECIDED, VECTORS_WAIT
+from cairnmind.storage.restore_staged import RestoreFailed, RestoreUnfinished
+from cairnmind.storage.sql import utc_now
+from cairnmind.storage.store_readonly import StoreNotReady
+from cairnmind.store import GRAPH_ROWS_PER_REQUEST, Store
 
 runner = CliRunner()
 
@@ -146,8 +145,10 @@ def test_a_restore_commits_no_more_than_the_bound_per_transaction(tmp_path, monk
     assert comparable(target.export()) == comparable(source.export())
 
 
-def _failing_commits(monkeypatch, *numbers, error=OSError("the engine went away")):
+def _failing_commits(monkeypatch, *numbers, error=None):
     """Make the ``n``-th commit of the write phase (counted over every restore of the test) fail, as a lost engine does."""
+    if error is None:
+        error = OSError("the engine went away")
     seen = [0]
 
     def failing(self):

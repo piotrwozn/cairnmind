@@ -1,22 +1,27 @@
 """Local credentials, separate from project memory and public profile metadata."""
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import os
-from pathlib import Path
 import tempfile
 import threading
+from contextlib import contextmanager
+from pathlib import Path
 
 from cairnmind.agents.api_profiles import ENV_NAME, PROFILE_ID
 from cairnmind.pal.file_locks import lock_exclusive
 from cairnmind.pal.private_files import (
-    atomic_replace, ensure_private_dir, fsync_directory,
-    is_private_stat, is_reparse_point, make_private, open_no_follow,
+    atomic_replace,
+    ensure_private_dir,
+    fsync_directory,
+    is_private_stat,
+    is_reparse_point,
+    make_private,
+    open_no_follow,
 )
 
 
-def credential_environment_names():
+def credential_environment_names() -> tuple[str, ...]:
     """Known credential variables to exclude from child command environments."""
     return ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN",
             "CODEX_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_ADMIN_KEY", "AZURE_OPENAI_API_KEY")
@@ -175,7 +180,7 @@ class CredentialStore:
     def resolve(self, profile):
         kind, name = self._reference(profile)
         with self._mutex:
-            if kind is None:
+            if kind is None or name is None:
                 return None
             if kind == "env":
                 value = self._environ.get(name)
@@ -187,7 +192,7 @@ class CredentialStore:
     def status(self, profile):
         kind, name = self._reference(profile)
         with self._mutex:
-            if kind is None:
+            if kind is None or name is None:
                 return {"configured": True, "storage": "none", "code": "not_required"}
             if kind == "env":
                 value = self._environ.get(name)

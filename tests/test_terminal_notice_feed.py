@@ -7,13 +7,13 @@ import threading
 from datetime import datetime, timedelta
 
 import pytest
-
-from cairnmind.terminal import terminal_notice_feed as feed
-from cairnmind.config import Settings
-from cairnmind.terminal.terminal_notices import NoticeHistory
-from cairnmind.terminal.terminal_panels import SidebarApp
 from test_terminal_panels import settle
 from test_terminal_ux080 import setup_ui
+
+from cairnmind.config import Settings
+from cairnmind.terminal import terminal_notice_feed as feed
+from cairnmind.terminal.terminal_notices import NoticeHistory
+from cairnmind.terminal.terminal_panels import SidebarApp
 
 SCOPE = {"project_id": "p", "project_name": "P", "worktree": "/w"}
 

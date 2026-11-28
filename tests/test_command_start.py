@@ -10,15 +10,15 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
-
-from cairnmind import __version__, cli
-from cairnmind.config import Settings
-from cairnmind.cli_cmds.service_version import instance_id
 from conftest import own_time
 from test_other_version import OLD, forbidden, invoke, isolated, old_service  # noqa: F401 - isolated: autouse
 
+from cairnmind import __version__, cli
+from cairnmind.cli_cmds.service_version import instance_id
+from cairnmind.config import Settings
+
 HEAVY = ("cairnmind.service", "fastapi", "uvicorn", "starlette")
-RUN = """
+RUN = f"""
 import json, sys
 from cairnmind import cli
 sys.argv = ["cairnmind", "--data-dir", sys.argv[1], *sys.argv[2:]]
@@ -26,8 +26,8 @@ try:
     cli.entrypoint()
 except SystemExit:
     pass
-print(json.dumps([name for name in %r if name in sys.modules]), file=sys.stderr)
-""" % (HEAVY,)
+print(json.dumps([name for name in {HEAVY!r} if name in sys.modules]), file=sys.stderr)
+"""
 
 
 class StubService:

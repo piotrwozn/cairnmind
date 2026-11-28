@@ -5,20 +5,20 @@ import asyncio
 import hashlib
 import json
 import math
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
-
-from cairnmind.storage.arcade import ArcadeError  # noqa: F401 - kept for callers importing ArcadeError from retrieval
-from cairnmind.storage.arcade_backend import ArcadeBackend, vector_type_name
-from cairnmind.config import Settings
-from cairnmind.memory.confirmation import confirmation_text, confirmed_by as _confirmed_by
-from cairnmind.memory.conflicts import standing_marks
 from cairnmind.agents.context_selection import context_place, select_entries
-from cairnmind.memory.memory_paths import bound_metadata, memory_bindings
+from cairnmind.config import Settings
+from cairnmind.memory.confirmation import confirmation_text
+from cairnmind.memory.confirmation import confirmed_by as _confirmed_by
+from cairnmind.memory.conflicts import standing_marks
 from cairnmind.memory.memory_egress import ASK, held_back_class
 from cairnmind.memory.memory_models import from_settings
+from cairnmind.memory.memory_paths import bound_metadata, memory_bindings
+from cairnmind.storage.arcade import ArcadeError  # noqa: F401 - kept for callers importing ArcadeError from retrieval
+from cairnmind.storage.arcade_backend import ArcadeBackend, vector_type_name
 from cairnmind.storage.sql import unregistered_root
 from cairnmind.storage.storage_query import any_of, col, db_count, db_find, eq, is_in, is_null, ne
 
@@ -47,8 +47,8 @@ def last_warnings(warnings, limit: int, width: int = 240) -> list[str]:
 STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "i", "in", "is",
     "it", "of", "on", "or", "the", "this", "to", "was", "what", "where", "which", "why", "with",
-    "co", "czy", "do", "dla", "gdzie", "i", "jak", "jaki", "jakie", "jest", "na", "o", "oraz",
-    "po", "się", "to", "w", "we", "z", "za", "że", "dlaczego", "które", "który", "ma", "mamy",
+    "co", "czy", "do", "dla", "gdzie", "jak", "jaki", "jakie", "jest", "na", "o", "oraz",
+    "po", "się", "w", "we", "z", "za", "że", "dlaczego", "które", "który", "ma", "mamy",
 }
 
 
@@ -215,8 +215,9 @@ def public_record(record: dict, *, content_limit: int = 500, metadata_budget: in
     ) if record.get(key) is not None}
     original = str(item.get("content", ""))
     item["content"] = original[:content_limit]
-    if isinstance(item.get("key"), str) and len(item["key"]) > 200:
-        item["key"] = item["key"][:200]
+    record_key = item.get("key")
+    if isinstance(record_key, str) and len(record_key) > 200:
+        item["key"] = record_key[:200]
         item["key_truncated"] = True
     if len(original) > content_limit:
         item["content_truncated"] = True
@@ -289,9 +290,10 @@ class Retriever:
             return False
         for field in ("root", "worktree"):
             value = metadata.get(field)
-            if value is not None:
-                if not isinstance(value, str) or not value or Path(value).expanduser().resolve() != root:
-                    return False
+            if value is not None and (
+                not isinstance(value, str) or not value or Path(value).expanduser().resolve() != root
+            ):
+                return False
         path = metadata.get("path")
         if file_path and path is not None:
             if not isinstance(path, str) or not Path(path).is_absolute():

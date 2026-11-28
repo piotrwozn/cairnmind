@@ -5,14 +5,15 @@ import json
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from test_cockpit_server import cockpit as cockpit
+from test_cockpit_server import login
+from test_impact import workspace as workspace
+from test_impact_verdicts import changed as changed
+from test_impact_verdicts import give
 from typer.testing import CliRunner
 
 from cairnmind.cli import app
 from cairnmind.terminal.inspector_api import attach_inspector_routes
-
-from test_cockpit_server import cockpit as cockpit, login
-from test_impact import workspace as workspace
-from test_impact_verdicts import changed as changed, give
 
 
 def state(store, pid):

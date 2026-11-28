@@ -9,8 +9,8 @@ from types import SimpleNamespace
 import pytest
 
 from cairnmind import service
-from cairnmind.terminal import terminal_bridge as tb
 from cairnmind.config import Settings
+from cairnmind.terminal import terminal_bridge as tb
 
 
 @pytest.mark.asyncio

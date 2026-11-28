@@ -7,11 +7,11 @@ import sys
 from pathlib import Path
 
 import pytest
-
-from installer_script import installer_functions
 from conftest import own_time
-from cairnmind.pal import process_identity
+from installer_script import installer_functions
+
 from cairnmind.cli_cmds import upgrade_mark
+from cairnmind.pal import process_identity
 from cairnmind.terminal.terminal_i18n import CATALOG
 
 

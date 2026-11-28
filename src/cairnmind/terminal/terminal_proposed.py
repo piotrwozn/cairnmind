@@ -7,13 +7,15 @@ Everything that comes from stored data is printed as literal text, one line per 
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from rich.cells import cell_len
 from textual import work
 from textual.widgets import DataTable, Input
 
 from cairnmind.memory.stale_proposed import DEFAULT_DAYS, MAX_DAYS
-from cairnmind.terminal.terminal_i18n_messages import display_word
 from cairnmind.pal.terminal_safe import plain
+from cairnmind.terminal.terminal_i18n_messages import display_word
 from cairnmind.terminal.terminal_ui import Field, FormModal
 
 # How the newest evidence time is known (sql.evidence_time), as the cell says it, before translation.
@@ -56,7 +58,29 @@ def list_summary(result, days, translate):
 class ProposedView:
     """The Proposed view's part of the inspector panel; the panel calls it from its list, filter and language code."""
     proposed_days = DEFAULT_DAYS
-    _proposed_result = None
+    _proposed_result: tuple[dict[str, Any], int] | None = None
+
+    if TYPE_CHECKING:
+        workspace_data: dict[str, Any]
+        view: str
+        rows: dict[str, Any]
+        entity: Any
+        history_owner: Any
+        next_cursor: Any
+        source_next: Any
+        _scope_version: int
+
+        def t(self, text: Any, **values: Any) -> str: ...
+        def query_one(self, selector: Any, expect_type: Any = ...) -> Any: ...
+        def notice(self, value: Any, kind: str = "info") -> None: ...
+        def view_hint(self, text: str) -> None: ...
+        def render_rows(self, rows: list[Any]) -> None: ...
+        def use_columns(self, kind: str) -> None: ...
+        def fit_columns(self, width: int | None = None) -> None: ...
+        def params(self) -> dict[str, Any]: ...
+        async def request(self, method: str, path: str, *, params: Any = None, json: Any = None) -> Any: ...
+        async def push_screen_wait(self, screen: Any) -> Any: ...
+        async def load_page(self, cursor: Any = None) -> None: ...
 
     async def load_proposed(self):
         if not self.workspace_data.get("project_id"):

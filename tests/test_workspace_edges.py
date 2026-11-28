@@ -4,11 +4,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-
-from cairnmind.terminal import workspace as ws
-from cairnmind.config import Settings
-from cairnmind.terminal.terminal_client import BrokerError
 from conftest import own_time
+
+from cairnmind.config import Settings
+from cairnmind.terminal import workspace as ws
+from cairnmind.terminal.terminal_client import BrokerError
 
 
 class _FakeTmuxManager(ws.WorkspaceManager):

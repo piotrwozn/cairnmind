@@ -213,11 +213,12 @@ def test_the_installer_pipe_prints_the_same_summary(monkeypatch, capsys):
 
 @pytest.fixture
 def quiet(monkeypatch, tmp_path):
-    from cairnmind.agents import api_runtime
-    from cairnmind.storage import database_credentials, engine, store_writer
-    from cairnmind.memory import integrations
     import httpx
+
+    from cairnmind.agents import api_runtime
     from cairnmind.config import Settings
+    from cairnmind.memory import integrations
+    from cairnmind.storage import database_credentials, engine, store_writer
     directory = tmp_path / "memory"
     directory.mkdir()
     (directory / "config.json").write_text(json.dumps({"port": 1, "arcade_url": "http://127.0.0.1:1"}))

@@ -3,21 +3,26 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 import re
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from cairnmind import __version__
-from cairnmind.config import Settings
 from cairnmind.agents.evaluation import (
-    GoldenCase, MeasuredOllama, _case_answer_schema, _native_client, _native_failure,
-    run_evaluation, score_answer,
+    GoldenCase,
+    MeasuredOllama,
+    _case_answer_schema,
+    _native_client,
+    _native_failure,
+    run_evaluation,
+    score_answer,
 )
 from cairnmind.agents.ollama import OllamaUnavailable
-from cairnmind.store import Store
 from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
+from cairnmind.config import Settings
+from cairnmind.store import Store
 
 
 class FixtureOllama:

@@ -6,9 +6,6 @@ belongs in the runtime's separate, unarchived operational terminal.
 """
 from __future__ import annotations
 
-from collections import OrderedDict
-from copy import deepcopy
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -18,10 +15,12 @@ import shutil
 import subprocess
 import threading
 import time
-from typing import Mapping
+from collections import OrderedDict
+from collections.abc import Mapping
+from copy import deepcopy
+from datetime import UTC, datetime
 
 from cairnmind.memory.integrations import _probe_cli
-
 
 CLIENTS = ("codex", "claude")
 CACHE_SECONDS = 30
@@ -119,7 +118,7 @@ def _expiry(value) -> datetime | None:
         return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return parsed.astimezone(timezone.utc) if parsed.tzinfo is not None else None
+        return parsed.astimezone(UTC) if parsed.tzinfo is not None else None
     except ValueError:
         return None
 
@@ -168,7 +167,7 @@ def _auth_result(client: str, result, info: dict) -> None:
         expiry = _expiry(document.get("loginExpiresAt"))
         if expiry:
             info["login_expires_at"] = expiry.isoformat()
-            if expiry <= datetime.now(timezone.utc):
+            if expiry <= datetime.now(UTC):
                 info["auth"] = "expired_or_rejected"
                 info["error_code"] = "login_expired"
     elif not document["loggedIn"] and code not in {"auth_rejected", "network_unavailable", "unsupported_client"}:
@@ -214,7 +213,7 @@ def probe_client(client: str, env: Mapping[str, str] | None = None, force: bool 
         "credential_configuration": "environment_present" if any(environment.get(name, "").strip() for name in _API_ENV[client])
                                     else "not_observed",
         "login_expires_at": None, "error_code": capability_error,
-        "observed_at": datetime.now(timezone.utc).isoformat(), "cached": False, "age_seconds": 0,
+        "observed_at": datetime.now(UTC).isoformat(), "cached": False, "age_seconds": 0,
         "cache_ttl_seconds": CACHE_SECONDS,
     }
     if installed:

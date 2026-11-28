@@ -125,7 +125,8 @@ def running_rows(slots):
     for slot in slots if isinstance(slots, list) else []:
         if isinstance(slot, dict) and slot.get("run_id"):
             client = slot.get("client") or slot.get("profile_id") or slot.get("id") or ""
-            word = LIFECYCLE.get(slot.get("lifecycle"), "None") if slot.get("run_id") else "None"
+            lifecycle = slot.get("lifecycle")
+            word = LIFECYCLE.get(lifecycle, "None") if isinstance(lifecycle, str) and slot.get("run_id") else "None"
             rows.append((first_line(client) if isinstance(client, str) else "", word, slot.get("lifecycle") in _LIVE
                          and bool(slot.get("run_id"))))
     return rows

@@ -1,8 +1,8 @@
 """Graph vertex, edge, prefetch, batching, and record-graph operations for Store."""
 from __future__ import annotations
 
-from contextlib import contextmanager
 import hashlib
+from contextlib import contextmanager
 
 from cairnmind.storage import graph_transactions
 from cairnmind.storage.sql import clean_row

@@ -7,14 +7,14 @@ import json
 
 import httpx
 import pytest
+from test_external_mcp_start import Network
 from typer.testing import CliRunner
 
 from cairnmind import __version__, cli
-from cairnmind.memory import integrations
-from cairnmind.mcp import mcp_server
-from cairnmind.config import Settings
 from cairnmind.cli_cmds.service_version import OTHER_VERSION, instance_id
-from test_external_mcp_start import Network
+from cairnmind.config import Settings
+from cairnmind.mcp import mcp_server
+from cairnmind.memory import integrations
 
 runner = CliRunner()
 REAL = httpx.Client

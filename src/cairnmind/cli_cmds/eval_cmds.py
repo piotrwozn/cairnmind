@@ -6,12 +6,12 @@ from typing import Annotated
 
 import typer
 
+from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.cli_arguments import (
     AnswerIdArg,
     ProjectArg,
     RepositoryArg,
 )
-from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.io import initialized
 
 
@@ -30,8 +30,8 @@ def register(apps: dict[str, typer.Typer]) -> None:
             except ValueError as exc:
                 raise typer.BadParameter(str(exc), param_hint="--replay") from None
         if record is not None:
-            from cairnmind.memory.memory_models import from_settings
             from cairnmind.agents.vcr import VcrOllama
+            from cairnmind.memory.memory_models import from_settings
             client = VcrOllama.record(from_settings(settings), record, suite=suite)
             return client, client
         return None, None
@@ -189,7 +189,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         """
         from cairnmind.agents.answer_log import replay
         _io._not_run_without_models(ctx.obj, "cairnmind eval replay")
-        pid = _io.store_for_read(ctx.obj).resolve_project(project)["id"]
+        pid = _io.resolve_project(_io.store_for_read(ctx.obj), project)["id"]
         try:
             # Asked for the logged scope, not the session's, and a refusal is kept as its reason in the report.
             result = replay(ctx.obj, pid, lambda payload: _io.request(ctx.obj, "POST", "/ask", json=payload, session=False,
@@ -206,7 +206,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
                      limit: Annotated[int, typer.Option("--limit", help="How many answers, newest first.")] = 20):
         """List the logged answers of a project, newest first. Asks no model and writes nothing."""
         from cairnmind.agents.answer_log import listing
-        pid = _io.store_for_read(ctx.obj).resolve_project(project)["id"]
+        pid = _io.resolve_project(_io.store_for_read(ctx.obj), project)["id"]
         try:
             _io.output(listing(ctx.obj, pid, limit))
         except ValueError as exc:
@@ -216,7 +216,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
     def answers_show(ctx: typer.Context, project: ProjectArg, answer_id: AnswerIdArg):
         """Show one logged answer with its question, citations, code state, model and timings."""
         from cairnmind.agents.answer_log import find
-        pid = _io.store_for_read(ctx.obj).resolve_project(project)["id"]
+        pid = _io.resolve_project(_io.store_for_read(ctx.obj), project)["id"]
         try:
             _io.output(find(ctx.obj, pid, answer_id))
         except LookupError as exc:
@@ -231,7 +231,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
                                                         "0 deletes the log.")]):
         """Keep only the newest logged answers of a project."""
         from cairnmind.agents.answer_log import prune
-        pid = _io.store_for_read(ctx.obj).resolve_project(project)["id"]
+        pid = _io.resolve_project(_io.store_for_read(ctx.obj), project)["id"]
         _io.output(prune(ctx.obj, pid, keep))
 
     @cache_app.command("clear")

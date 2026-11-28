@@ -12,10 +12,15 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from cairnmind.agents.agent_journal import AgentJournal
-from cairnmind.agents.agent_memory import AgentMemoryClient, MEMORY_TOOLS, archive_agent_target, capture_agent_target
+from cairnmind.agents.agent_memory import (
+    MEMORY_TOOLS,
+    AgentMemoryClient,
+    archive_agent_target,
+    capture_agent_target,
+)
 from cairnmind.memory.memory import MemoryManager, inspect_snapshot
-from cairnmind.service import create_app
 from cairnmind.memory.sessions import SessionManager
+from cairnmind.service import create_app
 from cairnmind.store import Store
 
 

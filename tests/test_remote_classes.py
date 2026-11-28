@@ -5,18 +5,18 @@ server that is not loopback, exactly as `cairnmind models set --allow-remote` sa
 """
 from __future__ import annotations
 
-from dataclasses import replace
 import json
+from dataclasses import replace
 from uuid import uuid4
 
 import httpx
 import pytest
 
-from cairnmind.memory import memory_egress, memory_models
 from cairnmind.agents.agent import KnowledgeAgent
-from cairnmind.config import Settings
 from cairnmind.agents.ollama import OllamaUnavailable
 from cairnmind.agents.retrieval import Retriever
+from cairnmind.config import Settings
+from cairnmind.memory import memory_egress, memory_models
 from cairnmind.service import schedule_embeddings
 from cairnmind.store import Store
 

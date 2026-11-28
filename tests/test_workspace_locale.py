@@ -15,7 +15,6 @@ if sys.platform != "win32":
     import termios
 
 import pytest
-
 from test_workspace import manager as manager
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX tmux/PTY locale handling")

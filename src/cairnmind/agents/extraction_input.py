@@ -5,14 +5,21 @@ Pure functions without a model or a database, so that the extraction job and the
 """
 from __future__ import annotations
 
-from copy import deepcopy
 import hashlib
 import json
 import re
+from copy import deepcopy
 
-from cairnmind.memory.integrations import BEGIN, DATA_NOT_INSTRUCTIONS, EARLIER_BEGIN, EARLIER_END, END, launch_prompt
 from cairnmind.agents.ollama import MODEL_DIGEST
 from cairnmind.agents.retrieval import json_value, public_source_metadata
+from cairnmind.memory.integrations import (
+    BEGIN,
+    DATA_NOT_INSTRUCTIONS,
+    EARLIER_BEGIN,
+    EARLIER_END,
+    END,
+    launch_prompt,
+)
 from cairnmind.store import EXTRACTOR_MODEL_CHARS, TASK_STATES
 
 VISIBLE_CHARS = 12000
@@ -317,8 +324,7 @@ def extractor_stamp(model: str, digest: str | None) -> dict:
     The result always passes store.validate_extractor_stamp: an empty name is written as unknown, and
     a name too long for EXTRACTOR_MODEL_CHARS keeps its start and a hash of the whole name.
     """
-    valid = isinstance(digest, str) and MODEL_DIGEST.fullmatch(digest)
-    suffix = "@" + (digest if valid else UNKNOWN_DIGEST)
+    suffix = "@" + (digest if isinstance(digest, str) and MODEL_DIGEST.fullmatch(digest) else UNKNOWN_DIGEST)
     name = model if isinstance(model, str) and model else UNKNOWN_DIGEST
     room = EXTRACTOR_MODEL_CHARS - len(suffix)
     if len(name) > room:

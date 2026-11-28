@@ -5,11 +5,11 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.storage import engine
 from cairnmind.cli_cmds import first_start
-from cairnmind.memory import integrations
-from cairnmind.storage.arcade import ArcadeError
 from cairnmind.config import Settings
+from cairnmind.memory import integrations
+from cairnmind.storage import engine
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.store import Store
 
 

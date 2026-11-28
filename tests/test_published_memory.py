@@ -2,27 +2,25 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
+from conftest import as_person, person_edit, person_unproven
 
+from cairnmind.memory.confirmation import ConfirmationRefused
 from cairnmind.memory.evidence import evidence_states
 from cairnmind.memory.findings import save_finding
-from cairnmind.terminal.inspector import Inspector
-from cairnmind.memory.memory_acts import confirm_plan
 from cairnmind.memory.memory import MemoryConflict, MemoryManager
+from cairnmind.memory.memory_acts import confirm_plan
 from cairnmind.memory.memory_published import PUBLICATION_SWITCH, Publisher
 from cairnmind.memory.memory_published_check import check_directory
 from cairnmind.memory.memory_published_format import render
-from cairnmind.memory.memory_published_parse import parse_file
 from cairnmind.memory.memory_published_import import PublishedImporter
+from cairnmind.memory.memory_published_parse import parse_file
 from cairnmind.memory.plans import PlanManager
 from cairnmind.store import Store
-
-from cairnmind.memory.confirmation import ConfirmationRefused
-
-from conftest import as_person, person_edit, person_unproven
+from cairnmind.terminal.inspector import Inspector
 
 GUIDE = "# Guide\n\nThe active backend is ArcadeDB.\nNothing else stores memory.\n"
 

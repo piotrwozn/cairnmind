@@ -1,6 +1,7 @@
 """Cross-platform exclusive and shared file lock tests (flock on POSIX, LockFileEx on Windows)."""
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -64,12 +65,10 @@ def test_locked_path_releases_on_normal_and_exception_exit(tmp_path):
     target = tmp_path / "ctx.lock"
     with file_locks.locked_path(target, blocking=False) as handle:
         assert not os.get_inheritable(handle.fileno())
-        with pytest.raises(BlockingIOError):
-            with file_locks.locked_path(target, blocking=False):
-                pytest.fail("nested nonblocking lock must fail")
-    with pytest.raises(RuntimeError):
-        with file_locks.locked_path(target, blocking=False):
-            raise RuntimeError("boom")
+        with pytest.raises(BlockingIOError), file_locks.locked_path(target, blocking=False):
+            pytest.fail("nested nonblocking lock must fail")
+    with pytest.raises(RuntimeError), file_locks.locked_path(target, blocking=False):
+        raise RuntimeError("boom")
     with file_locks.locked_path(target, blocking=False):
         pass
 
@@ -88,9 +87,8 @@ def test_exclusive_lock_enforced_across_processes(tmp_path):
     )
     try:
         assert child.stdout.readline().strip() == "LOCKED"
-        with pytest.raises(BlockingIOError):
-            with file_locks.locked_path(target, blocking=False):
-                pytest.fail("acquired lock held by another process")
+        with pytest.raises(BlockingIOError), file_locks.locked_path(target, blocking=False):
+            pytest.fail("acquired lock held by another process")
     finally:
         child.stdin.close()
         child.wait(timeout=15)
@@ -115,9 +113,8 @@ def test_shared_locks_enforced_across_two_processes(tmp_path):
     try:
         assert p1.stdout.readline().strip() == "SHARED"
         assert p2.stdout.readline().strip() == "SHARED"
-        with pytest.raises(BlockingIOError):
-            with file_locks.locked_path(target, blocking=False):
-                pytest.fail("exclusive lock succeeded while two processes held shared locks")
+        with pytest.raises(BlockingIOError), file_locks.locked_path(target, blocking=False):
+            pytest.fail("exclusive lock succeeded while two processes held shared locks")
     finally:
         p1.stdin.close()
         p2.stdin.close()
@@ -144,9 +141,8 @@ def test_killing_lock_holder_releases_lock_for_next_process(tmp_path):
         line = holder.stdout.readline().strip()
         assert line.startswith("LOCKED ")
         real_pid = int(line.split()[1])
-        with pytest.raises(BlockingIOError):
-            with file_locks.locked_path(target, blocking=False):
-                pass
+        with pytest.raises(BlockingIOError), file_locks.locked_path(target, blocking=False):
+            pass
         process_control.terminate_pid(real_pid, force=True)
         holder.kill()
         holder.wait(timeout=15)
@@ -158,10 +154,8 @@ def test_killing_lock_holder_releases_lock_for_next_process(tmp_path):
             time.sleep(0.01)
     finally:
         if real_pid is not None:
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 process_control.terminate_pid(real_pid, force=True)
-            except ProcessLookupError:
-                pass
         if holder.poll() is None:
             holder.kill()
             holder.wait(timeout=15)
@@ -199,18 +193,17 @@ def test_child_process_does_not_inherit_lock_handle(tmp_path):
 
 def test_product_locks_work_on_this_platform(tmp_path):
     """Exercise real product lock callers: config.load(create=True), setup_mark.held, CockpitState (#435)."""
+    from cairnmind.config import Settings
     from cairnmind.terminal import setup_mark
     from cairnmind.terminal.cockpit_state import CockpitState
-    from cairnmind.config import Settings
 
     settings = Settings.load(tmp_path / "data", create=True)
     assert (settings.data_dir / "config.lock").exists()
 
     with setup_mark.held(settings.data_dir):
         assert setup_mark.mark_path(settings.data_dir).exists()
-        with pytest.raises(setup_mark.ChangeBusy):
-            with setup_mark.held(settings.data_dir):
-                pass
+        with pytest.raises(setup_mark.ChangeBusy), setup_mark.held(settings.data_dir):
+            pass
     assert not setup_mark.mark_path(settings.data_dir).exists()
 
     state = CockpitState(settings)

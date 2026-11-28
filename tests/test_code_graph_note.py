@@ -13,11 +13,11 @@ from fastapi.testclient import TestClient
 from test_knowledge import FakeOllama
 from test_snapshot_graph_rows import origin, target_of  # noqa: F401, F811  (origin is a fixture)
 
-from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
 from cairnmind.config import Settings
 from cairnmind.memory.impact import build_impact
-from cairnmind.scip.ingest import index_project
 from cairnmind.memory.memory import MemoryManager
+from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
+from cairnmind.scip.ingest import index_project
 from cairnmind.service import create_app
 from cairnmind.terminal.terminal_i18n import tr
 from cairnmind.terminal.terminal_impact import list_summary

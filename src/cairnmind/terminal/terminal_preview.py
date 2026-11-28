@@ -8,12 +8,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from contextlib import suppress
 import hashlib
 import io
 import json
 import os
-from pathlib import Path
 import secrets
 import shlex
 import signal
@@ -23,23 +21,25 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import suppress
+from pathlib import Path
 
-try:
+if sys.platform != "win32":
     import fcntl
     import termios
-except ImportError:
-    fcntl = None  # type: ignore[assignment]
-    termios = None  # type: ignore[assignment]
+else:
+    fcntl = None
+    termios = None
 
+import uvicorn
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse
-import uvicorn
 
 from cairnmind import __version__
-from cairnmind.terminal.cockpit import BrowserSessions, _birth, cockpit_status, instance_id
-from cairnmind.terminal.cockpit_state import _atomic
 from cairnmind.config import Settings
 from cairnmind.pal.system_links import system_spelling
+from cairnmind.terminal.cockpit import BrowserSessions, _birth, cockpit_status, instance_id
+from cairnmind.terminal.cockpit_state import _atomic
 from cairnmind.terminal.terminal_client import BrokerClient, BrokerError
 from cairnmind.terminal.workspace import WorkspaceManager
 
@@ -159,7 +159,7 @@ class FixtureData:
                 nodes = [{"id": "project:" + row["id"], "project_id": row["id"],
                           "kind": "project", "label": row["name"]} for row in page["items"]]
             return {"nodes": nodes, "edges": [{"from_id": a["id"], "to_id": b["id"]}
-                    for a, b in zip(nodes, nodes[1:])], "groups": [], "next_cursor": page["next_cursor"],
+                    for a, b in zip(nodes, nodes[1:], strict=False)], "groups": [], "next_cursor": page["next_cursor"],
                     "cursor": {"epoch": self.epoch, "seq": 1}}
         prefix = "/api/inspector/"
         if path.startswith(prefix):
@@ -310,7 +310,16 @@ class PreviewWorkspace(WorkspaceManager):
 class PreviewTerminal:
     """A real bounded PTY attachment; passive by default so a user can take over."""
 
+    master: int
+    slave: int
+    stopped: threading.Event
+    output: bytearray
+    process: subprocess.Popen[bytes]
+    thread: threading.Thread
+
     def __init__(self, manager, size=(180, 55), *, readonly=True):
+        if sys.platform == "win32":
+            raise RuntimeError("PreviewTerminal requires POSIX PTY support")
         self.master, self.slave = os.openpty()
         self.stopped = threading.Event()
         self.output = bytearray()
@@ -342,6 +351,8 @@ class PreviewTerminal:
         os.write(self.master, value if isinstance(value, bytes) else value.encode())
 
     def resize(self, cols, rows):
+        if sys.platform == "win32":
+            raise RuntimeError("PreviewTerminal requires POSIX PTY support")
         fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         os.kill(self.process.pid, signal.SIGWINCH)
 

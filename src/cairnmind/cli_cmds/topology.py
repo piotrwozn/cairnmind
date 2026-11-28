@@ -130,9 +130,10 @@ MESSAGES = {
 def _role(settings, role: str, environment: dict):
     """One memory model role: (the block, None) or (the block, the reason it cannot be used)."""
     from urllib.parse import urlsplit
+
     from cairnmind.memory import memory_egress
-    from cairnmind.storage.database_mode import shown
     from cairnmind.memory.memory_models import MODEL_FIELDS, is_loopback, profile
+    from cairnmind.storage.database_mode import shown
     model = getattr(settings, MODEL_FIELDS[role])
     try:
         row = profile(settings, role)
@@ -179,9 +180,9 @@ def topology(settings, *, models: dict | None = None, writer: dict | None = None
              java_major: int | None = None) -> dict:
     """The topology of ``settings``. ``models``: memory_models.doctor_models' result; ``writer``: the writer role;
     ``java_major``: the major version doctor read from the Java the engine runs, when it read one."""
-    from cairnmind.storage import database_credentials, database_mode
     from cairnmind.agents import knowledge_mode
     from cairnmind.memory.memory_models import ROLES
+    from cairnmind.storage import database_credentials, database_mode
     environment = (getattr(settings, "_origin", None) or {}).get("environment", {})
 
     named = database_mode.CONNECT_SETTING if settings.arcade_connect_url else "arcade_url"
@@ -243,6 +244,7 @@ def topology(settings, *, models: dict | None = None, writer: dict | None = None
 def probe(settings) -> dict:
     """What `cairnmind setup` shows: the requests doctor makes (read-only), then the topology."""
     import httpx
+
     from cairnmind.memory.memory_models import doctor_models, doctor_verify
     from cairnmind.storage.store_writer import inspect
     with httpx.Client(timeout=1.5, trust_env=False, verify=doctor_verify(settings)) as http:

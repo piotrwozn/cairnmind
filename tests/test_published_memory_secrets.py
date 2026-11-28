@@ -1,21 +1,38 @@
 """The secrets gate of published memory (#171), without a store: what is found, what is not, and releases."""
 from __future__ import annotations
 
-from pathlib import Path
 import secrets
+from pathlib import Path
 
 import pytest
+from test_published_memory_format import (
+    AT,
+    OTHER,
+    PROJECT,
+    RECORD,
+    REVIEW,
+    constraint,
+    decision,
+    single,
+    tree,
+)
 from typer.testing import CliRunner
 
 from cairnmind import cli
 from cairnmind.memory.memory_published_check import check_files
 from cairnmind.memory.memory_published_format import path_of, render
 from cairnmind.memory.memory_published_secrets import (
-    REGISTERED, Rules, SecretRulesError, described, load_rules, random_looking, release_problem, scan_text,
+    REGISTERED,
+    Rules,
+    SecretRulesError,
+    described,
+    load_rules,
+    random_looking,
+    release_problem,
+    scan_text,
     value_sha256,
 )
 from cairnmind.storage.sql import json_text
-from test_published_memory_format import AT, OTHER, PROJECT, RECORD, REVIEW, constraint, decision, single, tree
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = "6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c"

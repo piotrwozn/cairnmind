@@ -84,7 +84,7 @@ def _bytes_expression():
 def _parts(low, high, prefix):
     """Sixteen ranges of ids that together are the range [low, high): by the digit after ``prefix``."""
     edges = [low] + [prefix + digit for digit in _DIGITS[1:]] + [high]
-    return list(zip(edges, edges[1:]))
+    return list(zip(edges, edges[1:], strict=False))
 
 
 def _in_range(low, high):

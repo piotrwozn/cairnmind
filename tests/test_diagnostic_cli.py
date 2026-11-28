@@ -6,13 +6,12 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from conftest import plain_words
 from typer.testing import CliRunner
 
-from conftest import plain_words
-
 from cairnmind import __version__, cli
-from cairnmind.config import Settings
 from cairnmind.cli_cmds.service_version import instance_id
+from cairnmind.config import Settings
 
 
 def no_start(monkeypatch):
@@ -298,8 +297,8 @@ def test_retry_uses_current_ack_after_refresh_despite_old_launcher_packet(tmp_pa
 
     from fastapi.testclient import TestClient
 
-    from cairnmind.service import create_app
     from cairnmind.memory.sessions import SessionManager
+    from cairnmind.service import create_app
     from cairnmind.store import Store
 
     root = tmp_path / "repo"

@@ -11,15 +11,26 @@ from __future__ import annotations
 import subprocess
 import time
 from pathlib import Path
+from uuid import uuid4
 
 from cairnmind.cli_cmds.first_start import UNKNOWN_PROJECT_NEXT
+from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.storage.sql import clean_row, insert_document, utc_now
 from cairnmind.storage.storage_query import (
-    any_of, asc, db_count, db_delete_where, db_find, db_find_one, db_update_where, desc, eq, gte,
-    is_not_null, is_null, ne,
+    any_of,
+    asc,
+    db_count,
+    db_delete_where,
+    db_find,
+    db_find_one,
+    db_update_where,
+    desc,
+    eq,
+    gte,
+    is_not_null,
+    is_null,
+    ne,
 )
-from cairnmind.pal.terminal_safe import safe_text
-from uuid import uuid4
 
 ENDED = frozenset({"exited", "failed", "interrupted"})
 INSTALLED_FILES = ("AGENTS.md", "CLAUDE.md", ".mcp.json", ".codex/config.toml", ".codex/hooks.json",

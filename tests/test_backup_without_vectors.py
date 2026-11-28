@@ -10,12 +10,18 @@ import types
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind.terminal import person_proof
+from cairnmind.agents.retrieval import (
+    VECTORS_BUILDING,
+    VECTORS_FAILED,
+    VECTORS_NOT_READY,
+    Retriever,
+    last_warnings,
+)
 from cairnmind.cli import app
 from cairnmind.scip.ingest import _write_chunks
 from cairnmind.storage.restore_claims import VECTORS_REBUILT, VECTORS_UNDECIDED, VECTORS_WAIT, checked_restore
-from cairnmind.agents.retrieval import VECTORS_BUILDING, VECTORS_FAILED, VECTORS_NOT_READY, Retriever, last_warnings
 from cairnmind.store import Store
+from cairnmind.terminal import person_proof
 from cairnmind.terminal.terminal_i18n import tr
 
 NAMESPACE = "embedder@digest"
@@ -194,6 +200,7 @@ def test_a_backup_that_carries_vectors_is_restored_with_them_and_nothing_is_requ
     """An older file: the writer of this version leaves vectors out, restore still loads those a file brings."""
     import gzip
     import hashlib
+
     from cairnmind.storage.sql import clean_row, json_text, quote_name
     envelope = json.loads(gzip.decompress(embedded.backup.read_bytes()))
     payload = envelope["payload"]

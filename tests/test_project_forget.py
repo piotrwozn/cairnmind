@@ -4,19 +4,19 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import as_person, person_unproven
 
 from cairnmind.agents import answer_log, client_runtime
-from cairnmind.memory import project_forget, project_removal as removal
+from cairnmind.memory import project_forget
+from cairnmind.memory import project_removal as removal
 from cairnmind.memory.confirmation import ConfirmationRefused
-from cairnmind.scip.ingest import index_project
 from cairnmind.memory.memory import MemoryManager
-from cairnmind.terminal.person_proof import FORGET_REFUSED
 from cairnmind.memory.sessions import SessionManager
+from cairnmind.scip.ingest import index_project
 from cairnmind.storage.sql import insert_document
-from cairnmind.store import DOCUMENT_TYPES, EXPORT_TYPES, Store
 from cairnmind.storage.store_writer import StoreNotWriter
-
-from conftest import as_person, person_unproven
+from cairnmind.store import DOCUMENT_TYPES, EXPORT_TYPES, Store
+from cairnmind.terminal.person_proof import FORGET_REFUSED
 
 NOT_COUNTED = {"projects", "project_roots", "journal_state", "journal_events"}
 

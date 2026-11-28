@@ -1,10 +1,10 @@
 """Lightweight CLI entrypoint with a fast path for `cairnmind hook` invocations."""
 from __future__ import annotations
 
-from collections.abc import Sequence
 import json
-from pathlib import Path
 import sys
+from collections.abc import Sequence
+from pathlib import Path
 
 
 def _parse_hook_argv(argv: Sequence[str]) -> tuple[str | None, str] | None:

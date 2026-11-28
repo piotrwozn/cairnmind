@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import shutil
 import stat
 import subprocess
 import sys
 import time
+from pathlib import Path
 from uuid import uuid4
 
 if sys.platform != "win32":
@@ -20,8 +20,8 @@ from cairnmind.memory import memory as portable
 from cairnmind.memory.memory import MemoryConflict, MemoryManager, inspect_snapshot
 from cairnmind.memory.plans import PlanManager
 from cairnmind.memory.sessions import SessionManager
-from cairnmind.store import Store
 from cairnmind.memory.verification import run_check, verification_status
+from cairnmind.store import Store
 
 
 def git(root, *args):

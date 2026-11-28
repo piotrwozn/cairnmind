@@ -2,16 +2,22 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
 
-from cairnmind.config import Settings
 from cairnmind.agents.ollama import OllamaUnavailable
 from cairnmind.agents.repository_evaluation import (
-    NOT_INDEXED, answer_is_right, case_result, load_questions, run_repository_evaluation, summarize, tracked_files,
+    NOT_INDEXED,
+    answer_is_right,
+    case_result,
+    load_questions,
+    run_repository_evaluation,
+    summarize,
+    tracked_files,
 )
+from cairnmind.config import Settings
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 QUESTIONS = REPOSITORY / "docs" / "evaluation" / "repository-questions.json"
@@ -104,7 +110,7 @@ def test_fake_answers_give_complete_right_and_wrong_counts(tmp_path):
         {"status": "partial", "answer": "7", "sources": [], "diagnostics": {"code": "answer_unsupported"}},
         {"status": "partial", "answer": "unknown", "sources": [], "diagnostics": {"code": "insufficient_evidence"}},
     ]
-    rows = [case_result(case, result, tmp_path, 2, 1.25) for case, result in zip(cases, results)]
+    rows = [case_result(case, result, tmp_path, 2, 1.25) for case, result in zip(cases, results, strict=False)]
     assert rows[0]["citations"] == [{"path": "a.py", "line_start": 3, "quote": "LIMIT = 7"}]
     assert [row["right"] for row in rows] == [True, True, False, False, False]  # a partial answer is never right
     assert summarize(rows) == {"asked": 5, "complete": 3, "complete_and_right": 2, "complete_and_wrong": 1,
@@ -181,8 +187,8 @@ def test_without_a_running_engine_nothing_is_copied(tmp_path, monkeypatch):
 
 
 def test_a_database_that_cannot_be_dropped_fails_the_run_and_is_named(tmp_path, monkeypatch, capsys):
-    import cairnmind.storage.engine as engine
     import cairnmind.agents.repository_evaluation as evaluation
+    import cairnmind.storage.engine as engine
     from cairnmind.storage.arcade import ArcadeError
     root = tmp_path / "repo"
     root.mkdir()
@@ -218,8 +224,8 @@ def test_a_database_that_cannot_be_dropped_fails_the_run_and_is_named(tmp_path, 
 
 
 def test_an_interrupted_run_still_drops_its_database_and_writes_its_report(tmp_path, monkeypatch):
-    import cairnmind.storage.engine as engine
     import cairnmind.agents.repository_evaluation as evaluation
+    import cairnmind.storage.engine as engine
     root = tmp_path / "repo"
     root.mkdir()
     (root / "a.py").write_text("LIMIT = 7\n")

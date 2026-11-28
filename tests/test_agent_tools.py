@@ -2,21 +2,21 @@
 import asyncio
 import hashlib
 import os
-from pathlib import Path
 import shlex
 import signal
 import stat
 import sys
 import time
+from pathlib import Path
 
 import pytest
-
 from conftest import make_symlink_or_skip
+
 from cairnmind.agents import agent_tools
-from cairnmind.pal import process_identity
 from cairnmind.agents.agent_journal import AgentJournal, JournalError
 from cairnmind.agents.agent_tools import MAX_COMMAND_OUTPUT_BYTES, ToolExecutor
 from cairnmind.config import Settings
+from cairnmind.pal import process_identity
 
 IS_WINDOWS = sys.platform == "win32"
 posix_only = pytest.mark.skipif(IS_WINDOWS, reason="POSIX shell/signal/dir_fd semantics")

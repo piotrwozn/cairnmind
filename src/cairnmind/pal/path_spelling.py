@@ -11,6 +11,7 @@ only in case are different files there, and their identities differ.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 
@@ -48,7 +49,7 @@ def has_alias(path: Path, root: Path) -> bool:
     folder = root
     for part in parts:
         if "~" in part:
-            if hasattr(os, "O_DIRECTORY") and os.stat in os.supports_dir_fd:
+            if sys.platform != "win32" and hasattr(os, "O_DIRECTORY") and os.stat in os.supports_dir_fd:
                 try:
                     fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
                 except OSError:

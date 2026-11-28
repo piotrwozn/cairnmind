@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import functools
 import os
-from pathlib import Path
 import struct
 import sys
+from pathlib import Path
+from typing import Any
 
 # <sys/sysctl.h> of macOS: the names of the queries and the layout of struct kinfo_proc, whose first member
 # is struct extern_proc: p_un (its p_starttime, a struct timeval, at offset 0), p_vmspace, p_sigacts,
@@ -313,7 +314,9 @@ _WIN_STATUS_BUFFER_OVERFLOW = 0x80000005
 
 
 @functools.cache
-def _win32_libs():
+def _win32_libs() -> tuple[Any, Any, Any]:
+    if sys.platform != "win32":
+        raise OSError("Win32 API is only available on Windows")
     import ctypes
     from ctypes import wintypes
 
@@ -355,6 +358,8 @@ def _win32_open(pid: int):
 
 
 def _win32_alive(pid: int) -> bool:
+    if sys.platform != "win32":
+        return False
     import ctypes
     from ctypes import wintypes
 
@@ -362,9 +367,7 @@ def _win32_alive(pid: int) -> bool:
     handle = _win32_open(pid)
     if not handle:
         err = ctypes.get_last_error()
-        if err == _WIN_ERROR_ACCESS_DENIED:
-            return True
-        return False
+        return err == _WIN_ERROR_ACCESS_DENIED
     try:
         code = wintypes.DWORD(0)
         if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):

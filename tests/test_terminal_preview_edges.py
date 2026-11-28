@@ -5,11 +5,11 @@ import argparse
 import sys
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
-from cairnmind.terminal import terminal_preview as tp
 from cairnmind.config import Settings
+from cairnmind.terminal import terminal_preview as tp
 
 
 def _auth_client(app, token: str) -> TestClient:
@@ -63,9 +63,8 @@ def test_preview_app_fixture_routes_auth_writes_offline_and_ws(tmp_path):
     assert len(app.state.audit) < 600
 
     # WebSocket closes with 1008
-    with pytest.raises(Exception):
-        with client.websocket_connect("/ws"):
-            pass
+    with pytest.raises(Exception), client.websocket_connect("/ws"):
+        pass
 
     # Offline scenario returns 503 on /api/*
     off_app = tp.create_preview_app(settings, scenario="offline")

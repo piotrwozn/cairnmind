@@ -15,13 +15,14 @@ Design invariants:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
 import math
 import os
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from cairnmind.agents.support import support_citations
 
@@ -207,7 +208,14 @@ def evaluate_tier1_nli(
     if hasattr(active_scorer, "model_id"):
         model_id = str(active_scorer.model_id)
 
-    score_fn = active_scorer.score if hasattr(active_scorer, "score") else active_scorer
+    score_method = getattr(active_scorer, "score", None)
+    score_fn: Callable[[str, str], Any]
+    if callable(score_method):
+        score_fn = score_method
+    elif callable(active_scorer):
+        score_fn = active_scorer
+    else:
+        return NliDecision("escalate", "nli_error: UncallableScorer", model_id=model_id)
     hypothesis = f"Question: {question.strip()}\nAnswer: {answer.strip()}"
 
     max_entail = 0.0

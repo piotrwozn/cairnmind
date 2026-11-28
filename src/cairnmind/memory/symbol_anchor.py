@@ -16,8 +16,8 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
-from pathlib import Path, PurePosixPath
 import re
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 NORM_VERSION = 1
@@ -294,14 +294,18 @@ def extract_tagged_comments(
             cur_tag: str | None = None
             cur_parts: list[str] = []
 
-            def flush_block() -> None:
+            def flush_block(
+                block_start: int = start_row,
+                block_end: int = end_row,
+                block_raw: str = raw_text,
+            ) -> None:
                 nonlocal cur_tag, cur_parts
                 if cur_tag is None:
                     return
                 body = _normalize_comment_text(" ".join(cur_parts))
                 if body:
-                    bound = _bind_comment_to_symbol(start_row, end_row, anchor_symbols)
-                    results.append(_make_comment_entry(cur_tag, body, start_row, end_row, bound, raw_text))
+                    bound = _bind_comment_to_symbol(block_start, block_end, anchor_symbols)
+                    results.append(_make_comment_entry(cur_tag, body, block_start, block_end, bound, block_raw))
                 cur_tag, cur_parts = None, []
 
             for line in lines:

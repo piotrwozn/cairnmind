@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from conftest import own_time
 from typer.testing import CliRunner
 
-from conftest import own_time
 from cairnmind import cli
 from cairnmind.cli_cmds import upgrade_mark
 from cairnmind.config import Settings
@@ -50,6 +50,7 @@ def test_a_running_service_is_still_used_during_an_upgrade_so_stop_works(tmp_pat
 
 def test_a_coding_session_is_refused_during_an_upgrade_even_beside_a_running_service(tmp_path, monkeypatch, capsys):
     import typer
+
     from cairnmind.memory import integrations
     settings = Settings.load(tmp_path / "data")
     monkeypatch.setattr(cli, "service_alive", lambda settings: True)
@@ -193,8 +194,8 @@ def test_a_service_start_is_announced_once_the_broker_is_up_and_never_before_a_r
         tmp_path, monkeypatch, capsys, started):
     """A service the workspace started is stopped with its broker when an installer began meanwhile, and its start
     is not said; one that runs on is said (#287, #319)."""
-    from cairnmind.terminal import cockpit
     from cairnmind.cli_cmds.first_start import SERVICE_STARTED
+    from cairnmind.terminal import cockpit
     _, settings = broker_started_while_an_upgrade_began(tmp_path, monkeypatch)
     monkeypatch.setattr(cli, "ensure_service", lambda settings, **kwargs: started)
     monkeypatch.setattr(cockpit, "stop_cockpit", lambda settings: None)

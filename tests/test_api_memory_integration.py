@@ -14,8 +14,8 @@ from cairnmind.agents.agent_memory import AgentMemoryClient
 from cairnmind.agents.api_agent import AgentEngine
 from cairnmind.agents.api_profiles import normalize_profile
 from cairnmind.agents.api_providers import make_provider
-from cairnmind.service import create_app
 from cairnmind.memory.sessions import SessionManager
+from cairnmind.service import create_app
 from cairnmind.store import Store
 
 

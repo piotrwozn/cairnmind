@@ -1,22 +1,29 @@
 """Real Git + ArcadeDB; subprocess fixtures use only the current Python runtime."""
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from cairnmind.config import Settings
+from cairnmind.memory.verification import (
+    MAX_OUTPUT_BYTES,
+    capture_code_state,
+    load_profiles,
+    recover_interrupted_runs,
+    run_check,
+    task_definition_hash,
+    validate_completion,
+    verification_status,
+)
 from cairnmind.store import Store
-from cairnmind.memory.verification import (MAX_OUTPUT_BYTES, capture_code_state, load_profiles,
-                                  recover_interrupted_runs, run_check, task_definition_hash,
-                                  validate_completion, verification_status)
 
 
 def git(root, *args):

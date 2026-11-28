@@ -10,8 +10,8 @@ import sys
 
 import pytest
 
-from cairnmind.terminal import setup_mark
 from cairnmind.cli_cmds.service_version import Sentence
+from cairnmind.terminal import setup_mark
 from cairnmind.terminal.terminal_i18n import CATALOG
 
 HELPER = ["-c", "import time; time.sleep(30)", "cairnmind.terminal.setup_change"]
@@ -194,9 +194,8 @@ def test_a_second_change_is_refused_while_the_first_holds_the_lock(data_dir):
     descriptor = os.open(data_dir / setup_mark.LOCK, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         file_locks.lock_exclusive(descriptor, blocking=False)
-        with pytest.raises(setup_mark.ChangeBusy) as refused:
-            with setup_mark.held(data_dir):
-                pytest.fail("a second change started")
+        with pytest.raises(setup_mark.ChangeBusy) as refused, setup_mark.held(data_dir):
+            pytest.fail("a second change started")
         assert str(refused.value) == setup_mark.BUSY
         assert not setup_mark.mark_path(data_dir).exists()
     finally:
@@ -266,10 +265,10 @@ def test_a_running_service_is_still_used_during_a_change_so_the_change_can_stop_
 
 
 def test_commands_during_a_change_say_so(data_dir, running, isolated, monkeypatch):
+    from conftest import plain_words
     from typer.testing import CliRunner
 
     from cairnmind import cli
-    from conftest import plain_words
     from cairnmind.config import Settings
     Settings.load(data_dir, create=True)
     monkeypatch.setattr(cli.subprocess, "Popen", forbidden)
@@ -281,11 +280,14 @@ def test_commands_during_a_change_say_so(data_dir, running, isolated, monkeypatc
     profile = runner.invoke(cli.app, ["--data-dir", str(data_dir), "setup", "local", "--yes"])
     assert profile.exit_code == 2, profile.output
     assert sentence in plain_words(profile.output)
-    from cairnmind.config import Settings
     import typer
-    with pytest.raises(typer.Exit):  # what `cairnmind restore` holds before it touches anything
-        with cli._service_stopped(Settings.load(data_dir), "held", "running"):
-            pytest.fail("a restore started during a change")
+
+    from cairnmind.config import Settings
+    with (
+        pytest.raises(typer.Exit),  # what `cairnmind restore` holds before it touches anything
+        cli._service_stopped(Settings.load(data_dir), "held", "running"),
+    ):
+        pytest.fail("a restore started during a change")
 
 
 def test_doctor_names_a_change_that_did_not_finish(data_dir, children, isolated, monkeypatch):
@@ -311,8 +313,8 @@ def test_a_kept_copy_stops_a_start_and_doctor_counts_it_as_missing(data_dir, iso
     from typer.testing import CliRunner
 
     from cairnmind import cli
-    from cairnmind.memory import integrations
     from cairnmind.config import Settings
+    from cairnmind.memory import integrations
     from cairnmind.terminal.terminal_i18n import tr
     (data_dir / setup_mark.BEFORE).write_text("{}")  # a change that ended, and config.json is nobody's checked
     sentence = setup_mark.NOTE_COPY.format(copy=data_dir / setup_mark.BEFORE)
@@ -356,8 +358,8 @@ def test_the_broker_says_the_change_when_the_service_is_gone(data_dir, running, 
     import httpx
     from fastapi.testclient import TestClient
 
-    from cairnmind.terminal.cockpit import create_cockpit_app
     from cairnmind.config import Settings
+    from cairnmind.terminal.cockpit import create_cockpit_app
     from cairnmind.terminal.terminal_client import BrokerError
     from cairnmind.terminal.terminal_i18n import tr
     from cairnmind.terminal.terminal_i18n_messages import broker_error_text
@@ -383,8 +385,8 @@ def test_the_broker_says_the_change_when_the_service_is_gone(data_dir, running, 
 
 def test_an_mcp_tool_call_during_a_change_names_it(data_dir, running, isolated, monkeypatch):
     from cairnmind import cli
-    from cairnmind.mcp import mcp_server
     from cairnmind.config import Settings
+    from cairnmind.mcp import mcp_server
     monkeypatch.setattr(cli, "service_alive", lambda settings: False)
     monkeypatch.setattr(cli.subprocess, "Popen", forbidden)
     monkeypatch.setattr("cairnmind.storage.store_writer.inspect", lambda settings: {"role": "writer"})
@@ -396,8 +398,9 @@ def test_an_mcp_tool_call_during_a_change_names_it(data_dir, running, isolated, 
 
 
 async def test_the_activity_panel_shows_the_change_instead_of_unavailable(tmp_path, monkeypatch):
-    from cairnmind.terminal.terminal_client import BrokerError
     from test_terminal_activity import Broker, flat, make, until
+
+    from cairnmind.terminal.terminal_client import BrokerError
 
     sentence = setup_mark.NOTE_RUNNING.format(pid=4242, path="/data/setup-in-progress")
 

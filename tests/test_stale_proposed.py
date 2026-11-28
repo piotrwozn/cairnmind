@@ -1,23 +1,22 @@
 """Proposed findings nobody touched for a while (#189): the list, its scope, and acting on it, against the real store."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
+from datetime import UTC, datetime, timedelta
 
+import pytest
+from conftest import as_person
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
 from typer.testing import CliRunner
 
-from cairnmind.memory import stale_proposed as proposed
 from cairnmind.cli import app as cli_app
+from cairnmind.memory import stale_proposed as proposed
+from cairnmind.store import Store
 from cairnmind.terminal.inspector import Inspector
 from cairnmind.terminal.inspector_api import attach_inspector_routes
-from cairnmind.store import Store
 
-from conftest import as_person
-
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 
 
 def aged(store, record, days):

@@ -7,13 +7,14 @@ import threading
 import time
 
 import pytest
+from test_workspace import manager as manager
+from test_workspace import rows
 
 from cairnmind.terminal import terminal_notice_feed as feed
 from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.terminal.terminal_notices import NoticeHistory
 from cairnmind.terminal.workspace import ACTIVITY_WIDTH, COCKPIT_MIN_WIDTH, SESSION, WorkspaceManager
 from cairnmind.terminal.workspace_activity import RESPAWN_PAUSE
-from test_workspace import manager as manager, rows
 
 ROLES = {"sidebar", "client1", "client2", "inspector", "graph"}
 

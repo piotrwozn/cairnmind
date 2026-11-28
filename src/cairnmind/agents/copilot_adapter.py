@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from contextlib import suppress
 import hashlib
 import importlib.metadata
 import inspect
@@ -16,15 +15,20 @@ import json
 import logging
 import math
 import os
-from pathlib import Path
 import re
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
-import shutil
+from collections.abc import Callable
+from contextlib import suppress
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from uuid import uuid4
+
+log = logging.getLogger(__name__)
 
 SDK_VERSION = "1.0.29"
 RUNTIME_VERSION = "1.0.107"
@@ -91,8 +95,7 @@ def _sdk():
         from copilot import CopilotClient, RuntimeConnection, Tool, ToolResult
         from copilot.generated.rpc import PermissionDecisionApproveOnce, PermissionDecisionReject
     except ImportError:
-        raise CopilotError("copilot_sdk_missing") from None
-    except importlib.metadata.PackageNotFoundError:
+        # Also catches importlib.metadata.PackageNotFoundError (a subclass of ImportError).
         raise CopilotError("copilot_sdk_missing") from None
     # The SDK logs raw JSON-RPC exception payloads, including provider HTTP
     # bodies, at WARNING.  Keep those out of terminal captures and project
@@ -131,7 +134,7 @@ def _tree_manifest(root):
         info = path.lstat()
         if is_reparse_point(path):
             raise CopilotError("copilot_runtime_invalid")
-        if not IS_WINDOWS and info.st_uid != os.getuid():
+        if sys.platform != "win32" and not IS_WINDOWS and info.st_uid != os.getuid():
             raise CopilotError("copilot_runtime_invalid")
         if stat.S_ISDIR(info.st_mode):
             continue
@@ -262,7 +265,9 @@ def _prepare_worker(settings):
             files = _tree_manifest(staged)
             if bundle.exists():
                 from cairnmind.pal.private_files import IS_WINDOWS, atomic_replace, is_reparse_point
-                if is_reparse_point(bundle) or (not IS_WINDOWS and bundle.lstat().st_uid != os.getuid()):
+                if is_reparse_point(bundle) or (
+                    sys.platform != "win32" and not IS_WINDOWS and bundle.lstat().st_uid != os.getuid()
+                ):
                     raise CopilotError("copilot_runtime_invalid")
                 atomic_replace(bundle, previous)
             from cairnmind.pal.private_files import atomic_replace
@@ -304,9 +309,10 @@ class CopilotAdapter:
         # earlier version is resumed under exactly this name, so it does not change.
         self.session_id = "devbrain-" + self.logical_session_id
         self._factory, self._sdk_override = client_factory, sdk
-        self._client = self._session = None
-        self._sdk_api = None
-        self._handler = None
+        self._client: Any = None
+        self._session: Any = None
+        self._sdk_api: Any = None
+        self._handler: Callable[..., Any] | None = None
         self._allowed = {}
         self._on_delta = self._on_event = None
         self._active = False
@@ -317,7 +323,7 @@ class CopilotAdapter:
         self._callbacks = []
         self._delta_buffer = ""
         self._output_chars = 0
-        self._events = None
+        self._events: asyncio.Queue[Any] | None = None
         self._event_consumer = None
         self._catalog_hash = None
         self._usage_ids = set()
@@ -409,7 +415,7 @@ class CopilotAdapter:
     def _tool(self, descriptor):
         name = descriptor["name"]
 
-        async def call(invocation):
+        async def call(invocation: Any) -> Any:
             if not self._active or not self._accept_tools or _get(invocation, "session_id") != self.session_id:
                 return {"error": "copilot_tool_scope_rejected"}
             if _get(invocation, "agent_id"):
@@ -429,16 +435,18 @@ class CopilotAdapter:
             if self._calls > maximum:
                 self._set_limit("copilot_tool_limit")
                 return {"error": "copilot_tool_limit"}
+            handler = self._handler
+            if handler is None:
+                return {"error": "copilot_tool_scope_rejected"}
             # Determine arity before dispatch.  Retrying after a TypeError
             # raised *inside* the handler could repeat an actual side effect.
             try:
-                inspect.signature(self._handler).bind(name, args, call_id)
+                inspect.signature(handler).bind(name, args, call_id)
                 with_call_id = True
             except (TypeError, ValueError):
                 with_call_id = False
-            if with_call_id:
-                return await self._handler(name, args, call_id)
-            return await self._handler(name, args)
+            result = handler(name, args, call_id) if with_call_id else handler(name, args)
+            return await result if inspect.isawaitable(result) else result
 
         async def sdk_call(invocation):
             task = asyncio.current_task()
@@ -453,11 +461,12 @@ class CopilotAdapter:
                                                 result_type="failure" if failure else "success")
                 except asyncio.CancelledError:
                     raise
-                except Exception:
+                except Exception as exc:
                     # The SDK passes ToolResult to its pending-tool RPC.  A
                     # plain dict is not normalized by direct Tool handlers.
                     # Do not leak arbitrary exception text into its logs or
                     # back into the model after an uncertain side effect.
+                    log.debug("Copilot custom tool %s failed (%s)", name, type(exc).__name__)
                     return self._sdk_api.Result(text_result_for_llm='{"error":"cairnmind_tool_failed"}',
                                                 result_type="failure", error="cairnmind_tool_failed")
             finally:
@@ -526,12 +535,12 @@ class CopilotAdapter:
             usage = {}
             for name in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost"):
                 value = _get(data, name)
-                if type(value) in (int, float) and math.isfinite(value) and value >= 0:
+                if isinstance(value, (int, float)) and type(value) in (int, float) and math.isfinite(value) and value >= 0:
                     self._usage[name] = self._usage.get(name, 0) + value
                     usage[name] = value
             self._observed_usage_calls += 1
             amount = _get(_get(data, "copilot_usage"), "total_nano_aiu")
-            if type(amount) in (int, float) and math.isfinite(amount) and amount >= 0:
+            if isinstance(amount, (int, float)) and type(amount) in (int, float) and math.isfinite(amount) and amount >= 0:
                 self._reported_copilot_calls += 1
                 copilot = self._usage.setdefault("copilot", {})
                 copilot["total_nano_aiu"] = copilot.get("total_nano_aiu", 0) + amount
@@ -559,8 +568,11 @@ class CopilotAdapter:
             self._set_limit("copilot_output_limit")
 
     async def _consume_events(self):
+        events = self._events
+        if events is None:
+            return
         while True:
-            entry = await self._events.get()
+            entry = await events.get()
             if entry is None:
                 return
             kind, value = entry
@@ -621,6 +633,8 @@ class CopilotAdapter:
         self._turn_task = asyncio.current_task()
         try:
             await self._ensure_session(tools, system)
+            if self._session is None:
+                raise CopilotError("copilot_failed")
             timeout = self.profile.get("limits", {}).get("max_turn_seconds", 900)
             result = await self._session.send_and_wait(prompt, agent_mode="interactive", timeout=timeout)
             await self._events.put(None)
@@ -719,10 +733,16 @@ class CopilotAdapter:
 
 async def _login(settings):
     """Device codes exist only in this operational terminal, never in memory."""
-    from cairnmind.terminal.terminal_i18n import language_for, tr
+    from copilot.generated.rpc import (
+        AuthLoginAdvanceRequest,
+        AuthLoginBeginRequest,
+        AuthLoginCancelRequest,
+        AuthLoginMethod,
+        LoginProviderKind,
+    )
+
     from cairnmind.pal.terminal_safe import plain
-    from copilot.generated.rpc import (AuthLoginAdvanceRequest, AuthLoginBeginRequest, AuthLoginCancelRequest,
-                                       AuthLoginMethod, LoginProviderKind)
+    from cairnmind.terminal.terminal_i18n import language_for, tr
     adapter = CopilotAdapter({"client": "copilot"}, settings=settings)
     language = language_for(settings)
     flow_id = None
@@ -731,6 +751,8 @@ async def _login(settings):
         # An auth-only session has no model tools and never sends a prompt.
         adapter._allowed = {}
         await adapter._ensure_session([], "Authentication only. No model turn is permitted.")
+        if adapter._session is None:
+            raise CopilotError("copilot_failed")
         api = adapter._session.rpc.accounts.login
         begun = await api.begin(AuthLoginBeginRequest(kind=LoginProviderKind.GITHUB_DOT_COM,
                                                       method=AuthLoginMethod.DEVICE_CODE), timeout=30)

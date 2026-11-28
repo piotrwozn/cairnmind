@@ -5,12 +5,12 @@ import asyncio
 import base64
 import json
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from cairnmind.terminal import cockpit
 from cairnmind.config import Settings
+from cairnmind.terminal import cockpit
 
 
 class _FakeAttachment:
@@ -147,14 +147,18 @@ def test_cockpit_terminal_websocket_protocol_paths(tmp_path):
 
     base_ws = "ws://127.0.0.1:8766/api/client-runs/run1/terminal"
     # Missing generation -> close 1008
-    with pytest.raises(Exception):
-        with client.websocket_connect(f"{base_ws}?csrf={csrf}", headers={"origin": "http://127.0.0.1:8766"}):
-            pass
+    with (
+        pytest.raises(Exception),
+        client.websocket_connect(f"{base_ws}?csrf={csrf}", headers={"origin": "http://127.0.0.1:8766"}),
+    ):
+        pass
 
     # Mismatched generation -> close 1008
-    with pytest.raises(Exception):
-        with client.websocket_connect(f"{base_ws}?csrf={csrf}&generation=99", headers={"origin": "http://127.0.0.1:8766"}):
-            pass
+    with (
+        pytest.raises(Exception),
+        client.websocket_connect(f"{base_ws}?csrf={csrf}&generation=99", headers={"origin": "http://127.0.0.1:8766"}),
+    ):
+        pass
 
     # Happy path: output + control + takeover + text/base64 input + resize + unsupported frame -> error
     with client.websocket_connect(

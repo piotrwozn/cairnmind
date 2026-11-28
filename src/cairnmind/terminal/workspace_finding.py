@@ -6,6 +6,7 @@ placed on a command line, in a tmux command or in a shell. Nothing is read from 
 from __future__ import annotations
 
 import asyncio
+import logging
 from uuid import uuid4
 
 from textual import work
@@ -13,13 +14,14 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Footer, Label, Select, Static, TextArea
 
-from cairnmind.terminal import terminal_theme
 from cairnmind.memory.findings import FINDING_KINDS, FINDING_STATUSES, finding_error
+from cairnmind.pal.terminal_safe import plain, safe_text
+from cairnmind.terminal import terminal_theme
 from cairnmind.terminal.terminal_client import BrokerError
 from cairnmind.terminal.terminal_i18n_messages import display_word
-from cairnmind.pal.terminal_safe import plain, safe_text
 
 ERROR_LIMIT = 300
+log = logging.getLogger(__name__)
 
 
 def outcome_unknown(exc, sent) -> bool:
@@ -171,8 +173,8 @@ class FindingApp(App):
                 # authenticated again on the next Ctrl+S; the form's key keeps that retry to one write.
                 try:
                     await asyncio.to_thread(self.broker.close)
-                except Exception:
-                    pass
+                except Exception as close_exc:
+                    log.debug("Broker close failed after finding save error: %s", type(close_exc).__name__)
             self.show_error(exc, sent=sent)
             return
         finally:

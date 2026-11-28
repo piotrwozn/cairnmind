@@ -11,18 +11,20 @@ Runs completely inside a ``tempfile.TemporaryDirectory`` backed by in-memory SQL
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import threading
-from typing import Any, Callable
+from collections.abc import Callable
+from contextlib import suppress
+from pathlib import Path
+from typing import Any
 
-from cairnmind.scip import ingest
-from cairnmind.memory import verification
 from cairnmind.agents.retrieval import Retriever
+from cairnmind.memory import verification
+from cairnmind.scip import ingest
 from cairnmind.store import Store
 
 
@@ -109,11 +111,10 @@ def run_try_sandbox(
             raise KeyboardInterrupt(f"Interrupted by signal {signum}")
 
         for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                old_handlers[sig] = signal.getsignal(sig)
+            with suppress(OSError, ValueError):
+                prev = signal.getsignal(sig)
                 signal.signal(sig, _on_signal)
-            except (OSError, ValueError):
-                pass
+                old_handlers[sig] = prev
 
     store: Store | None = None
     try:
@@ -164,9 +165,12 @@ def run_try_sandbox(
         say("  Q: How does read_note handle notes written before tags existed?")
         say(f"  A: Verified verbatim quote -> `{verbatim_quote}` (trail_notes/store.py)")
         say("")
-        if interactive and prompt is not None:
-            if prompt("Press Enter for step 2 (or 'q' to quit): ").strip().lower() == "q":
-                return {"completed": False, "aborted_at_step": 1, "steps": [step1], "backend": "sqlite", "ephemeral": True}
+        if (
+            interactive
+            and prompt is not None
+            and prompt("Press Enter for step 2 (or 'q' to quit): ").strip().lower() == "q"
+        ):
+            return {"completed": False, "aborted_at_step": 1, "steps": [step1], "backend": "sqlite", "ephemeral": True}
 
         # --- Step 2: No lying about done — blocked when code changes after check ---
         store_file = repo / "trail_notes" / "store.py"
@@ -192,7 +196,8 @@ def run_try_sandbox(
             [src_row["id"]],
         )
         run1 = verification.run_check(store, store.settings, project["id"], "unit", task["id"], worktree=str(repo))
-        assert run1["passed"] is True, f"Initial check failed unexpectedly: {run1}"
+        if run1["passed"] is not True:
+            raise RuntimeError(f"Initial check failed unexpectedly: {run1}")
 
         # Edit the file AFTER tests ran — invalidating the fingerprint!
         store_file.write_text(
@@ -233,13 +238,17 @@ def run_try_sandbox(
         say("  3. Tried marking task `done` -> BLOCKED (fingerprint_mismatch):")
         say(f"     {blocked_reason}")
         say("")
-        if interactive and prompt is not None:
-            if prompt("Press Enter for step 3 (or 'q' to quit): ").strip().lower() == "q":
-                return {"completed": False, "aborted_at_step": 2, "steps": [step1, step2], "backend": "sqlite", "ephemeral": True}
+        if (
+            interactive
+            and prompt is not None
+            and prompt("Press Enter for step 3 (or 'q' to quit): ").strip().lower() == "q"
+        ):
+            return {"completed": False, "aborted_at_step": 2, "steps": [step1, step2], "backend": "sqlite", "ephemeral": True}
 
         # --- Step 3: Fresh check unlocks verified done ---
         run2 = verification.run_check(store, store.settings, project["id"], "unit", task["id"], worktree=str(repo))
-        assert run2["passed"] is True, f"Fresh check failed unexpectedly: {run2}"
+        if run2["passed"] is not True:
+            raise RuntimeError(f"Fresh check failed unexpectedly: {run2}")
         done_task = store.remember(
             project["id"],
             {
@@ -284,8 +293,6 @@ def run_try_sandbox(
         if store is not None:
             store.close()
         for sig, handler in old_handlers.items():
-            try:
+            with suppress(OSError, ValueError):
                 signal.signal(sig, handler)
-            except (OSError, ValueError):
-                pass
         _cleanup()

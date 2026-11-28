@@ -54,8 +54,8 @@ def test_the_stale_revision_message_is_english_and_reads_as_before():
 
 def test_the_preview_answers_in_english_and_is_translated():
     from cairnmind.terminal import terminal_preview
-    from cairnmind.terminal.terminal_i18n_messages import broker_error_text
     from cairnmind.terminal.terminal_client import BrokerError
+    from cairnmind.terminal.terminal_i18n_messages import broker_error_text
     fixed = [terminal_preview.NOTICE, "The synthetic preview server does not answer.", "Synthetic connection failure."]
     assert all(text in literals("terminal_preview.py") and not POLISH.search(text) for text in fixed)
     assert all(CATALOG.get(text) and POLISH.search(CATALOG[text]) for text in fixed)

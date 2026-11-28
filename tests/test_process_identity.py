@@ -9,24 +9,24 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
 import signal
 import struct
 import subprocess
 import sys
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from cairnmind.terminal import cockpit
-from cairnmind.storage import engine
-from cairnmind.pal import process_identity
-from cairnmind.memory import verification
 from cairnmind.agents.agent_tools import ToolExecutor
-from cairnmind.storage.arcade import ArcadeError
 from cairnmind.config import Settings
 from cairnmind.mcp.mcp_host import McpServer
+from cairnmind.memory import verification
+from cairnmind.pal import process_identity
+from cairnmind.storage import engine
+from cairnmind.storage.arcade import ArcadeError
+from cairnmind.terminal import cockpit
 
 linux = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="procfs is read on Linux only")
 RUNNING, ZOMBIE = 2, 5  # SRUN, SZOMB of <sys/proc.h>

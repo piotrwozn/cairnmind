@@ -6,19 +6,19 @@ import json
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from textual.widgets import Button
-from typer.testing import CliRunner
-
-from cairnmind import cli
-from cairnmind.terminal.cockpit import create_cockpit_app
-from cairnmind.terminal.cockpit_state import CockpitState
-from cairnmind.config import Settings
-from cairnmind.terminal.terminal_i18n import tr
-from cairnmind.terminal.terminal_panels import SidebarApp
 from test_cockpit_server import ORIGIN, Runtime, login
 from test_stage_router import move, planned  # noqa: F401  (planned is a fixture)
 from test_terminal_panels import settle, setup
 from test_trial011_workspace import MISSING_KEY, SIZES, inspector, notice_of, wait_until
+from textual.widgets import Button
+from typer.testing import CliRunner
+
+from cairnmind import cli
+from cairnmind.config import Settings
+from cairnmind.terminal.cockpit import create_cockpit_app
+from cairnmind.terminal.cockpit_state import CockpitState
+from cairnmind.terminal.terminal_i18n import tr
+from cairnmind.terminal.terminal_panels import SidebarApp
 
 CHECKS = '[checks.unit]\nargv = ["python", "-c", "pass"]\n'
 

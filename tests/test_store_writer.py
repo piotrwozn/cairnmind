@@ -2,18 +2,18 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import shutil
 import threading
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+from cairnmind.cli import app
 from cairnmind.storage import store_writer
 from cairnmind.storage.arcade import ArcadeClient, ArcadeError
-from cairnmind.cli import app
-from cairnmind.store import Store
 from cairnmind.storage.store_writer import StoreNotWriter, StoreWriterLost, take_over
+from cairnmind.store import Store
 
 runner = CliRunner()
 
@@ -241,11 +241,10 @@ def test_a_write_in_flight_during_a_takeover_does_not_commit(tmp_path):
     first = Store(tmp_path / "first")
     pid = project(tmp_path, first)
     second = Store(second_installation(tmp_path, first))
-    with pytest.raises((StoreWriterLost, ArcadeError)) as refused:
-        with first.transaction() as tx:
-            tx.query("SELECT FROM journal_state WHERE id='current'")
-            take_over(second)
-            tx.command("UPDATE projects SET name='renamed' WHERE id=:project", {"project": pid})
+    with pytest.raises((StoreWriterLost, ArcadeError)) as refused, first.transaction() as tx:
+        tx.query("SELECT FROM journal_state WHERE id='current'")
+        take_over(second)
+        tx.command("UPDATE projects SET name='renamed' WHERE id=:project", {"project": pid})
     # The head was read before the takeover, so the check passed on the old value: the engine refused the commit
     # (on 26.11.1: "Slot rebase not possible ... concurrent change to the same record").
     assert isinstance(refused.value, ArcadeError)

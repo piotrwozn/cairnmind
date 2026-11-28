@@ -8,10 +8,10 @@ import sys
 
 import pytest
 
-from cairnmind.terminal import person_proof
 from cairnmind.config import Settings
 from cairnmind.memory.confirmation import NOT_PROVEN
 from cairnmind.pal.runtime_sockets import prepare_socket_base, socket_directory, workspace_namespace
+from cairnmind.terminal import person_proof
 from cairnmind.terminal.terminal_i18n_messages import BROKER_MESSAGES
 
 KEY = "ab" * 32
@@ -223,6 +223,7 @@ def test_only_a_persons_post_paths_carry_the_proof():
 def test_the_proof_is_not_present_until_require_passes(settings, workspace_socket, tmp_path):
     import asyncio
     from types import SimpleNamespace
+
     from fastapi import HTTPException
     binary, _ = fake_tmux(tmp_path, KEY)
     settings.tmux_executable = binary

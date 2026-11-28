@@ -6,15 +6,14 @@ a Mac is imitated on Linux. On macOS (the CI job) /bin/bash is the bash 3.2 that
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
-
 from installer_script import installer_functions
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX bash scripts/install-wsl.sh")

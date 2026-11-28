@@ -7,10 +7,10 @@ when it does (macOS), else the folder named by CAIRNMIND_TEST_CASELESS_DIR (in W
 """
 import hashlib
 import os
-from pathlib import Path
 import shutil
 import sys
 import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -19,12 +19,17 @@ from cairnmind.agents import agent_tools
 from cairnmind.agents.agent_journal import AgentJournal
 from cairnmind.agents.agent_tools import ToolExecutor
 from cairnmind.config import Settings
-from cairnmind.scip.ingest import current_source, index_project
 from cairnmind.mcp.mcp_servers import inside_worktree
-from cairnmind.memory.memory_paths import (RESERVED_DIRECTORIES, is_memory_path, is_reserved_below, is_reserved_memory,
-                                    nested_reserved)
-from cairnmind.store import Store, validate_scope
+from cairnmind.memory.memory_paths import (
+    RESERVED_DIRECTORIES,
+    is_memory_path,
+    is_reserved_below,
+    is_reserved_memory,
+    nested_reserved,
+)
 from cairnmind.memory.verification import _input_patterns
+from cairnmind.scip.ingest import current_source, index_project
+from cairnmind.store import Store, validate_scope
 
 
 def _ignores_case(directory):

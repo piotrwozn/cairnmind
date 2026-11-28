@@ -12,28 +12,40 @@ from pathlib import Path
 
 import pytest
 import typer.main
+from conftest import plain_words
+from consent_steps import consent_drawn, early_enter_sends_nothing, form_ready
+from test_terminal_panels import settle
+from test_terminal_setup_change import click, fill, laid_out, on_screen, remote_db, report, until
+from test_terminal_ux080 import UIBroker, screen_text, setup_ui
+from test_topology import REMOTE, WRITER, clean_environment, make, remote_store  # noqa: F401 - clean_environment is an autouse fixture
 from textual.widgets import Button, Static
 
 from cairnmind import cli
-from cairnmind.terminal import setup_mark, setup_profiles, terminal_setup, terminal_setup_change
 from cairnmind.cli_cmds import topology as topology_module
-from cairnmind.config import Settings
-from cairnmind.terminal.terminal_i18n import CATALOG, tr
-from cairnmind.terminal.terminal_setup import (
-    CHIP_PROBLEM, CHIPS, HOW, KEEP_OPEN, LOADED, LOCAL_BACK, MESSAGES, NO_ANSWER, OPTIONAL_KEY, PLACEHOLDERS_OF, UNREADABLE,
-    commands, describe, shown)
-from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.cli_cmds.topology import lines, topology
-from conftest import plain_words
+from cairnmind.config import Settings
+from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.terminal import setup_mark, setup_profiles, terminal_setup, terminal_setup_change
 from cairnmind.terminal.terminal_client import BrokerError
-from cairnmind.terminal.terminal_panels import SidebarApp
-from cairnmind.terminal.terminal_panels import ConfirmModal
+from cairnmind.terminal.terminal_i18n import CATALOG, tr
+from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
+from cairnmind.terminal.terminal_setup import (
+    CHIP_PROBLEM,
+    CHIPS,
+    HOW,
+    KEEP_OPEN,
+    LOADED,
+    LOCAL_BACK,
+    MESSAGES,
+    NO_ANSWER,
+    OPTIONAL_KEY,
+    PLACEHOLDERS_OF,
+    UNREADABLE,
+    commands,
+    describe,
+    shown,
+)
 from cairnmind.terminal.terminal_ui import ChoiceModal
-from consent_steps import consent_drawn, early_enter_sends_nothing, form_ready
-from test_terminal_panels import settle
-from test_terminal_ux080 import UIBroker, screen_text, setup_ui
-from test_terminal_setup_change import click, fill, laid_out, on_screen, remote_db, report, until
-from test_topology import REMOTE, WRITER, clean_environment, make, remote_store  # noqa: F401 - clean_environment is an autouse fixture
 
 
 def sub(tmp_path, name):
@@ -432,10 +444,11 @@ def carried_out(tmp_path, monkeypatch, language="en", *, change=False):
     whose helper is fake: it records its start and, with `change`, makes the change as the helper would."""
     import types
 
-    from cairnmind.terminal import setup_change
     from test_setup_change import Rig
     from test_setup_profiles import make as make_installation
     from test_terminal_setup_change import Broker, Helper
+
+    from cairnmind.terminal import setup_change
 
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)
     rig = Rig(tmp_path, monkeypatch)

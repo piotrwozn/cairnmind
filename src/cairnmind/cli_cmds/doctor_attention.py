@@ -12,15 +12,44 @@ from __future__ import annotations
 import json
 import sys
 
-from cairnmind.pal import platform_hints
-from cairnmind.storage.engine_docker import DOCKER_ATTENTION
 from cairnmind.cli_cmds.first_start import (
-    CLIENT_NAMES, CLIENT_OFF, CLIENT_ON, DATA_DIR, ENGINE_DOWN, ENGINE_NOT_INSTALLED, ENGINE_ON_DEMAND, ENGINE_READY,
-    ENGINE_RELEASE, FULL_REPORT, JAVA_NEEDED, KNOWLEDGE_DISABLED, MODELS_OFF, MODELS_ON, NEXT_FIX, NEXT_PROJECTS,
-    NEXT_START, NOTES, NOTHING_MISSING, OPTIONAL_BROKEN, OPTIONAL_OFF, OPTIONAL_ON, READER_ROLE, REPORT_UNREADABLE, REQUIRED_MISSING,
-    REQUIRED_PRESENT, SERVER_DOWN_CONNECT, SERVICE_ON_DEMAND, SERVICE_RUNNING, THIS_MAC, WORKSPACE_OFF,
-    WORKSPACE_ON, cockpit_status)
+    CLIENT_NAMES,
+    CLIENT_OFF,
+    CLIENT_ON,
+    DATA_DIR,
+    ENGINE_DOWN,
+    ENGINE_NOT_INSTALLED,
+    ENGINE_ON_DEMAND,
+    ENGINE_READY,
+    ENGINE_RELEASE,
+    FULL_REPORT,
+    JAVA_NEEDED,
+    KNOWLEDGE_DISABLED,
+    MODELS_OFF,
+    MODELS_ON,
+    NEXT_FIX,
+    NEXT_PROJECTS,
+    NEXT_START,
+    NOTES,
+    NOTHING_MISSING,
+    OPTIONAL_BROKEN,
+    OPTIONAL_OFF,
+    OPTIONAL_ON,
+    READER_ROLE,
+    REPORT_UNREADABLE,
+    REQUIRED_MISSING,
+    REQUIRED_PRESENT,
+    SERVER_DOWN_CONNECT,
+    SERVICE_ON_DEMAND,
+    SERVICE_RUNNING,
+    THIS_MAC,
+    WORKSPACE_OFF,
+    WORKSPACE_ON,
+    cockpit_status,
+)
+from cairnmind.pal import platform_hints
 from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.storage.engine_docker import DOCKER_ATTENTION
 
 # Keys every doctor report has; an object without all of them (`cairnmind init` prints one with data_dir alone)
 # is not a report that found nothing.
@@ -231,9 +260,11 @@ def summary(report: dict) -> list[str]:
             off.append(CLIENT_OFF.format(client=label, note=platform_hints.hint("client_note", client=name)))
     lines = [_line(DATA_DIR.format(data_dir=report.get("data_dir") or "its data directory"))]
     # Storage, memory models and what runs here: topology's own three lines, the one wording of where things run.
-    place = report.get("topology") if isinstance(report.get("topology"), dict) else {}
+    raw_place = report.get("topology")
+    place = raw_place if isinstance(raw_place, dict) else {}
     lines += [_line(text, limit=1000) for text in place.get("lines") or []]
-    gpu = report.get("gpu") if isinstance(report.get("gpu"), dict) else {}
+    raw_gpu = report.get("gpu")
+    gpu = raw_gpu if isinstance(raw_gpu, dict) else {}
     if gpu.get("chip") and gpu.get("memory_gib"):  # only a Mac with an Apple chip has them; Linux and WSL do not
         lines.append(_line(THIS_MAC.format(chip=gpu["chip"], gib=gpu["memory_gib"])))
     lines.append(REQUIRED_PRESENT)
@@ -305,7 +336,7 @@ def _preflight_summary(report: dict) -> list[str]:
 def main() -> int:
     try:
         report = json.loads(sys.stdin.read())
-        if not isinstance(report, dict) or not REPORT_KEYS <= report.keys():
+        if not isinstance(report, dict) or not report.keys() >= REPORT_KEYS:
             # Any other object, even {}, is not a report that found nothing (#244).
             raise ValueError("not a doctor report")
         lines = summary(report)

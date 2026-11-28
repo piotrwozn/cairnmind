@@ -2,16 +2,16 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import re
+from pathlib import Path
 
 import pytest
 
-from cairnmind.config import Settings
 from cairnmind.agents.memory_evaluation import run_memory_evaluation
 from cairnmind.agents.ollama import OllamaUnavailable
-from cairnmind.store import Store
 from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
+from cairnmind.config import Settings
+from cairnmind.store import Store
 
 
 class MemoryFixtureOllama:

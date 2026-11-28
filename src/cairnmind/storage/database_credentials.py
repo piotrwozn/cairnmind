@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import errno
 import os
-from pathlib import Path
 import re
 import ssl
 import stat
+import sys
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -33,7 +34,7 @@ LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 # The longest password file read: a password is one line, and a larger file is not one.
 FILE_LIMIT = 4096
 USER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
-PASSWORD_HELP = ("set CAIRNMIND_ARCADE_PASSWORD, or name a private file (mode 0600) with "
+PASSWORD_HELP = ("set CAIRNMIND_ARCADE_PASSWORD, or name a private file (mode 0600) with "  # noqa: S105 - user guidance text, not a secret
                  "arcade_password_file in config.json")
 
 
@@ -63,6 +64,8 @@ def _open_mounted_secret(path: str, setting: str) -> int:
     ``folder/..<time>/NAME``. The kubelet replaces ``..data`` when the secret changes and then removes
     the old folder, so a folder that vanished between the two steps is looked up once more."""
     refused = ValueError(f"{setting} names {path}, a symbolic link: {LINK_RULE}.")
+    if sys.platform == "win32":
+        raise refused
     folder, name = os.path.split(path)
     for attempt in (1, 2):
         try:
@@ -283,7 +286,13 @@ SOURCE_LABELS = {"environment": "environment", "file": "file", "config": "config
 def doctor_block(settings, *, timeout: float = 1.5) -> dict[str, Any]:
     """The database part of ``cairnmind doctor``: read-only, and through ArcadeClient, so its rules apply."""
     from cairnmind.storage.arcade import ArcadeClient, ArcadeError
-    from cairnmind.storage.database_mode import address, describe, missing_database, supported_versions, version_problem
+    from cairnmind.storage.database_mode import (
+        address,
+        describe,
+        missing_database,
+        supported_versions,
+        version_problem,
+    )
     origin = getattr(settings, "_origin", None) or {}
     source = origin.get("password", "config" if settings.arcade_password else "none")
     # Where storage runs (#68): mode "managed" or "connect", and the host.
@@ -363,6 +372,7 @@ def plan_user(settings, admin_secret: str) -> dict[str, Any]:
     on 26.11.1). ``sign_in`` is None when the user signs in, else the status of the refusal.
     """
     from dataclasses import replace
+
     from cairnmind.storage.arcade import ArcadeClient, ArcadeError
     from cairnmind.storage.database_mode import server_version, version_problem
     _new_user(settings)  # what --yes refuses before it signs in, the dry run refuses too
@@ -412,10 +422,11 @@ def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[st
     The user is ``arcade_user`` and the password the one resolved for it (environment or file); both
     must already be configured, so that the password never passes through this command's arguments.
     """
+    import json
     from contextlib import suppress
     from dataclasses import replace
+
     from cairnmind.storage.arcade import ArcadeClient, ArcadeError
-    import json
     name, secret = _new_user(settings)
     admin = ArcadeClient(replace(settings, arcade_user="root", arcade_password=admin_secret), administrator=True)
     payload = {"name": name, "password": secret, "databases": {settings.arcade_database: [group]}}

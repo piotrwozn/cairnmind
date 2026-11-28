@@ -316,8 +316,8 @@ def register_admin_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) ->
         ctx.cache.clear()
         try:
             await asyncio.to_thread(old_store.close)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:
+            log.debug("Failed to close previous store after reload: %s", exc)
         return {"reloaded": True, "backend": ctx.active_backend_label()}
 
     @app.get("/status", dependencies=auth)
@@ -440,6 +440,20 @@ def register_admin_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) ->
         return {"stopping": bool(callback)}
 
 
+def _resolve_project_root(raw_root: str) -> Path:
+    try:
+        root = Path(raw_root).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("Project root is unavailable") from exc
+    if not root.is_dir():
+        raise ValueError("Project root must be an existing directory")
+    return root
+
+
+def _resolve_worktree_path(raw_worktree: str) -> str:
+    return str(Path(raw_worktree).expanduser().resolve())
+
+
 def register_project_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> None:
     @app.get("/projects", dependencies=auth)
     async def projects():
@@ -447,12 +461,7 @@ def register_project_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) 
 
     @app.post("/projects", dependencies=auth)
     async def register_project(body: RegisterProjectBody):
-        try:
-            root = Path(body.root).expanduser().resolve(strict=True)
-        except (OSError, RuntimeError) as exc:
-            raise ValueError("Project root is unavailable") from exc
-        if not root.is_dir():
-            raise ValueError("Project root must be an existing directory")
+        root = await asyncio.to_thread(_resolve_project_root, body.root)
         from cairnmind.memory.project_removal import add_outcome, removed_rows
 
         known = {row["id"] for row in await asyncio.to_thread(ctx.store.list_projects)}
@@ -620,7 +629,7 @@ def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -
         pid = resolve_project(ctx, body.project)["id"]
         if body.session_id:
             raise ValueError("Where published memory goes is chosen only by a person, not inside a coding session")
-        worktree = str(Path(body.worktree).expanduser().resolve()) if body.worktree else None
+        worktree = await asyncio.to_thread(_resolve_worktree_path, body.worktree) if body.worktree else None
         return await asyncio.to_thread(configure, ctx.store, pid, body.kind, body.path, worktree)
 
     @app.post("/memory/import-published", dependencies=auth)
@@ -963,7 +972,7 @@ def register_core_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> 
             "task_definition_hash",
             "origin",
         )
-        result = {"checks": [{key: row.get(key) for key in fields if key in row} for row in rows]}
+        result: dict[str, Any] = {"checks": [{key: row.get(key) for key in fields if key in row} for row in rows]}
         if task_id:
             task = await asyncio.to_thread(
                 db_find_one,

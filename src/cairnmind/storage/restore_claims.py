@@ -114,7 +114,9 @@ class BackupClaims:
             self.revisions += 1  # not in the reported counts, but a redo with the workspace would keep it
             return {**row, "snapshot": _with_mark(row["snapshot"], mark)}
         if collection == "projects":
-            from cairnmind.memory.record_kinds import withdraw_all  # record_kinds imports the transcript reader: not at the top
+            from cairnmind.memory.record_kinds import (
+                withdraw_all,  # record_kinds imports the transcript reader: not at the top
+            )
             row, count = withdraw_all(row, self.at, ROUTE, WITHDRAW_NOTE)
             self.record_kinds += count
         return row

@@ -12,10 +12,15 @@ from cairnmind.cli import app
 from cairnmind.config import Settings
 from cairnmind.memory.contract import build_contract, write_contract
 from cairnmind.memory.plans import PlanManager
-from cairnmind.store import Store
+from cairnmind.memory.verification import (
+    criteria_status,
+    load_profiles,
+    run_check,
+    task_definition_hash,
+    verification_status,
+)
 from cairnmind.storage.sql import clean_row
-from cairnmind.memory.verification import (criteria_status, load_profiles, run_check, task_definition_hash,
-                                    verification_status)
+from cairnmind.store import Store
 
 
 def git(root, *args):

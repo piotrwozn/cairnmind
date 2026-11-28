@@ -7,13 +7,13 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.cli_cmds import doctor_attention, first_start
-from cairnmind.storage import engine, store_writer
-from cairnmind.memory import integrations, project_removal
 from cairnmind.agents import knowledge_mode
-from cairnmind.storage.arcade import ArcadeClient, ArcadeError
+from cairnmind.cli_cmds import doctor_attention, first_start
 from cairnmind.config import Settings
+from cairnmind.memory import integrations, project_removal
 from cairnmind.pal.platform_hints import hint
+from cairnmind.storage import engine, store_writer
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 
 REPORT = {"python": "3.12.3", "data_dir": "/home/me/.local/share/cairnmind", "environment_notes": [],
           "clients": {"codex": {"installed": False, "verified_resume": False},
@@ -373,6 +373,7 @@ def test_the_managed_block_is_not_chunked():
 
 def test_text_matches_lists_a_record_and_its_note_once(monkeypatch):
     import asyncio
+
     from cairnmind.memory import memory_egress
     monkeypatch.setattr(memory_egress, "ask_gate", lambda settings, store, also_held=frozenset(): None)  # #183's run classes
     shown = [{"id": "chunk", "source_id": "s1", "uri": "manual://note/1", "kind": "note", "text": "We deploy blue green."},

@@ -7,6 +7,8 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from test_client_runtime import native as native
+from test_terminal_panels import FakeBroker, FakeWorkspace, settle
 from textual import work
 from textual.binding import Binding
 from textual.widgets import Button, DataTable, Input, Static
@@ -16,13 +18,20 @@ from cairnmind.terminal.terminal_client import BrokerError
 from cairnmind.terminal.terminal_i18n import language_for, tr
 from cairnmind.terminal.terminal_inspector import InspectorApp
 from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
-from cairnmind.terminal.terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FolderPicker, FormModal, MessageModal
-from test_terminal_panels import FakeBroker, FakeWorkspace, settle
-from test_client_runtime import native as native
+from cairnmind.terminal.terminal_ui import (
+    BasePanel,
+    ChoiceModal,
+    Field,
+    FieldError,
+    FolderPicker,
+    FormModal,
+    MessageModal,
+)
 
 
 def test_binding_localization_preserves_routing_and_roundtrips():
     from textual.app import App
+
     from cairnmind.terminal.terminal_i18n import localize_bindings
 
     class BindingApp(App):

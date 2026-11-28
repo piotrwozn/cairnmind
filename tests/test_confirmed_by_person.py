@@ -8,22 +8,26 @@ import json
 import subprocess
 from uuid import uuid4
 
-from fastapi.testclient import TestClient
 import pytest
+from conftest import as_person, confirmed_before_rule, person_edit, plain_words
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from cairnmind.memory import confirmation
-from cairnmind.memory.confirmation import ConfirmationRefused, confirmation_of, confirmation_text, person_at_terminal
+from cairnmind.agents.retrieval import public_record
 from cairnmind.config import Settings
-from cairnmind.terminal.inspector import Inspector
+from cairnmind.memory import confirmation
+from cairnmind.memory.confirmation import (
+    ConfirmationRefused,
+    confirmation_of,
+    confirmation_text,
+    person_at_terminal,
+)
 from cairnmind.memory.memory_acts import confirm_plan, covered_by_local_act
 from cairnmind.memory.plans import PlanManager
-from cairnmind.agents.retrieval import public_record
-from cairnmind.service import create_app
 from cairnmind.memory.sessions import SessionManager
+from cairnmind.service import create_app
 from cairnmind.store import Store
-
-from conftest import as_person, confirmed_before_rule, person_edit, plain_words
+from cairnmind.terminal.inspector import Inspector
 
 REFUSAL = "Only a person can store a record as confirmed"
 

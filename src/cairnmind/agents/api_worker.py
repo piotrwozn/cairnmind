@@ -8,15 +8,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from contextlib import suppress
-from dataclasses import replace
-from functools import partial
 import inspect
 import json
 import math
-from pathlib import Path
 import re
 import sys
+from contextlib import suppress
+from dataclasses import replace
+from functools import partial
+from pathlib import Path
+from typing import Any
 
 from rich.text import Text
 from textual import on, work
@@ -25,15 +26,16 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Header, RichLog, Static, TextArea
 
-from cairnmind.terminal import terminal_theme
 from cairnmind.config import Settings
-from cairnmind.mcp.mcp_failure_notice import reason as mcp_reason, valid_report
-from cairnmind.terminal.terminal_panels import ConfirmModal
+from cairnmind.mcp.mcp_failure_notice import reason as mcp_reason
+from cairnmind.mcp.mcp_failure_notice import valid_report
 from cairnmind.pal.terminal_safe import plain, safe_text
-from cairnmind.terminal.terminal_ui import ChoiceModal, Field, FormModal, drop_unseen_key
-from cairnmind.terminal.terminal_i18n import language_for
+from cairnmind.terminal import terminal_theme
 from cairnmind.terminal.terminal_agent_i18n import STATUS, status_text, tr
+from cairnmind.terminal.terminal_i18n import language_for
 from cairnmind.terminal.terminal_i18n_messages import AGENT_MESSAGES, fixed_message
+from cairnmind.terminal.terminal_panels import ConfirmModal
+from cairnmind.terminal.terminal_ui import ChoiceModal, Field, FormModal, drop_unseen_key
 
 _SERVER_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
 _CODE = re.compile(r"^[a-z][a-z_]{0,39}$")
@@ -55,12 +57,18 @@ def usage_text(usage: dict, profile: dict, language="en") -> str:
         parts.append(t("token report incomplete"))
     pricing = profile.get("pricing") or {}
     estimate = usage.get("estimated_cost")
-    if not (complete and usage.get("cost_currency") == "USD" and type(estimate) in (int, float)
+    if not (complete and usage.get("cost_currency") == "USD"
+            and isinstance(estimate, (int, float)) and type(estimate) in (int, float)
             and math.isfinite(estimate) and estimate >= 0):
         estimate = None
-        if complete and all(type(n) in (int, float) and math.isfinite(n) and n >= 0 for n in (
-                input_tokens, output_tokens, pricing.get("input_per_million"), pricing.get("output_per_million"))):
-            estimate = (input_tokens * pricing["input_per_million"] + output_tokens * pricing["output_per_million"]) / 1_000_000
+        in_rate, out_rate = pricing.get("input_per_million"), pricing.get("output_per_million")
+        if (complete
+                and isinstance(input_tokens, (int, float)) and type(input_tokens) in (int, float)
+                and isinstance(output_tokens, (int, float)) and type(output_tokens) in (int, float)
+                and isinstance(in_rate, (int, float)) and type(in_rate) in (int, float)
+                and isinstance(out_rate, (int, float)) and type(out_rate) in (int, float)
+                and all(math.isfinite(n) and n >= 0 for n in (input_tokens, output_tokens, in_rate, out_rate))):
+            estimate = (input_tokens * in_rate + output_tokens * out_rate) / 1_000_000
     if estimate is not None:
         parts.append(t("estimated cost {amount:.6f} USD (profile rates)", amount=estimate))
     else:
@@ -69,7 +77,7 @@ def usage_text(usage: dict, profile: dict, language="en") -> str:
     if isinstance(copilot, dict):
         amount = copilot.get("total_nano_aiu")
         state = t(copilot.get("status") if copilot.get("status") in {"complete", "partial", "unavailable"} else "observed")
-        if type(amount) in (int, float) and math.isfinite(amount) and amount >= 0:
+        if isinstance(amount, (int, float)) and type(amount) in (int, float) and math.isfinite(amount) and amount >= 0:
             parts.append(t("Copilot: {amount} nano_aiu · report {state}", amount=amount, state=state))
         else:
             parts.append(t("Copilot: usage unavailable"))
@@ -154,9 +162,9 @@ class AgentApp(App):
         self._last_usage = None
         self._key = key
         self._engine_factory = engine_factory
-        self.engine = None
+        self.engine: Any = None
         self._turn_task = None
-        self._approval_screen = None
+        self._approval_screen: Any = None
         self._stream = ""
         self._busy = False
         self._queued = False
@@ -251,7 +259,7 @@ class AgentApp(App):
         text = usage_text(value, self.profile, self.language) if isinstance(value, dict) else self.t("usage: unavailable · cost: unavailable")
         self.query_one("#agent-usage", Static).update(self.display_text(text, limit=3000))
 
-    def display_text(self, value, *, limit=65536):
+    def display_text(self, value, *, limit: int | None = 65536):
         value = str(value)
         for secret in self._redacted_values:
             value = value.replace(secret, "[REDACTED]")
@@ -380,8 +388,13 @@ class AgentApp(App):
             return False
         if request.get("session_id") != self.run_record.get("session_id"):
             return False
-        from cairnmind.agents.agent_write_guard import (changed_files_text, file_write_text, valid_changed_files,
-                                        valid_file_write, without_changed_files)
+        from cairnmind.agents.agent_write_guard import (
+            changed_files_text,
+            file_write_text,
+            valid_changed_files,
+            valid_file_write,
+            without_changed_files,
+        )
         if not valid_changed_files(request):
             return False
         # The files the agent changed since the last approval, shown under what would run (#176).
@@ -529,7 +542,8 @@ class AgentApp(App):
 
     @work(group="agent-resolve", exclusive=True, exit_on_error=False)
     async def resolve_pending(self):
-        if self._busy or self.engine is None:
+        engine = self.engine
+        if self._busy or engine is None:
             return
         pending = await self.refresh_pending()
         if not pending:
@@ -543,7 +557,7 @@ class AgentApp(App):
         if selected is None:
             return
         async def save_finding(values):
-            result = self.engine.resolve_uncertain(selected, values["note"])
+            result = engine.resolve_uncertain(selected, values["note"])
             if inspect.isawaitable(result):
                 await result
         note = await self.push_screen_wait(FormModal(self.t("Resolve after checking the outcome"), [Field("note", self.t("What did you check, and what actually happened?"), required=True, multiline=True)], note=self.t("This saves your finding. It does not repeat the command or edit."), submit=self.t("Save finding"), on_submit=save_finding))

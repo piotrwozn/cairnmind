@@ -7,20 +7,19 @@ from __future__ import annotations
 
 import inspect
 import json
-from pathlib import Path
 import re
 import socket
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import typer
+from conftest import own_time, plain_words
 from typer.testing import CliRunner
 
-from conftest import plain_words, own_time
-
 from cairnmind import __version__, cli
-from cairnmind.pal import file_locks
 from cairnmind.config import Settings
+from cairnmind.pal import file_locks
 from cairnmind.store import Store
 
 runner = CliRunner()
@@ -317,12 +316,12 @@ def test_an_unknown_id_is_refused_alike_for_a_task_a_plan_a_source_and_a_session
 def test_an_unregistered_folder_is_refused_with_the_command_that_registers_it(tmp_path):
     # The same refusal for memory, retrieval, the inspector, checks and plans (#244): the folder, the project
     # and the command, quoted for the shell.
-    from cairnmind.scip.ingest import register_default_histories
-    from cairnmind.terminal.inspector import Inspector
+    from cairnmind.agents.retrieval import Retriever
     from cairnmind.memory.memory import MemoryManager
     from cairnmind.memory.plans import PlanManager
-    from cairnmind.agents.retrieval import Retriever
     from cairnmind.memory.verification import _root
+    from cairnmind.scip.ingest import register_default_histories
+    from cairnmind.terminal.inspector import Inspector
     store = Store(tmp_path / "memory")
     root = tmp_path / "repo"
     root.mkdir()
@@ -480,6 +479,7 @@ def test_a_plan_file_or_an_evidence_file_of_another_shape_is_a_refusal(tmp_path)
 
 def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
     import io
+
     from cairnmind.cli_cmds import doctor_attention
     healthy = {"python": "3.12.3", "clients": {"codex": {"installed": True, "verified_resume": True},
                                                "claude": {"installed": False, "verified_resume": False}},

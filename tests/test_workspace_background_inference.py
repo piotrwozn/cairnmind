@@ -8,9 +8,9 @@ import threading
 import time
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from cairnmind.config import Settings
 from cairnmind.service import create_app, schedule_embeddings
@@ -317,6 +317,7 @@ async def test_cancellation_after_launch_keeps_idempotency_and_unconfirmed_warni
 async def _wait_for_modal(app, pilot, kind, *, button_id=None, seconds=6.0):
     from textual.css.query import NoMatches
     from textual.widgets import Button
+
     from cairnmind.terminal.terminal_ui import ChoiceModal
 
     stable_region = None
@@ -361,10 +362,11 @@ async def _wait_for_modal(app, pilot, kind, *, button_id=None, seconds=6.0):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["process", "cancel", "scope_changed"])
 async def test_queue_button_is_explicit_scoped_localized_and_never_starts_an_assistant(tmp_path, monkeypatch, action):
+    from test_terminal_panels import settle, setup
     from textual.widgets import Button, Static
+
     from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
     from cairnmind.terminal.terminal_ui import ChoiceModal
-    from test_terminal_panels import setup, settle
 
     settings, broker, workspace = setup(tmp_path, monkeypatch)
     original = broker.request
@@ -412,11 +414,13 @@ async def test_process_memory_without_models_shows_the_way_on_the_real_24_column
 
     Covers a service restarted between the status read and the enable request; the usual no-models path is the test below."""
     import textwrap
+
+    from test_terminal_panels import settle, setup
     from textual.widgets import Static
+
     from cairnmind.cli_cmds import first_start
     from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
     from cairnmind.terminal.terminal_ui import ChoiceModal
-    from test_terminal_panels import setup, settle
 
     notice = getattr(first_start, which)
     command = "cairnmind models pull" if which == "PROCESS_OFF" else "cairnmind stop"
@@ -454,11 +458,13 @@ async def test_process_memory_without_models_shows_the_way_on_the_real_24_column
 async def test_process_memory_without_models_asks_no_consent_and_shows_the_notice_at_once(tmp_path, monkeypatch, which, size):
     """No models: no dialog about using them, no request that enables anything, the #294 notice instead (#309)."""
     import textwrap
+
+    from test_terminal_panels import settle, setup
     from textual.widgets import Static
+
     from cairnmind.cli_cmds import first_start
     from cairnmind.terminal.terminal_panels import ConfirmModal, SidebarApp
     from cairnmind.terminal.terminal_ui import ChoiceModal
-    from test_terminal_panels import setup, settle
 
     settings, broker, workspace = setup(tmp_path, monkeypatch)
     advice = first_start.RESTART_FOR_MODELS if which == "PROCESS_RESTART" else first_start.GET_MODELS

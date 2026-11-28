@@ -6,9 +6,9 @@ MultiLineRange, SymbolInformation, Relationship) with strict fail-closed size an
 """
 from __future__ import annotations
 
+import struct
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-import struct
 from typing import Any
 
 # Fail-closed bounds against malformed or adversarial index files.
@@ -483,6 +483,7 @@ def parse_scip_bytes(data: bytes | bytearray | memoryview, *, max_bytes: int = M
 def parse_scip_file(path: Path | str) -> ScipIndex:
     """Safely open (no symlink follow) and decode an ``index.scip`` file."""
     import os
+
     from cairnmind.pal.private_files import open_no_follow
     target = Path(path)
     fd = open_no_follow(target, os.O_RDONLY)
@@ -644,9 +645,7 @@ def parse_scip_symbol(
             mapped_kind = "function"
         elif last_suffix == "()":
             mapped_kind = "parameter"
-        elif last_suffix == "[]":
-            mapped_kind = "type"
-        elif last_suffix == "/":
+        elif last_suffix == "[]" or last_suffix == "/":
             mapped_kind = "type"
         else:
             has_type_owner = any(suf == "#" for _, suf in descriptors[:-1])

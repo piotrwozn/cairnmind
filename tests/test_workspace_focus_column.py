@@ -12,8 +12,8 @@ import signal
 import struct
 import sys
 import time
-from types import SimpleNamespace
 import warnings
+from types import SimpleNamespace
 
 if sys.platform != "win32":
     import fcntl
@@ -21,12 +21,12 @@ if sys.platform != "win32":
     import termios
 
 import pytest
+from pty_drain import drain_pty
+from test_workspace import manager as manager  # noqa: F401 (the fixture)
 
 from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.terminal.workspace import ACTIVITY_WIDTH, SESSION, WorkspaceManager
 from cairnmind.terminal.workspace_activity import FOCUS_MIN_WIDTH
-from pty_drain import drain_pty
-from test_workspace import manager as manager  # noqa: F401 (the fixture)
 
 pytestmark = [pytest.mark.tmux, pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX tmux/PTY focus column")]
 VIEWS = ("sidebar", "client1", "client2", "inspector", "graph")
@@ -221,7 +221,7 @@ def settled(workspace):
         if now != seen:
             seen, quiet = now, time.monotonic()
         time.sleep(.1)
-    return {role: [f"{a} {b}" for a, b in zip(value[::2], value[1::2])] for role, value in seen.items()}
+    return {role: [f"{a} {b}" for a, b in zip(value[::2], value[1::2], strict=False)] for role, value in seen.items()}
 
 
 @pytest.mark.parametrize("with_terminal", [False, True], ids=["detached", "attached"])

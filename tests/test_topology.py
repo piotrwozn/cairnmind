@@ -12,24 +12,42 @@ import subprocess
 
 import httpx
 import pytest
-
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.memory import integrations, memory_models
-from cairnmind.storage import store_writer
 from cairnmind.cli_cmds import topology as topology_module
+from cairnmind.cli_cmds.first_start import KNOWLEDGE_INVALID
+from cairnmind.cli_cmds.topology import (
+    CHANGE_HINT,
+    EVALUATED_NOT,
+    EVALUATED_NOT_CHECKED,
+    EVALUATED_PASSED,
+    EVALUATED_RELEASE,
+    EVALUATED_UNKNOWN,
+    EVALUATED_UNREACHABLE,
+    FROM_VARIABLE,
+    ITEM_DATABASE_HERE,
+    ITEM_ENGINE_DOCKER,
+    ITEM_MODELS_EMBEDDING,
+    ITEM_NO_SERVICE,
+    ITEM_SERVICE_VARIABLE,
+    MODELS_DISABLED,
+    MODELS_INVALID,
+    OLLAMA_FROM_VARIABLE,
+    STORAGE_CONNECT_HERE,
+    STORAGE_CONNECT_REMOTE,
+    STORAGE_DOCKER,
+    STORAGE_PROBLEM,
+    lines,
+    status_words,
+    topology,
+)
 from cairnmind.config import Settings, is_own_variable
+from cairnmind.memory import integrations, memory_models
+from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.storage import store_writer
 from cairnmind.storage.database_credentials import problem as database_problem
 from cairnmind.storage.database_mode import MODE_INVALID
-from cairnmind.cli_cmds.first_start import KNOWLEDGE_INVALID
-from cairnmind.pal.terminal_safe import safe_text
-from cairnmind.cli_cmds.topology import (
-    CHANGE_HINT, EVALUATED_NOT, EVALUATED_NOT_CHECKED, EVALUATED_PASSED, EVALUATED_RELEASE, EVALUATED_UNKNOWN, EVALUATED_UNREACHABLE,
-    FROM_VARIABLE,
-    ITEM_DATABASE_HERE, ITEM_ENGINE_DOCKER, ITEM_MODELS_EMBEDDING, ITEM_NO_SERVICE, ITEM_SERVICE_VARIABLE,
-    MODELS_DISABLED, MODELS_INVALID, OLLAMA_FROM_VARIABLE, STORAGE_CONNECT_HERE, STORAGE_CONNECT_REMOTE, STORAGE_DOCKER,
-    STORAGE_PROBLEM, lines, status_words, topology)
 
 REMOTE = {"provider": "openai_compatible", "base_url": "https://models.example/v1", "allow_remote": True}
 WRITER = {"role": "writer"}

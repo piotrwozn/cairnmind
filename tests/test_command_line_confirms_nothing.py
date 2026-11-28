@@ -11,8 +11,8 @@ from conftest import plain_words
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.memory import confirmation, impact_verdicts, memory_published_release, record_kinds
 from cairnmind.cli import app
+from cairnmind.memory import confirmation, impact_verdicts, memory_published_release, record_kinds
 
 ENVIRONMENT_WITHOUT_A_SESSION = ("CAIRNMIND_SESSION_ID", "DEVBRAIN_SESSION_ID", "CAIRNMIND_PACKET_ID",
                                  "DEVBRAIN_PACKET_ID", *confirmation.CLIENT_MARKERS)

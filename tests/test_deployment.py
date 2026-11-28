@@ -6,17 +6,17 @@ builds the image and checks the running service.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 import typer
 
-from cairnmind.storage import engine
 from cairnmind.cli import app
 from cairnmind.config import Settings
+from cairnmind.storage import engine
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = ROOT / "deploy" / "arcadedb" / "Dockerfile"
@@ -241,7 +241,7 @@ def test_the_manifest_check_creates_every_namespace_the_manifests_name_before_th
     script = (ROOT / "scripts" / "kubernetes_check.py").read_text()
     values = dict(re.findall(r'^(TEMPLATE_CLIENTS) = "([\w-]+)"$', script, re.M))
     values.update(zip(("DATABASE", "CLIENTS"), re.findall(r'^DATABASE, CLIENTS = "([\w-]+)", "([\w-]+)"$', script,
-                                                         re.M)[0]))
+                                                         re.M)[0], strict=False))
     created = {values[name] for name in re.findall(r'kubectl\("create", "namespace", (\w+)\)', script)}
     assert named <= declared | created
     dry_run = script.index('"--dry-run=server"')
@@ -264,8 +264,9 @@ def test_the_volume_is_unpacked_without_setting_the_root_owned_top_folder():
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Tests Kubernetes POSIX 0400 secret symlink mount")
 def test_the_mounted_password_mode_of_the_manifests_is_one_the_password_file_rule_accepts(tmp_path):
-    from cairnmind.storage.database_credentials import read_private_file
     from test_database_credentials import SECRET, mounted_secret
+
+    from cairnmind.storage.database_credentials import read_private_file
     job = manifest("check/connection-check.yaml")
     modes = set(re.findall(r"^\s+defaultMode: (0\d+)$", job, re.M))
     assert modes == {"0400"} and not re.search(r"^\s+fsGroup:", job, re.M)

@@ -22,8 +22,10 @@ go to their own provider (docs/EXTERNAL_CLIENTS.md).
 """
 from __future__ import annotations
 
-from contextvars import ContextVar
+import contextlib
 import json
+from contextvars import ContextVar
+from typing import Any
 from urllib.parse import urlsplit
 
 from cairnmind.memory.memory_models import is_loopback, profile
@@ -85,11 +87,10 @@ def coding_held_classes(settings, client: str, profile) -> frozenset:
     from a hosted one (every Copilot connection, every API profile whose address is not loopback, or not
     readable) all but the allowed. Codex, Claude Code and external MCP clients are never asked."""
     if client != "copilot":
-        try:
+        # An address that cannot be read is not the local one.
+        with contextlib.suppress(KeyError, TypeError, AttributeError, ValueError):
             if is_loopback(profile["base_url"]):
                 return frozenset()
-        except (KeyError, TypeError, AttributeError, ValueError):
-            pass  # an address that cannot be read is not the local one
     return frozenset(CLASSES) - allowed_classes(settings)[0]
 
 
@@ -102,8 +103,10 @@ def coding_read(name: str, result, held: frozenset, session_id: str) -> dict:
                 "message": HOSTED_READ_REFUSED.format(name=class_name)}
     result = result if isinstance(result, dict) else {}
     if name == "read_source":
-        source = result.get("source") if isinstance(result.get("source"), dict) else {}
-        metadata = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
+        raw_source = result.get("source")
+        source = raw_source if isinstance(raw_source, dict) else {}
+        raw_metadata = source.get("metadata")
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
         found = result.get("sensitivity")
         if (found in CLASSES and found not in held) or (
                 source.get("kind") == "agent_transcript" and metadata.get("session_id") == session_id):
@@ -147,7 +150,7 @@ def held_back_class(settings, role: str, source) -> str | None:
 def describe(settings, role: str) -> dict:
     """What doctor and `models set` say about one role: the classes it receives and those held back."""
     held = held_classes(settings, role)
-    entry = {"sends": ordered(set(CLASSES) - held), "held_back": ordered(held)}
+    entry: dict[str, Any] = {"sends": ordered(set(CLASSES) - held), "held_back": ordered(held)}
     if is_remote(settings, role):
         try:
             row = profile(settings, role) or {"base_url": settings.ollama_url}
@@ -296,6 +299,8 @@ def release_held_extractions(store, settings) -> int:
                 continue
         source_id = payload.get("source_id") if isinstance(payload, dict) else None
         if held:
+            if not isinstance(source_id, str):
+                continue
             sources = source_rows(store, [source_id])
             if source_id not in sources or source_sensitivity(sources[source_id]) in held:
                 continue

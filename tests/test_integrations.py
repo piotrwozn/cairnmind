@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 import copy
 import hashlib
+import json
 import os
 import stat
 import subprocess
@@ -13,13 +13,12 @@ from pathlib import Path
 
 import httpx
 import pytest
-
 from conftest import plain_words
 
 from cairnmind.config import Settings
+from cairnmind.mcp.mcp_server import ServiceClient, create_server
 from cairnmind.memory import integrations
 from cairnmind.storage.store_writer import StoreNotWriter
-from cairnmind.mcp.mcp_server import ServiceClient, create_server
 
 TOOLS = {"ask", "remember", "checkpoint", "save_plan", "next_task", "resume_context", "ack_resume", "check_status"}
 
@@ -64,8 +63,8 @@ def prepared(project):
 
 @pytest.fixture
 def native_backend(monkeypatch):
-    from cairnmind.scip import ingest
     from cairnmind import store
+    from cairnmind.scip import ingest
     monkeypatch.setattr(store, "Store", lambda *a: object())
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
 
@@ -807,8 +806,8 @@ def test_spool_drain_records_logical_receipt_before_removing_event(settings, tmp
 
 
 def test_end_hook_survives_unavailable_backend_and_restart(settings, tmp_path, monkeypatch):
-    from cairnmind.store import Store
     from cairnmind import store as store_module
+    from cairnmind.store import Store
 
     root = tmp_path / "repo"
     root.mkdir()
@@ -858,8 +857,9 @@ def test_session_start_returns_exact_prepared_packet(settings, project, prepared
 
 def test_start_hook_exact_http_read_preserves_packet_when_project_state_changed(settings, project, monkeypatch):
     from fastapi.testclient import TestClient
-    from cairnmind.service import create_app
+
     from cairnmind.memory.sessions import SessionManager
+    from cairnmind.service import create_app
 
     root = Path(project["root"])
     (root / "app.py").write_text("VALUE = 1\n")
@@ -1104,12 +1104,11 @@ async def test_actual_stdio_mcp_initialization_is_protocol_clean(settings):
 
     server = StdioServerParameters(command=sys.executable,
                                   args=["-m", "cairnmind", "--data-dir", str(settings.data_dir), "mcp"])
-    async with stdio_client(server) as (reader, writer):
-        async with ClientSession(reader, writer) as session:
-            result = await session.initialize()
-            assert result.serverInfo.name == "cairnmind"
-            tools = await session.list_tools()
-            assert {tool.name for tool in tools.tools} == TOOLS
+    async with stdio_client(server) as (reader, writer), ClientSession(reader, writer) as session:
+        result = await session.initialize()
+        assert result.serverInfo.name == "cairnmind"
+        tools = await session.list_tools()
+        assert {tool.name for tool in tools.tools} == TOOLS
 
 
 @pytest.mark.asyncio
@@ -1367,6 +1366,7 @@ def test_contract_text_shows_what_a_failed_pattern_check_found_and_cuts_long_evi
 
 def test_doctor_contract_prints_text_on_request_and_json_by_default(tmp_path, monkeypatch):
     from typer.testing import CliRunner
+
     from cairnmind import cli
     probes = {"codex": _golden_probe(monkeypatch, "codex-0.166.0"), "claude": _golden_probe(monkeypatch, "claude-2.1.319")}
     monkeypatch.setattr(integrations, "_probe_cli", lambda name: probes[name])

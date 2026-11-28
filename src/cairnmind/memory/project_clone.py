@@ -16,23 +16,23 @@ All validation and store preflight checks run before any network call or filesys
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlsplit
 
-from cairnmind.config import is_own_variable
 from cairnmind.cli_cmds.first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN
+from cairnmind.config import is_own_variable
 from cairnmind.memory.memory_paths import PUBLISHED_RELATIVE, snapshot_directory
 from cairnmind.pal.path_spelling import lies_in
 from cairnmind.pal.process_control import quote_arg
+from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.storage.storage_query import db_find
 from cairnmind.storage.store_writer import StoreNotWriter
-from cairnmind.pal.terminal_safe import safe_text
 
 CLONE_TOOLS = ("auto", "gh", "git")
 DEFAULT_TIMEOUT = 600

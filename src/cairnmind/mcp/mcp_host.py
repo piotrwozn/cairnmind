@@ -24,11 +24,15 @@ import re
 import shutil
 import signal
 import tempfile
+from contextlib import suppress
 
 from cairnmind.mcp.mcp_schema import MAX_BLOCKS, MAX_RESULT_BYTES, admit, convert, text  # noqa: F401 - re-exported
-from cairnmind.mcp.mcp_schema import canonical as _canonical, clean as _clean, sha as _sha
+from cairnmind.mcp.mcp_schema import canonical as _canonical
+from cairnmind.mcp.mcp_schema import clean as _clean
+from cairnmind.mcp.mcp_schema import sha as _sha
 from cairnmind.pal.process_control import IS_WINDOWS, ProcessJob, group_popen_kwargs
-from cairnmind.pal.process_identity import recorded, start as process_start
+from cairnmind.pal.process_identity import recorded
+from cairnmind.pal.process_identity import start as process_start
 
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
@@ -109,7 +113,7 @@ class McpServer:
                 process.stdin.write(_canonical(message) + b"\n")
                 # A server that stops reading its input cannot make the host buffer without bound.
                 await asyncio.wait_for(process.stdin.drain(), 5)
-            except (OSError, ConnectionError, asyncio.TimeoutError, RuntimeError, ValueError):
+            except (TimeoutError, OSError, ConnectionError, RuntimeError, ValueError):
                 raise McpFailure("mcp_server_unavailable") from None
 
     def _fail_pending(self, code):
@@ -131,8 +135,14 @@ class McpServer:
         await self._write(reply)
 
     async def _read(self):
-        stdout = self.process.stdout
+        process = self.process
+        stdout = process.stdout if process is not None else None
         code = "mcp_server_exited"
+        if stdout is None:
+            self._fail_pending("mcp_server_unavailable")
+            if self.state == "running":
+                self.state = "off"
+            return
         try:
             while True:
                 try:
@@ -170,7 +180,7 @@ class McpServer:
             if self.state == "running":
                 self.state = "off"
 
-    async def request(self, method, params, timeout):
+    async def request(self, method, params, timeout):  # noqa: ASYNC109 - protocol method takes per-call timeout
         if self.process is None or self.state not in {"starting", "running"}:
             raise McpFailure("mcp_server_unavailable")
         self._next_id += 1
@@ -180,7 +190,7 @@ class McpServer:
         try:
             await self._write({"jsonrpc": "2.0", "id": identifier, "method": method, "params": params})
             return await asyncio.wait_for(asyncio.shield(future), timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise McpFailure("mcp_call_timeout") from None
         finally:
             self._pending.pop(identifier, None)
@@ -262,7 +272,7 @@ class McpServer:
             code = _START_CODES.get(error.code, error.code) if isinstance(error, McpFailure) else "start_failed"
             raise McpFailure(code) from None
 
-    async def call(self, tool, arguments, timeout):
+    async def call(self, tool, arguments, timeout):  # noqa: ASYNC109 - protocol method takes per-call timeout
         """The converted result of one tools/call; a fixed code on any failure. Never raises server text."""
         base = {"server_id": self.id, "tool": tool, "third_party_untrusted": True}
         async with self._lock:
@@ -295,25 +305,21 @@ class McpServer:
             if job is not None:
                 job.terminate()
             elif recorded(process.pid, self.birth) is True:
-                try:
+                with suppress(ProcessLookupError):
                     process.terminate()
-                except ProcessLookupError:
-                    pass
             return
         if recorded(process.pid, self.birth) is not True:
             return  # the number belongs to another process now, or that cannot be told
-        try:
-            # The server's whole group: a child it started does not outlive the run.
-            os.killpg(process.pid, sent)
-        except (ProcessLookupError, PermissionError):
-            pass
+        killpg = getattr(os, "killpg", None)
+        if killpg is not None:
+            with suppress(ProcessLookupError, PermissionError):
+                # The server's whole group: a child it started does not outlive the run.
+                killpg(process.pid, sent)
 
     @staticmethod
     async def _reaped(process, seconds):
-        try:
+        with suppress(TimeoutError):
             await asyncio.wait_for(asyncio.shield(process.wait()), seconds)
-        except asyncio.TimeoutError:
-            pass
         return process.returncode is not None
 
     async def _halt(self):
@@ -387,7 +393,8 @@ class McpHost:
                 if schema is None:
                     skipped.append({"index": index, "tool": tool, "reason": reason})
                     continue
-                annotations = row.get("annotations") if isinstance(row.get("annotations"), dict) else {}
+                raw_annotations = row.get("annotations")
+                annotations = raw_annotations if isinstance(raw_annotations, dict) else {}
                 hints = {key: annotations[key] for key in _HINTS if type(annotations.get(key)) is bool}
                 public = {"name": name, "description": describe(server_id, tool, row.get("description")),
                           "parameters": schema}
@@ -452,7 +459,7 @@ class McpHost:
         try:
             results = await asyncio.gather(*tasks)
             events = []
-            for definition, (rows, code) in zip(self.definitions, results):
+            for definition, (rows, code) in zip(self.definitions, results, strict=True):
                 if code is not None:
                     events.append(("mcp_server_failed", {"server_id": self._label(definition), "code": code}))
                 else:
@@ -477,7 +484,7 @@ class McpHost:
     def schemas(self):
         return [entry["schema"] for entry in self.catalogue.values()]
 
-    async def call(self, name, arguments, timeout):
+    async def call(self, name, arguments, timeout):  # noqa: ASYNC109 - protocol method takes per-call timeout
         entry = self.catalogue[name]
         server = self.servers.get(entry["server_id"])
         if server is None or server.state != "running":

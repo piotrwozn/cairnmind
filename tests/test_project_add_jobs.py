@@ -5,12 +5,12 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.cli_cmds import first_start, upgrade_mark
-from cairnmind.scip import ingest
 from cairnmind.agents import knowledge_mode
+from cairnmind.cli_cmds import first_start, upgrade_mark
 from cairnmind.memory import project_removal
-from cairnmind.terminal import setup_mark
+from cairnmind.scip import ingest
 from cairnmind.storage.store_writer import StoreNotWriter
+from cairnmind.terminal import setup_mark
 
 
 class Store:

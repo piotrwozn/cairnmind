@@ -16,11 +16,11 @@ runs it alone and prints its address and, when stopped (Ctrl+C or SIGTERM), the 
 """
 from __future__ import annotations
 
-from contextlib import suppress
 import socket
 import ssl
 import threading
 import time
+from contextlib import suppress
 
 
 class _Closed(Exception):
@@ -154,7 +154,7 @@ class Relay:
         while not self._stop.is_set():
             try:
                 raw, _ = self._listener.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 return

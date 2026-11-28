@@ -10,7 +10,6 @@ import time
 from uuid import uuid4
 
 import pytest
-
 from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401  (workspace is a fixture)
 
 from cairnmind.agents.agent import CITATIONS_LEFT_OUT, MIN_QUOTE_CHARS, KnowledgeAgent

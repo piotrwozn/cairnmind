@@ -3,17 +3,17 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
+from conftest import time_budget
 from typer.testing import CliRunner
 
-from conftest import time_budget
 from cairnmind import cli
+from cairnmind.memory.verification import run_check
 from cairnmind.scip.ingest import index_project
 from cairnmind.store import Store
-from cairnmind.memory.verification import run_check
 
 runner = CliRunner()
 _LATENCY_SCALE = float(os.environ.get("CAIRNMIND_LATENCY_SCALE") or "1")

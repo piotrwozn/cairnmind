@@ -3,19 +3,25 @@ opt-in redaction, rebase-resilient reference hydration, and deterministic snapsh
 """
 from __future__ import annotations
 
-from copy import copy, deepcopy
 import hashlib
 import os
-from pathlib import Path, PurePosixPath
 import re
 import subprocess
+from copy import copy, deepcopy
+from pathlib import Path, PurePosixPath
 from typing import Any
 
-from cairnmind.scip.ignore_rules import IgnoreMatcher, escapes_root, is_git_worktree
 from cairnmind.memory.memory_published_release import CONFIG, config_text, registered_secrets
 from cairnmind.memory.memory_published_secrets import (
-    HIGH_ENTROPY, Rules, SecretRulesError, load_rules, redact_text, scan_text, value_sha256,
+    HIGH_ENTROPY,
+    Rules,
+    SecretRulesError,
+    load_rules,
+    redact_text,
+    scan_text,
+    value_sha256,
 )
+from cairnmind.scip.ignore_rules import IgnoreMatcher, escapes_root, is_git_worktree
 
 PROFILE_TEAM = "team"
 PROFILE_FULL = "full"
@@ -515,7 +521,7 @@ def resolve_snapshot_refs(payload: dict[str, list[dict[str, Any]]], root: Path) 
         resolved_text: str | None = None
         resolution_mode: str | None = None
 
-        if in_git and isinstance(rel, str) and isinstance(commit_sha, str):
+        if in_git and isinstance(rel, str) and isinstance(commit_sha, str) and isinstance(expected_sha, str):
             matched_blob = _blob_matches_sha(_blob_at_commit(root, commit_sha, rel), expected_sha)
             if matched_blob is not None:
                 try:
@@ -524,7 +530,7 @@ def resolve_snapshot_refs(payload: dict[str, list[dict[str, Any]]], root: Path) 
                 except UnicodeDecodeError:
                     resolved_text = None
 
-        if resolved_text is None and isinstance(rel, str) and _safe_rel_posix(rel):
+        if resolved_text is None and isinstance(rel, str) and _safe_rel_posix(rel) and isinstance(expected_sha, str):
             # Fallback after rebase/amend/squash: check file_path + content_sha256 at HEAD
             head_blob: bytes | None = None
             if in_git and head_commit and rel in head_tree and head_tree[rel][0] != "120000":
@@ -570,8 +576,20 @@ def merge_snapshots(ours_path: str | Path, theirs_path: str | Path, output_dir: 
     Raises `MemoryConflict` if both sides edited the same entity at the same version with different content.
     """
     from cairnmind.memory.memory import (
-        FORMAT, TABLES, VERSION, MemoryConflict, _atomic_write, _bytes, _descriptors, _digest,
-        _load_snapshot, _manifest_id, _state_hash, _sync_directory, _validate, _without_rebuilt_graph,
+        FORMAT,
+        TABLES,
+        VERSION,
+        MemoryConflict,
+        _atomic_write,
+        _bytes,
+        _descriptors,
+        _digest,
+        _load_snapshot,
+        _manifest_id,
+        _state_hash,
+        _sync_directory,
+        _validate,
+        _without_rebuilt_graph,
         _write_whole,
     )
     from cairnmind.storage.sql import utc_now
@@ -607,7 +625,7 @@ def merge_snapshots(ours_path: str | Path, theirs_path: str | Path, output_dir: 
     for src in merged["sources"]:
         if src.get("is_current"):
             by_uri.setdefault(src["uri"], []).append(src)
-    for uri, group in by_uri.items():
+    for _uri, group in by_uri.items():
         if len(group) > 1:
             group.sort(key=lambda r: (str(r.get("created_at", "")), r["id"]))
             for older in group[:-1]:

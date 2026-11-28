@@ -7,9 +7,9 @@ the inspector read; the inspector route checks it, and the workspace's key trave
 """
 from __future__ import annotations
 
+from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.terminal.terminal_notices import about
 from cairnmind.terminal.terminal_person_act import agreed, refused, reloaded, tell_saved, typed
-from cairnmind.pal.terminal_safe import safe_text
 
 PLAN_UNCLEAR = "The service did not confirm the plan, so it may have been confirmed."
 

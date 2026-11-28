@@ -6,11 +6,12 @@ explicit, injection-proof AST compiled natively by both ``ArcadeBackend`` and
 """
 from __future__ import annotations
 
-from copy import deepcopy
-from dataclasses import dataclass
 import re
 import sqlite3
-from typing import Any, Iterable, Sequence, Union
+from collections.abc import Iterable, Sequence
+from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any
 
 from cairnmind.storage.sql import IDENTIFIER, _arcade_ident, json_text, quote_name
 
@@ -44,16 +45,16 @@ class FieldCondition:
 
 @dataclass(frozen=True)
 class OrGroup:
-    conditions: tuple["FilterNode", ...]
+    conditions: tuple[FilterNode, ...]
 
 
 @dataclass(frozen=True)
 class AndGroup:
-    conditions: tuple["FilterNode", ...]
+    conditions: tuple[FilterNode, ...]
 
 
-FilterNode = Union[FieldCondition, OrGroup, AndGroup]
-WhereInput = Union[None, dict[str, Any], FilterNode, Sequence[FilterNode]]
+FilterNode = FieldCondition | OrGroup | AndGroup
+WhereInput = None | dict[str, Any] | FilterNode | Sequence[FilterNode]
 
 
 @dataclass(frozen=True)
@@ -513,7 +514,7 @@ def db_find(
     distinct: bool = False,
 ) -> list[dict[str, Any]]:
     """Run a backend-neutral structured document query against a Store, tx, backend, or test fake."""
-    if hasattr(target, "find") and callable(target.find):
+    if callable(getattr(target, "find", None)):
         return target.find(
             collection,
             where,
@@ -550,7 +551,7 @@ def db_find_one(
     required: bool = False,
 ) -> dict[str, Any] | None:
     """Return the first matching row or None (raising ValueError when `required=True`)."""
-    if hasattr(target, "find_one") and callable(target.find_one):
+    if callable(getattr(target, "find_one", None)):
         return target.find_one(
             collection, where, columns=columns, order_by=order_by, required=required
         )
@@ -564,7 +565,7 @@ def db_find_one(
 
 def db_count(target: Any, collection: str, where: WhereInput = ()) -> int:
     """Count matching rows in `collection` without raw SQL."""
-    if hasattr(target, "count") and callable(target.count):
+    if callable(getattr(target, "count", None)):
         return int(target.count(collection, where))
     backend = getattr(target, "backend", None)
     if backend is not None and hasattr(backend, "count"):
@@ -590,7 +591,7 @@ def db_group_counts(
     count_alias: str = "total",
 ) -> list[dict[str, Any]]:
     """Aggregate row counts grouped by one or more fields."""
-    if hasattr(target, "group_counts") and callable(target.group_counts):
+    if callable(getattr(target, "group_counts", None)):
         return target.group_counts(collection, group_by, where, count_alias=count_alias)
     backend = getattr(target, "backend", None)
     if backend is not None and hasattr(backend, "group_counts"):
@@ -615,7 +616,7 @@ def db_update_where(
     where: WhereInput = (),
 ) -> list[dict[str, Any]]:
     """Structured update/remove mutation against a Store, tx, or StorageBackend."""
-    if hasattr(target, "update_where") and callable(target.update_where):
+    if callable(getattr(target, "update_where", None)):
         return target.update_where(
             collection, set_fields=set_fields, remove_fields=remove_fields, where=where
         )
@@ -650,7 +651,7 @@ def db_delete_where(
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """Structured delete mutation against a Store, tx, or StorageBackend."""
-    if hasattr(target, "delete_where") and callable(target.delete_where):
+    if callable(getattr(target, "delete_where", None)):
         return target.delete_where(collection, where, limit=limit)
     backend = getattr(target, "backend", None)
     if backend is not None and hasattr(backend, "delete_where"):
@@ -663,7 +664,7 @@ def db_delete_where(
 
 def db_insert_document(target: Any, collection: str, data: dict[str, Any]) -> dict[str, Any]:
     """Insert a single document through the structured StorageBackend / transaction API."""
-    if hasattr(target, "insert_document") and callable(target.insert_document):
+    if callable(getattr(target, "insert_document", None)):
         return target.insert_document(collection, data)
     backend = getattr(target, "backend", None)
     if backend is not None and hasattr(backend, "insert_document"):
@@ -675,7 +676,7 @@ def db_insert_document(target: Any, collection: str, data: dict[str, Any]) -> di
 
 def db_insert_documents(target: Any, collection: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Batch-insert documents through the structured StorageBackend / transaction API."""
-    if hasattr(target, "insert_documents") and callable(target.insert_documents):
+    if callable(getattr(target, "insert_documents", None)):
         return target.insert_documents(collection, rows)
     backend = getattr(target, "backend", None)
     if backend is not None and hasattr(backend, "insert_documents"):
@@ -686,7 +687,7 @@ def db_insert_documents(target: Any, collection: str, rows: list[dict[str, Any]]
 
 def db_list_collections(target: Any) -> set[str]:
     """Return existing collection names without raw SQL in callers."""
-    if hasattr(target, "list_collections") and callable(target.list_collections):
+    if callable(getattr(target, "list_collections", None)):
         return set(target.list_collections())
     backend = getattr(target, "backend", None)
     if backend is not None and hasattr(backend, "list_collections"):
@@ -700,7 +701,7 @@ def db_list_collections(target: Any) -> set[str]:
 
 def db_server_time_ms(target: Any) -> int:
     """Return the database server clock in epoch milliseconds without raw SQL in callers."""
-    if hasattr(target, "server_time_ms") and callable(target.server_time_ms):
+    if callable(getattr(target, "server_time_ms", None)):
         return int(target.server_time_ms())
     backend = getattr(target, "backend", None)
     if backend is not None and hasattr(backend, "server_time_ms"):
@@ -720,12 +721,12 @@ def db_upsert_document(
     key_field: str = "id",
 ) -> dict[str, Any]:
     """Upsert a document by `key_field` through the structured StorageBackend / transaction API."""
-    if hasattr(target, "upsert_document") and callable(target.upsert_document):
+    if callable(getattr(target, "upsert_document", None)):
         return target.upsert_document(collection, data, key_field=key_field)
     backend = getattr(target, "backend", None)
     if backend is not None and hasattr(backend, "upsert_document"):
         return backend.upsert_document(target, collection, data, key_field=key_field)
-    if hasattr(target, "transaction") and callable(target.transaction):
+    if callable(getattr(target, "transaction", None)):
         with target.transaction() as tx:
             return db_upsert_document(tx, collection, data, key_field=key_field)
     setters = ",".join(f"{quote_name(key)}=:value_{key}" for key in data)

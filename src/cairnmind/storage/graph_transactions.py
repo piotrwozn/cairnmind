@@ -19,12 +19,15 @@ for and written again in a new transaction, once), and shares ``BoundedTransacti
 """
 from __future__ import annotations
 
-from contextlib import ExitStack
+import logging
 import sys
 import time
+from contextlib import ExitStack
 
 from cairnmind.storage.arcade import ArcadeError
 from cairnmind.storage.storage_query import db_find, is_in
+
+log = logging.getLogger(__name__)
 
 ROWS_PER_TRANSACTION = 20000
 VERTEX_WAIT = 60.0  # seconds the engine's index may take to find the vertices that were committed
@@ -79,8 +82,8 @@ class BoundedTransactions:
         if stack is not None:
             try:
                 stack.__exit__(*sys.exc_info())
-            except Exception:  # noqa: BLE001 - the first error is the one the person needs
-                pass
+            except Exception as exc:  # noqa: BLE001 - the first error is the one the person needs
+                log.debug("Ignoring rollback error while abandoning transaction: %s", exc)
 
 
 class GraphTransactions(BoundedTransactions):

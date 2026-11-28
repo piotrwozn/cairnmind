@@ -1,25 +1,30 @@
 """Owner-local cockpit preferences and explicitly scoped project discovery."""
 from __future__ import annotations
 
-from copy import deepcopy
-from contextlib import contextmanager
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
+from copy import deepcopy
+from pathlib import Path
 from uuid import uuid4
 
 from cairnmind.agents.api_profiles import normalize_profile
-from cairnmind.pal.file_locks import lock_exclusive
 from cairnmind.mcp.mcp_servers import apply_project_edit, validate_project_mcp_servers
+from cairnmind.pal.file_locks import lock_exclusive
 from cairnmind.pal.private_files import (
-    atomic_replace, ensure_private_dir, fsync_directory,
-    is_private_stat, is_reparse_point, make_private, open_no_follow,
+    atomic_replace,
+    ensure_private_dir,
+    fsync_directory,
+    is_private_stat,
+    is_reparse_point,
+    make_private,
+    open_no_follow,
 )
 from cairnmind.terminal.stages import validate_project_stages
 

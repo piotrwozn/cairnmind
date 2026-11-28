@@ -11,8 +11,8 @@ import socket
 import pytest
 
 from cairnmind import cli
-from cairnmind.storage.arcade import ArcadeError
 from cairnmind.config import Settings
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.store import Store
 
 READ_COMMANDS = [

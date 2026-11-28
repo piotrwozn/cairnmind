@@ -198,6 +198,7 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
         candidate, existing = rows[record_id], rows[other_id]
         if not candidate or not existing:
             raise LookupError("Unknown record in requested project")
+        pair_rows = {record_id: candidate, other_id: existing}
         if candidate["version"] != expected_version or existing["version"] != other_expected_version:
             raise ValueError("Conflict version conflict; read the current findings")
         active, standing = _successors(store, project_id)
@@ -218,12 +219,12 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
                  "previous_status": {record_id: candidate["status"], other_id: existing["status"]},
                  "status": "confirmed" if action == "supersede" else None,
                  "content_sha256": {identifier: hashlib.sha256(row["content"].encode()).hexdigest()
-                                    for identifier, row in rows.items()},
+                                    for identifier, row in pair_rows.items()},
                  # The quoted passage each finding carries: a published quote must be this one (#172).
-                 "evidence_sha256": {identifier: record_evidence(row) for identifier, row in rows.items()}}
-        if any(row["kind"] == "task" for row in rows.values()):
+                 "evidence_sha256": {identifier: record_evidence(row) for identifier, row in pair_rows.items()}}
+        if any(row["kind"] == "task" for row in pair_rows.values()):
             audit["definition_sha256"] = {identifier: row_definition_hash(row["content"], row.get("metadata"))
-                                          for identifier, row in rows.items() if row["kind"] == "task"}
+                                          for identifier, row in pair_rows.items() if row["kind"] == "task"}
         if action == "supersede":
             # Kind, key and replaced record of both findings as this decision leaves them (#170).
             winner, loser = (candidate, existing) if keep == record_id else (existing, candidate)

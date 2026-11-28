@@ -11,13 +11,20 @@ content. Nothing imported is verified, and no review is written as this machine'
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 from cairnmind.memory.memory_paths import PUBLISHED_RELATIVE
 from cairnmind.memory.memory_published import version_projection
 from cairnmind.memory.memory_published_check import check_directory, check_files, record_row, stub_row
-from cairnmind.memory.memory_published_format import J, canonical_uuid, projection, reviewed_by, same, sha256_text
+from cairnmind.memory.memory_published_format import (
+    J,
+    canonical_uuid,
+    projection,
+    reviewed_by,
+    same,
+    sha256_text,
+)
 from cairnmind.storage.sql import clean_row, evidence_time, insert_document, json_text, utc_now
 from cairnmind.storage.storage_query import asc, db_find, db_find_one, db_update_where, is_in, ne
 
@@ -122,7 +129,7 @@ class PublishedImporter:
         if rules is None:
             rules = import_rules(None if isinstance(directory, dict) else directory, self.store.settings)
         tree, errors = check_files(directory, rules) if isinstance(directory, dict) else check_directory(directory, rules)
-        if errors:
+        if errors or tree is None:
             raise MemoryConflict("The published memory was refused: " + _listing(errors))
         take = set(take_published or ())
         if any(not canonical_uuid(i) or i not in tree["records"] for i in take):
@@ -132,7 +139,7 @@ class PublishedImporter:
                   "publication_id": tree["project_id"], "inserted": [], "advanced": [], "unchanged": 0,
                   "taken": [], "stubs": 0, "plans": [], "verification": "nothing imported is verified here",
                   "model_calls": 0}
-        if hasattr(authorize, "refresh"):
+        if authorize is not None and hasattr(authorize, "refresh"):
             authorize.refresh()  # hashes the worktree: never inside the transaction below (#255)
         try:
             with self.store.transaction() as tx:
@@ -167,6 +174,8 @@ class PublishedImporter:
     def _apply(self, tx, tree, project_id, bind, take, result, directory=None):
         from cairnmind.memory.memory import MemoryConflict
         project = db_find_one(tx, "projects", {"id": project_id}, required=True)
+        if project is None:
+            raise LookupError(f"Unknown project: {project_id}")
         # Another project's directory first (#239): no binding or ID check could make it this project's.
         _own_directory(tx, directory, project_id)
         identity = project.get("publication_id")
@@ -452,18 +461,28 @@ class PublishedImporter:
                     continue
             version = local["version"] if local else 0
             for index in numbers or [None]:
-                definition = definitions[index if index is not None else -1]
-                current = definitions[-1] if index is None else definition
+                if index is None:
+                    if local is None:
+                        continue
+                    current = definitions[-1]
+                    step_ids = local["step_ids"]
+                    source_ids = local["source_ids"]
+                    updated_at = now
+                else:
+                    current = definitions[index]
+                    step_ids = [s[0] for s in current["steps"]]
+                    source_ids = list(current["sources"])
+                    updated_at = current["at"]
                 version += 1
                 row = {"id": plan_id, "project_id": project_id, "version": version, "title": current["title"],
                        "goal": current["goal"], "constraints": current["constraints"],
-                       "step_ids": [s[0] for s in current["steps"]] if index is not None else local["step_ids"],
+                       "step_ids": step_ids,
                        "context_hash": _digest({"title": current["title"], "goal": current["goal"],
                                                 "constraints": current["constraints"]}),
-                       "source_ids": list(current["sources"]) if index is not None else local["source_ids"],
+                       "source_ids": source_ids,
                        "created_at": local["created_at"] if local else model["created_at"],
-                       "updated_at": current["at"] if index is not None else now}
-                if index is None:
+                       "updated_at": updated_at}
+                if index is None and local is not None:
                     row.update({k: local.get(k) for k in ("title", "goal", "constraints", "context_hash")})
                 tasks = []
                 for task_id in row["step_ids"]:

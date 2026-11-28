@@ -9,6 +9,10 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from conftest import plain_words
+from consent_steps import consent_drawn, form_ready
+from test_terminal_panels import FakeBroker, settle, setup
+from test_terminal_ux080 import screen_text
 from textual.widgets import Button, Select, Static, TextArea
 
 from cairnmind.agents import agent_memory
@@ -20,10 +24,6 @@ from cairnmind.terminal.terminal_i18n import CATALOG, tr
 from cairnmind.terminal.terminal_i18n_messages import BROKER_MESSAGES
 from cairnmind.terminal.terminal_inspector import InspectorApp
 from cairnmind.terminal.terminal_ui import FormModal
-from conftest import plain_words
-from consent_steps import consent_drawn, form_ready
-from test_terminal_panels import FakeBroker, setup, settle
-from test_terminal_ux080 import screen_text
 
 REPLACE = "/api/inspector/records/record-a/replace"
 NEW = "Validate tokens with the shared helper."

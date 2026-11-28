@@ -26,20 +26,25 @@ source it cited before has lost sources.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import logging
 import os
-from pathlib import Path
 import re
 import shutil
 import stat
 import time
+from contextlib import contextmanager
+from pathlib import Path
 from uuid import uuid4
 
 from cairnmind.pal.file_locks import lock_exclusive
 from cairnmind.pal.private_files import (
-    atomic_replace, ensure_private_dir, is_private_stat, is_reparse_point, open_no_follow, pread_at,
+    atomic_replace,
+    ensure_private_dir,
+    is_private_stat,
+    is_reparse_point,
+    open_no_follow,
+    pread_at,
 )
 
 FORMAT_VERSION = 1
@@ -171,6 +176,8 @@ def append(settings, entry: dict) -> bool:
     if len(line) > MAX_ENTRY_BYTES:
         return False
     with _locked(settings, entry["project_id"], create=True) as folder:
+        if folder is None:
+            raise ValueError("Answer log directory could not be locked")
         path = folder / "answers.jsonl"
         fd = open_no_follow(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
         with os.fdopen(fd, "ab") as handle:

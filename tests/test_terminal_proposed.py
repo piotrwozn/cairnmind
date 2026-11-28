@@ -4,16 +4,22 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
+from consent_steps import consent_drawn, form_ready
+from test_terminal_panels import settle, setup
 from textual.widgets import DataTable, Input, Select, Static, TextArea
 
 from cairnmind.memory.stale_proposed import MAX_DAYS
 from cairnmind.terminal.terminal_i18n import tr
 from cairnmind.terminal.terminal_inspector import _VIEWS, InspectorApp
-from cairnmind.terminal.terminal_proposed import (BASIS_WORDS, DAYS_ERROR, SUMMARY_ONE_DAY, TEXT_WIDTH, days_error,
-                                        list_summary)
+from cairnmind.terminal.terminal_proposed import (
+    BASIS_WORDS,
+    DAYS_ERROR,
+    SUMMARY_ONE_DAY,
+    TEXT_WIDTH,
+    days_error,
+    list_summary,
+)
 from cairnmind.terminal.terminal_ui import FormModal
-from consent_steps import consent_drawn, form_ready
-from test_terminal_panels import settle, setup
 
 ITEMS = [
     {"id": "record-a", "kind": "decision", "version": 3, "updated_at": "2026-08-01T10:00:00+00:00", "age_days": 90,

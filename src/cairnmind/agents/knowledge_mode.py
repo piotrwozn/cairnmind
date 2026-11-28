@@ -13,10 +13,25 @@ import asyncio
 import time
 
 from cairnmind import config
+from cairnmind.cli_cmds.first_start import (
+    ASK_LEFT_OUT,
+    ASK_NO_MATCH,
+    ASK_OFF,
+    ASK_TIMED_OUT,
+    CHOSE_DISABLED,
+    CHOSE_ENABLED,
+    GET_MODELS,
+    KNOWLEDGE_DISABLED,
+    KNOWLEDGE_INVALID,
+    MATCHES_HELD_BACK,
+    MODEL_MISSING,
+    MODELS_NOT_CONFIGURED,
+    NEEDS_MODELS,
+    RESTART_FOR_MODELS,
+    SERVER_DOWN,
+    TURNED_ON,
+)
 from cairnmind.pal.file_locks import lock_exclusive
-from cairnmind.cli_cmds.first_start import (ASK_LEFT_OUT, ASK_NO_MATCH, ASK_OFF, ASK_TIMED_OUT, CHOSE_DISABLED, CHOSE_ENABLED, GET_MODELS, KNOWLEDGE_DISABLED,
-                          KNOWLEDGE_INVALID, MATCHES_HELD_BACK, MODEL_MISSING, MODELS_NOT_CONFIGURED, NEEDS_MODELS,
-                          RESTART_FOR_MODELS, SERVER_DOWN, TURNED_ON)
 
 UNAVAILABLE_CODE = "models_not_configured"
 
@@ -50,6 +65,7 @@ def missing_models(settings) -> list[str]:
     """Why the configured models cannot be used now, one phrase per server or model, or [] when each role's server
     answers and lists its model. Read-only: the requests doctor makes (doctor_models), never a download."""
     import httpx
+
     from cairnmind.memory.memory_models import ROLES, doctor_models, doctor_verify
     with httpx.Client(timeout=1.5, trust_env=False, verify=doctor_verify(settings)) as http:
         found = doctor_models(settings, http)
@@ -117,8 +133,8 @@ async def text_matches(agent, project_id: str, question: str, worktree=None, als
     with the sensitivity gate set as KnowledgeAgent.ask sets it. No model is asked. Search results, never an
     answer: unavailable_answer presents them."""
     from cairnmind.agents.agent import INITIAL_HITS
-    from cairnmind.memory.memory_egress import ASK, ask_gate
     from cairnmind.agents.retrieval import last_warnings
+    from cairnmind.memory.memory_egress import ASK, ask_gate
     if not isinstance(question, str) or not question.strip() or len(question) > 16000:
         raise ValueError("Question must contain 1–16000 characters")  # as KnowledgeAgent._ask_impl refuses it
     started = time.monotonic()

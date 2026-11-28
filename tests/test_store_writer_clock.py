@@ -1,10 +1,10 @@
 """The times of the writer row and its history come from the database server, not from each client's clock (#372)."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
-from pathlib import Path
 import re
+from datetime import UTC, datetime
+from pathlib import Path
 
 from cairnmind.storage import store_writer
 from cairnmind.storage.arcade import ArcadeClient
@@ -26,7 +26,7 @@ def row(store: Store) -> dict:
 
 
 def seconds_from_now(text: str) -> float:
-    return abs((datetime.fromisoformat(text) - datetime.now(timezone.utc)).total_seconds())
+    return abs((datetime.fromisoformat(text) - datetime.now(UTC)).total_seconds())
 
 
 def takeovers_with_wrong_clocks(monkeypatch, first: Store, second_dir: Path) -> list[str]:

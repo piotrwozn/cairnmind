@@ -3,17 +3,17 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from conftest import counted_waits, own_time
 from test_index_batching import code_tree, dump
 
-from conftest import counted_waits, own_time
-from cairnmind.storage import graph_transactions
-from cairnmind.scip import ingest
-from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
+from cairnmind.scip import ingest
 from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
-from cairnmind.terminal.inspector import Inspector
+from cairnmind.storage import graph_transactions
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.storage.journal import JournalTransaction
 from cairnmind.store import Store
+from cairnmind.terminal.inspector import Inspector
 
 
 def graph(store, pid):

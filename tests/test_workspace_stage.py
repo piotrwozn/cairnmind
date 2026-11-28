@@ -1,28 +1,28 @@
 """Run next stage in the workspace: Start work for one assistant, or exactly `cairnmind check run`."""
 from __future__ import annotations
 
-from copy import deepcopy
 import json
 import subprocess
 import sys
+from copy import deepcopy
 
 import pytest
+from test_brief import check_profile, repository
+from test_terminal_panels import settle
+from test_terminal_ux080 import screen_text, setup_ui
 from textual.widgets import Static
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.terminal import workspace_stage
 from cairnmind.config import Settings
 from cairnmind.memory.plans import PlanManager
 from cairnmind.memory.sessions import SessionManager
 from cairnmind.store import Store
+from cairnmind.terminal import workspace_stage
 from cairnmind.terminal.terminal_commands import COMMANDS, dispatch_command
 from cairnmind.terminal.terminal_panels import SidebarApp
 from cairnmind.terminal.terminal_ui import ChoiceModal, FormModal, MessageModal
 from cairnmind.terminal.workspace_state import WorkspaceState
-from test_brief import check_profile, repository
-from test_terminal_panels import settle
-from test_terminal_ux080 import screen_text, setup_ui
 
 
 def decision(action, project, **extra):

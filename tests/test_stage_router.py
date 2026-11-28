@@ -3,19 +3,19 @@ from __future__ import annotations
 
 import json
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
+from fastapi.testclient import TestClient
+from test_cockpit_server import ORIGIN, Runtime, login
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.terminal.cockpit import create_cockpit_app
-from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.config import Settings
 from cairnmind.memory.plans import PlanManager
 from cairnmind.store import Store
+from cairnmind.terminal.cockpit import create_cockpit_app
+from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.terminal.terminal_client import BrokerClient as RealBrokerClient
-from test_cockpit_server import ORIGIN, Runtime, login
 
 STAGES = {"implement": "codex", "review": "claude", "test": "unit"}
 
@@ -294,9 +294,10 @@ def test_cockpit_stage_is_read_only_and_never_starts_an_assistant(cockpit):
 
 def test_two_step_plan_hands_implement_to_codex_and_review_to_claude_each_with_its_own_ack(tmp_path):
     """The acceptance scenario with a fake runner: the router picks, the launcher's packet is ACKed."""
+    from test_brief import repository
+
     from cairnmind.memory.sessions import SessionManager
     from cairnmind.terminal.stages import project_routing, resolve_stage
-    from test_brief import repository
     root = repository(tmp_path / "repo")
     store = Store(tmp_path / "memory")
     settings = Settings.load(store.data_dir)

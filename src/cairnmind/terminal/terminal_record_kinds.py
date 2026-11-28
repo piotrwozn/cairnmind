@@ -13,9 +13,9 @@ from __future__ import annotations
 import asyncio
 import time
 
+from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.terminal.terminal_notices import about as notice_about
 from cairnmind.terminal.terminal_person_act import agreed, refused, typed
-from cairnmind.pal.terminal_safe import safe_text
 
 CHECK_SECONDS = 60
 EXAMPLE = 300

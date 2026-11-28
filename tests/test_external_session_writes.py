@@ -4,12 +4,12 @@ Real HTTP service, ArcadeDB and Git; no model is asked.
 """
 import subprocess
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from cairnmind.config import Settings
-from cairnmind.service import create_app
 from cairnmind.memory.sessions import SessionManager
+from cairnmind.service import create_app
 from cairnmind.store import ORIGIN_METADATA, Store
 
 FORGED = {"origin_client": "codex", "origin_session_id": "someone-else", "origin_history": "archived",
@@ -146,9 +146,9 @@ def remember(fixture, bound, content, sources, kind="decision"):
 
 
 def test_an_external_record_is_never_verified_wherever_its_evidence_state_is_shown(fixture):
+    from cairnmind.agents.retrieval import public_record
     from cairnmind.memory.evidence import evidence_states, orphans_report
     from cairnmind.terminal.inspector import Inspector
-    from cairnmind.agents.retrieval import public_record
     from cairnmind.terminal.terminal_inspector import EVIDENCE_LABELS
 
     external = remember(fixture, fixture.session("external"), "Decided in an external editor", [fixture.note["id"]])

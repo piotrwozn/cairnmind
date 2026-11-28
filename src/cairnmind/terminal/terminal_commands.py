@@ -11,14 +11,22 @@ from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.widgets import Button, DataTable, Footer, Input, Static
 
-from cairnmind.terminal import terminal_theme
-from cairnmind.cli_cmds.cli_human import NO_VERBATIM_EVIDENCE as _NO_VERBATIM_CODE, error_code_for_ask, has_degraded_origin
-from cairnmind.terminal.cockpit_state import CockpitState
-from cairnmind.cli_cmds.first_start import (ASK_NEXT, CLIENT_NAMES, DEGRADED_ORIGIN_NOTE, GET_MODELS, MATCHES_HEADING, MODE_STATUS,
-                          NO_VERBATIM_EVIDENCE, STORED_FINDING)
-from cairnmind.terminal.terminal_i18n_messages import ASK_STATUS, fixed_message
+from cairnmind.cli_cmds.cli_human import NO_VERBATIM_EVIDENCE as _NO_VERBATIM_CODE
+from cairnmind.cli_cmds.cli_human import error_code_for_ask, has_degraded_origin
+from cairnmind.cli_cmds.first_start import (
+    ASK_NEXT,
+    CLIENT_NAMES,
+    DEGRADED_ORIGIN_NOTE,
+    GET_MODELS,
+    MATCHES_HEADING,
+    MODE_STATUS,
+    NO_VERBATIM_EVIDENCE,
+    STORED_FINDING,
+)
 from cairnmind.pal.terminal_safe import plain
-
+from cairnmind.terminal import terminal_theme
+from cairnmind.terminal.cockpit_state import CockpitState
+from cairnmind.terminal.terminal_i18n_messages import ASK_STATUS, fixed_message
 
 COMMANDS = (
     ("Projects", "Choose or open a project", "command", "search"),
@@ -160,7 +168,7 @@ class CommandPaletteApp(App):
         self._expanded = None
         if cells and sum(max(1, len(lines)) for lines in wrapped) > self._height:
             self._expanded = max(0, min(cursor, len(self.rows) - 1))
-        for index, (row, description, lines) in enumerate(zip(self.rows, descriptions, wrapped)):
+        for index, (row, description, lines) in enumerate(zip(self.rows, descriptions, wrapped, strict=True)):
             if self._expanded is not None and index != self._expanded:
                 lines = [textwrap.shorten(description, cells, placeholder="…")]
             table.add_row(terminal_theme.cropped(self.translate(row[0]), "value"),

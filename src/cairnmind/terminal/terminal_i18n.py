@@ -1,39 +1,38 @@
 """Small explicit terminal catalog. User content and API identifiers are never translated."""
 from __future__ import annotations
 
+from cairnmind.agents.recorder_agent import MESSAGES as RECORDER_MESSAGES
+from cairnmind.cli_cmds.first_start import MESSAGES as FIRST_START_MESSAGES
+from cairnmind.cli_cmds.service_version import MESSAGES as SERVICE_VERSION_MESSAGES
+from cairnmind.cli_cmds.topology import MESSAGES as TOPOLOGY_MESSAGES
+from cairnmind.cli_cmds.upgrade_mark import MESSAGES as UPGRADE_MARK_MESSAGES
 from cairnmind.mcp.mcp_failure_notice import MESSAGES as MCP_FAILURE_MESSAGES
 from cairnmind.memory.check_profile_messages import MESSAGES as CHECK_PROFILE_MESSAGES
-from cairnmind.storage.engine_docker import MESSAGES as ENGINE_DOCKER_MESSAGES
-from cairnmind.cli_cmds.first_start import MESSAGES as FIRST_START_MESSAGES
 from cairnmind.memory.memory_models import MESSAGES as MEMORY_MODELS_MESSAGES
-from cairnmind.pal.platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
 from cairnmind.memory.project_clone import MESSAGES as PROJECT_CLONE_MESSAGES
-from cairnmind.memory.project_forget import MESSAGES as PROJECT_FORGET_MESSAGES
 from cairnmind.memory.project_folders import MESSAGES as PROJECT_FOLDER_MESSAGES
+from cairnmind.memory.project_forget import MESSAGES as PROJECT_FORGET_MESSAGES
 from cairnmind.memory.project_removal import MESSAGES as PROJECT_REMOVAL_MESSAGES
-from cairnmind.agents.recorder_agent import MESSAGES as RECORDER_MESSAGES
+from cairnmind.pal.platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
+from cairnmind.storage.engine_docker import MESSAGES as ENGINE_DOCKER_MESSAGES
 from cairnmind.storage.restore_claims import MESSAGES as RESTORE_CLAIM_MESSAGES
 from cairnmind.storage.restore_staged import MESSAGES as RESTORE_STAGED_MESSAGES
 from cairnmind.storage.store_prune import MESSAGES as PRUNE_MESSAGES
-from cairnmind.cli_cmds.service_version import MESSAGES as SERVICE_VERSION_MESSAGES
-from cairnmind.terminal.terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
-from cairnmind.terminal.terminal_legacy_groups import MESSAGES as LEGACY_GROUP_MESSAGES
-from cairnmind.terminal.terminal_plan_confirm import MESSAGES as PLAN_CONFIRM_MESSAGES
-from cairnmind.terminal.terminal_person_act import MESSAGES as PERSON_ACT_MESSAGES
-from cairnmind.terminal.terminal_project_forget import MESSAGES as PROJECT_FORGET_VIEW_MESSAGES
-from cairnmind.terminal.terminal_release import MESSAGES as RELEASE_MESSAGES
-from cairnmind.terminal.terminal_replace import MESSAGES as REPLACE_MESSAGES
-from cairnmind.terminal.terminal_published_import import MESSAGES as PUBLISHED_IMPORT_MESSAGES
-from cairnmind.terminal.terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
 from cairnmind.terminal.setup_change import MESSAGES as SETUP_CHANGE_MESSAGES
 from cairnmind.terminal.setup_mark import MESSAGES as SETUP_MARK_MESSAGES
-from cairnmind.terminal.terminal_setup import MESSAGES as SETUP_SCREEN_MESSAGES
 from cairnmind.terminal.setup_profiles import MESSAGES as SETUP_PROFILE_MESSAGES
-from cairnmind.terminal.terminal_setup_change import MESSAGES as SETUP_CHANGE_UI_MESSAGES
-from cairnmind.cli_cmds.topology import MESSAGES as TOPOLOGY_MESSAGES
-from cairnmind.cli_cmds.upgrade_mark import MESSAGES as UPGRADE_MARK_MESSAGES
+from cairnmind.terminal.terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from cairnmind.terminal.terminal_i18n_messages import MESSAGES
-
+from cairnmind.terminal.terminal_legacy_groups import MESSAGES as LEGACY_GROUP_MESSAGES
+from cairnmind.terminal.terminal_person_act import MESSAGES as PERSON_ACT_MESSAGES
+from cairnmind.terminal.terminal_plan_confirm import MESSAGES as PLAN_CONFIRM_MESSAGES
+from cairnmind.terminal.terminal_project_forget import MESSAGES as PROJECT_FORGET_VIEW_MESSAGES
+from cairnmind.terminal.terminal_published_import import MESSAGES as PUBLISHED_IMPORT_MESSAGES
+from cairnmind.terminal.terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
+from cairnmind.terminal.terminal_release import MESSAGES as RELEASE_MESSAGES
+from cairnmind.terminal.terminal_replace import MESSAGES as REPLACE_MESSAGES
+from cairnmind.terminal.terminal_setup import MESSAGES as SETUP_SCREEN_MESSAGES
+from cairnmind.terminal.terminal_setup_change import MESSAGES as SETUP_CHANGE_UI_MESSAGES
 
 CATALOG = {
     "Invalid assistant selections": "Niepoprawna lista wyborów asystenta",
@@ -760,8 +759,8 @@ def native_failure_notice(run, language="en"):
     if not isinstance(state, str):
         return ""
     client_id = run.get("client")
-    client = {"codex": "Codex", "claude": "Claude"}.get(
-        client_id if isinstance(client_id, str) else None, tr("Assistant", language))
+    fallback = tr("Assistant", language)
+    client = {"codex": "Codex", "claude": "Claude"}.get(client_id, fallback) if isinstance(client_id, str) else fallback
     if state == "stale":
         message = tr("The session changed.", language)
     elif state in {"failed", "interrupted"}:

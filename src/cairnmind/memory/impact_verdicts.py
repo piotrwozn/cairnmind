@@ -17,18 +17,44 @@ from __future__ import annotations
 
 from cairnmind.memory.impact_core import (
     CLI_REFUSED as CLI_REFUSED,
+)
+from cairnmind.memory.impact_core import (
     MAX_NOTE_CHARS as MAX_NOTE_CHARS,
+)
+from cairnmind.memory.impact_core import (
     PREFIX as PREFIX,
+)
+from cairnmind.memory.impact_core import (
     STALE as STALE,
+)
+from cairnmind.memory.impact_core import (
     VERDICTS as VERDICTS,
+)
+from cairnmind.memory.impact_core import (
     StaleVerdict as StaleVerdict,
+)
+from cairnmind.memory.impact_core import (
     _on_disk as _on_disk,
+)
+from cairnmind.memory.impact_core import (
     _sha as _sha,
+)
+from cairnmind.memory.impact_core import (
     _uri as _uri,
+)
+from cairnmind.memory.impact_core import (
     annotate as annotate,
+)
+from cairnmind.memory.impact_core import (
     current_verdicts as current_verdicts,
+)
+from cairnmind.memory.impact_core import (
     fingerprints as fingerprints,
+)
+from cairnmind.memory.impact_core import (
     is_verdict_source as is_verdict_source,
+)
+from cairnmind.memory.impact_core import (
     verdict_line as verdict_line,
 )
 
@@ -43,8 +69,8 @@ def record_verdict(store, project_id, record_id, fingerprint, verdict, since, wo
     """
     from cairnmind.memory.confirmation import ConfirmationRefused
     from cairnmind.memory.impact import build_impact
-    from cairnmind.terminal.person_proof import PROOF_MISSING, present
     from cairnmind.storage.sql import json_text, utc_now
+    from cairnmind.terminal.person_proof import PROOF_MISSING, present
     if verdict not in VERDICTS:
         raise ValueError("The verdict must be still_valid, needs_update or not_related")
     if note is not None and (not isinstance(note, str) or len(note) > MAX_NOTE_CHARS):
@@ -70,8 +96,7 @@ def record_verdict(store, project_id, record_id, fingerprint, verdict, since, wo
         raise ConfirmationRefused(PROOF_MISSING)  # a person's act needs the workspace's key (#306)
     with store.transaction():
         earlier = current_verdicts(store, project_id).get(uri)
-        said = None if earlier is None else (earlier[1].get("verdict"), earlier[1].get("note") or "")
-        if said == (verdict, note):
+        if earlier is not None and (earlier[1].get("verdict"), earlier[1].get("note") or "") == (verdict, note):
             return {"record_id": record_id, "fingerprint": fingerprint, "verdict": earlier[1],
                     "audit_source_id": earlier[0]["id"], "already_saved": True}
         source = store.snapshot(project_id, uri, json_text(document), "manual", metadata)

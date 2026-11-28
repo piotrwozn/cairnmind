@@ -8,22 +8,21 @@ from __future__ import annotations
 import json
 
 import pytest
+from conftest import as_person, confirmed_before_rule
+from test_backup_restore_stream import comparable
 from typer.testing import CliRunner
 
-from cairnmind.terminal import person_proof
-from cairnmind.memory import record_kinds
 from cairnmind.cli import app
+from cairnmind.memory import record_kinds
 from cairnmind.memory.confirmation import confirmation_of, import_mark, local_verdict
-from cairnmind.terminal.inspector import Inspector
 from cairnmind.memory.memory_acts import confirm_plan
 from cairnmind.memory.plans import PlanManager
 from cairnmind.storage.restore_claims import BackupClaims
 from cairnmind.storage.restore_staged import RestoreFailed
 from cairnmind.storage.sql import update_document
 from cairnmind.store import Store
-
-from conftest import as_person, confirmed_before_rule
-from test_backup_restore_stream import comparable
+from cairnmind.terminal import person_proof
+from cairnmind.terminal.inspector import Inspector
 
 KIND = "future-claude-record"
 

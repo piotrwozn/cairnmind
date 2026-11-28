@@ -5,20 +5,20 @@ import asyncio
 import json
 import sys
 
-import pytest
-
 import conftest
+import pytest
+from test_api_agent import Memory, ScriptedProvider, call, reply
+from test_api_agent import setup as setup
+from test_api_worker import Engine as FakeEngine
 
 from cairnmind.agents import agent_tools
-from cairnmind.pal import process_identity
 from cairnmind.agents.agent_memory import MEMORY_TOOLS
 from cairnmind.agents.api_agent import AgentEngine
 from cairnmind.agents.api_worker import AgentApp
-from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.config import Settings
 from cairnmind.mcp.mcp_servers import frozen_servers
-from test_api_agent import Memory, ScriptedProvider, call, reply, setup as setup
-from test_api_worker import Engine as FakeEngine
+from cairnmind.pal import process_identity
+from cairnmind.terminal.cockpit_state import CockpitState
 
 FIXTURE = conftest.MCP_FIXTURE  # this pytest process's own copy (see conftest)
 

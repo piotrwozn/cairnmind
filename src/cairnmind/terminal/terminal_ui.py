@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
-import inspect
 import threading
-from pathlib import Path
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from rich.cells import cell_len
 from textual import on, work
@@ -18,8 +20,8 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Static, TextArea
 from textual.worker import WorkerState
 
-from cairnmind.terminal import terminal_theme
 from cairnmind.pal.terminal_safe import plain, safe_text
+from cairnmind.terminal import terminal_theme
 from cairnmind.terminal.terminal_i18n import language_for, localize_bindings, tr
 from cairnmind.terminal.terminal_i18n_messages import broker_error_text
 
@@ -57,6 +59,9 @@ def relabel_select(select, options, value) -> None:
 
 class LocalizedModal:
     BODY_CHROME = 10  # rows of a .cm-dialog that are not its scrolling body (see terminal_theme.fit_body)
+    if TYPE_CHECKING:
+        app: Any
+        def query(self, selector: str | None = None) -> Any: ...
 
     def t(self, text, **values):
         return tr(text, getattr(self.app, "language", "en"), **values)
@@ -118,12 +123,10 @@ def package_size_lines(size, language="en"):
     over = [tr(name.replace("_", " "), language) for name in size.get("over") or []
             if name in {"rows", "bytes", "manifest_bytes", "object_bytes"}]
     if "manifest_bytes" in (size.get("over") or []) + (size.get("warning") or []):  # the figure behind the name (#261)
-        try:
+        with suppress(KeyError, TypeError, ValueError):
             manifest = size["manifest_bytes"]
             lines.append(tr("Manifest: {size} of {size_limit} bytes", language,
                             size=f"{int(manifest['used']):,}", size_limit=f"{int(manifest['limit']):,}"))
-        except (KeyError, TypeError, ValueError):
-            pass
     if over:  # a preview knows the exact size (#261)
         lines.append(tr("Over the publication limit ({names}). A snapshot would be refused.", language, names=", ".join(over)))
     elif names:
@@ -217,7 +220,7 @@ class Field:
     value: str = ""
     required: bool = False
     multiline: bool = False
-    validator: object = None
+    validator: Callable[[str], Any] | None = None
     folder: bool = False
 
 
@@ -292,8 +295,10 @@ class FormModal(LocalizedModal, ModalScreen[dict | None]):
         try:
             values = {}
             for field in self.fields:
-                widget = self.query_one("#field-" + field.name)
-                value = widget.text if isinstance(widget, TextArea) else widget.value
+                if field.multiline:
+                    value = self.query_one("#field-" + field.name, TextArea).text
+                else:
+                    value = self.query_one("#field-" + field.name, Input).value
                 if field.required and not value.strip():
                     raise FieldError(field.name, self.t("Required field") + ": " + self.t(field.label))
                 if field.validator is not None:
@@ -323,7 +328,7 @@ class FormModal(LocalizedModal, ModalScreen[dict | None]):
             self.dismiss(None)
 
 
-class MessageModal(LocalizedModal, ModalScreen[None]):
+class MessageModal(LocalizedModal, ModalScreen[Any]):
     BINDINGS = [("escape", "close", "Close")]
 
     def __init__(self, title: str, value):
@@ -490,8 +495,10 @@ class BasePanel(App):
         with self._feed_lock:  # one copy at a time, and always the newest snapshot
             rows = self._feed_rows
             if rows is not self._feed_sent:
-                with suppress(Exception):
-                    publish(self.settings, self.workspace_id, self.panel_role, rows)
+                role = getattr(self, "panel_role", None)
+                if role is not None:
+                    with suppress(Exception):
+                        publish(self.settings, self.workspace_id, role, rows)
                 self._feed_sent = rows
 
     def notice_for(self, about, value, kind="info") -> None:

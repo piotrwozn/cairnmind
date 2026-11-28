@@ -19,10 +19,10 @@ from __future__ import annotations
 import gzip
 import hashlib
 import os
-from pathlib import Path
 import tempfile
 import time
-from typing import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
+from pathlib import Path
 
 from cairnmind.config import BACKUP_FORMATS
 from cairnmind.storage.sql import clean_row, json_text, utc_now
@@ -89,7 +89,7 @@ def payload_digest(payload) -> str:
 
 def _pages(tx, name: str) -> Iterator[str]:
     """Every row of a type as canonical text, paged natively by the active storage backend."""
-    if hasattr(tx, "iter_backup_pages") and callable(tx.iter_backup_pages):
+    if callable(getattr(tx, "iter_backup_pages", None)):
         yield from tx.iter_backup_pages(name, page_rows=PAGE_ROWS, page_bytes=PAGE_BYTES)
         return
     from cairnmind.storage.storage_query import asc, db_find, gt
@@ -134,21 +134,20 @@ def write_temporary(destination, payload: dict) -> Path:
         raise ValueError(f"Cannot write a backup into {destination.parent}: {exc.strerror or exc}") from None
     temporary = Path(name)
     try:
-        with os.fdopen(fd, "wb") as handle:
-            with gzip.GzipFile(fileobj=handle, mode="wb") as compressed:
-                digest = hashlib.sha256()
-                compressed.write(('{"format":' + json_text(BACKUP_FORMATS[0]) + ',"payload":').encode())
-                pending, size = [], 0
-                for chunk in payload_chunks(payload):
-                    data = chunk.encode()
-                    digest.update(data)
-                    pending.append(data)
-                    size += len(data)
-                    if size >= WRITE_BYTES:
-                        compressed.write(b"".join(pending))
-                        pending, size = [], 0
-                compressed.write(b"".join(pending))
-                compressed.write((',"sha256":' + json_text(digest.hexdigest()) + ',"version":1}').encode())
+        with os.fdopen(fd, "wb") as handle, gzip.GzipFile(fileobj=handle, mode="wb") as compressed:
+            digest = hashlib.sha256()
+            compressed.write(('{"format":' + json_text(BACKUP_FORMATS[0]) + ',"payload":').encode())
+            pending, size = [], 0
+            for chunk in payload_chunks(payload):
+                data = chunk.encode()
+                digest.update(data)
+                pending.append(data)
+                size += len(data)
+                if size >= WRITE_BYTES:
+                    compressed.write(b"".join(pending))
+                    pending, size = [], 0
+            compressed.write(b"".join(pending))
+            compressed.write((',"sha256":' + json_text(digest.hexdigest()) + ',"version":1}').encode())
         return temporary
     except BaseException:
         temporary.unlink(missing_ok=True)

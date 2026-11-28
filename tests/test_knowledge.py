@@ -10,15 +10,21 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from conftest import as_person
 
-from cairnmind.agents.agent import EXCERPT_CHARS, INITIAL_HITS, REPAIR_CATALOG_CHARS, KnowledgeAgent, SYSTEM, question_excerpt
-from cairnmind.config import Settings
+from cairnmind.agents.agent import (
+    EXCERPT_CHARS,
+    INITIAL_HITS,
+    REPAIR_CATALOG_CHARS,
+    SYSTEM,
+    KnowledgeAgent,
+    question_excerpt,
+)
 from cairnmind.agents.ollama import Ollama, OllamaUnavailable
 from cairnmind.agents.retrieval import Retriever, public_record
-from cairnmind.store import Store
-
-from conftest import as_person
 from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
+from cairnmind.config import Settings
+from cairnmind.store import Store
 
 
 class FakeOllama:
@@ -142,10 +148,10 @@ def test_graph_walk_follows_four_hop_evidence_chain(workspace):
     source, _ = document(store, project, "Evidence for dependency topology")
     ids = [str(uuid4()) for _ in range(5)]
     labels = ["decision-login", "module", "function", "caller", "test"]
-    for node_id, label in zip(ids, labels):
+    for node_id, label in zip(ids, labels, strict=False):
         store.upsert_node({"id": node_id, "project_id": project["id"], "kind": "symbol", "label": label,
                            "source_id": source["id"], "metadata": {}})
-    for previous, following in zip(ids, ids[1:]):
+    for previous, following in zip(ids, ids[1:], strict=False):
         store.upsert_edge({"id": str(uuid4()), "project_id": project["id"], "from_id": previous,
                            "to_id": following, "kind": "depends_on", "source_id": source["id"], "status": "confirmed"})
     graph = Retriever(store, settings, FakeOllama()).graph(project["id"], "decision-login")
@@ -1483,8 +1489,8 @@ async def test_workflow_projects_managed_metadata_with_explicit_bounds(workspace
 
 
 async def test_plan_request_goals_and_constraints_are_native_fulltext_retrievable(workspace):
-    from cairnmind.scip.ingest import index_pending_sources
     from cairnmind.memory.plans import PlanManager
+    from cairnmind.scip.ingest import index_pending_sources
 
     store, project, settings = workspace
     saved = PlanManager(store).save(project["id"], {"title": "Calibration", "goal": "orbital calibrator",

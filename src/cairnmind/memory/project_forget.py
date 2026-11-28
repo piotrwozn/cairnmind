@@ -12,9 +12,9 @@ import socket
 from pathlib import Path
 
 from cairnmind.cli_cmds.first_start import UNKNOWN_PROJECT_NEXT
+from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.storage.sql import insert_document, utc_now
 from cairnmind.storage.storage_query import db_find_one, db_update_where
-from cairnmind.pal.terminal_safe import safe_text
 
 HISTORY = "deleted_projects"
 HISTORY_LIMIT = 100
@@ -69,9 +69,9 @@ def delete(settings, store, project_id: str) -> dict:
     """Delete the project's memory in one transaction that reads the project and its jobs again, and keep the trace."""
     from cairnmind.agents import answer_log
     from cairnmind.memory import project_removal
-    from cairnmind.storage import store_writer
     from cairnmind.memory.confirmation import ConfirmationRefused
     from cairnmind.scip.ingest import forget_index_signature
+    from cairnmind.storage import store_writer
     from cairnmind.terminal.person_proof import FORGET_REFUSED, present
     if not present():
         raise ConfirmationRefused(FORGET_REFUSED)  # before anything is read

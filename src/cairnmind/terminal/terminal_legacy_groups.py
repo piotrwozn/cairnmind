@@ -10,9 +10,9 @@ from __future__ import annotations
 import asyncio
 
 from cairnmind.memory.confirmation import LIST_WORDS
+from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.terminal.terminal_notices import about as notice_about
 from cairnmind.terminal.terminal_person_act import refused
-from cairnmind.pal.terminal_safe import safe_text
 
 TEXT = 200  # a task's text in the dialog, escaped and cut
 TITLE = 500  # the route's limit of a plan title
@@ -52,7 +52,9 @@ MESSAGES = {
 
 
 def _line(number, task, t) -> str:
-    from cairnmind.terminal.terminal_i18n_messages import display_word  # imported here: that module imports the catalog
+    from cairnmind.terminal.terminal_i18n_messages import (
+        display_word,  # imported here: that module imports the catalog
+    )
     words = [display_word(task.get("status"), t)]
     if task.get("confirmed_by") in LIST_WORDS:
         words.append(t(LIST_WORDS[task["confirmed_by"]]))

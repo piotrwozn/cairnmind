@@ -6,13 +6,12 @@ import socket
 
 import pytest
 
-from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.cli import READ_KINDS
 from cairnmind.config import Settings
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.storage.journal import TABLE_TYPES
-from cairnmind.store import SCHEMA_VERSION, Store
 from cairnmind.storage.store_readonly import ReadOnlyStoreError, StoreNotReady
-
+from cairnmind.store import SCHEMA_VERSION, Store
 
 # Read by opening the store and by the consistency check itself, not by a command.
 BOOKKEEPING = {"schema", "devbrain_meta", "journal_state", "journal_events"}
@@ -94,9 +93,8 @@ def test_a_store_opened_for_reading_refuses_every_write(tmp_path, monkeypatch):
         reader.client.command("DELETE FROM projects")
     with pytest.raises(ReadOnlyStoreError):
         reader.client.server_command(f"drop database {store.settings.arcade_database}")
-    with pytest.raises(ReadOnlyStoreError):
-        with reader.transaction() as tx:
-            tx.command("DELETE FROM projects")
+    with pytest.raises(ReadOnlyStoreError), reader.transaction() as tx:
+        tx.command("DELETE FROM projects")
     assert changes(sent) == []
     assert names(store) == ["demo"]
 
@@ -186,7 +184,9 @@ def test_another_schema_version_is_refused_and_not_migrated(tmp_path, monkeypatc
 def test_the_read_commands_work_on_a_ready_store_without_preparing_it(tmp_path, monkeypatch):
     import json
     import subprocess
+
     from typer.testing import CliRunner
+
     from cairnmind.cli import app
     from cairnmind.memory.plans import PlanManager
     store, project = ready(tmp_path)
@@ -247,7 +247,9 @@ def save_second_version(store, project, first):
 
 def test_a_commit_between_the_queries_of_plan_show_is_never_shown_half(tmp_path, monkeypatch):
     import json
+
     from typer.testing import CliRunner
+
     import cairnmind.memory.plans as plans
     from cairnmind.cli import app
     store, project, first = plan_fixture(tmp_path)
@@ -272,7 +274,9 @@ def test_a_commit_between_the_queries_of_plan_show_is_never_shown_half(tmp_path,
 
 def test_commits_of_other_kinds_or_projects_between_the_queries_do_not_repeat_plan_show(tmp_path, monkeypatch):
     import json
+
     from typer.testing import CliRunner
+
     import cairnmind.memory.plans as plans
     from cairnmind.cli import app
     store, project, first = plan_fixture(tmp_path)

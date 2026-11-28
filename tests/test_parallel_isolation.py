@@ -6,16 +6,15 @@ directory, so it is started here from such a copy, as another worker would have 
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import shutil
 import signal
 import subprocess
 import sys
 import time
-
-import pytest
+from pathlib import Path
 
 import conftest
+import pytest
 from conftest import mcp_fixture_processes
 
 
@@ -83,7 +82,7 @@ def test_the_fixture_servers_of_another_worker_are_not_this_workers(tmp_path):
     other_copy = tmp_path / "popen-gw9" / "mcp-fixture" / Path(conftest.MCP_FIXTURE).name
     other_copy.parent.mkdir(parents=True)
     shutil.copyfile(conftest.MCP_FIXTURE_SOURCE, other_copy)
-    assert conftest.MCP_FIXTURE != str(conftest.MCP_FIXTURE_SOURCE)  # every pytest process has its own copy
+    assert str(conftest.MCP_FIXTURE_SOURCE) != conftest.MCP_FIXTURE  # every pytest process has its own copy
     theirs, ours = start(other_copy, "deaf"), start(Path(conftest.MCP_FIXTURE), "deaf")
     try:
         deadline = time.monotonic() + 30

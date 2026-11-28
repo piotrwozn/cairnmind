@@ -1,14 +1,15 @@
 """CLI commands for projects, indexing, asking, brief, impact, scan, usage, records, remember, jobs."""
 from __future__ import annotations
 
-from enum import Enum
-from pathlib import Path
 import sys
-from typing import Annotated
 import uuid
+from enum import StrEnum
+from pathlib import Path
+from typing import Annotated
 
 import typer
 
+from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.cli_arguments import (
     FolderArg,
     JobIdArg,
@@ -21,11 +22,9 @@ from cairnmind.cli_cmds.cli_arguments import (
     StateFileArg,
     TranscriptArg,
 )
-from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.io import JSON_FLAG, initialized
 from cairnmind.config import Settings
 from cairnmind.storage.arcade import ArcadeError
-
 
 _CLONE_OPT = Annotated[str | None, typer.Option(
     "--clone", help="Clone a Git repository (owner/repo, HTTPS or SSH URL) before registering.")]
@@ -49,7 +48,7 @@ _NO_SCIP_OPT = Annotated[
 ]
 
 
-class UsageBy(str, Enum):
+class UsageBy(StrEnum):
     day = "day"
     week = "week"
 
@@ -62,6 +61,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
     def _run_project_add(ctx: typer.Context, name: str | None, root: str | None, clone: str | None,
                          via: str, branch: str | None, fresh: bool, as_json: bool, no_scip: bool = False) -> None:
         import shlex
+
         from cairnmind.cli_cmds import first_start
         from cairnmind.memory import project_clone
         from cairnmind.memory.brief import _git_out
@@ -214,8 +214,8 @@ def register(apps: dict[str, typer.Typer]) -> None:
         jobs are queued, whether the service runs, and why they wait: no models (#274), an upgrade mark that refuses a
         start (#298, #339), or a service that was stopped. waiting_because None means not known to wait: a running service
         started by the workspace, or before models were turned on, can still hold them."""
-        from cairnmind.cli_cmds import first_start, upgrade_mark
         from cairnmind.agents import knowledge_mode
+        from cairnmind.cli_cmds import first_start, upgrade_mark
         summary = store.job_summary(project_id)
         count = sum(summary[group][state] for group in ("indexing", "extraction") for state in ("pending", "running"))
         running = _io.service_alive(settings)
@@ -283,7 +283,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
             _io.refuse(removal.IN_SESSION)
         store = _io.store_for(ctx.obj)
         require_writer(store)
-        row = store.resolve_project(project)
+        row = _io.resolve_project(store, project)
         try:
             removal.require_idle(ctx.obj, store, row)
             result = removal.plan(ctx.obj, store, row, root.expanduser().resolve() if root else None)
@@ -300,7 +300,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
     def project_root(ctx: typer.Context, project: ProjectArg, path: FolderArg):
         """Explicitly assign an additional folder or worktree to the project."""
         store = _io.store_for(ctx.obj)
-        pid = store.resolve_project(project)["id"]
+        pid = _io.resolve_project(store, project)["id"]
         root = path.expanduser().resolve(strict=True)
         if not root.is_dir():
             raise typer.BadParameter("The path must be a folder, not a file")
@@ -335,7 +335,12 @@ def register(apps: dict[str, typer.Typer]) -> None:
         if via is not None:
             if client != "auto":
                 _io.refuse("--via cannot be combined with --client.")
-            from cairnmind.memory.importers import ImporterExecutionError, ImporterRefused, require_outside_session, run_converter_import
+            from cairnmind.memory.importers import (
+                ImporterExecutionError,
+                ImporterRefused,
+                require_outside_session,
+                run_converter_import,
+            )
             try:
                 require_outside_session()
                 store = _io.store_for(ctx.obj)
@@ -403,7 +408,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         from cairnmind.memory.brief import build_brief
         # Read the store directly, as `tasks list` does: starting the service could start model work.
         store = _io.store_for(ctx.obj)
-        pid = store.resolve_project(project)["id"]
+        pid = _io.resolve_project(store, project)["id"]
         result = build_brief(store, pid, _io.actor_scope(store, pid, worktree))
         if as_json:
             _io.output(result)
@@ -424,7 +429,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         store = _io.store_for_read(ctx.obj)
 
         def read():
-            pid = store.resolve_project(project)["id"]
+            pid = _io.resolve_project(store, project)["id"]
             return pid, build_impact(store, pid, since, _io.actor_scope(store, pid, worktree), pending=pending)
 
         result = store.read_consistently(read, _io.READ_KINDS["impact"])
@@ -440,10 +445,11 @@ def register(apps: dict[str, typer.Typer]) -> None:
             str | None,
             typer.Argument(metavar="[PROJECT]", help="Project name, id or folder (default: current working directory)."),
         ] = None,
-        diff: Annotated[
-            str,
-            typer.Option("--diff", help="Git commit, branch, tag or range (e.g. origin/main or origin/main...HEAD)."),
-        ] = ...,
+        diff: str = typer.Option(
+            ...,
+            "--diff",
+            help="Git commit, branch, tag or range (e.g. origin/main or origin/main...HEAD).",
+        ),
         worktree: Annotated[
             Path | None,
             typer.Option("--worktree", help="Registered worktree path to compare."),
@@ -461,7 +467,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
             store = _io.store_for_read(ctx.obj)
 
             def read():
-                pid = store.resolve_project(target)["id"]
+                pid = _io.resolve_project(store, target)["id"]
                 return pid, scan_diff(store, pid, diff, _io.actor_scope(store, pid, worktree))
 
             result = store.read_consistently(read, _io.READ_KINDS["scan"])
@@ -506,7 +512,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         store = _io.store_for_read(ctx.obj)
 
         def read():
-            selected = store.resolve_project(project)
+            selected = _io.resolve_project(store, project)
             return selected["id"], selected
 
         found = store.read_consistently(read, _io.READ_KINDS["usage"])
@@ -528,7 +534,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
                                  codex_waiting=lambda start: waiting_in_inbox(store, found["id"], start),
                                  warn_unavailable=unavailable)
         except ValueError as exc:
-            raise typer.BadParameter(str(exc), param_hint="--since")
+            raise typer.BadParameter(str(exc), param_hint="--since") from None
         if as_json:
             _io.output(result)
         else:
@@ -596,7 +602,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         store = _io.store_for_read(ctx.obj)
 
         def read():
-            pid = store.resolve_project(project)["id"]
+            pid = _io.resolve_project(store, project)["id"]
             return pid, store.list_records(pid, include_history=history)
 
         _io.output(store.read_consistently(read, _io.READ_KINDS["records"]))
@@ -611,12 +617,12 @@ def register(apps: dict[str, typer.Typer]) -> None:
 
         Each one shows its id, kind, source count and newest evidence time. Confirm or dispute them in the memory inspector, which records your review with its version check and audit note (#189).
         """
-        from cairnmind.terminal.inspector import Inspector
         from cairnmind.memory.stale_proposed import stale_proposed, stale_text
+        from cairnmind.terminal.inspector import Inspector
         store = _io.store_for_read(ctx.obj)
 
         def read():
-            selected = store.resolve_project(project)
+            selected = _io.resolve_project(store, project)
             inspector = Inspector(store)
             scope = inspector._scope(selected["id"], _io.actor_scope(store, selected["id"], worktree))
             result = stale_proposed(store, selected["id"], days=days, matches=lambda row: inspector._matches(scope, row))
@@ -651,7 +657,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
             # because the person asked for a confirmed one and storing another quietly is not allowed.
             _io.refuse(confirmation.CLI_CONFIRM_REFUSED)
         store = _io.store_for(ctx.obj)
-        pid = store.resolve_project(project)["id"]
+        pid = _io.resolve_project(store, project)["id"]
         from cairnmind.store import KeyTaken
         try:
             with _io.actor_write(store, ctx.obj, pid):
@@ -678,6 +684,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
 
         def sentences():
             import shlex
+
             from cairnmind.cli_cmds import first_start
             from cairnmind.pal.terminal_safe import safe_text
             quoted = shlex.quote(safe_text(project))

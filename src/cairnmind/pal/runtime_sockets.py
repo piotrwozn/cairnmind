@@ -15,13 +15,14 @@ from __future__ import annotations
 
 import hashlib
 import os
-from pathlib import Path
 import stat
 import sys
 import tempfile
+from contextlib import suppress
+from pathlib import Path
 
 KINDS = ("ui", "native")
-SYSTEM_TEMP = "/tmp"
+SYSTEM_TEMP = "/tmp"  # noqa: S108 - macOS system temp root validated by owner and sticky bit
 # sun_path holds 104 bytes on macOS and 108 on Linux, the closing NUL included.
 SUN_PATH = {"darwin": 104, "linux": 108}
 # A socket path longer than this is refused before tmux is asked to bind it; under both limits above.
@@ -40,7 +41,7 @@ def workspace_namespace(data_dir: Path, workspace_id: str = "default") -> str:
 def _uid(uid: int | None) -> int:
     if uid is not None:
         return uid
-    return os.getuid() if hasattr(os, "getuid") else 0
+    return os.getuid() if sys.platform != "win32" and hasattr(os, "getuid") else 0
 
 
 def socket_base(*, platform: str | None = None, uid: int | None = None, system_temp: str | None = None) -> Path:
@@ -67,17 +68,15 @@ def prepare_socket_base(*, platform: str | None = None, system_temp: str | None 
     The resolved system directory must belong to root or to the user, and be sticky when others can write to it, so
     nobody else can remove or replace the per-user directory once it is checked.
     """
-    if not _darwin(platform):
+    if not _darwin(platform) or sys.platform == "win32" or not hasattr(os, "getuid"):
         return
     base = socket_base(platform="darwin", system_temp=system_temp)
     parent = os.lstat(base.parent)
     if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid not in (0, os.getuid())
             or (parent.st_mode & 0o022 and not parent.st_mode & stat.S_ISVTX)):
         raise ValueError("The system temporary folder is not safe for private sockets.")
-    try:
+    with suppress(FileExistsError):
         os.mkdir(base, 0o700)
-    except FileExistsError:
-        pass
     info = os.lstat(base)
     if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
             or stat.S_IMODE(info.st_mode) != 0o700):

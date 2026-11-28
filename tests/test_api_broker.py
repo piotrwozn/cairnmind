@@ -1,14 +1,14 @@
 """Authenticated configuration boundary: no paid requests and no public key readback."""
 from copy import deepcopy
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from cairnmind.agents.api_credentials import CredentialStore
+from cairnmind.config import Settings
 from cairnmind.terminal.cockpit import create_cockpit_app
 from cairnmind.terminal.cockpit_state import CockpitState
-from cairnmind.config import Settings
 
 ORIGIN = 'http://127.0.0.1:8766'
 

@@ -314,8 +314,11 @@ def well_known_spans(text: str, bounded: bool = False):
         end = _KEY_END.search(text, begin.end())
         if end:
             yield PRIVATE_KEY, begin.start(), end.end()
+        elif bounded:
+            body_match = _KEY_BODY.match(text, begin.end())
+            yield PRIVATE_KEY, begin.start(), body_match.end() if body_match else begin.end()
         else:
-            yield PRIVATE_KEY, begin.start(), _KEY_BODY.match(text, begin.end()).end() if bounded else len(text)
+            yield PRIVATE_KEY, begin.start(), len(text)
     for kind, pattern in _SHAPES:
         for match in pattern.finditer(text):
             yield kind, match.start(), match.end()
@@ -507,7 +510,14 @@ def release_problem(passage, record_id):
 
     A release is the canonical JSON of {action "release", actor, actor_name, at, branch, commit, hits,
     reason, record_id}, with a reason and at least one hit, sorted, none of them a registered secret."""
-    from cairnmind.memory.memory_published_format import J, PublishedFormatError, canonical_uuid, clean_value, parse_json, timestamp
+    from cairnmind.memory.memory_published_format import (
+        J,
+        PublishedFormatError,
+        canonical_uuid,
+        clean_value,
+        parse_json,
+        timestamp,
+    )
     try:
         value = parse_json(passage)
     except PublishedFormatError:

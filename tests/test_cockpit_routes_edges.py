@@ -1,14 +1,13 @@
 """Additional fast-tier route coverage for cockpit.py (_control, profiles, credentials, models)."""
 from __future__ import annotations
 
-
 import httpx
-
-from cairnmind.terminal import cockpit
-from cairnmind.agents.api_providers import ProviderError
-from cairnmind.terminal.cockpit_state import CockpitState
-from cairnmind.config import Settings
 from test_cockpit_edges import _FakeRuntime, _make_auth_client
+
+from cairnmind.agents.api_providers import ProviderError
+from cairnmind.config import Settings
+from cairnmind.terminal import cockpit
+from cairnmind.terminal.cockpit_state import CockpitState
 
 
 def _authed_client(tmp_path, monkeypatch, *, runtime=None, service_handler=None):

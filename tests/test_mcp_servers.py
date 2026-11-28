@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.config import Settings
+from cairnmind.terminal.cockpit_state import CockpitState
 
 
 def server(**changes):

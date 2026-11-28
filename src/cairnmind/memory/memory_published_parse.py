@@ -11,10 +11,30 @@ from copy import deepcopy
 from pathlib import PurePosixPath
 
 from cairnmind.memory.memory_published_format import (
-    _BLOCK, _FIELD, _SOURCE, MAX_NOTE_CHARS, PLAN_FIELDS, PLAN_HEADER, RECORD_FIELDS, RECORD_HEADER,
-    RECORD_KINDS, TASK_FIELDS, TRUST_FIELDS, PublishedFormatError, canonical_uuid,
-    clean_text, clean_value, conflict_marker, decode, derive_covered, derive_plan_covered, parse_json,
-    ref_class, render, same, timestamp,
+    _BLOCK,
+    _FIELD,
+    _SOURCE,
+    MAX_NOTE_CHARS,
+    PLAN_FIELDS,
+    PLAN_HEADER,
+    RECORD_FIELDS,
+    RECORD_HEADER,
+    RECORD_KINDS,
+    TASK_FIELDS,
+    TRUST_FIELDS,
+    PublishedFormatError,
+    canonical_uuid,
+    clean_text,
+    clean_value,
+    conflict_marker,
+    decode,
+    derive_covered,
+    derive_plan_covered,
+    parse_json,
+    ref_class,
+    render,
+    same,
+    timestamp,
 )
 from cairnmind.store import STATUSES, TASK_STATES
 
@@ -81,8 +101,8 @@ def _fields(lines, allowed):
 
 def _blocks(lines, allowed):
     found = {}
-    while lines.peek() is not None and _BLOCK.match(lines.peek()):
-        label = _BLOCK.match(lines.peek()).group(1)
+    while (peeked := lines.peek()) is not None and (match := _BLOCK.match(peeked)):
+        label = match.group(1)
         if label not in allowed or label in found:
             raise PublishedFormatError(f"line {lines.index + 1}: unexpected block {label!r}")
         found[label] = lines.block(label)
@@ -139,7 +159,7 @@ def _check_source(source_id, source):
         raise PublishedFormatError(f"source {source_id} has a passage where none belongs, or lacks one")
     if passage is not None and (not clean_text(passage) or not passage or len(passage) > MAX_NOTE_CHARS * 4):
         raise PublishedFormatError(f"source {source_id} has a passage the format does not allow")
-    if kind == "note" and len(passage) > MAX_NOTE_CHARS:
+    if kind == "note" and passage is not None and len(passage) > MAX_NOTE_CHARS:
         raise PublishedFormatError(f"source {source_id} is a note longer than {MAX_NOTE_CHARS} characters")
     if kind == "file":
         path = ref["path"]

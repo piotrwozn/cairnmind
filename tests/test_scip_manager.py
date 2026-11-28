@@ -4,14 +4,14 @@ from __future__ import annotations
 import functools
 import gzip
 import hashlib
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import io
 import os
-from pathlib import Path
 import sys
 import tarfile
 import threading
 import zipfile
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 

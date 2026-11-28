@@ -1,31 +1,28 @@
 """ArcadeDB source of truth, native graph, and verified portable backups."""
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import datetime, timezone
 import gzip
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import threading
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
-from cairnmind.storage import store_graph, store_jobs
-from cairnmind.storage.store_jobs import (  # noqa: F401
-    JOB_STATES,
-    JobNotFoundError,
-    _DIAGNOSTIC_CODE,
-    _JOB_UNSET,
-    job_diagnostics,
-)
-from cairnmind.pal.file_locks import lock_exclusive, unlock
-from cairnmind.config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
 from cairnmind.cli_cmds.first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN, UNKNOWN_PROJECT_NEXT
-from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
+
 # The sensitivity class of a source and a record (#180): derived on every read, stored nowhere.
 from cairnmind.memory.sensitivity import record_sensitivity, source_sensitivity  # noqa: F401
+from cairnmind.pal.file_locks import lock_exclusive, unlock
+from cairnmind.pal.path_spelling import lies_in
+from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.storage import store_graph, store_jobs
+from cairnmind.storage.arcade import REQUEST_TIMEOUT
+from cairnmind.storage.backup_reader import opened_backup
 from cairnmind.storage.sql import PROFILE_NAME, clean_row, evidence_time, json_text, parse_utc, utc_now
 from cairnmind.storage.storage_query import (
     any_of,
@@ -44,10 +41,14 @@ from cairnmind.storage.storage_query import (
     ne,
     not_in,
 )
-from cairnmind.storage.arcade import REQUEST_TIMEOUT
-from cairnmind.storage.backup_reader import opened_backup
-from cairnmind.pal.path_spelling import lies_in
 from cairnmind.storage.store_backup import VECTOR_COLLECTIONS, payload_digest, streamed_backup, write_backup
+from cairnmind.storage.store_jobs import (  # noqa: F401
+    _DIAGNOSTIC_CODE,
+    _JOB_UNSET,
+    JOB_STATES,
+    JobNotFoundError,
+    job_diagnostics,
+)
 
 SCHEMA_VERSION = 4
 # Indexes for lookups by a field other than id and project_id. They are not part of the schema version:
@@ -505,8 +506,11 @@ class Store:
         recheck(self)  # one read, only while the role is lost: a person may have taken it back
         if self._writer_lost:
             raise StoreWriterLost(self._writer_lost)
+        inst = self.installation
+        if inst is None:
+            raise RuntimeError("Store installation is not initialized")
         with self._lock(), self.client.transaction(commit_timeout=commit_timeout) as native:
-            tx = JournalTransaction(native, writer=self.installation.id,
+            tx = JournalTransaction(native, writer=inst.id,
                                     check=lambda head, reader: check_head(self, head, reader))
             self._local.transaction = tx
             self._local.after_commit = pending = []
@@ -591,8 +595,17 @@ class Store:
         mark that says the confirmation lapsed; the same mark is left when such a write sets another status.
         A person's act leaves no such mark.
         """
-        from cairnmind.memory.confirmation import (MARK, NOT_PROVEN, PERSON_ROUTES, SEED_ROUTE, SEED_SOURCE, ConfirmationRefused,
-                                   lowered, person_mark, said)
+        from cairnmind.memory.confirmation import (
+            MARK,
+            NOT_PROVEN,
+            PERSON_ROUTES,
+            SEED_ROUTE,
+            SEED_SOURCE,
+            ConfirmationRefused,
+            lowered,
+            person_mark,
+            said,
+        )
         act = self._proven_act()
         if status != "confirmed":
             # A person's act (a dispute, a conflict decision) leaves no such mark and clears an earlier one.
@@ -649,13 +662,22 @@ class Store:
 
     def init(self):
         from cairnmind.storage.arcade import ArcadeError
-        from cairnmind.storage.store_writer import claimed_meanwhile, mixed_reason, read_fence, read_writer, settle
+        from cairnmind.storage.store_writer import (
+            claimed_meanwhile,
+            mixed_reason,
+            read_fence,
+            read_writer,
+            settle,
+        )
+        inst = self.installation
+        if inst is None:
+            raise RuntimeError("Store installation is not initialized")
         with self._lock():
             types = self.backend.list_collections(self.client)
             writer, named = read_writer(self.client) if "devbrain_meta" in types else None, None
             if writer and "journal_state" in types:
                 writer, named = read_fence(self.client)
-            if writer and writer.get("installation_id") != self.installation.id:
+            if writer and writer.get("installation_id") != inst.id:
                 # Another installation writes this database: no schema statement, no upgrade and no write here.
                 self._open_as_reader(writer)
                 return
@@ -666,7 +688,7 @@ class Store:
                 if mark is not None and not (self._for_restore or self._for_takeover):
                     raise RestoreUnfinished(refusal(mark), mark)
                 self._unfinished_restore = mark is not None
-            if writer and named not in (None, self.installation.id):
+            if writer and named not in (None, inst.id):
                 # The row names this installation and the journal head another one: no schema statement and no
                 # write here either, until a person runs the takeover (store_writer.mixed_reason).
                 self._writer_lost = mixed_reason(writer, named)
@@ -676,16 +698,16 @@ class Store:
             except ArcadeError as exc:
                 # Another installation, on any machine, is creating this store at the same moment and its
                 # commit came first (#68): this one opens it as a reader, as it would a moment later.
-                other = claimed_meanwhile(self.client, self.installation, exc)
+                other = claimed_meanwhile(self.client, inst, exc)
                 if other is None:
                     raise
                 self._open_as_reader(other)
                 return
             try:
-                other = settle(self.client, self.installation)
+                other = settle(self.client, inst)
             except ArcadeError:
                 # Two installations claimed a store without a writer at the same moment: one commit failed.
-                other = settle(self.client, self.installation)
+                other = settle(self.client, inst)
             if other:
                 self._open_as_reader(other)
                 return
@@ -699,7 +721,10 @@ class Store:
         """Go on as a store that reads only: every write is refused with the reason (store_writer)."""
         from cairnmind.storage.store_readonly import ReadOnlyClient, StoreNotReady, check_ready
         from cairnmind.storage.store_writer import reader_reason
-        reason = reader_reason(self.installation, writer)
+        inst = self.installation
+        if inst is None:
+            raise RuntimeError("Store installation is not initialized")
+        reason = reader_reason(inst, writer)
         try:
             check_ready(self.client, self.settings)
         except StoreNotReady as exc:
@@ -1049,8 +1074,8 @@ class Store:
 
     def _derive_symbol_anchor(self, tx, project_id, sources, metadata, *, source_rows=None):
         """Derive a cross-OS symbol anchor from cited code sources when metadata names a symbol or quote."""
-        from cairnmind.scip.parsing import analyze_code
         from cairnmind.memory.symbol_anchor import posix_path, resolve_symbol_anchor
+        from cairnmind.scip.parsing import analyze_code
         symbol_name = metadata.get("symbol") if isinstance(metadata.get("symbol"), str) else None
         quote = metadata.get("evidence") if isinstance(metadata.get("evidence"), str) else None
         if not (symbol_name and symbol_name.strip()) and not (quote and quote.strip()):
@@ -1072,7 +1097,8 @@ class Store:
             src = by_id.get(source_id)
             if not src:
                 continue
-            src_meta = src.get("metadata") if isinstance(src.get("metadata"), dict) else {}
+            raw_meta = src.get("metadata")
+            src_meta = raw_meta if isinstance(raw_meta, dict) else {}
             rel = src_meta.get("relative_path")
             if not isinstance(rel, str) or not rel.strip():
                 raw_path = src_meta.get("path") or src.get("uri") or ""
@@ -1087,7 +1113,8 @@ class Store:
             rel = posix_path(rel)
             if not rel:
                 continue
-            analysis = src_meta.get("analysis") if isinstance(src_meta.get("analysis"), dict) else None
+            raw_analysis = src_meta.get("analysis")
+            analysis = raw_analysis if isinstance(raw_analysis, dict) else None
             has_hashes = bool(
                 analysis
                 and any(isinstance(sym.get("body_hash"), str) for sym in (analysis.get("symbols") or []))
@@ -1144,8 +1171,8 @@ class Store:
         # A write that is not a person's act and reaches a record a person confirmed (it can only leave the
         # statement as it is: progress on a task, or nothing) does not make that confirmation worth less: the
         # record keeps every source it had, the note of the person's act among them, and the write only adds.
-        kept = bool(old) and not slot and self._kept(old)
-        if kept:
+        kept = old is not None and not slot and self._kept(old)
+        if kept and old is not None:
             held = old.get("source_ids") or []
             sources = list(dict.fromkeys([*(json.loads(held) if isinstance(held, str) else held), *sources]))
             extra_sources = [sid for sid in sources if sid not in source_rows]
@@ -1283,7 +1310,8 @@ class Store:
                 raise ValueError("Managed task membership must be changed through PlanManager")
             if not old and "expected_version" in record and record["expected_version"] != previous["version"]:
                 raise ValueError("Record version conflict; replaced record has changed")
-            from cairnmind.memory.confirmation import MARK as mark_name, lowered
+            from cairnmind.memory.confirmation import MARK as mark_name
+            from cairnmind.memory.confirmation import lowered
             self._keep_verdict(previous, "replace")
             act = self._proven_act()
             if not act and previous["status"] == "confirmed":
@@ -1373,7 +1401,8 @@ class Store:
                 # the whole write is committed and the writer lock is released, and never as part of it.
                 from cairnmind.memory.scope import note_progress
                 worktree = record.get("worktree")
-                self._after_commit(lambda: note_progress(self, result, worktree, change))
+                change_kind: str = change
+                self._after_commit(lambda: note_progress(self, result, worktree, change_kind))
         return result
 
     def _after_commit(self, call):
@@ -1393,7 +1422,9 @@ class Store:
         if not isinstance(state, dict):
             raise ValueError("Checkpoint state must be an object")
         content = json_text(state)
-        from cairnmind.memory.secret_mask import note_metadata  # indexed with its known secrets replaced (#182)
+        from cairnmind.memory.secret_mask import (
+            note_metadata,  # indexed with its known secrets replaced (#182)
+        )
         source = self.snapshot(project_id, f"checkpoint://{uuid4()}", content, "checkpoint",
                                note_metadata(self.settings, content, {"origin": "client"}))
         with self.transaction() as tx:
@@ -1510,7 +1541,7 @@ class Store:
                 if position is not None and not state.get("first_seq", 1) - 1 <= position <= head["seq"]:
                     position = None
                 seq, shared, complete = dict(self._stamp_seq), self._stamp_global, position is not None
-                while complete and position < head["seq"]:
+                while complete and position is not None and position < head["seq"]:
                     rows = self.find(
                         "journal_events",
                         [eq("epoch", head["epoch"]), gt("seq", position), lte("seq", head["seq"])],
@@ -1576,7 +1607,7 @@ class Store:
         refuse_if_unfinished(self.client)  # a backup of part of a restore would pass for a whole one (#362)
         destination = Path(destination).expanduser().resolve()
         if destination.is_dir():
-            destination /= f"cairnmind-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid4().hex[:8]}{BACKUP_SUFFIXES[0]}"
+            destination /= f"cairnmind-{datetime.now(UTC):%Y%m%dT%H%M%S}-{uuid4().hex[:8]}{BACKUP_SUFFIXES[0]}"
         # Rows are read, hashed and compressed a page at a time inside one transaction; the file is moved
         # into place only after that transaction commits (#196).
         return streamed_backup(self.transaction, destination, EXPORT_TYPES, 5)

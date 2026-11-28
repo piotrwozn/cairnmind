@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import queue
 import signal
 import subprocess
 import threading
 import time
+from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 from cairnmind import __version__
@@ -67,10 +68,8 @@ def _terminate_process(proc: subprocess.Popen[bytes]) -> None:
         else:
             proc.terminate()
     except OSError:
-        try:
+        with suppress(OSError):
             proc.terminate()
-        except OSError:
-            pass
     try:
         proc.wait(timeout=0.5)
         return
@@ -82,14 +81,10 @@ def _terminate_process(proc: subprocess.Popen[bytes]) -> None:
         else:
             proc.kill()
     except OSError:
-        try:
+        with suppress(OSError):
             proc.kill()
-        except OSError:
-            pass
-    try:
+    with suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=2.0)
-    except subprocess.TimeoutExpired:
-        pass
 
 
 def _reader_thread(stream, out_queue: queue.Queue[bytes | None]) -> None:
@@ -218,7 +213,8 @@ def probe_mcp_stdio(
     t_err.start()
 
     try:
-        assert proc.stdin is not None
+        if proc.stdin is None:
+            raise RuntimeError("MCP probe subprocess stdin pipe is unavailable")
         init_req = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -279,15 +275,11 @@ def probe_mcp_stdio(
         t_err.join(timeout=0.3)
         t_out.join(timeout=0.3)
         if proc.stdout:
-            try:
+            with suppress(OSError):
                 proc.stdout.close()
-            except OSError:
-                pass
         if proc.stderr:
-            try:
+            with suppress(OSError):
                 proc.stderr.close()
-            except OSError:
-                pass
         result["stderr_preview"] = b"".join(stderr_lines).decode("utf-8", errors="replace").strip()[:500]
         if not result["ok"] and result["stderr_preview"] and result["error"] and "Dirty stdout" not in result["error"]:
             result["error"] = f"{result['error']} (stderr: {result['stderr_preview'][:200]})"

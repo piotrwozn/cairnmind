@@ -117,8 +117,8 @@ BORDER_WORDS = {
 
 @pytest.mark.parametrize("language", ["en", "pl"])
 def test_tmux_pane_badge_is_green_only_for_ack(language):
-    from cairnmind.terminal.workspace import tmux_chrome
     from cairnmind.terminal.terminal_bridge import CONTROL_STATES
+    from cairnmind.terminal.workspace import tmux_chrome
     from cairnmind.terminal.workspace_border import CONTROL_LABELS, MEMORY_LABELS, ROLE_LABELS
     options = dict(tmux_chrome(language))
     border = options["pane-border-format"]

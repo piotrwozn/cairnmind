@@ -13,22 +13,21 @@ Guarantees:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import difflib
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import stat
 import sys
 import tempfile
 import tomllib
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import tomlkit
 
-from cairnmind.pal import private_files
 from cairnmind.config import Settings
 from cairnmind.memory.integrations import (
     EARLIER_SERVER,
@@ -38,6 +37,7 @@ from cairnmind.memory.integrations import (
     TOML_END,
     codex_tool_timeout,
 )
+from cairnmind.pal import private_files
 
 # Keys that bypass client consent/trust flows — forbidden in every generated preset.
 FORBIDDEN_CONSENT_KEYS = frozenset({
@@ -351,13 +351,13 @@ def config_path_for_client(
 def _is_temp_path(path: Path) -> bool:
     """Whether an executable path resides in a temporary directory."""
     resolved = str(path).replace("\\", "/")
-    temp_roots = [str(Path(tempfile.gettempdir()).resolve()).replace("\\", "/"), "/tmp", "/var/tmp", "/private/var/folders"]
+    temp_roots = [str(Path(tempfile.gettempdir()).resolve()).replace("\\", "/"), "/tmp", "/var/tmp", "/private/var/folders"]  # noqa: S108 - checking whether executable sits in temp dir
     lower = resolved.lower()
     for base in temp_roots:
         norm_base = base.rstrip("/").lower()
         if norm_base and (lower == norm_base or lower.startswith(norm_base + "/")):
             return True
-    return "/temp/" in lower or "/tmp/" in lower
+    return "/temp/" in lower or "/tmp/" in lower  # noqa: S108 - checking whether executable sits in temp dir
 
 
 def resolve_executable(executable: str | None = None) -> tuple[str, list[str]]:
@@ -437,7 +437,8 @@ def build_server_entry(
         entry = {"command": command, "args": base_args}
 
     # Belt-and-suspenders invariant: never emit any consent-bypass key.
-    assert not (FORBIDDEN_CONSENT_KEYS & set(entry.keys())), f"Forbidden consent keys in preset for {client}"
+    if FORBIDDEN_CONSENT_KEYS & set(entry.keys()):
+        raise RuntimeError(f"Forbidden consent keys in preset for {client}")
     return entry, warnings
 
 

@@ -7,11 +7,11 @@ from typing import Annotated
 import httpx
 import typer
 
+from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.cli_arguments import (
     ProjectArg,
     SnapshotArg,
 )
-from cairnmind.cli_cmds import io as _io
 from cairnmind.cli_cmds.io import initialized
 from cairnmind.config import Settings
 
@@ -128,7 +128,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
             store = _io.store_for_read(ctx.obj)
 
             def read():
-                selected = store.resolve_project(project)
+                selected = _io.resolve_project(store, project)
                 current = get_decision_source(store, selected["id"])
                 return selected["id"], {
                     "project_id": selected["id"],
@@ -160,7 +160,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         store = _io.store_for_read(ctx.obj)
 
         def read():
-            selected = store.resolve_project(project)
+            selected = _io.resolve_project(store, project)
             root = _root(store, selected["id"], _io.actor_scope(store, selected["id"], worktree))
             return selected["id"], orphans_report(store, selected, root, _scoped_records(store, selected["id"], root))
 
@@ -178,7 +178,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         store = _io.store_for_read(ctx.obj)
 
         def read():
-            selected = store.resolve_project(project)
+            selected = _io.resolve_project(store, project)
             return selected["id"], extraction_stats(store, selected["id"])
 
         stats = store.read_consistently(read, _io.READ_KINDS["memory extraction-stats"])
@@ -214,7 +214,7 @@ def register(apps: dict[str, typer.Typer]) -> None:
         if not dry_run and getattr(store, "not_writer", None):
             from cairnmind.storage.store_writer import StoreNotWriter
             raise StoreNotWriter(store.not_writer)
-        pid = store.resolve_project(project)["id"]
+        pid = _io.resolve_project(store, project)["id"]
         _io.output((plan if dry_run else queue)(store, pid, below, EXTRACTOR_VERSION))
 
     @memory_app.command("import")

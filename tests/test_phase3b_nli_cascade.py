@@ -12,12 +12,17 @@ from typer.testing import CliRunner
 
 from cairnmind import cli
 from cairnmind.agents.agent import KnowledgeAgent
-from cairnmind.config import Settings
 from cairnmind.agents.nli_verifier import (
-    NEEDS_LLM_REVIEW_CODE, NliScores, NliUnavailable, OnnxNliScorer, evaluate_tier1_nli, resolve_nli_model_dir,
+    NEEDS_LLM_REVIEW_CODE,
+    NliScores,
+    NliUnavailable,
+    OnnxNliScorer,
+    evaluate_tier1_nli,
+    resolve_nli_model_dir,
 )
 from cairnmind.agents.ollama import OllamaUnavailable
 from cairnmind.agents.support import support_citations, support_messages
+from cairnmind.config import Settings
 
 runner = CliRunner()
 

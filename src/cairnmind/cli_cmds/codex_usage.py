@@ -100,8 +100,11 @@ def waiting_in_inbox(store, project_id: str, start) -> int:
         if row.get("id") in seen:
             continue
         seen.add(row.get("id"))
+        raw_line = row.get("raw")
+        if not isinstance(raw_line, (str, bytes, bytearray)):
+            continue
         try:
-            event = json.loads(row.get("raw"))
+            event = json.loads(raw_line)
             if not isinstance(event, dict) or event.get("type") != _MARKER:
                 continue
         except (ValueError, TypeError, RecursionError):

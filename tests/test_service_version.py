@@ -8,9 +8,9 @@ import pytest
 
 from cairnmind import __version__
 from cairnmind.cli_cmds import service_version
+from cairnmind.cli_cmds.service_version import NO_HEALTH, OTHER_VERSION, VERSION_UNKNOWN, instance_id, refusal
 from cairnmind.config import Settings
 from cairnmind.pal.process_control import format_command
-from cairnmind.cli_cmds.service_version import NO_HEALTH, OTHER_VERSION, VERSION_UNKNOWN, instance_id, refusal
 from cairnmind.terminal.terminal_i18n import CATALOG
 
 

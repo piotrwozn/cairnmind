@@ -120,7 +120,7 @@ def mac_chip() -> dict | None:
     return {"chip": chip, "memory_gib": gib, "note": hint("gpu_chip", "darwin", chip=chip, gib=gib)}
 
 
-def hint(topic: str, system: str | None = None, **values: str) -> str:
+def hint(topic: str, system: str | None = None, **values: str | int | float) -> str:
     """The English sentence of a topic for this system (or the given one), with the values filled in."""
     by_system = TEXTS[topic]
     key = host_system() if system is None else system

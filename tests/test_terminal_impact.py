@@ -4,6 +4,8 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
+from test_terminal_panels import settle
+from test_terminal_ux080 import setup_ui
 from textual.widgets import Button, Checkbox, DataTable, Input, Static
 
 from cairnmind.terminal.terminal_client import BrokerError
@@ -11,8 +13,6 @@ from cairnmind.terminal.terminal_i18n import tr
 from cairnmind.terminal.terminal_inspector import InspectorApp
 from cairnmind.terminal.terminal_panels import ConfirmModal
 from cairnmind.terminal.terminal_ui import ChoiceModal, FormModal
-from test_terminal_panels import settle
-from test_terminal_ux080 import setup_ui
 
 RULE = {"id": "rec-rule", "kind": "decision", "status": "proposed",
         "title": "Sessions last 30 minutes.\x1b[31m\nchecked: forged",
@@ -306,6 +306,7 @@ def test_every_label_of_the_view_has_a_polish_translation():
     import ast
     import re
     from pathlib import Path
+
     import cairnmind.terminal.terminal_impact as view
     source = Path(view.__file__).read_text(encoding="utf-8")
     # Every literal handed to the translator, with adjacent literals joined as Python joins them.

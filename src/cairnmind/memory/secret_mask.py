@@ -61,8 +61,8 @@ def registered_secrets(settings, environ=None) -> list[str]:
     Raises ValueError when the saved keys or the saved profiles cannot be read: what cannot be read cannot be
     kept out, so a caller refuses instead of passing text through unchecked."""
     from cairnmind.agents.api_credentials import CredentialStore, credential_environment_names
-    from cairnmind.terminal.cockpit_state import CockpitState
     from cairnmind.memory.memory_models import FIELDS, profile
+    from cairnmind.terminal.cockpit_state import CockpitState
     environ = os.environ if environ is None else environ
     values = [getattr(settings, "token", None), getattr(settings, "arcade_password", None)]
     values += CredentialStore(settings).registered_values()

@@ -13,12 +13,24 @@ import subprocess
 import sys
 
 from cairnmind.memory.check_profile_messages import check_error_text
+from cairnmind.terminal.stages import (
+    AGENT_CLIENTS,
+    CLIENT_STAGES,
+    CONFIRM_PROBLEMS,
+    CONNECTION_PROBLEMS,
+    LAUNCHABLE_CLIENTS,
+    STAGES,
+    assistant_name,
+    changed_since_confirmed,
+    confirmed_choice,
+    describe,
+    stage_head,
+    stage_slot,
+    validate_stage_map,
+)
 from cairnmind.terminal.terminal_connection_hints import connection_hint
 from cairnmind.terminal.terminal_i18n_messages import display_word
 from cairnmind.terminal.terminal_notices import about
-from cairnmind.terminal.stages import (AGENT_CLIENTS, CLIENT_STAGES, CONFIRM_PROBLEMS, CONNECTION_PROBLEMS, LAUNCHABLE_CLIENTS, STAGES,
-                     assistant_name, changed_since_confirmed, confirmed_choice, describe, stage_head, stage_slot,
-                     validate_stage_map)
 
 _UNSET = ":unset"
 
@@ -105,10 +117,10 @@ async def _shown(app, scope) -> bool:
     return (current.get("project_id"), current.get("worktree")) == scope
 
 
-def _outcome(app, profile, result=None, error=None) -> str:
-    if error is not None or _not_run(result):
-        return (app.t("The check could not run") + ": " + profile + " · "
-                + check_error_text(error if error is not None else result["error"], app.t))
+def _outcome(app, profile, result: dict | None = None, error=None) -> str:
+    if error is not None or result is None or _not_run(result):
+        detail = error if error is not None else (result["error"] if result is not None else "The check did not run.")
+        return app.t("The check could not run") + ": " + profile + " · " + check_error_text(detail, app.t)
     verdict = "Check passed." if result.get("passed") is True else "Check did not pass."
     return (app.t("Check finished") + ": " + profile + " · " + app.t(verdict)
             + (" " + app.t("Outcome") + ": " + display_word(result["outcome"], app.t) if result.get("outcome") else "")
@@ -265,7 +277,7 @@ async def edit_stages(app):
                                        else app.t("Unknown assistant") + " (" + slot_id + ")")
         # The same comparison as Run next stage: profile, client and, for an agent, its provider,
         # model and address.
-        if profile and changed_since_confirmed(target, slot, profile) != []:
+        if slot and profile and changed_since_confirmed(target, slot, profile) != []:
             text += " · " + app.t("not confirmed; save it to confirm")
         return text
 
@@ -281,7 +293,7 @@ async def edit_stages(app):
         names = [assistant_name(profiles[s["profile_id"]], app.t) for s in launchable]
         # Two slots of one profile read the same; only then does the slot id tell them apart.
         choices = [(name + (" · " + s["id"] if names.count(name) > 1 else ""), s["id"])
-                   for name, s in zip(names, launchable)]
+                   for name, s in zip(names, launchable, strict=True)]
         value = await app.push_screen_wait(ChoiceModal(app.t(stage), choices + [("Not set", _UNSET)]))
         if value is None:
             return

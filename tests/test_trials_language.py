@@ -4,12 +4,12 @@ import re
 from pathlib import Path
 
 import pytest
+from test_terminal_panels import settle, setup
 
 from cairnmind.terminal.terminal_commands import ask_summary
 from cairnmind.terminal.terminal_i18n import tr
 from cairnmind.terminal.terminal_panels import SidebarApp
 from cairnmind.terminal.terminal_ui import ChoiceModal
-from test_terminal_panels import setup, settle
 
 SOURCE = Path(__file__).resolve().parents[1] / "src" / "cairnmind"
 POLISH = re.compile("[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]")
@@ -173,11 +173,11 @@ async def test_a_running_inspector_switches_every_label_to_the_new_language(tmp_
 
 @pytest.mark.asyncio
 async def test_a_language_switch_redraws_the_impact_list_and_keeps_the_chosen_row(tmp_path, monkeypatch):
+    from test_terminal_impact import Impact
+    from test_terminal_ux080 import setup_ui
     from textual.widgets import DataTable
 
     from cairnmind.terminal.terminal_inspector import InspectorApp
-    from test_terminal_impact import Impact
-    from test_terminal_ux080 import setup_ui
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     language = ["en"]
     monkeypatch.setattr("cairnmind.terminal.terminal_ui.language_for", lambda settings: language[0])
@@ -201,12 +201,12 @@ async def test_a_language_switch_redraws_the_impact_list_and_keeps_the_chosen_ro
 
 @pytest.mark.asyncio
 async def test_a_running_graph_lays_out_its_buttons_again_for_longer_labels(tmp_path):
+    from test_terminal_graph import ControlledBroker
     from textual.widgets import Button
 
+    from cairnmind.config import Settings
     from cairnmind.terminal.cockpit_state import CockpitState
     from cairnmind.terminal.terminal_graph import GraphApp
-    from test_terminal_graph import ControlledBroker
-    from cairnmind.config import Settings
     from cairnmind.terminal.workspace_state import WorkspaceState
     settings = Settings(tmp_path / "data")
     project = {"id": "alpha", "name": "Alpha", "root": str(tmp_path / "alpha")}
@@ -262,14 +262,14 @@ def test_the_copilot_sign_in_terminal_prints_its_errors_in_the_ui_language(
     ("en", "The request exceeds the context limit.", "Żądanie"),
     ("pl", "Żądanie przekracza limit kontekstu.", "The request exceeds")])
 async def test_a_provider_error_reads_in_the_panel_language(tmp_path, language, shown, hidden):
+    from test_api_worker import Engine
+    from test_api_worker import settle as settle_agent
     from textual.widgets import RichLog, Static
 
     from cairnmind.agents.api_providers import ProviderError
     from cairnmind.agents.api_worker import AgentApp
-    from cairnmind.terminal.cockpit_state import CockpitState
     from cairnmind.config import Settings
-    from test_api_worker import Engine
-    from test_api_worker import settle as settle_agent
+    from cairnmind.terminal.cockpit_state import CockpitState
 
     class Overflow(Engine):
         async def turn(self, text):
@@ -298,11 +298,11 @@ async def test_a_provider_error_reads_in_the_panel_language(tmp_path, language, 
 @pytest.mark.asyncio
 async def test_the_finding_form_offers_kinds_and_statuses_in_polish_and_saves_the_stored_word(
         tmp_path, monkeypatch):
+    from test_quick_finding import FakeBroker, selected_workspace
     from textual.widgets import Select
     from textual.widgets._select import SelectCurrent
 
     from cairnmind.terminal.workspace_finding import FindingApp
-    from test_quick_finding import FakeBroker, selected_workspace
     monkeypatch.setattr("cairnmind.terminal.terminal_i18n.language_for", lambda settings: "pl")
     settings, state = selected_workspace(tmp_path)
     broker = FakeBroker()
@@ -333,7 +333,8 @@ def test_a_stage_and_its_check_result_name_states_and_outcomes_in_polish():
 def test_an_acknowledged_memory_reads_the_same_in_the_sessions_rows_and_the_agent_pane():
     # #153/#157 review: the agent pane said "Pamięć potwierdzona (ACK)" where Sessions said "Pamięć potwierdzona".
     from cairnmind.terminal.terminal_activity_data import session_label
-    from cairnmind.terminal.terminal_agent_i18n import STATUS, tr as agent_tr
+    from cairnmind.terminal.terminal_agent_i18n import STATUS
+    from cairnmind.terminal.terminal_agent_i18n import tr as agent_tr
     row = session_label({"client": "api", "id": "run1234", "lifecycle": "running", "memory": {"acknowledged": True},
                          "worktree": "/src/shop"}, lambda text: tr(text, "pl"))
     assert agent_tr(STATUS["acknowledged"], "pl") == "Pamięć potwierdzona"
@@ -370,7 +371,7 @@ async def test_command_menu_descriptions_wrap_instead_of_being_cut_at_80x24(tmp_
             shown, chosen = cells(table), table.cursor_row
             # The chosen command always shows every word of its description.
             assert shown[chosen] == tr(COMMANDS[chosen][1], language)
-            for text, row in zip(shown, COMMANDS):
+            for text, row in zip(shown, COMMANDS, strict=False):
                 full = tr(row[1], language)
                 assert text == full or (text.endswith("…") and full.startswith(text[:-1].rstrip()))
             if size == (90, 34):

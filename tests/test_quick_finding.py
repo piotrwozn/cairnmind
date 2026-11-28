@@ -2,30 +2,31 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import shlex
 import subprocess
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
+from fastapi.testclient import TestClient
+from test_cockpit_server import ORIGIN, Runtime, login
+from test_cockpit_server import cockpit as cockpit
+from test_service import LocalModelFixture
 from textual.widgets import Select, Static, TextArea
 
-from cairnmind.terminal.cockpit import create_cockpit_app
-from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.config import Settings
 from cairnmind.memory.findings import FINDING_KINDS, FINDING_STATUSES, MAX_FINDING_CHARS, finding_error
 from cairnmind.service import create_app
 from cairnmind.store import Store
+from cairnmind.terminal.cockpit import create_cockpit_app
+from cairnmind.terminal.cockpit_state import CockpitState
 from cairnmind.terminal.terminal_client import BrokerClient, BrokerError
 from cairnmind.terminal.terminal_commands import CommandPaletteApp
 from cairnmind.terminal.workspace import WorkspaceManager
 from cairnmind.terminal.workspace_finding import ERROR_LIMIT, FindingApp, confirmation, run_finding_form
 from cairnmind.terminal.workspace_state import WorkspaceState
-from test_cockpit_server import ORIGIN, Runtime, cockpit as cockpit, login
-from test_service import LocalModelFixture
 
 ROOT = Path(__file__).resolve().parents[1]
 KEY = "0b5d2a52-8f8e-4b8e-9d55-0d7c1c3b6f01"

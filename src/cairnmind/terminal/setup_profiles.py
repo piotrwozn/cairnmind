@@ -24,21 +24,21 @@ import asyncio
 import json
 import os
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable
 from urllib.parse import urlsplit
 
-from cairnmind.storage import database_credentials, database_mode, engine, engine_docker, store_writer
 from cairnmind.agents import knowledge_mode
-from cairnmind.memory import memory_egress, memory_models
+from cairnmind.agents.ollama import OllamaUnavailable
 from cairnmind.cli_cmds import topology
-from cairnmind.storage.arcade import ArcadeError
+from cairnmind.config import Settings, derived_database, env_names, env_value
+from cairnmind.memory import memory_egress, memory_models
 from cairnmind.pal.file_locks import lock_exclusive
 from cairnmind.pal.private_files import atomic_replace, make_private
-from cairnmind.config import Settings, derived_database, env_names, env_value
-from cairnmind.agents.ollama import OllamaUnavailable
 from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.storage import database_credentials, database_mode, engine, engine_docker, store_writer
+from cairnmind.storage.arcade import ArcadeError
 
 PROFILES = ("local", "remote-db", "remote")
 STORAGE_FIELDS = ("arcade_url", "arcade_connect_url", "arcade_user", "arcade_database", "arcade_password_file",
@@ -212,17 +212,17 @@ PUT_BACK = "The change stopped at {step}: {error} config.json was put back as it
 PUT_BACK_FAILED = ("The change stopped at {step}: {error} config.json could NOT be put back ({reason}); check it "
                    "before you start Cairnmind.{notes}")
 KEPT_BACKUP = "The backup {path} is kept."
-KEPT_PASSWORD = ("The password that engine now uses stays in config.json (arcade_password), so that `cairnmind setup "
+KEPT_PASSWORD = ("The password that engine now uses stays in config.json (arcade_password), so that `cairnmind setup "  # noqa: S105 - UI message template
                  "local` can be run again.")
-KEPT_PASSWORD_START = ("The engine did not finish starting, and ArcadeDB may already have taken the password this "
+KEPT_PASSWORD_START = ("The engine did not finish starting, and ArcadeDB may already have taken the password this "  # noqa: S105 - UI message template
                        "change generated for it, so that password stays in config.json (arcade_password) and "
                        "`cairnmind setup local` can be run again.")
-PASSWORD_NOT_KEPT_NEW = ("The password generated for the engine on this machine could not be kept in config.json "
+PASSWORD_NOT_KEPT_NEW = ("The password generated for the engine on this machine could not be kept in config.json "  # noqa: S105 - UI message template
                          "(arcade_password): {reason}. The engine may now hold a password nobody knows. This command "
                          "just created its `arcade` folder in the data directory, so stopping the engine "
                          "(`cairnmind engine stop`) and removing that `arcade` folder lets `cairnmind setup local` "
                          "run again.")
-PASSWORD_NOT_KEPT_OLD = ("The password generated for the engine on this machine could not be kept in config.json "
+PASSWORD_NOT_KEPT_OLD = ("The password generated for the engine on this machine could not be kept in config.json "  # noqa: S105 - UI message template
                          "(arcade_password): {reason}. The `arcade` folder in the data directory held a store before "
                          "this command, so remove nothing: the arcade_password from your own earlier copy of "
                          "config.json is what signs in to that engine.")
@@ -353,7 +353,9 @@ def render_one(item: tuple[str, dict], language: str = "en") -> str:
     shown = {key: _value(key, value, language) for key, value in values.items()}
     if language == "en":
         return template.format(**shown)
-    from cairnmind.terminal.terminal_i18n import tr  # imported here: terminal_i18n merges MESSAGES of this module
+    from cairnmind.terminal.terminal_i18n import (
+        tr,  # imported here: terminal_i18n merges MESSAGES of this module
+    )
     return tr(template, language, **shown)
 
 
@@ -465,7 +467,8 @@ def save_storage(data_dir: Path, fields: dict) -> None:
 
     Settings in memory also hold environment values and a password read from a file; saving those would make them
     permanent, so only these fields change, and never through Settings.save."""
-    assert set(fields) <= set(STORAGE_FIELDS), fields
+    if not (set(fields) <= set(STORAGE_FIELDS)):
+        raise ValueError(f"Unexpected storage fields: {sorted(set(fields) - set(STORAGE_FIELDS))}")
     path = data_dir / "config.json"
     data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (data_dir / "config.lock").open("a", encoding="utf-8") as lock:
@@ -519,7 +522,8 @@ def local_storage(settings) -> dict:
     kept, or Settings.load(create=True) generates one after the switch. The database is the name derived from the
     data directory, so a --database given to remote-db cannot lose the local store. The prefix of that name is checked
     here as Settings.load checks it, because derived_database does not."""
-    if not env_value("ARCADE_DB_PREFIX", "cairnmind").replace("_", "").isalnum():
+    prefix = env_value("ARCADE_DB_PREFIX", "cairnmind") or ""
+    if not prefix.replace("_", "").isalnum():
         raise SetupRefused(BAD_PREFIX, variable=next(key for key in env_names("ARCADE_DB_PREFIX") if key in os.environ))
     stored = (settings._origin or {}).get("kept", {}).get("arcade_url", (settings.arcade_url,))[0]
     default = Settings.__dataclass_fields__["arcade_url"].default
@@ -530,8 +534,8 @@ def local_storage(settings) -> dict:
 
 def _test_readable(settings, result) -> None:
     """Open the store this installation connects to for reading only (no write, no engine start)."""
-    from cairnmind.store import Store
     from cairnmind.storage.store_readonly import StoreNotReady
+    from cairnmind.store import Store
     url = database_mode.address(settings)
     try:
         store = Store.open_readonly(settings)
@@ -793,7 +797,9 @@ def _plan_lines(settings, request, plan, moves, result) -> None:
         changes.append((ENGINE_START, {"engine": how}))
         if plan["target"]:
             changes.append((BACKUP_PLAN, {"url": url, "path": plan["target"]}))
-            from cairnmind.terminal.person_proof import restore_proof  # as far as it is known now; checked_restore reads it again
+            from cairnmind.terminal.person_proof import (
+                restore_proof,  # as far as it is known now; checked_restore reads it again
+            )
             changes.append((RESTORE_WILL_KEEP if restore_proof(settings) == "key" else RESTORE_WILL_CLAIM, {}))
         else:
             data = settings.data_dir / "arcade" / "databases" / fields["arcade_database"]

@@ -2,19 +2,32 @@
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
-from dataclasses import replace
 import math
 import threading
+from copy import deepcopy
+from dataclasses import replace
 
 import pytest
 from textual.widgets import OptionList, Static
 
-from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT
 from cairnmind.config import Settings
-from cairnmind.terminal.terminal_graph import (BrailleCanvas, Camera, EDGE_LIMIT, GraphApp, GraphModel, GraphScope,
-                                    GroupPicker, NODE_LIMIT, TerminalGraph, layout_positions, render_scene,
-                                    seed_position, selection_for, terminal_visible)
+from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT
+from cairnmind.terminal.terminal_graph import (
+    EDGE_LIMIT,
+    NODE_LIMIT,
+    BrailleCanvas,
+    Camera,
+    GraphApp,
+    GraphModel,
+    GraphScope,
+    GroupPicker,
+    TerminalGraph,
+    layout_positions,
+    render_scene,
+    seed_position,
+    selection_for,
+    terminal_visible,
+)
 from cairnmind.terminal.workspace_state import WorkspaceState
 
 

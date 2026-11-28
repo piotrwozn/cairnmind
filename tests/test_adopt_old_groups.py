@@ -7,15 +7,14 @@ person's act and writes one audit note. Real HTTP service, ArcadeDB and Git; no 
 from __future__ import annotations
 
 import pytest
-
-from cairnmind.terminal import person_proof
-from cairnmind.memory.confirmation import GROUP_CHANGED, ConfirmationRefused, confirmation_of, confirmed_by
-from cairnmind.terminal.inspector import Inspector
-from cairnmind.memory.memory_acts import adopt_group
-from cairnmind.memory.plans import PlanManager, legacy_groups
-
 from conftest import confirmed_before_rule
 from test_confirmed_by_person import fixture  # noqa: F401
+
+from cairnmind.memory.confirmation import GROUP_CHANGED, ConfirmationRefused, confirmation_of, confirmed_by
+from cairnmind.memory.memory_acts import adopt_group
+from cairnmind.memory.plans import PlanManager, legacy_groups
+from cairnmind.terminal import person_proof
+from cairnmind.terminal.inspector import Inspector
 
 
 def old_task(fixture, key, content, group="old-group", index=1, **metadata):  # noqa: F811

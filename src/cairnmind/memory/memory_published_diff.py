@@ -140,7 +140,7 @@ def compare(base_files, head_files, rules=None) -> dict:
             continue
         before, after = _entries_of(old), _entries_of(new)
         if old["kind"] == new["kind"] and len(after) < len(before) and all(
-                J(a) == J(b) for a, b in zip(before, after)):
+                J(a) == J(b) for a, b in zip(before, after, strict=False)):
             # The head keeps the base's first revisions and drops the rest: a revert of the change that appended
             # them. The head tree imports (a store that has them stays ahead), so it is reported, not refused.
             entry = _entry("reverted", new, path, len(after) - 1, before[-1])
@@ -148,7 +148,7 @@ def compare(base_files, head_files, rules=None) -> dict:
             entries.append(entry)
             continue
         if old["kind"] != new["kind"] or len(after) < len(before) or any(
-                J(a) != J(b) for a, b in zip(before, after)):
+                J(a) != J(b) for a, b in zip(before, after, strict=False)):
             errors.append((path, "an earlier published revision was rewritten or removed; published revisions "
                                  "are only ever appended"))
             continue

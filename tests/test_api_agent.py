@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
 import hashlib
 import json
 import subprocess
+from copy import deepcopy
 from uuid import uuid4
 
 import httpx
@@ -808,6 +808,7 @@ async def test_a_refused_confirmation_reaches_the_model_with_what_to_do_on_real_
     # #240: the store's "only a person confirms" refusals reached the model as a bare tool_failed, or as a
     # state_conflict that sends it to read and retry; a key that exists came back as tool_failed.
     from conftest import as_person
+
     from cairnmind.memory.confirmation import REFUSED
     root = tmp_path / "project"
     root.mkdir()

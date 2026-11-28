@@ -11,17 +11,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
-from pathlib import Path
 import shlex
+import sqlite3
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
-from cairnmind.storage.arcade import ArcadeError
 from cairnmind.config import Settings
-from cairnmind.storage.database_mode import describe as describe_storage
 from cairnmind.memory.evidence import evidence_states, third_party_origin
 from cairnmind.memory.memory_paths import (
     MEMORY_DIRECTORIES,
@@ -32,10 +32,15 @@ from cairnmind.memory.memory_paths import (
     nested_reserved,
     snapshot_directory,
 )
-from cairnmind.storage.storage_query import asc, db_find, desc as order_desc, eq, is_in
-from cairnmind.store import Store, degraded_origin
-from cairnmind.storage.store_readonly import StoreNotReady
 from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.storage.arcade import ArcadeError
+from cairnmind.storage.database_mode import describe as describe_storage
+from cairnmind.storage.storage_query import asc, db_find, eq, is_in
+from cairnmind.storage.storage_query import desc as order_desc
+from cairnmind.storage.store_readonly import StoreNotReady
+from cairnmind.store import Store, degraded_origin
+
+log = logging.getLogger(__name__)
 
 # Client/Cairnmind-managed config files that must never trigger false code drift.
 MANAGED_CONFIG_FILES = frozenset({
@@ -363,6 +368,8 @@ def _resolve_project_and_root(
 
     if project is not None:
         selected = store.resolve_project(project)
+        if selected is None:
+            raise ValueError(f"Unknown project: {project}")
         scope = actor_scope(store, selected["id"], worktree)
         if scope is None:
             # Prefer the registered worktree containing cwd when a project has multiple worktrees.
@@ -404,6 +411,8 @@ def _resolve_project_and_root(
         )
     _, pid, matched_root = max(matches, key=lambda item: item[0])
     selected = store.resolve_project(pid)
+    if selected is None:
+        raise ValueError(f"Unknown project: {pid}")
     scope = actor_scope(store, selected["id"], worktree or matched_root)
     root = _root(store, selected["id"], scope)
     return selected, root
@@ -458,7 +467,8 @@ def _latest_baseline(store: Store, project_id: str, root: Path) -> dict[str, Any
 
 def _source_relative_path(source: dict[str, Any], root: Path) -> str | None:
     """Resolve a file source's path relative to `root` without escaping `root`."""
-    meta = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
+    raw_meta = source.get("metadata")
+    meta = raw_meta if isinstance(raw_meta, dict) else {}
     raw_path = meta.get("path") or source.get("uri")
     if not isinstance(raw_path, str) or not raw_path or "://" in raw_path:
         return None
@@ -573,7 +583,8 @@ def _check_file_drift(
             if not disk_path.exists():
                 drift_files.add(rel)
                 continue
-            meta = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
+            raw_meta = source.get("metadata")
+            meta = raw_meta if isinstance(raw_meta, dict) else {}
             try:
                 st = disk_path.stat()
             except OSError:
@@ -589,9 +600,8 @@ def _check_file_drift(
             ):
                 continue
             expected_sha = source.get("sha256")
-            if isinstance(expected_sha, str) and expected_sha:
-                if _file_sha256(disk_path) != expected_sha:
-                    drift_files.add(rel)
+            if isinstance(expected_sha, str) and expected_sha and _file_sha256(disk_path) != expected_sha:
+                drift_files.add(rel)
 
     return sorted(drift_files), dirty_git_files, sorted(set(broken_refs)), divergence
 
@@ -660,7 +670,8 @@ def _check_test_freshness(
     def memo_capture(st, pid, wt=None, extra_inputs=None):
         key = tuple(sorted(extra_inputs or ()))
         if key not in observed:
-            assert staged is not None
+            if staged is None:
+                raise RuntimeError("Staged Git entries are required for exact pulse capture.")
             observed[key] = _single_pass_code_state(root, git, staged[0], staged[1], nested, extra_inputs)
         return observed[key]
 
@@ -785,7 +796,8 @@ def _check_degraded(
     details: list[dict[str, Any]] = []
     states = evidence_states(store, project_id, active_records, quotes=False) if active_records else {}
     for record in active_records:
-        meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        raw_meta = record.get("metadata")
+        meta = raw_meta if isinstance(raw_meta, dict) else {}
         st = states.get(record["id"], {})
         if st.get("evidence_state") == "degraded" or degraded_origin(meta):
             degraded_ids.add(record["id"])
@@ -827,12 +839,10 @@ def _check_snapshot_and_locks(
             integrity_errors.append(f"Blocked migration lock present: {lock_candidate}")
             broken_refs.append(f"lock:{lock_candidate}")
 
-    from cairnmind.terminal import setup_mark
     from cairnmind.cli_cmds import upgrade_mark
+    from cairnmind.terminal import setup_mark
 
-    if reason := setup_mark.unchecked(settings.data_dir):
-        integrity_errors.append(str(reason))
-    elif reason := setup_mark.refusal(settings.data_dir):
+    if (reason := setup_mark.unchecked(settings.data_dir)) or (reason := setup_mark.refusal(settings.data_dir)):
         integrity_errors.append(str(reason))
     if reason := upgrade_mark.refusal():
         integrity_errors.append(str(reason))
@@ -997,8 +1007,8 @@ def run_pulse(
             return broken([str(exc)], actions=["Run `cairnmind doctor` to inspect storage readiness"])
 
     try:
-        from cairnmind.memory.brief import _scoped_records
         from cairnmind.cli import READ_KINDS
+        from cairnmind.memory.brief import _scoped_records
 
         def read_all():
             selected, root = _resolve_project_and_root(store, project, worktree)
@@ -1078,8 +1088,8 @@ def run_pulse(
         if owns_store and hasattr(store, "client") and hasattr(store.client, "close"):
             try:
                 store.client.close()
-            except Exception:  # noqa: BLE001
-                pass
+            except (OSError, RuntimeError, ArcadeError, sqlite3.Error) as exc:
+                log.debug("Failed to close pulse store client: %s", exc)
 
 
 def exit_code_for_pulse(report: dict[str, Any], *, strict: bool = False) -> int:
@@ -1094,13 +1104,9 @@ def exit_code_for_pulse(report: dict[str, Any], *, strict: bool = False) -> int:
 
 def _use_color(tty: bool | None = None) -> bool:
     is_tty = sys.stdout.isatty() if tty is None else tty
-    if not is_tty:
+    if not is_tty or os.environ.get("NO_COLOR"):
         return False
-    if os.environ.get("NO_COLOR"):
-        return False
-    if os.environ.get("TERM") == "dumb":
-        return False
-    return True
+    return os.environ.get("TERM") != "dumb"
 
 
 def render_pulse(report: dict[str, Any], *, color: bool | None = None) -> str:

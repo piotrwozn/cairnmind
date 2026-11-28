@@ -16,11 +16,11 @@ local processes from reading repository files or mutating project state:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hmac
 import os
 import secrets
-from typing import Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
 from urllib.parse import urlencode, urlparse
 
 from fastapi import FastAPI, Request

@@ -2,18 +2,17 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
-from fastapi.testclient import TestClient
 import pytest
+from conftest import person_proven
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from cairnmind import cli
 from cairnmind.memory.confirmation import confirmed_by
 from cairnmind.memory.evidence import evidence_states, orphans_report
-from cairnmind.scip.ingest import index_project
-from cairnmind.terminal.inspector import Inspector
 from cairnmind.memory.memory import MemoryManager
 from cairnmind.memory.quote_healing import (
     QuoteCASConflict,
@@ -22,10 +21,10 @@ from cairnmind.memory.quote_healing import (
     is_healing_audit_source,
     sha256_quote,
 )
+from cairnmind.scip.ingest import index_project
 from cairnmind.service import create_app
 from cairnmind.store import Store
-
-from conftest import person_proven
+from cairnmind.terminal.inspector import Inspector
 
 
 class NoInference:

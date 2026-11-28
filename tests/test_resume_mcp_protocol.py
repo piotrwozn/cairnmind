@@ -5,7 +5,6 @@ production coding model read or understood a packet.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import os
 import socket
@@ -13,19 +12,20 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
 import httpx
 import pytest
 import uvicorn
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 from cairnmind.config import Settings
-from cairnmind.scip.ingest import import_history
 from cairnmind.memory.integrations import hook
 from cairnmind.memory.plans import PlanManager
-from cairnmind.service import create_app
 from cairnmind.memory.sessions import SessionManager
+from cairnmind.scip.ingest import import_history
+from cairnmind.service import create_app
 from cairnmind.store import Store
 
 
@@ -146,68 +146,67 @@ async def test_actual_stdio_resume_refresh_keeps_horizon_and_requires_new_explic
             command=sys.executable,
             args=["-m", "cairnmind", "--data-dir", str(settings.data_dir), "mcp"],
             env=dict(os.environ))
-        async with stdio_client(parameters) as (reader, writer):
-            async with ClientSession(reader, writer) as client:
-                initialized = await client.initialize()
-                assert initialized.serverInfo.name == "cairnmind"
-                context = tool_result(await client.call_tool("resume_context", {}))
-                assert context["packet"] == initial
-                assert not store.query("SELECT FROM resume_acks")
-                rejected(await client.call_tool("checkpoint", {
-                    "project": project["id"], "state": {"goal": "Before ACK"}}))
-                wrong = ack_arguments(initial)
-                wrong["readback"]["task"]["version"] += 1
-                rejected(await client.call_tool("ack_resume", wrong))
-                assert not store.query("SELECT FROM resume_acks")
+        async with stdio_client(parameters) as (reader, writer), ClientSession(reader, writer) as client:
+            initialized = await client.initialize()
+            assert initialized.serverInfo.name == "cairnmind"
+            context = tool_result(await client.call_tool("resume_context", {}))
+            assert context["packet"] == initial
+            assert not store.query("SELECT FROM resume_acks")
+            rejected(await client.call_tool("checkpoint", {
+                "project": project["id"], "state": {"goal": "Before ACK"}}))
+            wrong = ack_arguments(initial)
+            wrong["readback"]["task"]["version"] += 1
+            rejected(await client.call_tool("ack_resume", wrong))
+            assert not store.query("SELECT FROM resume_acks")
 
-                acknowledgment = tool_result(await client.call_tool("ack_resume", ack_arguments(initial)))
-                assert acknowledgment["packet_id"] == initial["id"]
+            acknowledgment = tool_result(await client.call_tool("ack_resume", ack_arguments(initial)))
+            assert acknowledgment["packet_id"] == initial["id"]
+            manager.require_ack(session_id, initial["id"])
+            assert len(store.query("SELECT FROM resume_acks")) == 1
+
+            with current.open("a") as handle:
+                handle.write(json.dumps({"type": "event_msg", "payload": {
+                    "type": "agent_message", "message": "The current turn is still growing"}}) + "\n")
+            code.write_text("VALUE = 2\n")
+            rejected(await client.call_tool("checkpoint", {
+                "project": project["id"], "state": {"goal": "Old ACK after code change"}}))
+            rejected(await client.call_tool("ack_resume", ack_arguments(initial)))
+            with pytest.raises(ValueError, match="resume_required"):
                 manager.require_ack(session_id, initial["id"])
-                assert len(store.query("SELECT FROM resume_acks")) == 1
 
-                with current.open("a") as handle:
-                    handle.write(json.dumps({"type": "event_msg", "payload": {
-                        "type": "agent_message", "message": "The current turn is still growing"}}) + "\n")
-                code.write_text("VALUE = 2\n")
-                rejected(await client.call_tool("checkpoint", {
-                    "project": project["id"], "state": {"goal": "Old ACK after code change"}}))
-                rejected(await client.call_tool("ack_resume", ack_arguments(initial)))
-                with pytest.raises(ValueError, match="resume_required"):
-                    manager.require_ack(session_id, initial["id"])
-
-                refreshed = tool_result(await client.call_tool("resume_context", {}))
-                assert refreshed["status"] == "ready", refreshed
-                packet = refreshed["packet"]
-                assert refreshed["session_id"] == session_id
-                assert refreshed["epoch"] > prepared["epoch"]
-                assert packet["id"] != initial["id"]
-                # A refresh can retain an additional durable proof, while the
-                # captured range, generation and actual archive evidence stay fixed.
-                assert [{key: value for key, value in row.items() if key != "proof"}
-                        for row in packet["archive_watermarks"]] == initial["archive_watermarks"]
-                assert packet["archive"]["status"] == "complete"
-                assert not store.query("SELECT FROM import_cursors WHERE path=:path", {"path": str(current)})
-                session = store.query("SELECT FROM sessions WHERE id=:id", {"id": session_id})[0]
-                assert session["native_session_id"] == "current-native"
-                assert any(target["path"] == str(current) for target in session["transcript_targets"])
-                assert [target["path"] for target in session["resume_targets"]] == [str(previous)]
-                assert session.get("ack_id") is None
-                assert len(store.query("SELECT FROM resume_acks")) == 1
-                rejected(await client.call_tool("checkpoint", {
-                    "project": project["id"], "state": {"goal": "Refreshed but not acknowledged"}}))
-                # The live bridge must adopt the newly returned packet identity,
-                # rather than remain pinned to its startup environment variable.
-                rejected(await client.call_tool("ack_resume", ack_arguments(initial)))
-                acknowledged = tool_result(await client.call_tool("ack_resume", ack_arguments(packet)))
-                assert acknowledged["packet_id"] == packet["id"]
-                manager.require_ack(session_id, packet["id"])
-                assert len(store.query("SELECT FROM resume_acks")) == 2
-                # Reading again is short while the acknowledged packet is current (#325); the whole one is asked for.
-                short = tool_result(await client.call_tool("resume_context", {}))
-                assert short["unchanged"] is True and short["packet_id"] == packet["id"] and "packet" not in short
-                assert tool_result(await client.call_tool("resume_context", {"full_packet": True}))["packet"] == packet
-                manager.require_ack(session_id, packet["id"])
-                assert len(store.query("SELECT FROM resume_acks")) == 2
-                saved = tool_result(await client.call_tool("checkpoint", {
-                    "project": project["id"], "state": {"goal": "Protocol test client acknowledged"}}))
-                assert saved["source_ids"]
+            refreshed = tool_result(await client.call_tool("resume_context", {}))
+            assert refreshed["status"] == "ready", refreshed
+            packet = refreshed["packet"]
+            assert refreshed["session_id"] == session_id
+            assert refreshed["epoch"] > prepared["epoch"]
+            assert packet["id"] != initial["id"]
+            # A refresh can retain an additional durable proof, while the
+            # captured range, generation and actual archive evidence stay fixed.
+            assert [{key: value for key, value in row.items() if key != "proof"}
+                    for row in packet["archive_watermarks"]] == initial["archive_watermarks"]
+            assert packet["archive"]["status"] == "complete"
+            assert not store.query("SELECT FROM import_cursors WHERE path=:path", {"path": str(current)})
+            session = store.query("SELECT FROM sessions WHERE id=:id", {"id": session_id})[0]
+            assert session["native_session_id"] == "current-native"
+            assert any(target["path"] == str(current) for target in session["transcript_targets"])
+            assert [target["path"] for target in session["resume_targets"]] == [str(previous)]
+            assert session.get("ack_id") is None
+            assert len(store.query("SELECT FROM resume_acks")) == 1
+            rejected(await client.call_tool("checkpoint", {
+                "project": project["id"], "state": {"goal": "Refreshed but not acknowledged"}}))
+            # The live bridge must adopt the newly returned packet identity,
+            # rather than remain pinned to its startup environment variable.
+            rejected(await client.call_tool("ack_resume", ack_arguments(initial)))
+            acknowledged = tool_result(await client.call_tool("ack_resume", ack_arguments(packet)))
+            assert acknowledged["packet_id"] == packet["id"]
+            manager.require_ack(session_id, packet["id"])
+            assert len(store.query("SELECT FROM resume_acks")) == 2
+            # Reading again is short while the acknowledged packet is current (#325); the whole one is asked for.
+            short = tool_result(await client.call_tool("resume_context", {}))
+            assert short["unchanged"] is True and short["packet_id"] == packet["id"] and "packet" not in short
+            assert tool_result(await client.call_tool("resume_context", {"full_packet": True}))["packet"] == packet
+            manager.require_ack(session_id, packet["id"])
+            assert len(store.query("SELECT FROM resume_acks")) == 2
+            saved = tool_result(await client.call_tool("checkpoint", {
+                "project": project["id"], "state": {"goal": "Protocol test client acknowledged"}}))
+            assert saved["source_ids"]

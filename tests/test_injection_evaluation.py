@@ -8,22 +8,37 @@ from __future__ import annotations
 import copy
 import json
 import os
-from pathlib import Path
 import re
+from contextlib import suppress
+from pathlib import Path
 
 import pytest
+from test_api_agent import Memory, call, reply
 from typer.testing import CliRunner
 
 from cairnmind import cli
 from cairnmind.agents.agent import KnowledgeAgent
 from cairnmind.agents.agent_memory import MemoryRefusal
-from cairnmind.config import Settings
-from cairnmind.agents.injection_evaluation import (SERVER_ID, TOOL, agent_path, answers_path, approver, body, extraction_path,
-                                            load_fixture, new_tokens, run_injection_evaluation, score_agent,
-                                            score_answer, score_extraction, tally, write_worktree)
+from cairnmind.agents.injection_evaluation import (
+    SERVER_ID,
+    TOOL,
+    agent_path,
+    answers_path,
+    approver,
+    body,
+    extraction_path,
+    load_fixture,
+    new_tokens,
+    run_injection_evaluation,
+    score_agent,
+    score_answer,
+    score_extraction,
+    tally,
+    write_worktree,
+)
 from cairnmind.agents.ollama import OllamaUnavailable
 from cairnmind.agents.support import NAMES_SYSTEM, SUPPORT_SYSTEM
-from test_api_agent import Memory, call, reply
+from cairnmind.config import Settings
 
 FIXTURE = Path(__file__).resolve().parents[1] / "docs" / "evaluation" / "injection-fixture.json"
 
@@ -473,6 +488,7 @@ def test_the_throwaway_service_ignores_an_exported_database_name(tmp_path, monke
     """create_app used to reload its settings from the environment: an exported name made the agent path's
     service talk to (or create) that database instead of the throwaway one."""
     from dataclasses import replace
+
     from cairnmind.storage.arcade import ArcadeClient
     settings = Settings.load(tmp_path / "data", create=True)
     exported = "cairnmind_g8a_exported_" + os.urandom(4).hex()
@@ -483,10 +499,8 @@ def test_the_throwaway_service_ignores_an_exported_database_name(tmp_path, monke
                                           ollama=Models(False), provider=lambda tokens: Agent(tokens, False))
         created = other.database_exists()
     finally:
-        try:
+        with suppress(Exception):  # it does not exist: the good case
             other.server_command("drop database " + exported)
-        except Exception:  # noqa: BLE001 - it does not exist: the good case
-            pass
     assert report["status"] == "measured", report
     assert not created and report["agent"]["reached_ack"]["count"] == 1
 

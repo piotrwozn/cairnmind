@@ -11,7 +11,7 @@ moves through its own states and is confirmed with its plan.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from cairnmind.storage.sql import ACT_NOTE_ORIGINS, parse_utc
 from cairnmind.storage.storage_query import asc, db_find, eq, is_in
@@ -70,7 +70,7 @@ def stale_proposed(store, project_id, *, days=DEFAULT_DAYS, matches=None, now=No
     valid_days(days)
     if type(limit) is not int or not 1 <= limit <= MAX_ITEMS:
         raise ValueError(f"Limit must be between 1 and {MAX_ITEMS}")
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     cutoff = now - timedelta(days=days)
     rows = db_find(store, "records", {"project_id": project_id, "status": "proposed"}, order_by=(asc("id"),))
     waiting = []

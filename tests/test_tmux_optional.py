@@ -14,8 +14,8 @@ import pytest
 
 from cairnmind import cli
 from cairnmind.cli_cmds import first_start
-from cairnmind.pal import platform_hints
 from cairnmind.config import Settings
+from cairnmind.pal import platform_hints
 from cairnmind.terminal.terminal_i18n import tr
 
 STATES = ["missing", "3.3a", "3.5a"]
@@ -141,9 +141,10 @@ def test_every_new_sentence_has_polish_in_the_catalog():
 def _quiet_doctor(monkeypatch):
     """Doctor with no client, engine, model server or store to ask: only tmux differs between the runs."""
     import httpx
+
     from cairnmind.agents import api_runtime
-    from cairnmind.storage import database_credentials, engine, store_writer
     from cairnmind.memory import integrations
+    from cairnmind.storage import database_credentials, engine, store_writer
     monkeypatch.setattr(cli, "service_alive", lambda settings: False)
     monkeypatch.setattr(integrations, "_probe_cli", lambda name: {"installed": False})
     monkeypatch.setattr(database_credentials, "doctor_block", lambda settings: {
@@ -250,6 +251,7 @@ def test_init_works_without_tmux(monkeypatch, tmp_path, data, tmux, state):
 @pytest.mark.parametrize("state", STATES)
 def test_serve_starts_without_tmux(monkeypatch, data, tmux, state):
     import uvicorn
+
     from cairnmind import service
     tmux(state)
     monkeypatch.setattr(service, "create_app", lambda *a, **k: types.SimpleNamespace(state=types.SimpleNamespace()))
@@ -261,9 +263,9 @@ def test_serve_starts_without_tmux(monkeypatch, data, tmux, state):
 
 @pytest.mark.parametrize("state", STATES)
 def test_run_starts_the_client_in_this_terminal_without_tmux(monkeypatch, tmp_path, data, tmux, state):
-    from cairnmind.scip import ingest
-    from cairnmind.memory import integrations
     from cairnmind import store
+    from cairnmind.memory import integrations
+    from cairnmind.scip import ingest
     tmux(state)
     monkeypatch.setattr(cli, "_ensure_service_or_refuse", lambda settings: None)
     monkeypatch.setattr(cli, "store_for", lambda settings, **kw: FakeStore(tmp_path))

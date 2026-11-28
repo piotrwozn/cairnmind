@@ -12,10 +12,10 @@ import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.cli_cmds import first_start
 from cairnmind.agents import knowledge_mode
-from cairnmind.config import Settings
 from cairnmind.agents.knowledge_mode import missing_models as REAL_PROBE
+from cairnmind.cli_cmds import first_start
+from cairnmind.config import Settings
 from cairnmind.terminal.terminal_i18n import tr
 
 NEW_SENTENCES = [first_start.KNOWLEDGE_DISABLED, first_start.MODELS_NOT_CONFIGURED, first_start.GET_MODELS,
@@ -94,6 +94,7 @@ def test_status_tells_a_running_disabled_service_to_restart_once_config_says_ena
 
 def test_the_service_refuses_to_start_on_a_knowledge_agent_value_it_does_not_know(tmp_path):
     from dataclasses import replace
+
     from cairnmind.service import create_app
     settings = replace(Settings.load(tmp_path, create=True), knowledge_agent="on",
                        arcade_url="http://127.0.0.1:1", ollama_url="http://127.0.0.1:1")
@@ -142,9 +143,11 @@ class Search:
 
 async def test_text_matches_use_the_lexical_search_of_ask_and_ask_no_model(tmp_path):
     from types import SimpleNamespace
+
+    from test_deterministic_mode import Untouched  # records every attribute asked of it
+
     from cairnmind.agents.agent import INITIAL_HITS
     from cairnmind.memory.memory_egress import ASK, Gate
-    from test_deterministic_mode import Untouched  # records every attribute asked of it
     remote = {"provider": "openai_compatible", "base_url": "https://models.example/v1", "allow_remote": True}
     model, seen = Untouched(), []
 

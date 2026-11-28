@@ -23,17 +23,17 @@ The English sentences are the source; ``MESSAGES`` holds their Polish.
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 import re
 import time
+from pathlib import Path
 from typing import NoReturn
 from uuid import uuid4
 
+from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.storage.arcade import RESTORE_COMMIT_TIMEOUT
 from cairnmind.storage.graph_transactions import BoundedTransactions
 from cairnmind.storage.sql import utc_now
 from cairnmind.storage.store_readonly import StoreNotReady
-from cairnmind.pal.terminal_safe import safe_text
 
 MARK = "restore_unfinished"  # the name of the row of devbrain_meta
 ROWS_PER_TRANSACTION = 5000
@@ -187,7 +187,7 @@ def unfinished(reader) -> dict | None:
         return {}
     row = rows[0]
     mark = {key: row.get(key) for key in (*_TEXT_FIELDS, "before_sha256", "undoing")}
-    if (not all(isinstance(mark[key], str) and 1 <= len(mark[key]) <= 4096 and "\0" not in mark[key]
+    if (not all(isinstance(val := mark[key], str) and 1 <= len(val) <= 4096 and "\0" not in val
                 for key in _TEXT_FIELDS)
             or not isinstance(mark["before_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", mark["before_sha256"])
             or not isinstance(mark["undoing"], bool)):
@@ -370,7 +370,7 @@ def _staged(store, source, path: Path, claims) -> None:
         store._restore_from(source, claims)
     except Exception as exc:  # noqa: BLE001 - every failure is undone or leaves the mark; none passes as it was
         error = _described(exc, store.settings, offset)
-        if unknown:
+        if unknown or mark is None:
             raise RestoreFailed(UNKNOWN_STATE.format(error=error)) from exc
         if found is None and not store.restore_changed:
             try:

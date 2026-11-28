@@ -1,19 +1,19 @@
 """Operational diagnostics use stored evidence and never silently retry history."""
-from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi.testclient import TestClient
 
-from cairnmind.scip.ingest import import_history
 from cairnmind.memory.integrations import _transcript_watermark, drain_hook_spool
-from cairnmind.service import create_app, finish_job_if_present
 from cairnmind.memory.sessions import SessionManager
-from cairnmind.store import JobNotFoundError, Store, job_diagnostics
+from cairnmind.scip.ingest import import_history
+from cairnmind.service import create_app, finish_job_if_present
 from cairnmind.storage.sql import json_text
+from cairnmind.store import JobNotFoundError, Store, job_diagnostics
 
 
 @pytest.fixture

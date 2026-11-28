@@ -87,5 +87,7 @@ def resolve_text(pair, choice_label, action, reason, t) -> str:
 
 async def agreed(app, title, text, approve) -> bool:
     """Show the consent dialog of a person's act; True only when the person chose `approve` in it (#318)."""
-    from cairnmind.terminal.terminal_panels import ConfirmModal  # imported here: terminal_panels imports the catalog, which reads MESSAGES
+    from cairnmind.terminal.terminal_panels import (
+        ConfirmModal,  # imported here: terminal_panels imports the catalog, which reads MESSAGES
+    )
     return await app.push_screen_wait(ConfirmModal(title, text, approve=approve, consent=True)) is True

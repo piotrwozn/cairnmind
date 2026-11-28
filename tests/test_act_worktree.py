@@ -5,25 +5,24 @@ import json
 import subprocess
 from uuid import uuid4
 
+import pytest
+from conftest import as_person
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
+from test_published_memory import reviewed
+from test_published_memory_secrets import SHAPES
 from typer.testing import CliRunner
 
 from cairnmind import cli
 from cairnmind.memory import conflicts
-from cairnmind.memory.memory_published_release import release
-from cairnmind.service import create_app
 from cairnmind.memory.findings import save_finding
+from cairnmind.memory.memory_acts import act_context, confirm
+from cairnmind.memory.memory_published_release import release
+from cairnmind.memory.plans import PlanManager
+from cairnmind.service import create_app
+from cairnmind.store import Store
 from cairnmind.terminal.inspector import Inspector
 from cairnmind.terminal.inspector_api import attach_inspector_routes
-from cairnmind.memory.memory_acts import act_context, confirm
-from cairnmind.memory.plans import PlanManager
-from cairnmind.store import Store
-
-from conftest import as_person
-from test_published_memory import reviewed
-from test_published_memory_secrets import SHAPES
 
 
 def git(root, *args):

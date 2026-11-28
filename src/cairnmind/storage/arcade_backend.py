@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
-from cairnmind.storage.arcade import ArcadeError, REQUEST_TIMEOUT
+from cairnmind.storage.arcade import REQUEST_TIMEOUT, ArcadeError
 from cairnmind.storage.sql import IDENTIFIER, clean_row, json_text, one_row, quote_name
 from cairnmind.storage.storage_backend import ALL_COLLECTIONS
 
@@ -481,7 +482,8 @@ class ArcadeBackend:
             tx.script(statements, params, project_id)
         for offset in range(0, len(created_edges), GRAPH_ROWS_PER_REQUEST):
             part = created_edges[offset:offset + GRAPH_ROWS_PER_REQUEST]
-            statements, params = [], {"ids": [edge["id"] for edge in part]}
+            statements: list[str] = []
+            params: dict[str, Any] = {"ids": [edge["id"] for edge in part]}
             for index, edge in enumerate(part):
                 statements.append(
                     f"CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:f{index}) "
@@ -721,8 +723,10 @@ class ArcadeBackend:
     def init_schema(self, store: Any = None) -> None:
         """Create or upgrade ArcadeDB types, properties, and indexes under writer lock."""
         from uuid import uuid4
+
         from cairnmind.config import BACKUP_SUFFIXES
         from cairnmind.storage.sql import insert_document, update_document
+        from cairnmind.storage.store_backup import streamed_export
         from cairnmind.store import (
             DOCUMENT_TYPES,
             EXPORT_TYPES,
@@ -735,7 +739,6 @@ class ArcadeBackend:
             V04_EXPORT_TYPES,
             V05_DOCUMENT_TYPES,
         )
-        from cairnmind.storage.store_backup import streamed_export
 
         owner = store if store is not None else self._store
         client = owner.client
@@ -968,7 +971,7 @@ class ArcadeBackend:
         import random
         where = f" WHERE {quote_name(project_key)}=:project" if project_id else ""
         params = {"project": project_id} if project_id else {}
-        generator, seen, sample = random.Random(seed), set(), []
+        generator, seen, sample = random.Random(seed), set(), []  # noqa: S311 - deterministic non-crypto sampling
         part = rows / sample_points
         for point in range(sample_points):
             offset = int(point * part + generator.random() * max(0.0, part - sample_window))
@@ -1046,7 +1049,7 @@ class ArcadeBackend:
 
         def parts(low, high, prefix):
             edges = [low] + [prefix + d for d in digits[1:]] + [high]
-            return list(zip(edges, edges[1:]))
+            return list(zip(edges, edges[1:], strict=False))
 
         def in_range(low, high):
             w, p = [], {}
@@ -1080,7 +1083,7 @@ class ArcadeBackend:
                 return total
             except RuntimeError:
                 total = {}
-            for digit, (first_low, first_high) in zip(digits, parts(None, None, "")):
+            for digit, (first_low, first_high) in zip(digits, parts(None, None, ""), strict=True):
                 try:
                     add(run_part(first_low, first_high), total)
                     continue

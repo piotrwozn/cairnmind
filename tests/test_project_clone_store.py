@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.scip import ingest
 from cairnmind.memory import project_clone
+from cairnmind.scip import ingest
 from cairnmind.store import Store
 
 

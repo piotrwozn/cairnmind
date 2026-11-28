@@ -6,14 +6,29 @@ translated: text from a model, a provider or a source is never looked up here (s
 """
 from __future__ import annotations
 
-from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT
+from cairnmind.cli_cmds.first_start import ASK_NO_MATCH, ASK_OFF, GET_MODELS, MATCHES_HELD_BACK
+from cairnmind.cli_cmds.first_start import MESSAGES as FIRST_START
 from cairnmind.memory.confirmation import GROUP_CHANGED, NOT_PROVEN, REPLACED_CHANGED
-from cairnmind.cli_cmds.first_start import ASK_NO_MATCH, ASK_OFF, GET_MODELS, MATCHES_HELD_BACK, MESSAGES as FIRST_START
-from cairnmind.memory.memory_egress import HOSTED_ASK_UNKNOWN, HOSTED_PACKET_NOTE, HOSTED_READ_REFUSED, HOSTED_RECORDS_HELD
+from cairnmind.memory.memory_egress import (
+    HOSTED_ASK_UNKNOWN,
+    HOSTED_PACKET_NOTE,
+    HOSTED_READ_REFUSED,
+    HOSTED_RECORDS_HELD,
+)
+from cairnmind.memory.record_replace import CHANGED as REPLACE_CHANGED
+from cairnmind.memory.record_replace import HISTORICAL as REPLACE_HISTORICAL
+from cairnmind.memory.record_replace import NOT_REPLACEABLE, SAME_TEXT
 from cairnmind.memory.sensitivity import CLASSES
-from cairnmind.terminal.person_proof import FORGET_REFUSED, IMPORT_REPLACE, NO_WORKSPACE_KEY, PROOF_MISSING, PROOF_REFUSED, TMUX_MISSING
-from cairnmind.memory.record_replace import CHANGED as REPLACE_CHANGED, HISTORICAL as REPLACE_HISTORICAL, NOT_REPLACEABLE, SAME_TEXT
 from cairnmind.pal.service_token import FOREIGN_SERVICE
+from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT
+from cairnmind.terminal.person_proof import (
+    FORGET_REFUSED,
+    IMPORT_REPLACE,
+    NO_WORKSPACE_KEY,
+    PROOF_MISSING,
+    PROOF_REFUSED,
+    TMUX_MISSING,
+)
 
 # Answers and gaps of the memory agent's /ask (agent.py, service.py).
 ASK_MESSAGES = {
@@ -520,8 +535,9 @@ def broker_error_text(exc, translate) -> str:
     """One line for an error of the local broker, with its fixed detail in the panel's language."""
     detail, status = getattr(exc, "detail", None), getattr(exc, "status_code", None)
     sentence = exc.args[0] if getattr(exc, "args", None) else None
-    if getattr(sentence, "template", None):  # a service_version.Sentence (#319): its Polish is of the template
-        return translate(sentence.template).format(**sentence.values)
+    template = getattr(sentence, "template", None)
+    if sentence is not None and template:  # a service_version.Sentence (#319): its Polish is of the template
+        return translate(template).format(**sentence.values)
     if isinstance(getattr(exc, "foreign", None), dict) and type(status) is int:
         return f"Broker {status}: " + translate(FOREIGN_SERVICE).format(**exc.foreign)
     if isinstance(detail, str) and type(status) is int:

@@ -9,9 +9,9 @@ from typer.testing import CliRunner
 
 from cairnmind import cli
 from cairnmind.cli_cmds import doctor_attention, doctor_preflight
-from cairnmind.memory import integrations
-from cairnmind.mcp import mcp_presets
 from cairnmind.config import Settings
+from cairnmind.mcp import mcp_presets
+from cairnmind.memory import integrations
 
 runner = CliRunner()
 

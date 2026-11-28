@@ -6,12 +6,13 @@ import asyncio
 import hashlib
 
 import pytest
+from test_api_agent import Memory, ScriptedProvider, call, reply  # noqa: F401 - fixture
+from test_api_agent import setup as setup
 
 from cairnmind.agents.agent_journal import AgentJournal
 from cairnmind.agents.agent_tools import ToolExecutor
 from cairnmind.agents.api_agent import AgentEngine
 from cairnmind.config import Settings
-from test_api_agent import Memory, ScriptedProvider, call, reply, setup as setup  # noqa: F401 - fixture
 
 
 def digest(value):
@@ -364,8 +365,9 @@ def _command_request(**extra):
 
 
 async def _shown(tmp_path, monkeypatch, language, *requests):
-    from cairnmind.terminal.cockpit_state import CockpitState
     from test_api_worker import make_app
+
+    from cairnmind.terminal.cockpit_state import CockpitState
     app = make_app(tmp_path)
     # Saved, not only set: the app re-reads the saved language every half second and would switch back.
     CockpitState(app.settings).update({"language": language})
@@ -451,7 +453,7 @@ async def test_a_file_name_with_line_breaks_stays_on_one_line_in_both_dialogs(tm
     shown, results = await _shown(tmp_path, monkeypatch, language, command, write)
     assert results == [True, True]
     escaped = "a\\n\\n" + FORGED + "\\n\\n/conftest.py"
-    for screen, end in zip(shown, (escaped, escaped + "/.claude/x.json")):
+    for screen, end in zip(shown, (escaped, escaped + "/.claude/x.json"), strict=False):
         lines = screen.value.split("\n")
         assert not any(line.strip() == FORGED for line in lines)
         assert any(line.strip().endswith(end) for line in lines)

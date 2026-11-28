@@ -12,7 +12,7 @@ import os
 import re
 import subprocess
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -20,23 +20,29 @@ from uuid import UUID
 
 import pathspec
 
+from cairnmind.agents.agent_memory import is_mcp_source
+from cairnmind.memory import project_folders
+from cairnmind.memory.impact_verdicts import is_verdict_source
+from cairnmind.memory.memory_paths import (
+    bound_metadata,
+    imported_source_ids,
+    is_memory_path,
+    is_reserved_below,
+    memory_bindings,
+    nested_reserved,
+)
+from cairnmind.memory.quote_healing import is_healing_audit_source
+from cairnmind.memory.secret_mask import ingest_masker, masked_metadata
 from cairnmind.pal.file_locks import lock_exclusive, unlock
-
+from cairnmind.pal.path_spelling import has_alias, lies_in, path_identity, same_or_below
+from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.scip.code_graph import code_graph_pending
 from cairnmind.scip.parsing import analyze_code, parser_identity
+from cairnmind.storage import graph_transactions
 from cairnmind.storage.arcade import ArcadeError
 from cairnmind.storage.embed_jobs import queue_embed_jobs
-from cairnmind.agents.agent_memory import is_mcp_source
-from cairnmind.memory.impact_verdicts import is_verdict_source
-from cairnmind.memory.quote_healing import is_healing_audit_source
-from cairnmind.storage import graph_transactions
-from cairnmind.scip.code_graph import code_graph_pending
 from cairnmind.storage.graph_transactions import GraphTransactions, await_vertices
 from cairnmind.storage.journal import MAX_TRANSACTION_EVENTS
-from cairnmind.memory.memory_paths import (bound_metadata, imported_source_ids, is_memory_path, is_reserved_below,
-                                    memory_bindings, nested_reserved)
-from cairnmind.pal.path_spelling import has_alias, lies_in, path_identity, same_or_below
-from cairnmind.memory.secret_mask import ingest_masker, masked_metadata
-from cairnmind.memory import project_folders
 from cairnmind.storage.sql import json_text as _json_text
 from cairnmind.storage.storage_query import (
     any_of,
@@ -57,7 +63,6 @@ from cairnmind.storage.storage_query import (
     ne,
     not_in,
 )
-from cairnmind.pal.terminal_safe import safe_text
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 EXCLUDED_DIRS = {
@@ -300,16 +305,12 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
             continue
         ignore = folder / ".gitignore"
         if ignore.is_file() and not ignore.is_symlink():
-            try:
+            with suppress(OSError):
                 git_rules[folder] = pathspec.GitIgnoreSpec.from_lines(ignore.read_text(encoding="utf-8", errors="replace").splitlines())
-            except OSError:
-                pass
         cm_ignore = folder / CAIRNMINDIGNORE
         if cm_ignore.is_file() and not cm_ignore.is_symlink():
-            try:
+            with suppress(OSError):
                 cm_rules[folder] = pathspec.GitIgnoreSpec.from_lines(cm_ignore.read_text(encoding="utf-8", errors="replace").splitlines())
-            except OSError:
-                pass
 
         dirs[:] = sorted(
             name for name in sorted(dirs)  # sorted before the links are noted: the same order every round
@@ -386,50 +387,49 @@ def _chunks(text: str, uri: str = ""):
 
 
 def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: dict | None = None) -> int:
-    with _ingestion_lock(store, "chunks", source_id):
-        with store.transaction() as tx:
-            sources = db_find(
-                tx,
-                "sources",
-                {"id": source_id},
-                columns=("project_id", "is_current", "uri", "kind", "metadata"),
-            )
-            if not sources or sources[0]["project_id"] != project_id:
-                raise ValueError("Chunk source does not belong to the requested project")
-            if is_verdict_source(sources[0]) or is_mcp_source(sources[0]) or is_healing_audit_source(sources[0]):
-                return 0  # a person's verdict or healing audit note is never searchable text
-            if sources[0].get("is_current") is False:
-                return 0  # replaced meanwhile: its chunks were deleted with it and are not written again (#186)
-            existing = db_find(tx, "chunks", {"source_id": source_id}, columns=("id", "line_start", "line_end"))
-            uri = sources[0]["uri"]
-            if existing and PurePosixPath(uri.replace("\\", "/")).name in MANAGED_FILES and (
-                    {(row["line_start"], row["line_end"]) for row in existing}
-                    != {(first, last) for _, first, last in _chunks(text, uri)}):
-                # A block indexed before #313 leaves the index here, the next time the project is indexed.
-                store.drop_chunks(tx, [source_id])
-                store._delete_old_vectors(tx, [source_id])
-                existing = []
-            ids = []
-            if not existing:
-                for number, (content, first, last) in enumerate(_chunks(text, uri)):
-                    chunk_id = _identifier(project_id, source_id, number, first, last, content)
-                    db_insert_document(
-                        tx,
-                        "chunks",
-                        {
-                            "id": chunk_id,
-                            "project_id": project_id,
-                            "source_id": source_id,
-                            "text": content,
-                            "line_start": first,
-                            "line_end": last,
-                            "metadata": metadata or {},
-                            "is_current": sources[0]["is_current"],
-                        },
-                    )
-                    ids.append(chunk_id)
-            else:
-                ids = [row["id"] for row in existing]
+    with _ingestion_lock(store, "chunks", source_id), store.transaction() as tx:
+        sources = db_find(
+            tx,
+            "sources",
+            {"id": source_id},
+            columns=("project_id", "is_current", "uri", "kind", "metadata"),
+        )
+        if not sources or sources[0]["project_id"] != project_id:
+            raise ValueError("Chunk source does not belong to the requested project")
+        if is_verdict_source(sources[0]) or is_mcp_source(sources[0]) or is_healing_audit_source(sources[0]):
+            return 0  # a person's verdict or healing audit note is never searchable text
+        if sources[0].get("is_current") is False:
+            return 0  # replaced meanwhile: its chunks were deleted with it and are not written again (#186)
+        existing = db_find(tx, "chunks", {"source_id": source_id}, columns=("id", "line_start", "line_end"))
+        uri = sources[0]["uri"]
+        if existing and PurePosixPath(uri.replace("\\", "/")).name in MANAGED_FILES and (
+                {(row["line_start"], row["line_end"]) for row in existing}
+                != {(first, last) for _, first, last in _chunks(text, uri)}):
+            # A block indexed before #313 leaves the index here, the next time the project is indexed.
+            store.drop_chunks(tx, [source_id])
+            store._delete_old_vectors(tx, [source_id])
+            existing = []
+        ids = []
+        if not existing:
+            for number, (content, first, last) in enumerate(_chunks(text, uri)):
+                chunk_id = _identifier(project_id, source_id, number, first, last, content)
+                db_insert_document(
+                    tx,
+                    "chunks",
+                    {
+                        "id": chunk_id,
+                        "project_id": project_id,
+                        "source_id": source_id,
+                        "text": content,
+                        "line_start": first,
+                        "line_end": last,
+                        "metadata": metadata or {},
+                        "is_current": sources[0]["is_current"],
+                    },
+                )
+                ids.append(chunk_id)
+        else:
+            ids = [row["id"] for row in existing]
     # Replaying this is intentional: a crash after chunk commit but before
     # enqueue must not leave permanently unindexed evidence.
     queue_embed_jobs(store, project_id, ids)
@@ -935,7 +935,8 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
     def one_by_one(item):
         source = store.snapshot(project_id, item["uri"], item["content"], kind=item["kind"], metadata=item["metadata"])
         written = _write_chunks(store, project_id, source["id"], item["content"], item["chunk_metadata"])
-        finish(*item["place"], source, item["analysis"], written, item["extract"])
+        path, root, name, identity, settled = item["place"]
+        finish(path, root, name, identity, settled, source, item["analysis"], written, item["extract"])
 
     vectors: list[int] = []  # how many vector tables there are, read once, when a replacement first needs it
 
@@ -957,11 +958,12 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                 continue
             while group:
                 written = _write_files(store, project_id, group)
-                for item, source in zip(group, written):
+                for item, source in zip(group, written, strict=False):
                     if source is None:
                         one_by_one(item)  # another writer was first, or the file is too large to share: as before
                     else:
-                        finish(*item["place"], source, item["analysis"], len(item["chunks"]), False)
+                        path, root, name, identity, settled = item["place"]
+                        finish(path, root, name, identity, settled, source, item["analysis"], len(item["chunks"]), False)
                 group = group[len(written):]  # what a group too large to commit left over
     for folder in folders:
         root = Path(folder["root"])
@@ -1449,10 +1451,15 @@ def _graph_parts(project_id: str, indexed: dict[Path, dict], reuse: dict) -> tup
     # Resolving an import follows a symlink, which the walk leaves out: where every import leads is asked again, and
     # a file whose imports lead elsewhere is computed again though no file changed.
     for path in set(changed) | {path for path, old in reuse.items() if old["deps"] & moved or old["leads"] != leads_to(path)}:
-        *rows, targets = second(path)
-        parts[path] = {**parts[path], "deps": frozenset(targets), "leads": leads_to(path), "second": part(rows)}
-        nodes.update(rows[0])
-        edges.update(rows[1])
+        second_nodes, second_edges, targets = second(path)
+        parts[path] = {
+            **parts[path],
+            "deps": frozenset(targets),
+            "leads": leads_to(path),
+            "second": part((second_nodes, second_edges)),
+        }
+        nodes.update(second_nodes)
+        edges.update(second_edges)
     return parts, nodes, edges
 
 
@@ -1512,10 +1519,10 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         {"id": project_id},
         columns=("graph_fingerprint", "graph_nodes", "graph_edges"),
     )
-    unchanged = bool(marker) and marker.get("graph_fingerprint") == fingerprint
-    ours = unchanged and bool(remembered) and remembered["fingerprint"] == fingerprint  # the stored graph is this process's
-    if unchanged and (state is None or (ours and remembered.get("links", ()) == links)):
-        if state is not None:
+    unchanged = marker is not None and marker.get("graph_fingerprint") == fingerprint
+    ours = unchanged and remembered is not None and remembered["fingerprint"] == fingerprint  # the stored graph is this process's
+    if unchanged and marker is not None and (state is None or (ours and remembered is not None and remembered.get("links", ()) == links)):
+        if state is not None and remembered is not None:
             state.update(remembered)
         return {"nodes": int(marker.get("graph_nodes") or 0),
                 "edges": int(marker.get("graph_edges") or 0), "graph_unchanged": True}
@@ -1531,10 +1538,11 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
                "counts": (len(digests), len(edge_ids)), "code_nodes": _code_nodes(digests)}
     # Not for a graph that is ours and only a link moved: the write below checks it against the remembered one
     # by counts, and writes the rows that differ, as after a changed file.
-    if unchanged and not ours and _stored_graph_is(store, project_id, nodes, edges):
+    if unchanged and marker is not None and not ours and _stored_graph_is(store, project_id, nodes, edges):
         # The fingerprint said that the stored graph follows from these sources, and this
         # process has now seen that it does, row for row. Otherwise it is replaced in full below.
-        state.update(written)
+        if state is not None:
+            state.update(written)
         return {"nodes": int(marker.get("graph_nodes") or 0),
                 "edges": int(marker.get("graph_edges") or 0), "graph_unchanged": True}
 
@@ -1552,7 +1560,7 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             digests, edge_ids = _union(parts)
             written.update(parts=parts, counts=(len(digests), len(edge_ids)), code_nodes=_code_nodes(digests))
         db_update_where(tx, "projects", set_fields={"graph_fingerprint": None}, where={"id": project_id})
-        if as_remembered:
+        if as_remembered and remembered is not None:
             before, kept = _union(remembered["parts"])
             removed = sorted(kept - edge_ids)
             changed_nodes = [item for identifier, item in nodes.items() if before.get(identifier) != digests[identifier]]
@@ -1733,7 +1741,9 @@ def _claude_technical_metadata(event: dict) -> bool:
     fields and nested attachment/request/accounting payloads remain untouched.
     """
     kind = event.get("type")
-    fields = _CLAUDE_TECHNICAL_FIELDS.get(kind) if isinstance(kind, str) else None
+    if not isinstance(kind, str):
+        return False
+    fields = _CLAUDE_TECHNICAL_FIELDS.get(kind)
     if fields is None or not isinstance(event.get("sessionId"), str):
         return False
     optional = _CLAUDE_OPTIONAL_FIELDS.get(kind, {})
@@ -1821,10 +1831,8 @@ def _fingerprint(path: Path, offset: int = 0) -> str:
 def _source_project(store, requested: str | None, cwd: str | None) -> tuple[str | None, str | None]:
     inferred = None
     if cwd:
-        try:
+        with suppress(ValueError):
             inferred = store.resolve_project(cwd, recorded=True)["id"]
-        except ValueError:
-            pass
     if requested and cwd and requested != inferred:
         return None, (
             "Declared working directory belongs to another project" if inferred

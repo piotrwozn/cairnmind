@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import time
@@ -16,12 +17,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from cairnmind.agents.recorder_agent import RECORDER_PATH, agent_file
 from cairnmind.memory.confirmation import confirmed_by
 from cairnmind.memory.integrations import DATA_NOT_INSTRUCTIONS
 from cairnmind.memory.memory_egress import HOSTED_PACKET_NOTE, Gate, ordered
 from cairnmind.memory.packet_origin import omitted_by_origin, preview_key, record_origins
-from cairnmind.agents.recorder_agent import RECORDER_PATH, agent_file
-from cairnmind.store import EXTRACTION_MARK, ORIGIN_METADATA
 from cairnmind.storage.sql import clean_row, json_text, utc_now
 from cairnmind.storage.storage_query import (
     asc,
@@ -37,6 +37,9 @@ from cairnmind.storage.storage_query import (
     lt,
     ne,
 )
+from cairnmind.store import EXTRACTION_MARK, ORIGIN_METADATA
+
+log = logging.getLogger(__name__)
 
 MAX_PACKET_BYTES = 24576
 MAX_RECORDS = 20
@@ -147,8 +150,17 @@ def _managed_empty_file(relative: str, raw: bytes, settings, project: dict) -> b
 
 def _managed_command_file(relative: str, text: str, settings, _command) -> bool:
     """Whether a generated MCP or hook file is exactly what `_command` would produce."""
-    from cairnmind.memory.integrations import (EARLIER_SERVER, EARLIER_SESSION_ENV_VARS, EARLIER_TOML_BEGIN, EARLIER_TOML_END, SERVER,
-                               SESSION_ENV_VARS, TOML_BEGIN, TOML_END, codex_tool_timeout)
+    from cairnmind.memory.integrations import (
+        EARLIER_SERVER,
+        EARLIER_SESSION_ENV_VARS,
+        EARLIER_TOML_BEGIN,
+        EARLIER_TOML_END,
+        SERVER,
+        SESSION_ENV_VARS,
+        TOML_BEGIN,
+        TOML_END,
+        codex_tool_timeout,
+    )
 
     command = _command(settings, "mcp")
     server = {"command": command[0], "args": command[1:]}
@@ -180,7 +192,7 @@ def _managed_command_file(relative: str, text: str, settings, _command) -> bool:
                    "timeout": 10 if event == "SessionStart" else 3}
         if client == "codex" and event == "SessionStart":
             handler["additionalContextLimit"] = 0
-        group = {"hooks": [handler]}
+        group: dict[str, Any] = {"hooks": [handler]}
         if event == "SessionStart":
             group["matcher"] = ("startup|resume|clear|compact|fork" if client == "codex"
                                 else "startup|resume|clear|compact")
@@ -293,6 +305,8 @@ class SessionManager:
         if not isinstance(session_id, str) or not session_id:
             raise ValueError("A logical session ID is required")
         session = db_find_one(self.store, "sessions", {"id": session_id}, required=True)
+        if session is None:
+            raise LookupError(f"Unknown session: {session_id}")
         removed = db_find_one(
             self.store, "projects", [eq("id", session.get("project_id")), is_not_null("removed_at")],
         )
@@ -374,7 +388,7 @@ class SessionManager:
             refusal = self._write_refusal(session, packet_id)
         except ValueError as exc:
             session, refusal = None, str(exc)
-        if refusal:
+        if refusal or session is None:
             scope = (session["project_id"], session["worktree"]) if session else None
             return {"scope": scope, "error": ValueError(
                 "the session was not acknowledged when this write began; retry it")}
@@ -389,8 +403,8 @@ class SessionManager:
 
     def _state_locked(self, session: dict, code: dict) -> dict:
         """The state of the rows, read in the caller's transaction, with ``code`` taken before it (_code)."""
-        from cairnmind.memory.plans import PlanManager
         from cairnmind.memory.memory_paths import bound_metadata, memory_bindings
+        from cairnmind.memory.plans import PlanManager
 
         project_id, root = session["project_id"], session["worktree"]
         if code.get("scope") != (project_id, root):
@@ -417,9 +431,7 @@ class SessionManager:
                 resolved[record_root] = str(Path(record_root).expanduser().resolve())
             if record_root and resolved[record_root] != root:
                 continue
-            if kind in {"decision", "constraint", "preference", "checkpoint"}:
-                relevant.append(record)
-            elif kind == "task" and ((plan and metadata.get("plan_ref") == plan["id"])
+            if kind in {"decision", "constraint", "preference", "checkpoint"} or kind == "task" and ((plan and metadata.get("plan_ref") == plan["id"])
                                      or not metadata.get("plan_ref")):
                 relevant.append(record)
         relevant.sort(key=lambda row: (row["kind"], row["id"]))
@@ -496,7 +508,7 @@ class SessionManager:
     @staticmethod
     def _target(path: str, client: str, watermark: dict | None = None) -> dict:
         from cairnmind.pal.private_files import decode_file_id, encode_file_id
-        result = {"path": str(Path(path).expanduser().resolve()), "client": client}
+        result: dict[str, Any] = {"path": str(Path(path).expanduser().resolve()), "client": client}
         if isinstance(watermark, dict):
             for key in ("size", "device", "inode", "mtime_ns", "head_sha256", "head_bytes",
                         "observed_size", "pending_tail_bytes", "pending_tail_sha256", "stable"):
@@ -511,7 +523,8 @@ class SessionManager:
                 result.update(_transcript_watermark(Path(result["path"])))
             except (OSError, ValueError) as exc:
                 result["error"] = f"Transcript cannot be captured: {type(exc).__name__}"
-        if type(result.get("size")) is not int or result.get("size", -1) < 0:
+        size = result.get("size")
+        if type(size) is not int or size < 0:
             result.setdefault("error", "Transcript EOF is unknown")
         return result
 
@@ -1002,7 +1015,7 @@ class SessionManager:
             plan_view.update({key: plan[key] for key in ORIGIN_METADATA if key in plan})
         if task_view:
             task_view.update({key: task["metadata"][key] for key in ORIGIN_METADATA if key in task.get("metadata", {})})
-        if task and isinstance(task.get("metadata", {}).get("scope"), list) and task["metadata"]["scope"]:
+        if task_view and task and isinstance(task.get("metadata", {}).get("scope"), list) and task["metadata"]["scope"]:
             # Only for a task that declares one, so every other packet stays byte for byte what it was.
             task_view["scope"] = [str(pattern)[:500] for pattern in task["metadata"]["scope"][:64]]
         gate = None
@@ -1186,6 +1199,8 @@ class SessionManager:
                 # native transcript. Hooks retain later horizons separately.
                 with self.store.transaction() as tx:
                     current = db_find_one(tx, "sessions", {"id": session["id"]}, required=True)
+                    if current is None:
+                        raise LookupError(f"Unknown session: {session['id']}")
                     if current["epoch"] != session["epoch"]:
                         return {"session_id": current["id"], "epoch": current["epoch"], "status": "partial",
                                 "packet": None, "unknowns": ["Session resumed during horizon capture; retry"]}
@@ -1240,6 +1255,8 @@ class SessionManager:
         with self.store.transaction() as tx:
             self._require_scope(tx, project["id"], root)
             current = db_find_one(tx, "sessions", {"id": session["id"]}, required=True)
+            if current is None:
+                raise LookupError(f"Unknown session: {session['id']}")
             if current["epoch"] != session["epoch"]:
                 return {"session_id": current["id"], "epoch": current["epoch"], "status": "partial", "packet": None,
                         "unknowns": ["Session resumed again during packet preparation; retry"]}
@@ -1288,6 +1305,8 @@ class SessionManager:
             with self.store.transaction() as tx:
                 self._require_scope(tx, session["project_id"], session["worktree"])
                 current = db_find_one(tx, "sessions", {"id": session_id}, required=True)
+                if current is None:
+                    raise LookupError(f"Unknown session: {session_id}")
                 targets = self._merge_targets([*current.get("transcript_targets", []), proved])
                 db_update_where(tx, "sessions", set_fields={"transcript_targets": targets, "updated_at": utc_now()},
                                 where={"id": session_id})
@@ -1324,12 +1343,14 @@ class SessionManager:
                 current = self._state(session)
                 if current["state_hash"] == packet["state_hash"] and not self._own_continuity(session):
                     kept = current
-            except (OSError, ValueError):
-                pass
+            except (OSError, ValueError) as exc:
+                log.debug("Resume context state check failed for %s: %s", session_id, exc)
             if kept is not None:
                 return (self._unchanged(session_id, kept, packet) if short else None) or self._result(session, packet)
             with self.store.transaction() as tx:
                 current_session = db_find_one(tx, "sessions", {"id": session_id}, required=True)
+                if current_session is None:
+                    raise LookupError(f"Unknown session: {session_id}")
                 if current_session["epoch"] == session["epoch"]:
                     if "resume_targets" not in current_session:
                         current_session["resume_targets"] = self._legacy_action_targets(current_session, packet)
@@ -1387,8 +1408,12 @@ class SessionManager:
         code = self._code(session)
         with self.store.transaction() as tx:
             session = db_find_one(tx, "sessions", {"id": session_id}, required=True)
+            if session is None:
+                raise LookupError(f"Unknown session: {session_id}")
             packet = self._packet(session)
             self._refuse_ack(session, packet, packet_id, packet_hash, readback)
+            if packet is None:
+                raise ValueError("resume_required: ACK does not match a ready current packet")
             continuity = self._own_continuity(session)
             if continuity:
                 raise ValueError("resume_required: " + continuity[0])
@@ -1438,6 +1463,8 @@ class SessionManager:
         if refusal:
             raise ValueError(refusal)
         packet = self._packet(session)
+        if packet is None:
+            raise ValueError("resume_required: fetch and acknowledge the current ready resume packet")
         continuity = self._own_continuity(session)
         if continuity:
             raise ValueError("resume_required: " + continuity[0])
@@ -1475,6 +1502,8 @@ class SessionManager:
             receipt = db_find_one(tx, "session_events", {"id": event_id})
             if receipt:
                 old_session = db_find_one(tx, "sessions", {"id": receipt["session_id"]}, required=True)
+                if old_session is None:
+                    raise LookupError(f"Unknown session: {receipt['session_id']}")
                 if ((old_session["project_id"], old_session["client"], old_session["worktree"])
                         != (project["id"], client, root) or (logical_id and logical_id != old_session["id"])):
                     raise ValueError("Hook event ID is already bound to another logical session")

@@ -5,8 +5,8 @@ import json
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from cairnmind import cli
@@ -458,6 +458,7 @@ def test_resolve_ui_dist_finds_override(tmp_path):
 
 def test_ui_server_additional_edge_branches(tmp_path, monkeypatch):
     import asyncio
+
     from fastapi import FastAPI, HTTPException
 
     # _classify_reason_code branches

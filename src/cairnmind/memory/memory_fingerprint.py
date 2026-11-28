@@ -21,14 +21,15 @@ The local Ollama (and an Ollama profile) reports a digest: that is the identity 
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import math
-from pathlib import Path
 import time
+from pathlib import Path
 from typing import Any
 
-from cairnmind.pal.file_locks import lock_exclusive
 from cairnmind.agents.ollama import OllamaUnavailable
+from cairnmind.pal.file_locks import lock_exclusive
 
 FINGERPRINT_TEXT = "Cairnmind embedding fingerprint: a fixed sentence that is the same on every computer."
 FILE = "models.fingerprints.json"
@@ -107,7 +108,7 @@ def identity(data_dir, base: str, *, checked: bool = True) -> str:
 def similarity(left: list, right: list) -> float:
     if len(left) != len(right):
         return 0.0
-    dot = sum(a * b for a, b in zip(left, right))
+    dot = sum(a * b for a, b in zip(left, right, strict=True))
     norm = math.sqrt(sum(a * a for a in left)) * math.sqrt(sum(b * b for b in right))
     return dot / norm if norm else 0.0
 
@@ -121,14 +122,8 @@ def client_of(models):
     return client if isinstance(client, OpenAICompatible) and client.role == "embedding" else None
 
 
-async def check(client, *, accept: bool = False) -> dict:
-    """Send the fixed request and compare its answer with the stored one; accept replaces a changed one.
-
-    Raises OllamaUnavailable when the server or the model cannot answer; then nothing is stored.
-    """
-    base = await client.listed_identity(client.settings.embedding_model)
-    vector = [round(float(value), 7) for value in (await client.embed([FINGERPRINT_TEXT]))[0]]
-    path = Path(client.fingerprint_dir)
+def _record_fingerprint(fingerprint_dir: Path | str, base: str, vector: list[float], *, accept: bool) -> dict:
+    path = Path(fingerprint_dir)
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     with (path / LOCK).open("a", encoding="utf-8") as lock:
@@ -155,11 +150,24 @@ async def check(client, *, accept: bool = False) -> dict:
         record["checked_at"] = now
         records[base] = record
         _write(path, records)
-    client.fingerprint_checked = True
     result = {"status": status, "generation": record["generation"],
               "identity": None if record.get("changed") else _named(base, record["generation"])}
     if score is not None:
         result["similarity"] = round(score, 6)
+    return result
+
+
+async def check(client, *, accept: bool = False) -> dict:
+    """Send the fixed request and compare its answer with the stored one; accept replaces a changed one.
+
+    Raises OllamaUnavailable when the server or the model cannot answer; then nothing is stored.
+    """
+    base = await client.listed_identity(client.settings.embedding_model)
+    vector = [round(float(value), 7) for value in (await client.embed([FINGERPRINT_TEXT]))[0]]
+    result = await asyncio.to_thread(
+        _record_fingerprint, client.fingerprint_dir, base, vector, accept=accept,
+    )
+    client.fingerprint_checked = True
     return result
 
 

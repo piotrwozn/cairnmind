@@ -18,18 +18,18 @@ import difflib
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import tempfile
 import tomllib
+from pathlib import Path
 
 from cairnmind.memory.brief import _line, _title
 from cairnmind.memory.plans import PlanManager, _digest
 from cairnmind.memory.scope import drift_warning, scope_drift
-from cairnmind.store import valid_argv
+from cairnmind.memory.verification import _PROFILE_PATHS, _root, criteria_status, load_profiles
 from cairnmind.storage.sql import PROFILE_NAME
 from cairnmind.storage.storage_query import db_find_one
-from cairnmind.memory.verification import _PROFILE_PATHS, _root, criteria_status, load_profiles
+from cairnmind.store import valid_argv
 
 _SUMMARY = {"machine_fresh": "proven by a machine run", "machine_stale": "its check must be run again",
             "machine_missing": "its check has not been run here", "machine_unknown": "its check cannot be evaluated",

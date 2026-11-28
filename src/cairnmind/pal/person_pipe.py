@@ -14,6 +14,7 @@ malicious process running under the same Windows user account that connects dire
 from __future__ import annotations
 
 import re
+import sys
 import threading
 
 from cairnmind.pal.private_files import IS_WINDOWS, current_user_sid
@@ -22,7 +23,7 @@ from cairnmind.pal.runtime_sockets import workspace_namespace
 _KEY = re.compile(r"[0-9a-f]{64}")
 PIPE_PREFIX = r"\\.\pipe\cairnmind-person-"
 
-if IS_WINDOWS:
+if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
 
@@ -134,7 +135,7 @@ def is_valid_pipe_name(settings, value) -> bool:
 
 def _current_appcontainer_sid() -> str | None:
     """Return this process's AppContainer package SID when running inside one, else None."""
-    if not IS_WINDOWS:
+    if sys.platform != "win32" or not IS_WINDOWS:
         return None
     token = wintypes.HANDLE()
     if not _advapi32.OpenProcessToken(_kernel32.GetCurrentProcess(), _TOKEN_QUERY, ctypes.byref(token)):
@@ -154,6 +155,8 @@ def _current_appcontainer_sid() -> str | None:
         if not _advapi32.ConvertSidToStringSidW(info.TokenAppContainer, ctypes.byref(str_ptr)):
             return None
         try:
+            if not str_ptr.value:
+                return None
             return ctypes.wstring_at(str_ptr.value)
         finally:
             _kernel32.LocalFree(str_ptr)
@@ -162,7 +165,7 @@ def _current_appcontainer_sid() -> str | None:
 
 
 def _process_owner_sid(pid: int) -> str | None:
-    if not IS_WINDOWS or pid <= 0:
+    if sys.platform != "win32" or not IS_WINDOWS or pid <= 0:
         return None
     proc = _kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not proc:
@@ -184,6 +187,8 @@ def _process_owner_sid(pid: int) -> str | None:
             if not _advapi32.ConvertSidToStringSidW(user.User.Sid, ctypes.byref(str_ptr)):
                 return None
             try:
+                if not str_ptr.value:
+                    return None
                 return ctypes.wstring_at(str_ptr.value)
             finally:
                 _kernel32.LocalFree(str_ptr)
@@ -197,7 +202,7 @@ class PersonPipeServer:
     """Owner-only Windows Named Pipe server holding one in-memory 64-hex person key."""
 
     def __init__(self, data_dir, key: str):
-        if not IS_WINDOWS:
+        if sys.platform != "win32" or not IS_WINDOWS:
             raise OSError("PersonPipeServer is only supported on Windows")
         if not _KEY.fullmatch(key):
             raise ValueError("The key must be 64 lowercase hexadecimal characters.")
@@ -209,6 +214,8 @@ class PersonPipeServer:
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
+        if sys.platform != "win32" or not IS_WINDOWS:
+            raise OSError("PersonPipeServer is only supported on Windows")
         sid = current_user_sid()
         ac_sid = _current_appcontainer_sid()
         sddl = f"D:P(A;;GA;;;{sid})(A;;GA;;;{ac_sid})" if ac_sid else f"D:P(A;;GA;;;{sid})"
@@ -241,6 +248,8 @@ class PersonPipeServer:
         self._thread.start()
 
     def _serve(self) -> None:
+        if sys.platform != "win32":
+            return
         buf = ctypes.create_string_buffer(64)
         read = wintypes.DWORD(0)
         written = wintypes.DWORD(0)
@@ -253,16 +262,20 @@ class PersonPipeServer:
             try:
                 if self._stop.is_set():
                     break
-                if _kernel32.ReadFile(self._handle, buf, len(buf), ctypes.byref(read), None):
-                    if buf.raw[:read.value].strip() == b"GET":
-                        _kernel32.WriteFile(
-                            self._handle, self._key_bytes, len(self._key_bytes), ctypes.byref(written), None
-                        )
-                        _kernel32.FlushFileBuffers(self._handle)
+                if (
+                    _kernel32.ReadFile(self._handle, buf, len(buf), ctypes.byref(read), None)
+                    and buf.raw[:read.value].strip() == b"GET"
+                ):
+                    _kernel32.WriteFile(
+                        self._handle, self._key_bytes, len(self._key_bytes), ctypes.byref(written), None
+                    )
+                    _kernel32.FlushFileBuffers(self._handle)
             finally:
                 _kernel32.DisconnectNamedPipe(self._handle)
 
     def close(self) -> None:
+        if sys.platform != "win32":
+            return
         self._stop.set()
         if self._thread is not None and self._thread.is_alive():
             for _ in range(40):
@@ -300,7 +313,7 @@ def read_pipe_key(settings, pipe_name: str, *, timeout_ms: int = 2000) -> tuple[
     Returns ("key", key) only when the pipe exists, its server process belongs to the current user,
     and it answers with a valid 64-hex key. Fails closed with ("unavailable", None) otherwise.
     """
-    if not IS_WINDOWS or not is_valid_pipe_name(settings, pipe_name):
+    if sys.platform != "win32" or not IS_WINDOWS or not is_valid_pipe_name(settings, pipe_name):
         return "unavailable", None
     handle = _INVALID_HANDLE_VALUE
     for _ in range(3):

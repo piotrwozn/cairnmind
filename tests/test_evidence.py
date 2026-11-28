@@ -5,19 +5,19 @@ import json
 import subprocess
 from uuid import uuid4
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
 from cairnmind.memory.evidence import evidence_states, unanchored
-from cairnmind.scip.ingest import current_source, index_project
-from cairnmind.terminal.inspector import Inspector
-from cairnmind.terminal.inspector_api import attach_inspector_routes
 from cairnmind.memory.plans import PlanManager
 from cairnmind.memory.sessions import MAX_PACKET_BYTES, SessionManager
+from cairnmind.scip.ingest import current_source, index_project
 from cairnmind.store import Store
+from cairnmind.terminal.inspector import Inspector
+from cairnmind.terminal.inspector_api import attach_inspector_routes
 
 PASSAGE = "LOGIN_ERRORS = {'expired': 401, 'locked': 423}"
 ORIGINAL = f"# login errors\n{PASSAGE}\n"

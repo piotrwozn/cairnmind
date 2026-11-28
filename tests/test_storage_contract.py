@@ -21,9 +21,9 @@ from uuid import uuid4
 
 import pytest
 
+from cairnmind.agents.retrieval import Retriever
 from cairnmind.config import Settings
 from cairnmind.storage.journal import Journal
-from cairnmind.agents.retrieval import Retriever
 from cairnmind.storage.storage_backend import ALL_COLLECTIONS, StorageBackend
 from cairnmind.store import Store
 

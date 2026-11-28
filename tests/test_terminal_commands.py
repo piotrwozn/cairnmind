@@ -3,8 +3,12 @@ from types import SimpleNamespace
 import pytest
 
 from cairnmind.config import Settings
-from cairnmind.terminal.terminal_commands import COMMANDS, CommandPaletteApp, dispatch_command
-from cairnmind.terminal.terminal_commands import JoinWorkspaceApp
+from cairnmind.terminal.terminal_commands import (
+    COMMANDS,
+    CommandPaletteApp,
+    JoinWorkspaceApp,
+    dispatch_command,
+)
 
 
 @pytest.mark.asyncio

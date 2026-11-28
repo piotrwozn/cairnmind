@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
 
-from cairnmind.agents.client_runtime import LIVE, NativeRuntime, _ID, _atomic
+from cairnmind.agents.client_runtime import _ID, LIVE, NativeRuntime, _atomic
 from cairnmind.config import ENV_PREFIXES, Settings, tls_verify
 from cairnmind.mcp.mcp_servers import MAX_SERVERS
 from cairnmind.pal.path_spelling import lies_in
@@ -39,10 +39,10 @@ def _read_private(path):
 def _worker_environment(profiles=()):
     # Keys are resolved after exec through the private worker endpoint, and are
     # not serialized in the tmux launch specification or inherited by shells.
-    from cairnmind.memory.integrations import native_environment
     from cairnmind.agents.api_credentials import credential_environment_names
+    from cairnmind.memory.integrations import native_environment
     environment = native_environment()
-    names = set(credential_environment_names())
+    names: set[str] = set(credential_environment_names())
     for profile in profiles:
         reference = profile.get("credential_ref", "") or ""
         if reference.startswith("env:"):
@@ -184,8 +184,8 @@ class RuntimeSupervisor(NativeRuntime):
                              "mcp_servers": [], "mcp_problems": []}
             if client == "api":
                 # Fixed for this run: an edit of the preferences applies to the next run only (#126).
-                from cairnmind.terminal.cockpit_state import CockpitState
                 from cairnmind.mcp.mcp_servers import frozen_servers
+                from cairnmind.terminal.cockpit_state import CockpitState
                 try:
                     preferences = CockpitState(self.settings).load()
                 except (ValueError, OSError):
@@ -225,8 +225,8 @@ class RuntimeSupervisor(NativeRuntime):
         a report for another generation, another project or an unknown run is refused. Nothing the server
         said is ever part of a report.
         """
-        from cairnmind.mcp.mcp_failure_notice import SERVER_ID, START_FAILURE_CODES
         from cairnmind.agents.client_runtime import UnknownRun
+        from cairnmind.mcp.mcp_failure_notice import SERVER_ID, START_FAILURE_CODES
         if not isinstance(code, str) or code not in START_FAILURE_CODES:
             raise ValueError("mcp_failure_invalid: unknown code")
         if not isinstance(server_id, str) or not SERVER_ID.fullmatch(server_id):
@@ -302,8 +302,8 @@ def report_mcp_failure(settings: Settings, run: dict, server_id, code) -> bool:
     """From the agent worker: one server of this run did not start (#209). The run's identity, the server's
     id and a fixed code are sent, nothing the server said; any failure to send is ignored and never logged,
     since the agent pane already shows the server as off."""
-    from cairnmind.terminal.cockpit import cockpit_status
     from cairnmind.mcp.mcp_failure_notice import valid_report
+    from cairnmind.terminal.cockpit import cockpit_status
     from cairnmind.terminal.terminal_client import BrokerClient
     if not valid_report(server_id, code):
         return False
@@ -377,7 +377,8 @@ def cli_stage_readiness(settings: Settings):
             if not isinstance(status, dict):
                 return dict(_ERROR_ANSWER)
             code = status.get("code")
-            runtime = status.get("runtime") if isinstance(status.get("runtime"), dict) else {}
+            raw_runtime = status.get("runtime")
+            runtime = raw_runtime if isinstance(raw_runtime, dict) else {}
             return {"credential": code if isinstance(code, str) and code else None,
                     "runtime": runtime.get("code") if profile.get("client") == "copilot" else None}
         finally:

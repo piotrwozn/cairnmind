@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 from cairnmind.scip.ingest import (
-    current_source, import_history, index_pending_sources, index_project, poll_imports, register_default_histories,
+    current_source,
+    import_history,
+    index_pending_sources,
+    index_project,
+    poll_imports,
+    register_default_histories,
 )
 from cairnmind.store import Store
 
@@ -510,8 +515,8 @@ def test_a_deeply_nested_toml_file_does_not_stop_indexing(workspace):
 
 def test_an_indexed_managed_block_leaves_the_index_on_the_next_index(workspace, monkeypatch):
     """A block indexed before #313 is cut from the chunks when the project is indexed again, source unchanged."""
-    from cairnmind.scip import ingest
     from cairnmind.memory.integrations import BEGIN, END
+    from cairnmind.scip import ingest
 
     store, project, root = workspace
     guide = root / "AGENTS.md"

@@ -7,9 +7,9 @@ while rejecting symlinks that escape the project root and detecting binary files
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
-from typing import Sequence
+from collections.abc import Sequence
+from pathlib import Path
 
 import pathspec
 

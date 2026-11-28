@@ -26,13 +26,14 @@ therefore do not repeat it.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
-from pathlib import Path
 import re
 import threading
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
 
-from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.storage.database_mode import connect_only, missing_database, version_problem
 
 _READ = re.compile(r"^\s*\(*\s*(SELECT|MATCH|TRAVERSE)\b", re.I)
@@ -53,7 +54,7 @@ class ReadOnlyStoreError(RuntimeError):
 class ReadOnlyClient:
     """The database client of a store opened for reading: queries, and transactions that are rolled back."""
 
-    def __init__(self, client: ArcadeClient, refusal: str | None = None):
+    def __init__(self, client: Any, refusal: str | None = None):
         self._client = client
         self.settings = client.settings
         self.database = client.database
@@ -162,7 +163,8 @@ class ReadOnlyClient:
         self._refuse("A store opened for reading cannot create the database")
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, commit_timeout: float | None = None):
+        del commit_timeout
         with self._client.transaction(commit=False) as native:
             yield ReadOnlyClient(native, self.refusal)
 
@@ -170,7 +172,7 @@ class ReadOnlyClient:
         self._client.close()
 
 
-def check_ready(client: ArcadeClient, settings: Settings) -> None:
+def check_ready(client: Any, settings: Settings) -> None:
     """Refuse, without changing anything, a store that only ``Store(path)`` could make readable."""
     from cairnmind.store import SCHEMA_VERSION
     if hasattr(client, "server_info"):

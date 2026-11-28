@@ -4,16 +4,16 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
+from conftest import time_budget
 from typer.testing import CliRunner
 
-from conftest import time_budget
 from cairnmind import cli
-from cairnmind.memory import pulse
 from cairnmind.config import Settings
+from cairnmind.memory import pulse
 
 runner = CliRunner()
 _LATENCY_SCALE = float(os.environ.get("CAIRNMIND_LATENCY_SCALE") or "1")

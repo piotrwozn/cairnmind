@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import OrderedDict
-from contextlib import asynccontextmanager
 import hashlib
 import json
 import os
@@ -12,23 +10,31 @@ import socket
 import subprocess
 import sys
 import time
+from collections import OrderedDict
+from contextlib import asynccontextmanager, suppress
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException
 import httpx
+from fastapi import FastAPI, HTTPException
 
 from cairnmind import __version__
 from cairnmind.config import BROKER_NAMES, SESSION_NAMES, drop_env, tls_verify
 from cairnmind.terminal.cockpit_handlers import (
     MAX_BODY as MAX_BODY,
+)
+from cairnmind.terminal.cockpit_handlers import (
     MAX_FRAME as MAX_FRAME,
+)
+from cairnmind.terminal.cockpit_handlers import (
     SESSION_SECONDS,
     TICKET_SECONDS,
     CockpitContext,
     _birth,
-    _same as _same,
     instance_id,
     register_cockpit_routes,
+)
+from cairnmind.terminal.cockpit_handlers import (
+    _same as _same,
 )
 from cairnmind.terminal.cockpit_state import (
     CockpitState,
@@ -37,7 +43,6 @@ from cairnmind.terminal.cockpit_state import (
     _private_directory,
     _private_lock,
 )
-
 
 COOKIE = "cairnmind_cockpit"
 
@@ -136,17 +141,19 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
 
     async def stream(request, session, stream_headers):
         try:
-            async with httpx.AsyncClient(base_url=settings.url, transport=proxy_transport, trust_env=False,
-                                         timeout=httpx.Timeout(15, read=None), headers=stream_headers,
-                                         verify=tls_verify(settings.url)) as client:
-                async with client.stream("GET", "/events", params=request.query_params) as response:
-                    if response.is_error:
-                        yield 'event: unavailable\ndata: {"reason":"memory_service"}\n\n'
+            async with (
+                httpx.AsyncClient(base_url=settings.url, transport=proxy_transport, trust_env=False,
+                                  timeout=httpx.Timeout(15, read=None), headers=stream_headers,
+                                  verify=tls_verify(settings.url)) as client,
+                client.stream("GET", "/events", params=request.query_params) as response,
+            ):
+                if response.is_error:
+                    yield 'event: unavailable\ndata: {"reason":"memory_service"}\n\n'
+                    return
+                async for chunk in response.aiter_bytes():
+                    if browser.clock() >= session["expires"] or await request.is_disconnected():
                         return
-                    async for chunk in response.aiter_bytes():
-                        if browser.clock() >= session["expires"] or await request.is_disconnected():
-                            return
-                        yield chunk
+                    yield chunk
         except httpx.HTTPError:
             yield 'event: unavailable\ndata: {"reason":"memory_service"}\n\n'
 
@@ -204,8 +211,8 @@ def cockpit_status(settings):
 
 def ensure_cockpit(settings):
     """Start/reuse the private broker without opening a browser or minting a ticket."""
-    from cairnmind.cli_cmds import upgrade_mark
     from cairnmind.cli import UpgradeInProgress, ensure_service, say_service_started
+    from cairnmind.cli_cmds import upgrade_mark
     reason = upgrade_mark.refusal()
     if reason:
         # ensure_service reads the mark only when it starts the service: beside a running service a broker and a
@@ -323,8 +330,6 @@ def _serve_locked(settings, folder, port):
         finally:
             listener.close()
             path = _runtime_file(settings)
-            try:
+            with suppress(OSError, ValueError):
                 if json.loads(path.read_text(encoding="utf-8")).get("pid") == os.getpid():
                     path.unlink()
-            except (OSError, ValueError):
-                pass

@@ -1,17 +1,17 @@
-from datetime import datetime, timedelta, timezone
 import json
 import os
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
-from cairnmind.cli_cmds import usage as usage_module
 from cairnmind.agents.agent_journal import AgentJournal
 from cairnmind.agents.api_agent import AgentEngine
-from cairnmind.config import Settings
+from cairnmind.cli_cmds import usage as usage_module
 from cairnmind.cli_cmds.usage import build_usage, parse_since
+from cairnmind.config import Settings
 
-NOW = datetime(2026, 11, 13, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
 PROJECT = {"id": "p1", "name": "My App"}
 
 
@@ -258,7 +258,7 @@ def test_groups_are_sorted_by_day_profile_and_model_with_utc_days(data):
     data.run("r1", "s1", profile="b", model="m2")
     data.run("r2", "s1", profile="a", model="m9")
     data.run("r3", "s1", profile="a", model="m1")
-    late = datetime(2026, 11, 12, 23, 59, 59, 500000, tzinfo=timezone.utc).isoformat()
+    late = datetime(2026, 11, 12, 23, 59, 59, 500000, tzinfo=UTC).isoformat()
     data.journal("s1", turn("r1", stamp(2), done(1, 1)) + turn("r2", stamp(2, 1), done(2, 2))
                  + turn("r3", stamp(2, 2), done(3, 3)) + turn("r1", late, done(4, 4)))
     keys = [(g["day"], g["profile"], g["model"]) for g in data.build()["groups"]]
@@ -477,7 +477,7 @@ def test_turns_built_with_the_real_engine_usage_method(tmp_path):
     (settings.data_dir / "runtime" / "runs.json").write_text(json.dumps({"version": 1, "runs": [
         {"id": "r-" + name, "session_id": name, "project_id": "p1", "client": "api", "profile_id": name,
          "model": "m1"} for name in ("whole", "lost")]}))
-    result = build_usage(settings.data_dir, PROJECT, "1d", now=datetime.now(timezone.utc) + timedelta(minutes=1))
+    result = build_usage(settings.data_dir, PROJECT, "1d", now=datetime.now(UTC) + timedelta(minutes=1))
     groups = {g["profile"]: g for g in result["groups"]}
     # The engine records running totals, so the two calls of the first turn count once: 2500 and 150.
     assert (groups["whole"]["input_tokens"], groups["whole"]["output_tokens"]) == (2500, 150)
@@ -489,7 +489,7 @@ def test_turns_built_with_the_real_engine_usage_method(tmp_path):
 
 def test_weeks_are_iso_weeks_in_utc_and_follow_the_year_boundary(data):
     data.run("r1", "s1")
-    year_end = datetime(2025, 1, 5, 12, 0, tzinfo=timezone.utc)
+    year_end = datetime(2025, 1, 5, 12, 0, tzinfo=UTC)
     # Sunday 29 Dec 2024 ends 2024-W52; Monday 30 Dec and Wednesday 1 Jan are both in 2025-W01.
     data.journal("s1", turn("r1", "2024-12-29T23:30:00+00:00", done(1, 1))
                  + turn("r1", "2024-12-30T00:30:00+00:00", done(2, 2))
@@ -505,7 +505,7 @@ def test_weeks_are_iso_weeks_in_utc_and_follow_the_year_boundary(data):
 
 def test_a_week_is_numbered_by_the_year_of_its_thursday(data):
     data.run("r1", "s1")
-    new_year = datetime(2027, 1, 3, tzinfo=timezone.utc)
+    new_year = datetime(2027, 1, 3, tzinfo=UTC)
     # 31 Dec 2026 is a Thursday: week 53 of 2026, which also holds Friday 1 Jan 2027.
     data.journal("s1", turn("r1", "2026-12-31T10:00:00+00:00", done(1, 1))
                  + turn("r1", "2027-01-01T10:00:00+00:00", done(1, 1)), mtime=new_year)
@@ -723,7 +723,7 @@ def test_a_threshold_must_be_a_positive_whole_number(data, bad):
 
 
 def test_codex_weeks_use_the_same_iso_weeks(data):
-    year_end = datetime(2025, 1, 5, 12, 0, tzinfo=timezone.utc)
+    year_end = datetime(2025, 1, 5, 12, 0, tzinfo=UTC)
     lines = [record(1, (10, 1), (10, 1), "2024-12-29T23:30:00+00:00"),
              record(2, (25, 3), (15, 2), "2025-01-01T10:00:00+00:00")]
     result = with_codex(data, lines, "30d", now=year_end, by="week")
@@ -738,5 +738,5 @@ def test_a_parked_line_that_comes_back_on_a_later_page_is_counted_once(monkeypat
             {"id": "b", "created_at": "2026-01-01T00:00:01", "cwd": None, "raw": line},
             {"id": "a", "created_at": "2026-01-01T00:00:02", "cwd": None, "raw": line}]
     monkeypatch.setattr(codex_usage, "_pages", lambda store, sql, params: iter(rows))
-    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
     assert codex_usage.waiting_in_inbox(SimpleNamespace(), "project", start) == 2

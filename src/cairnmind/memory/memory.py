@@ -6,35 +6,58 @@ never restored from a portable package.
 """
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
-from copy import deepcopy
 import ctypes
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
 import os
-from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from copy import deepcopy
+from datetime import UTC, datetime
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from uuid import UUID, uuid4
 
-from cairnmind.scip.code_graph import code_graph_pending
-from cairnmind.pal.file_locks import lock_exclusive
-from cairnmind.storage.journal import Journal
-from cairnmind.pal.private_files import (
-    atomic_replace, fsync_directory, is_reparse_point, make_private, make_private_fd, open_no_follow,
-)
 from cairnmind.memory.memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
 from cairnmind.memory.memory_size import WARN_FRACTION, package_size
-from cairnmind.store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
-                    validate_extractor_stamp)
+from cairnmind.pal.file_locks import lock_exclusive
+from cairnmind.pal.private_files import (
+    atomic_replace,
+    fsync_directory,
+    is_reparse_point,
+    make_private,
+    make_private_fd,
+    open_no_follow,
+)
 from cairnmind.pal.system_links import passes_planted_link
+from cairnmind.scip.code_graph import code_graph_pending
+from cairnmind.storage.journal import Journal
 from cairnmind.storage.sql import clean_row, insert_document, json_text, unregistered_root, utc_now
 from cairnmind.storage.storage_query import (
-    any_of, db_count, db_find, db_find_one, db_update_where, desc, eq, gt, is_in, is_null, ne, not_in,
+    any_of,
+    db_count,
+    db_find,
+    db_find_one,
+    db_update_where,
+    desc,
+    eq,
+    gt,
+    is_in,
+    is_null,
+    ne,
+    not_in,
+)
+from cairnmind.store import (
+    EXTRACTION_MARK,
+    EXTRACTOR_STAMP,
+    KINDS,
+    STATUSES,
+    TASK_STATES,
+    validate_criterion_links,
+    validate_extractor_stamp,
 )
 
 # Written into every new manifest, and so into its identifier. Manifests written under the
@@ -400,7 +423,7 @@ def _validate(payload, project_id, active_plan_id=None, *, graph=True):
                     raise ValueError("Plan revision tasks do not match managed step order")
                 snapshot = snapshot.get("plan")
             validator(snapshot)
-            if snapshot.get("id") != identifier or snapshot.get("version") != row["version"]:
+            if not isinstance(snapshot, dict) or snapshot.get("id") != identifier or snapshot.get("version") != row["version"]:
                 raise ValueError("Memory revision does not match its owner")
             revisions.setdefault(identifier, {})[row["version"]] = snapshot
         for identifier, current in maps[owner].items():
@@ -648,7 +671,7 @@ def _try_syncfs(directory: Path) -> bool:
             _LIBC_SYNCFS = func
         except (OSError, AttributeError):
             _LIBC_SYNCFS = None
-    if _LIBC_SYNCFS is None:
+    if _LIBC_SYNCFS is None or sys.platform != "linux":
         return False
     descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -691,7 +714,7 @@ def _write_objects_batch(objects_dir: Path, items: list[tuple[Path, bytes]]) -> 
         raise ValueError("Memory publication cannot replace symbolic links")
     staged: list[tuple[str, Path]] = []
     try:
-        if sys.platform.startswith("linux"):
+        if sys.platform == "linux":
             for target, data in items:
                 if target.is_symlink():
                     raise ValueError("Memory publication cannot replace symbolic links")
@@ -738,9 +761,11 @@ class MemoryManager:
     def __init__(self, store):
         self.store = store
 
-    def _scope(self, project_id, worktree=None, reader=None):
+    def _scope(self, project_id, worktree=None, reader=None) -> tuple[dict, Path]:
         reader = reader or self.store
         project = db_find_one(reader, "projects", {"id": project_id}, required=True)
+        if project is None:
+            raise ValueError(f"Unknown project: {project_id}")
         root = Path(worktree if worktree is not None else project["root"]).expanduser().resolve()
         if not db_find(reader, "project_roots", {"project_id": project_id, "path": str(root)}, columns=("id",)):
             raise ValueError(unregistered_root(root, project))
@@ -783,7 +808,7 @@ class MemoryManager:
 
     def _capture(self, project_id, worktree=None, reader=None, authorize=None):
         if reader is None:
-            if hasattr(authorize, "refresh"):
+            if authorize is not None and hasattr(authorize, "refresh"):
                 authorize.refresh()  # hashes the worktree: never inside the transaction below (#255)
             with self.store.transaction() as tx:
                 return self._capture(project_id, worktree, tx, authorize)
@@ -799,8 +824,10 @@ class MemoryManager:
             ))
             seen_node_ids = {r.get("id") for r in base_nodes}
             linked = sorted({
-                r.get(end) for r in raw_rows["edges"] for end in ("from_id", "to_id")
-                if isinstance(r.get(end), str) and r.get(end) not in seen_node_ids
+                node_id
+                for r in raw_rows["edges"]
+                for end in ("from_id", "to_id")
+                if isinstance((node_id := r.get(end)), str) and node_id not in seen_node_ids
             })
             for start in range(0, len(linked), 500):
                 base_nodes.extend(db_find(
@@ -1014,9 +1041,9 @@ class MemoryManager:
             tip = db_find_one(
                 self.store, "memory_snapshots", {"project_id": project_id}, order_by=(desc("created_at"), desc("id"))
             )
-            if previous and tip and tip["snapshot_id"] != previous["snapshot_id"]:
-                if previous["snapshot_id"] not in tip.get("ancestors", []):
-                    raise MemoryConflict("Published and accepted memory snapshot histories diverged")
+            if (previous and tip and tip["snapshot_id"] != previous["snapshot_id"]
+                    and previous["snapshot_id"] not in tip.get("ancestors", [])):
+                raise MemoryConflict("Published and accepted memory snapshot histories diverged")
             if (previous and previous.get("content_hash") == content_hash
                     and (not tip or tip["snapshot_id"] == previous["snapshot_id"])):
                 return _summary(path, previous, "unchanged")
@@ -1097,7 +1124,10 @@ class MemoryManager:
     def import_snapshot(self, path, root, name=None, dry_run=False, *, expected_snapshot_id=None, expected_project_id=None,
                         authorize=None, replace_confirmed=False, expected_replaced=None, heal_quotes=True):
         from cairnmind.memory.snapshot_privacy import (
-            PROFILE_TEAM, REF_EVIDENCE_TYPES, TRANSCRIPT_SOURCE_KINDS, _referenced_source_ids,
+            PROFILE_TEAM,
+            REF_EVIDENCE_TYPES,
+            TRANSCRIPT_SOURCE_KINDS,
+            _referenced_source_ids,
             resolve_snapshot_refs,
         )
         path, raw, manifest, payload = _load_snapshot(path)
@@ -1123,7 +1153,7 @@ class MemoryManager:
                   "snapshot_id": snapshot_id, "counts": manifest["counts"], "active_plan_id": manifest.get("active_plan_id"),
                   "verification": "historical", "model_calls": 0,
                   **({"stale_refs": stale_refs} if stale_refs else {})}
-        if hasattr(authorize, "refresh"):
+        if authorize is not None and hasattr(authorize, "refresh"):
             authorize.refresh()  # hashes the worktree: never inside the transaction below (#255)
         with self.store.transaction() as tx:
             if authorize is not None:
@@ -1250,7 +1280,14 @@ class MemoryManager:
             # here or moves this store's head on. It is kept as confirmed elsewhere, with who the package
             # says confirmed it, and is never this machine's own confirmation. A head that does not move
             # keeps the mark this store gave it.
-            from cairnmind.memory.confirmation import REPLACES_NOTE, archive_claims, import_mark, local_verdict, replaces_refusal, said
+            from cairnmind.memory.confirmation import (
+                REPLACES_NOTE,
+                archive_claims,
+                import_mark,
+                local_verdict,
+                replaces_refusal,
+                said,
+            )
             package_sources = {row["id"]: row for row in payload["sources"]}
             # Read from the rows: the captured state above leaves local marks out, as a package does.
             local_marks = {
@@ -1268,7 +1305,7 @@ class MemoryManager:
                     if mine:
                         marks[row["id"]] = mine
                     continue
-                if (local_verdict(head) and old["status"] == "confirmed" == row["status"] and said(
+                if (old is not None and local_verdict(head) and old["status"] == "confirmed" == row["status"] and said(
                         old["kind"], old["content"], old["key"], old.get("supersedes"), old.get("metadata")) == said(
                         row["kind"], row["content"], row["key"], row.get("supersedes"), row.get("metadata"))):
                     # The package moves on a record confirmed here and leaves it confirmed and saying the
@@ -1395,18 +1432,18 @@ class MemoryManager:
             for plan in payload["plans"]:
                 _plan_graph(self.store, tx, plan, [records[i] for i in plan["step_ids"]])
             # Search is usable without GPU; chunks are derived locally, never imported claims.
-            from cairnmind.scip.ingest import _chunks, _identifier
             from cairnmind.agents.agent import source_text
-            from cairnmind.memory.impact_verdicts import is_verdict_source
             from cairnmind.agents.agent_memory import is_mcp_source
+            from cairnmind.memory.impact_verdicts import is_verdict_source
             from cairnmind.memory.quote_healing import is_healing_audit_source
+            from cairnmind.scip.ingest import _chunks, _identifier
             for source in payload["sources"]:
                 if is_verdict_source(source) or is_mcp_source(source) or is_healing_audit_source(source):
                     continue  # imported with the memory, never searchable text
                 if db_find(tx, "chunks", {"source_id": source["id"]}, columns=("id",), limit=1):
                     continue
                 saved = db_find_one(tx, "sources", {"id": source["id"]}, columns=("is_current",), required=True)
-                if saved.get("is_current") is False:
+                if saved is None or saved.get("is_current") is False:
                     continue  # nothing searches a chunk of a source that is not current (#186)
                 for number, (text, first, last) in enumerate(_chunks(source_text(source), source.get("uri", ""))):
                     insert_document(tx, "chunks", {"id": _identifier(project_id, source["id"], number, first, last, text),
@@ -1509,7 +1546,7 @@ class MemoryManager:
         return result
 
     def tick(self, now=None):
-        moment = datetime.now(timezone.utc).timestamp() if now is None else now.timestamp() if isinstance(now, datetime) else float(now)
+        moment = datetime.now(UTC).timestamp() if now is None else now.timestamp() if isinstance(now, datetime) else float(now)
         if not math.isfinite(moment):
             raise ValueError("Invalid memory schedule time")
         results, errors = [], []
@@ -1521,7 +1558,7 @@ class MemoryManager:
             checked = row.get("last_checked_at")
             if checked and moment - datetime.fromisoformat(checked).timestamp() < row["interval_minutes"] * 60:
                 continue
-            timestamp = datetime.fromtimestamp(moment, timezone.utc).isoformat()
+            timestamp = datetime.fromtimestamp(moment, UTC).isoformat()
             try:
                 result = self._unchanged_since_receipt(row["project_id"], row["worktree"])
                 if result is None:

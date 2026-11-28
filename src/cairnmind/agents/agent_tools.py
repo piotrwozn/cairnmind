@@ -6,18 +6,19 @@ An approved shell command runs as the user; this module is not an OS sandbox.
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
-from copy import deepcopy
 import errno
 import hashlib
 import inspect
+import logging
 import os
-from pathlib import Path, PurePosixPath
 import re
 import shutil
 import signal
 import stat
 import sys
+from contextlib import contextmanager, suppress
+from copy import deepcopy
+from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from cairnmind.agents.agent_journal import AgentJournal, JournalError
@@ -26,8 +27,10 @@ from cairnmind.config import ENV_PREFIXES
 from cairnmind.pal.path_spelling import entry_identity, identity, is_alias
 from cairnmind.pal.private_files import IS_WINDOWS, atomic_replace, is_reparse_point, open_no_follow
 from cairnmind.pal.process_control import ProcessJob, group_popen_kwargs
-from cairnmind.pal.process_identity import group_running, recorded, start as process_start
+from cairnmind.pal.process_identity import group_running, recorded
+from cairnmind.pal.process_identity import start as process_start
 
+log = logging.getLogger(__name__)
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_TEXT_CHARS = 128 * 1024
@@ -156,7 +159,7 @@ def _windows_shell() -> list[str]:
 
 def _group_exists(pgid):
     """False only when the kernel says no process (not even a zombie) has group pgid."""
-    if IS_WINDOWS:
+    if sys.platform == "win32" or IS_WINDOWS:
         return False
     try:
         os.killpg(pgid, 0)
@@ -277,7 +280,7 @@ class ToolExecutor:
     @contextmanager
     def _directory(self, parts, *, create=False, leaf=None):
         with self._root() as root:
-            if not _USE_DIR_FD:
+            if isinstance(root, Path):
                 current = root
                 in_memory = False
                 for part in parts:
@@ -338,9 +341,11 @@ class ToolExecutor:
 
     @staticmethod
     def _bytes_at(parent, leaf):
-        if not _USE_DIR_FD:
-            target = Path(parent) / leaf
+        if isinstance(parent, Path):
+            target = parent / leaf
             fd = open_no_follow(target, os.O_RDONLY, private_on_create=False)
+        elif sys.platform == "win32":
+            raise ToolError("filesystem_error", "Directory descriptors are unsupported on Windows")
         else:
             fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=parent)
         with os.fdopen(fd, "rb") as handle:
@@ -383,9 +388,9 @@ class ToolExecutor:
                 previous, info = self._bytes_at(parent, leaf)
                 self._check_hash(previous, expected)
             temporary = ".cairnmind-api-" + uuid4().hex
-            if not _USE_DIR_FD:
-                temp_path = Path(parent) / temporary
-                target_path = Path(parent) / leaf
+            if isinstance(parent, Path):
+                temp_path = parent / temporary
+                target_path = parent / leaf
                 fd = open_no_follow(temp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644, private_on_create=False)
                 try:
                     with os.fdopen(fd, "wb") as stream:
@@ -400,13 +405,15 @@ class ToolExecutor:
                     else:
                         current, current_info = self._bytes_at(parent, leaf)
                         self._check_hash(current, expected)
-                        if (info.st_dev, info.st_ino, info.st_mode) != (
+                        if info is None or (info.st_dev, info.st_ino, info.st_mode) != (
                             current_info.st_dev, current_info.st_ino, current_info.st_mode
                         ):
                             raise ToolError("file_changed", "File identity changed while preparing the edit")
                         atomic_replace(temp_path, target_path)
                 finally:
                     temp_path.unlink(missing_ok=True)
+            elif sys.platform == "win32":
+                raise ToolError("filesystem_error", "Directory descriptors are unsupported on Windows")
             else:
                 fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
                              stat.S_IMODE(info.st_mode) if info else 0o644, dir_fd=parent)
@@ -424,17 +431,15 @@ class ToolExecutor:
                     else:
                         current, current_info = self._bytes_at(parent, leaf)
                         self._check_hash(current, expected)
-                        if (info.st_dev, info.st_ino, info.st_mode) != (
+                        if info is None or (info.st_dev, info.st_ino, info.st_mode) != (
                             current_info.st_dev, current_info.st_ino, current_info.st_mode
                         ):
                             raise ToolError("file_changed", "File identity changed while preparing the edit")
                         os.replace(temporary, leaf, src_dir_fd=parent, dst_dir_fd=parent)
                     os.fsync(parent)
                 finally:
-                    try:
+                    with suppress(FileNotFoundError):
                         os.unlink(temporary, dir_fd=parent)
-                    except FileNotFoundError:
-                        pass
         return {"ok": True, "path": relative, "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw),
                 "created": expected is None, "previous_sha256": expected}
 
@@ -606,8 +611,8 @@ class ToolExecutor:
         with self._parent(relative) as (parent, leaf, _):
             current, _ = self._bytes_at(parent, leaf)
             self._check_hash(current, args["expected_sha256"])
-            if not _USE_DIR_FD:
-                (Path(parent) / leaf).unlink()
+            if isinstance(parent, Path):
+                (parent / leaf).unlink()
             else:
                 os.unlink(leaf, dir_fd=parent)
                 os.fsync(parent)
@@ -617,7 +622,7 @@ class ToolExecutor:
         from cairnmind.agents.api_credentials import credential_environment_names
         from cairnmind.terminal.cockpit_state import CockpitState
 
-        excluded = set(credential_environment_names())
+        excluded: set[str] = set(credential_environment_names())
         try:
             for profile in CockpitState(self.settings).load()["profiles"]:
                 reference = profile.get("credential_ref")
@@ -661,13 +666,14 @@ class ToolExecutor:
                 try:
                     await asyncio.wait_for(process.wait(), KILL_WAIT_SECONDS)
                     return True
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     return False
             except asyncio.CancelledError:
                 if job is not None:
                     job.terminate()
                 raise
-            except Exception:
+            except Exception as exc:
+                log.debug("Windows process group termination failed (%s)", type(exc).__name__)
                 if job is not None:
                     job.terminate()
                 return False
@@ -676,7 +682,8 @@ class ToolExecutor:
         except asyncio.CancelledError:
             self._kill_group(process, birth)
             raise
-        except Exception:
+        except Exception as exc:
+            log.debug("POSIX process group termination failed (%s)", type(exc).__name__)
             self._kill_group(process, birth)
             return False
 
@@ -684,19 +691,24 @@ class ToolExecutor:
     def _kill_group(process, birth):
         try:  # best effort, unless the leader id now names another process
             if recorded(process.pid, birth) is True:
-                if IS_WINDOWS:
+                if sys.platform == "win32" or IS_WINDOWS:
                     process.kill()
                 else:
                     os.killpg(process.pid, signal.SIGKILL)
-        except Exception:
-            pass
+        except Exception as exc:
+            log.debug("Best-effort process group kill failed (%s)", type(exc).__name__)
 
     @staticmethod
     async def _signal_group(pgid, process, birth):
+        killpg = getattr(os, "killpg", None)
+        sigkill = getattr(signal, "SIGKILL", None)
+
         def send(signum):
             """False when the group no longer exists at all."""
+            if killpg is None or signum is None:
+                return False
             try:
-                os.killpg(pgid, signum)
+                killpg(pgid, signum)
             except ProcessLookupError:
                 return False
             except PermissionError:
@@ -720,7 +732,7 @@ class ToolExecutor:
             return owned is False
         # Whatever the scan saw, SIGKILL what is left of the group: harmless
         # to zombies, and it ends a member the scan could misjudge.
-        if not send(signal.SIGKILL):
+        if not send(sigkill):
             return True
         # A signal is delivered asynchronously: the processes end when the
         # kernel next runs them. Do not return before they have.
@@ -796,6 +808,12 @@ class ToolExecutor:
                     *shell_argv, cwd=cwd, env=environment,
                     stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                     **group_popen_kwargs()))
+            elif isinstance(directory, Path):
+                spawn = asyncio.create_task(asyncio.create_subprocess_exec(
+                    "/bin/bash", "--noprofile", "--norc", "-c", command,
+                    cwd=str(directory), env=environment,
+                    stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    start_new_session=True))
             else:
                 spawn = asyncio.create_task(asyncio.create_subprocess_exec(
                     sys.executable, "-I", "-S", "-c", _ENTER_DIRECTORY, str(directory),
@@ -865,12 +883,12 @@ class ToolExecutor:
                 await stop_and_wait()
             try:
                 await asyncio.wait_for(asyncio.shield(combined), timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 timed_out = True
                 await stop_and_wait()
                 try:
                     await asyncio.wait_for(asyncio.shield(combined), 1)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     combined.cancel()
                     await asyncio.gather(combined, return_exceptions=True)
             # The output can end before an interrupt has finished stopping the
@@ -900,7 +918,7 @@ class ToolExecutor:
                 self._left_running.add(action_id)
             try:
                 await asyncio.wait_for(asyncio.shield(combined), 1)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):
                 combined.cancel()
                 await asyncio.gather(combined, return_exceptions=True)
             raise
@@ -938,7 +956,7 @@ class ToolExecutor:
         if name == "write_file":
             after = args["content"]
         elif name == "apply_patch":
-            if before.count(args["old_text"]) != 1:
+            if before is None or before.count(args["old_text"]) != 1:
                 raise ToolError("patch_ambiguous", "old_text must be nonempty and occur exactly once")
             after = before.replace(args["old_text"], args["new_text"], 1)
         else:

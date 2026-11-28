@@ -29,19 +29,21 @@ import re
 import subprocess
 from pathlib import Path, PurePosixPath
 
-from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
 from cairnmind.memory.brief import _git_out, _line, _scoped_records, _title
-from cairnmind.memory.evidence import THIRD_PARTY_WRITTEN, _FILE_KINDS, _QUOTE, _metadata, evidence_states
+from cairnmind.memory.evidence import _FILE_KINDS, _QUOTE, THIRD_PARTY_WRITTEN, _metadata, evidence_states
 from cairnmind.memory.impact_core import (
     MAX_FILE_BYTES,
     _definitions,
     _new_text,
-    _span as _span,
     annotate,
     verdict_line,
 )
+from cairnmind.memory.impact_core import (
+    _span as _span,
+)
 from cairnmind.memory.impact_docs import documentation_lines, documentation_mentions, written_as_code
 from cairnmind.memory.memory_paths import git_pathspec
+from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
 from cairnmind.storage.storage_query import db_find, eq, is_in
 
 _STATUS = {"A": "added", "M": "modified", "D": "deleted", "T": "modified", "R": "renamed", "C": "added"}

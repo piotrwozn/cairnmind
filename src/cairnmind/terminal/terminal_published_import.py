@@ -116,8 +116,8 @@ def archive_replaced(result) -> list[str]:
 
 def archive_text(result: dict, language: str) -> str:
     """What the archive import's check says: the summary, then every record it replaces, none cut (the view scrolls)."""
-    from cairnmind.terminal.terminal_i18n import tr
     from cairnmind.pal.terminal_safe import safe_text
+    from cairnmind.terminal.terminal_i18n import tr
     from cairnmind.terminal.terminal_ui import summary_text
     lines = [summary_text(result, language)]
     replaced = archive_replaced(result)

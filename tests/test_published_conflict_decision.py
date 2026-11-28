@@ -1,13 +1,13 @@
 """A conflict decision travels with published memory (#239): the finding a person kept, and the one they rejected."""
 from __future__ import annotations
 
+from test_published_memory import ada, commit, folder_of, git, reviewed, teammate  # noqa: F401 (ada is a fixture)
+
 from cairnmind.memory import conflicts
 from cairnmind.memory.memory_published import Publisher
 from cairnmind.memory.memory_published_check import check_directory
 from cairnmind.memory.memory_published_import import PublishedImporter
 from cairnmind.memory.memory_published_parse import parse_file
-
-from test_published_memory import ada, commit, folder_of, git, reviewed, teammate  # noqa: F401 (ada is a fixture)
 
 EXTERNAL = {"origin_client": "claude", "origin_session_id": "s", "origin_history": "unarchived",
             "origin_evidence": "degraded"}
@@ -61,11 +61,11 @@ def test_keeping_the_replacement_publishes_it_and_the_rejected_decision_as_super
 
 
 def test_publishing_writes_again_a_published_file_that_went_missing_and_refuses_a_conflict_with_a_way_out(ada):  # noqa: F811
-    from cairnmind.terminal.inspector import Inspector
-    from cairnmind.memory.memory import MemoryConflict
     import pytest
-
     from conftest import person_edit
+
+    from cairnmind.memory.memory import MemoryConflict
+    from cairnmind.terminal.inspector import Inspector
     store, pid, root = ada["store"], ada["project"], ada["root"]
     old = reviewed(store, pid, "decision", "Sessions last a day.", "ttl")
     # A replacement the person writes in their terminal and then reviews: the replaced record is superseded
@@ -117,9 +117,9 @@ def test_keeping_a_replacement_an_external_session_wrote_still_withdraws_the_rej
 
 
 def test_a_record_that_names_an_external_proposal_is_held_with_that_reason(ada):  # noqa: F811
-    from cairnmind.terminal.inspector import Inspector
-
     from conftest import person_edit
+
+    from cairnmind.terminal.inspector import Inspector
     store, pid = ada["store"], ada["project"]
     with store.write_origin(EXTERNAL):
         note = store.snapshot(pid, "transcript://proposal", "Sessions last a week.", "transcript")

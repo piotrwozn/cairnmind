@@ -6,6 +6,7 @@ import asyncio
 import json
 from contextlib import suppress
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from textual import _time as textual_time  # the clock of Message.time, which stamps every key and mouse event
@@ -16,20 +17,30 @@ from textual.events import Click, MouseDown, Resize
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Static, Switch
 
-from cairnmind.terminal import terminal_theme
 from cairnmind.config import Settings
-from cairnmind.pal.service_token import FOREIGN_SERVICE, foreign_service
 from cairnmind.mcp.mcp_failure_notice import announce as announce_mcp_failures
-from cairnmind.pal.terminal_safe import plain
 from cairnmind.memory.project_folders import folder_notice
+from cairnmind.pal.service_token import FOREIGN_SERVICE, foreign_service
+from cairnmind.pal.terminal_safe import plain
+from cairnmind.terminal import terminal_theme
 from cairnmind.terminal.terminal_connection_hints import NOT_STARTED, connection_hint
 from cairnmind.terminal.terminal_i18n import native_failure_notice
+from cairnmind.terminal.terminal_i18n_messages import broker_error_text
 from cairnmind.terminal.terminal_notices import about as notice_about
 from cairnmind.terminal.terminal_person_act import refused
 from cairnmind.terminal.terminal_published_import import archive_replaced, archive_text
-from cairnmind.terminal.terminal_i18n_messages import broker_error_text
-from cairnmind.terminal.terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal,
-                          LocalizedModal, MessageModal, remeasure_buttons, replaces_here, summary_text)
+from cairnmind.terminal.terminal_ui import (
+    BasePanel,
+    ChoiceModal,
+    Field,
+    FieldError,
+    FormModal,
+    LocalizedModal,
+    MessageModal,
+    remeasure_buttons,
+    replaces_here,
+    summary_text,
+)
 
 
 class ConfirmModal(MessageModal):
@@ -193,7 +204,8 @@ def profile_fields(old, *, client, provider=None):
     if client == "api":
         defaults = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1",
                     "openai_compatible": "http://127.0.0.1:8000/v1", "ollama": "http://127.0.0.1:11434"}
-        fields.append(Field("base_url", "API address", old.get("base_url") or defaults[provider], True))
+        default_url = defaults[provider] if isinstance(provider, str) else ""
+        fields.append(Field("base_url", "API address", old.get("base_url") or default_url, True))
     fields.append(Field("credential_ref", "Credential reference: env:NAME or profile:ID (blank = no key)", old.get("credential_ref") or ""))
     limits = old.get("limits") or {}
     if client == "api":
@@ -403,7 +415,9 @@ class SidebarApp(BasePanel):
         self.show_page("projects")
         self.set_interval(.3, self._poll_workspace)
         self.set_interval(3, self.refresh_sidebar)
-        from cairnmind.terminal.terminal_setup_change import show_last_outcome  # the end of a change nobody watched, once (#339)
+        from cairnmind.terminal.terminal_setup_change import (
+            show_last_outcome,  # the end of a change nobody watched, once (#339)
+        )
         show_last_outcome(self)
         self.start_panel()
 
@@ -485,7 +499,7 @@ class SidebarApp(BasePanel):
                 return
         if self._launch_feedback is None:
             return
-        if identity != self._launch_feedback:
+        if identity != self._launch_feedback or run is None:
             self._launch_feedback = None
             self._launch_feedback_state = None
             super().notice("")
@@ -666,7 +680,7 @@ class SidebarApp(BasePanel):
         table.clear()
         names = [plain(project["name"]) for project in rows]
         self._longest_name = max([name.cell_len for name in names], default=0)
-        for project, name in zip(rows, names):
+        for project, name in zip(rows, names, strict=True):
             table.add_row(name, key=project["id"])
         self.call_after_refresh(self.fill_project_rows)
         if selected:
@@ -735,7 +749,7 @@ class SidebarApp(BasePanel):
             await asyncio.to_thread(self.workspace.select_project, project, selected,
                                    intent="inspect" if returning else intent, requested_slot_ids=requested)
             if intent == "work":
-                changes = {"focus": "client1"}
+                changes: dict[str, Any] = {"focus": "client1"}
                 if returning:
                     # Bring the resumed session into view without dropping another visible one (#155).
                     shown = list((await asyncio.to_thread(self.workspace.read)).get("visible_slot_ids") or [])
@@ -1079,8 +1093,9 @@ class SidebarApp(BasePanel):
             if not old:
                 for index, field in enumerate(fields):
                     if field.name == "label":
-                        fields[index] = Field("label", "Connection name",
-                            {"api": provider, "copilot": "GitHub Copilot", "codex": "Codex", "claude": "Claude"}[client], True)
+                        default_label = {"api": provider or "", "copilot": "GitHub Copilot",
+                                         "codex": "Codex", "claude": "Claude"}.get(client or "", "")
+                        fields[index] = Field("label", "Connection name", default_label, True)
                     elif field.name == "model" and client == "copilot":
                         fields[index] = Field("model", self.t("Model"), "auto")
 

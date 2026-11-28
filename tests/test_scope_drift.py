@@ -9,15 +9,15 @@ import sys
 import pytest
 from typer.testing import CliRunner
 
+import cairnmind.memory.scope as scope_module
 from cairnmind.cli import app
 from cairnmind.config import Settings
 from cairnmind.memory.memory import MemoryManager
 from cairnmind.memory.plans import PlanManager
 from cairnmind.memory.scope import drift_warning, record_baseline, scope_drift
-import cairnmind.memory.scope as scope_module
-from cairnmind.store import Store
-from cairnmind.storage.sql import clean_row
 from cairnmind.memory.verification import task_definition_hash, verification_status
+from cairnmind.storage.sql import clean_row
+from cairnmind.store import Store
 
 
 def git(root, *args):
@@ -434,11 +434,10 @@ def test_the_note_is_taken_only_after_the_write_is_committed(workspace):
     store, pid, root, settings = workspace
     saved, task = scoped_plan(store, pid, root)
     folder = store.data_dir / "scope-baselines"
-    with pytest.raises(RuntimeError):
-        with store.transaction():
-            start(store, pid, root, saved, task)
-            assert not folder.exists()
-            raise RuntimeError("the write is abandoned")
+    with pytest.raises(RuntimeError), store.transaction():
+        start(store, pid, root, saved, task)
+        assert not folder.exists()
+        raise RuntimeError("the write is abandoned")
     assert not folder.exists()
     with store.transaction():
         task = start(store, pid, root, saved, task)
@@ -479,9 +478,9 @@ def test_an_open_note_is_kept_however_old_and_leftovers_of_a_broken_write_are_re
 
 
 def test_a_long_scope_fits_the_model_view_and_the_brief_and_contract_say_the_warning(workspace):
+    from cairnmind.mcp.mcp_server import _next_task_view
     from cairnmind.memory.brief import _verification
     from cairnmind.memory.contract import build_contract
-    from cairnmind.mcp.mcp_server import _next_task_view
 
     store, pid, root, settings = workspace
     saved, task = scoped_plan(store, pid, root, scope=["src/auth/**"] + [f"docs/{'x' * 480}{n}/**" for n in range(63)])

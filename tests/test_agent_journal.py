@@ -1,16 +1,16 @@
 """Durability, integrity and operational recovery tests for the agent journal."""
-from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
-from pathlib import Path
 import stat
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
-
 from conftest import assert_private, make_private_again, make_symlink_or_skip, make_world_readable
-from cairnmind.agents.agent_journal import AgentJournal, JournalError, ZERO_HASH, canonical
+
+from cairnmind.agents.agent_journal import ZERO_HASH, AgentJournal, JournalError, canonical
 from cairnmind.config import Settings
 
 

@@ -21,21 +21,22 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
-from typing import Callable
 
 import httpx
 
-from cairnmind.storage import database_mode, engine_docker, store_writer
-from cairnmind.memory import memory_models, project_removal
 from cairnmind.cli_cmds import service_version, topology, upgrade_mark
-from cairnmind.terminal import setup_mark, setup_profiles
 from cairnmind.config import SESSION_NAMES, Settings, drop_env, session_value, tls_verify
+from cairnmind.memory import memory_models, project_removal
 from cairnmind.pal.file_locks import lock_exclusive
 from cairnmind.pal.private_files import open_no_follow
 from cairnmind.pal.process_control import detached_popen_kwargs
-from cairnmind.terminal.setup_profiles import SetupFailed, SetupRefused, render_one
+from cairnmind.storage import database_mode, engine_docker, store_writer
 from cairnmind.storage.storage_query import db_find, eq, gte
+from cairnmind.terminal import setup_mark, setup_profiles
+from cairnmind.terminal.setup_profiles import SetupFailed, SetupRefused, render_one
 
 PROGRESS, LOG = "setup-change.json", "setup-change.log"
 STOP_SECONDS = 30
@@ -377,10 +378,13 @@ def begin(settings, request, expected: dict, language: str) -> subprocess.Popen:
                                    stdout=log, stderr=log, env=env, **detached_popen_kwargs())
     finally:
         os.close(log)
+    stdin = process.stdin
+    if stdin is None:
+        raise RuntimeError("Helper process standard input pipe is unavailable.")
     try:
-        process.stdin.write(payload)
+        stdin.write(payload)
     finally:
-        process.stdin.close()
+        stdin.close()
     return process
 
 
@@ -425,11 +429,10 @@ def unseen_outcome(data_dir: Path, language: str) -> dict | None:
     found = _unseen_file(data_dir)
     if found is None or setup_mark.state(data_dir)[0] in ("running", "unreadable"):
         return None
-    try:  # the helper writes this file last: a newer config.json is a later change (`cairnmind setup`), now out of date
+    with suppress(OSError):
+        # the helper writes this file last: a newer config.json is a later change (`cairnmind setup`), now out of date
         if (Path(data_dir) / "config.json").stat().st_mtime > (Path(data_dir) / PROGRESS).stat().st_mtime:
             return None
-    except OSError:
-        pass
     lines = found.get("lines") if found.get("language") == language else found.get("other")
     if not isinstance(lines, list) or not lines or not all(isinstance(line, str) for line in lines):
         return None
@@ -442,10 +445,8 @@ def mark_shown(data_dir: Path, pid: int) -> None:
     another change's or cannot be read: the outcome may then be shown again, never lost."""
     found = _unseen_file(data_dir)
     if found is not None and found["pid"] == pid:
-        try:
+        with suppress(OSError):
             memory_models._write_json(Path(data_dir) / PROGRESS, {**found, "shown": True})
-        except OSError:
-            pass
 
 
 class _Report:
@@ -663,6 +664,8 @@ def _change(data_dir: Path, request, expected: dict, out) -> str:
     try:
         kind, payload = _apply(settings, request, expected, out)  # anything that escapes keeps the copy (below)
         if kind == "changed":
+            if not isinstance(payload, dict):
+                raise TypeError("Expected dictionary result from setup_profiles.run.")
             state, keep = _new_settings_start(data_dir, path, snapshot, payload, out)
             return state
         if kind == "interrupted":

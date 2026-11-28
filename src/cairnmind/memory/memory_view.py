@@ -9,8 +9,8 @@ import re
 
 from cairnmind.memory.memory import _load_snapshot
 from cairnmind.memory.sensitivity import record_sensitivity, source_sensitivity
-from cairnmind.store import STATUSES
 from cairnmind.pal.terminal_safe import safe_text
+from cairnmind.store import STATUSES
 
 RECORD_KINDS = ("decision", "constraint", "task", "fact", "question", "preference", "checkpoint")
 SHOW_KINDS = (*RECORD_KINDS, "plan")
@@ -79,7 +79,7 @@ def _degraded(metadata):
 
 def _source_mark(row):
     metadata = row.get("metadata") if row else None
-    if not _degraded(metadata):
+    if not isinstance(metadata, dict) or not _degraded(metadata):
         return ""
     return _THIRD_PARTY_SOURCE if str(metadata.get("origin_client", "")).startswith("mcp:") else _EXTERNAL_SOURCE
 
@@ -316,12 +316,12 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None, sou
                     f"updated {_line(row.get('updated_at') or 'unknown')}",
                 f"  id: {_line(row['id'])}" + ("" if row["key"] == row["id"] else f"  key: {_line(row['key'])}"),
                 *_indented(row["content"], "  | ")]
-        if origin(metadata, row["source_ids"]):
-            out.append(origin(metadata, row["source_ids"]))
-        if _published_line(metadata):
-            out.append(_published_line(metadata))
-        if _confirmed_line(row, sources):
-            out.append(_confirmed_line(row, sources))
+        if origin_line := origin(metadata, row["source_ids"]):
+            out.append(origin_line)
+        if published_line := _published_line(metadata):
+            out.append(published_line)
+        if confirmed_line := _confirmed_line(row, sources):
+            out.append(confirmed_line)
         out.append(f"  sensitivity: {record_sensitivity(row, sources)}")
         if _replaced(row):
             out.append("  replaces: " + ", ".join(named(i) for i in _replaced(row)))
@@ -354,8 +354,8 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None, sou
     for row in shown_plans:
         active = ", active in the origin worktree" if row["id"] == manifest.get("active_plan_id") else ""
         out += ["", f"[plan] {_line(row['title'])}, version {row['version']}{active}", f"  id: {_line(row['id'])}"]
-        if origin(row, row["source_ids"]):
-            out.append(origin(row, row["source_ids"]))
+        if plan_origin := origin(row, row["source_ids"]):
+            out.append(plan_origin)
         out.append(f"  sensitivity: {record_sensitivity(row, sources)}")
         if row["goal"].strip():
             out += ["  goal:", *_indented(row["goal"], "  | ")]

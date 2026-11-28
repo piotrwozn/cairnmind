@@ -5,12 +5,11 @@ import json
 from uuid import uuid4
 
 import pytest
-
-from cairnmind.config import Settings
-from cairnmind.agents.retrieval import Retriever
-from cairnmind.store import Store
-
 from conftest import as_person
+
+from cairnmind.agents.retrieval import Retriever
+from cairnmind.config import Settings
+from cairnmind.store import Store
 
 
 class NoModel:
@@ -318,7 +317,7 @@ def test_finished_tasks_do_not_take_the_finding_reserve(workspace, monkeypatch):
     real = retrieval.select_entries
 
     def spy(entries, reserve, budget, **options):
-        seen.update({item["id"]: (item["kind"], item["status"], flag) for item, flag in zip(entries, reserve)})
+        seen.update({item["id"]: (item["kind"], item["status"], flag) for item, flag in zip(entries, reserve, strict=False)})
         return real(entries, reserve, budget, **options)
 
     monkeypatch.setattr(retrieval, "select_entries", spy)

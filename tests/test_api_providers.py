@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
 import inspect
+import json
 import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 import pytest
 
 from cairnmind.agents.api_providers import ProviderError, make_provider
-
 
 TOOL = {"name": "read_file", "description": "Read a project file.", "parameters": {
     "type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"], "additionalProperties": False}}

@@ -5,12 +5,16 @@ import json
 from pathlib import Path
 
 import pytest
-
 from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401  (workspace is a fixture)
 
 from cairnmind.agents.agent import EXCERPT_CHARS, INITIAL_HITS, KnowledgeAgent
 from cairnmind.scip.definitions import (
-    MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, MAX_ROWS, candidate_names, definition_lines, rank_definitions,
+    MAX_DEFINITION_ATTEMPTS,
+    MAX_DEFINITIONS,
+    MAX_ROWS,
+    candidate_names,
+    definition_lines,
+    rank_definitions,
 )
 from cairnmind.scip.ingest import index_project
 

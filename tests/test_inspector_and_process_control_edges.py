@@ -5,8 +5,8 @@ from contextlib import contextmanager
 
 import pytest
 
-from cairnmind.terminal import inspector as insp
 from cairnmind.pal import process_control as pc
+from cairnmind.terminal import inspector as insp
 
 
 class _MiniInspectorStore:

@@ -4,14 +4,14 @@ from __future__ import annotations
 import ast
 import importlib
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 from conftest import make_symlink_or_skip
+
 from cairnmind.pal import private_files
 
 SRC_DIR = Path(__file__).resolve().parents[1] / "src" / "cairnmind"
@@ -57,9 +57,8 @@ def test_no_fcntl_flock_or_unapproved_fcntl_imports():
             elif isinstance(node, ast.ImportFrom) and node.module == "fcntl":
                 if path.name not in allowed_fcntl:
                     bad_imports.append(f"{path.name}:{node.lineno}")
-            elif isinstance(node, ast.Attribute) and node.attr == "flock":
-                if path.name != "file_locks.py":
-                    bad_flocks.append(f"{path.name}:{node.lineno}")
+            elif isinstance(node, ast.Attribute) and node.attr == "flock" and path.name != "file_locks.py":
+                bad_flocks.append(f"{path.name}:{node.lineno}")
     assert not bad_imports, f"Unexpected fcntl imports: {bad_imports}"
     assert not bad_flocks, f"Direct flock() calls outside file_locks.py: {bad_flocks}"
 
@@ -119,12 +118,17 @@ def test_explicit_utf8_encoding_on_all_text_file_io():
                         mode = kw.value.value
                 if (mode is None or "b" not in mode) and "encoding" not in kws:
                     violations.append(f"{path.name}:{node.lineno}: open(mode={mode!r}) without encoding")
-            elif isinstance(fn, ast.Attribute) and fn.attr == "open":
+            elif (
+                isinstance(fn, ast.Attribute)
+                and fn.attr == "open"
                 # Only flag Path.open("r"/"w"/"a"/...) with explicit string mode lacking 'b' and 'encoding'
-                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                    mode = node.args[0].value
-                    if mode and set(mode) <= set("rwax+t") and "b" not in mode and "encoding" not in kws:
-                        violations.append(f"{path.name}:{node.lineno}: .open({mode!r}) without encoding")
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                mode = node.args[0].value
+                if mode and set(mode) <= set("rwax+t") and "b" not in mode and "encoding" not in kws:
+                    violations.append(f"{path.name}:{node.lineno}: .open({mode!r}) without encoding")
     assert not violations, "Text I/O without explicit encoding=:\n" + "\n".join(violations)
 
 
@@ -224,8 +228,8 @@ def test_transcript_watermark_crlf_and_lf_parity(tmp_path):
     line2 = '{"role": "assistant", "text": "ok"}'
     partial = '{"role": "user", "text": "unfinished'
 
-    lf_raw = f"{line1}\n{line2}\n{partial}".encode("utf-8")
-    crlf_raw = f"{line1}\r\n{line2}\r\n{partial}".encode("utf-8")
+    lf_raw = f"{line1}\n{line2}\n{partial}".encode()
+    crlf_raw = f"{line1}\r\n{line2}\r\n{partial}".encode()
     lf_path.write_bytes(lf_raw)
     crlf_path.write_bytes(crlf_raw)
 
@@ -237,8 +241,8 @@ def test_transcript_watermark_crlf_and_lf_parity(tmp_path):
     assert wm_lf["pending_tail_bytes"] == len(partial.encode("utf-8"))
     assert wm_crlf["pending_tail_bytes"] == len(partial.encode("utf-8"))
     assert wm_lf["pending_tail_sha256"] == wm_crlf["pending_tail_sha256"]
-    assert wm_lf["size"] == len(f"{line1}\n{line2}\n".encode("utf-8"))
-    assert wm_crlf["size"] == len(f"{line1}\r\n{line2}\r\n".encode("utf-8"))
+    assert wm_lf["size"] == len(f"{line1}\n{line2}\n".encode())
+    assert wm_crlf["size"] == len(f"{line1}\r\n{line2}\r\n".encode())
     assert wm_lf["stable"] is True and wm_crlf["stable"] is True
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
+from test_terminal_panels import FakeBroker, FakeWorkspace, settle
 from textual.app import App
 from textual.widgets import Button, DataTable, Input, Static, Switch
 
@@ -13,11 +14,12 @@ from cairnmind.terminal.terminal_panels import (
     CredentialModal,
     DiscoveryModal,
     SidebarApp,
-    main as panels_main,
     profile_fields,
     profile_from_form,
 )
-from test_terminal_panels import FakeBroker, FakeWorkspace, settle
+from cairnmind.terminal.terminal_panels import (
+    main as panels_main,
+)
 
 
 class _ModalHost(App):

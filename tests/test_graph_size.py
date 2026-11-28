@@ -6,22 +6,21 @@ the engine out of memory (1 GB heap, the product's own command line; heavier row
 written in transactions of at most 20,000 rows, so the heap it needs does not follow the size of the project. The engine here is a private one with the product's own heap. The graph is synthetic:
 330 files of 1,000 symbols each, written by the indexer's own graph step. The restore of a project of this size is tests/test_restore_size.py (marker slow_size, #362): a restore half here would double this test's time.
 """
-from contextlib import contextmanager
 import json
 import os
-from pathlib import Path
 import time
+from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
+from conftest import prepare_engine
 
-from cairnmind.scip import ingest
-from cairnmind.pal import process_identity
-from cairnmind.scip.code_graph import code_graph_pending
 from cairnmind.config import env_names
+from cairnmind.pal import process_identity
+from cairnmind.scip import ingest
+from cairnmind.scip.code_graph import code_graph_pending
 from cairnmind.storage.engine import stop_engine
 from cairnmind.store import Store
-
-from conftest import prepare_engine
 
 FILES, SYMBOLS = 330, 1000
 NODES = FILES * (SYMBOLS + 2)  # symbols, files and the nodes of their sources

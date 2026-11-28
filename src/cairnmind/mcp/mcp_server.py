@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from contextlib import asynccontextmanager
 import os
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -17,11 +17,11 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 from cairnmind import __version__
-from cairnmind.config import Settings, env_names, session_value, tls_verify
 from cairnmind.cli_cmds import upgrade_mark
-from cairnmind.cli_cmds.upgrade_mark import BRIDGE_UPGRADE, CODE_REPLACED, CODE_UNREADABLE
-from cairnmind.pal.service_token import foreign_service_text, refused_token
 from cairnmind.cli_cmds.service_version import refusal as other_version
+from cairnmind.cli_cmds.upgrade_mark import BRIDGE_UPGRADE, CODE_REPLACED, CODE_UNREADABLE
+from cairnmind.config import Settings, env_names, session_value, tls_verify
+from cairnmind.pal.service_token import foreign_service_text, refused_token
 
 # store.ORIGIN_METADATA, repeated so the stdio bridge does not import the store: an external session's mark.
 ORIGIN_KEYS = ("origin_client", "origin_session_id", "origin_history", "origin_evidence")
@@ -63,7 +63,8 @@ def _saved_record_view(result: dict[str, Any], sent: Any) -> dict[str, Any]:
     """
     if not isinstance(result, dict) or not {"id", "version", "status"} <= set(result):
         return result
-    metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+    raw_metadata = result.get("metadata")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
     view = {"id": result["id"], "version": result["version"], "status": result["status"],
             "kind": result.get("kind"), "key": str(result.get("key", ""))[:300],
             "source_ids": list(result.get("source_ids") or [])[-8:]}
@@ -125,7 +126,8 @@ def _next_task_view(result: dict[str, Any]) -> dict[str, Any]:
         if isinstance(links, dict) and links:
             # The check of each criterion that is shown, in the same order; None where there is none.
             # Built after the list was bounded, so the two always agree and no text is repeated.
-            full = metadata.get("acceptance_criteria") if isinstance(metadata.get("acceptance_criteria"), list) else []
+            raw_criteria = metadata.get("acceptance_criteria")
+            full = raw_criteria if isinstance(raw_criteria, list) else []
             shown = len(limited.get("acceptance_criteria") or [])
             limited["criterion_checks"] = [links[text][:100] if isinstance(links.get(text), str) else None
                                            for text in full[:shown] if isinstance(text, str)]
@@ -165,6 +167,25 @@ def _written_as_path(value: str) -> bool:
     return value.startswith((".", "~")) or "/" in value or os.sep in value
 
 
+def _resolve_local_project(project: str) -> str:
+    local = Path(project).expanduser()
+    # Otherwise sent as given, and the service answers "Unknown project".
+    return str(local.resolve()) if _written_as_path(project) and local.exists() else project
+
+
+def _resolve_base_dir(project: str) -> Path:
+    return (Path(project) if os.path.isabs(project) and Path(project).is_dir() else Path.cwd()).resolve()
+
+
+def _match_containing_root(base: Path, roots: list[Any]) -> str | None:
+    inside = [
+        str(resolved)
+        for root in roots
+        if isinstance(root, str) and base.is_relative_to(resolved := Path(root).resolve())
+    ]
+    return max(inside, key=len) if inside else None
+
+
 UNAVAILABLE = "Cairnmind service is unavailable ({error}); start `cairnmind serve` or use the launcher."
 
 
@@ -194,11 +215,19 @@ def start_service(settings: Settings) -> None:
     """Start this installation's knowledge service as `ask`, `run` and `context` do (cli.ensure_service), for an
     external client, which no launcher started it for (#258). Stdout belongs to MCP; a start it makes is said on
     standard error (#287)."""
-    from cairnmind.cli import (ServiceOfOtherVersion, SetupInProgress, UpgradeInProgress, _data_dir_arguments, _os_error_text,
-                      _service_unavailable, ensure_service, say_service_started)
+    from cairnmind.cli import (
+        ServiceOfOtherVersion,
+        SetupInProgress,
+        UpgradeInProgress,
+        _data_dir_arguments,
+        _os_error_text,
+        _service_unavailable,
+        ensure_service,
+        say_service_started,
+    )
     from cairnmind.cli_cmds.first_start import SERVICE_NOT_STARTED
-    from cairnmind.terminal.setup_mark import BRIDGE_SETUP
     from cairnmind.storage.store_writer import inspect
+    from cairnmind.terminal.setup_mark import BRIDGE_SETUP
     try:
         role = inspect(settings).get("role")
     except Exception:  # noqa: BLE001 - the role only decides whether to start; a start is tried either way
@@ -301,7 +330,11 @@ class ServiceClient:
         async with self._starting:
             if self.session_id:
                 return await self.request("POST", "/sessions/context", payload={})
-            project, worktree = await self._project_for_service(self.external["project"]), self.external.get("worktree")
+            external = self.external
+            raw_project = external.get("project") if external is not None else None
+            if external is None or not isinstance(raw_project, str):
+                raise RuntimeError("External session configuration is missing a project")
+            project, worktree = await self._project_for_service(raw_project), external.get("worktree")
             if worktree is None:
                 worktree = await self._containing_root(project)
             result = await self._send("POST", "/sessions/prepare", {
@@ -322,18 +355,14 @@ class ServiceClient:
         listed = (await self._send("GET", "/projects", None, {}, allow_list=True)).get("items") or []
         if any(isinstance(row, dict) and project in (row.get("id"), row.get("name")) for row in listed):
             return project
-        local = Path(project).expanduser()
-        # Otherwise sent as given, and the service answers "Unknown project".
-        return str(local.resolve()) if _written_as_path(project) and local.exists() else project
+        return await asyncio.to_thread(_resolve_local_project, project)
 
     async def _containing_root(self, project: str) -> str | None:
         """The most specific registered root containing the project path (or the working directory)."""
         # A path was made absolute at start; a name or id is never read as a local folder.
-        base = (Path(project) if os.path.isabs(project) and Path(project).is_dir() else Path.cwd()).resolve()
+        base = await asyncio.to_thread(_resolve_base_dir, project)
         roots = (await self._send("GET", "/project-roots", None, {"project": project})).get("roots") or []
-        inside = [str(Path(root).resolve()) for root in roots if isinstance(root, str)
-                  and base.is_relative_to(Path(root).resolve())]
-        return max(inside, key=len) if inside else None
+        return await asyncio.to_thread(_match_containing_root, base, roots)
 
     def _adopt(self, result: dict[str, Any]) -> dict[str, Any]:
         if result.get("session_id") != self.session_id:
@@ -374,9 +403,8 @@ class ServiceClient:
             body["session_id"] = self.require_session()
         elif endpoint in self.SCOPED_READS and self.session_id:
             (query if method == "GET" else body)["session_id"] = self.session_id
-        if endpoint == "/sessions/ack":
-            if not self.packet_id or body.get("packet_id") != self.packet_id:
-                raise RuntimeError("resume_required: read resume_context before acknowledging its exact packet")
+        if endpoint == "/sessions/ack" and (not self.packet_id or body.get("packet_id") != self.packet_id):
+            raise RuntimeError("resume_required: read resume_context before acknowledging its exact packet")
         return await self._send(method, endpoint, body, query, adopt=endpoint == "/sessions/context")
 
     async def _send(self, method: str, endpoint: str, body: dict[str, Any] | None,
@@ -403,10 +431,8 @@ class ServiceClient:
         except httpx.HTTPStatusError as exc:
             code = exc.response.status_code
             detail = ""
-            try:
+            with suppress(ValueError):
                 detail = str(exc.response.json().get("detail", ""))[:400]
-            except ValueError:
-                pass
             if not self._matched and refused_token(code, detail):
                 raise RuntimeError(foreign_service_text(self.settings)) from None
             raise RuntimeError(f"Cairnmind service rejected the request ({code}): {detail}") from None
@@ -416,7 +442,8 @@ class ServiceClient:
                 reason = upgrade_mark.refusal() if self.external is None else None
                 if reason:  # `cairnmind serve` is not what to do now: it would start the version being replaced
                     raise RuntimeError(BRIDGE_UPGRADE.format(reason=reason)) from None
-                from cairnmind.terminal.setup_mark import BRIDGE_SETUP, refusal as setup_refusal
+                from cairnmind.terminal.setup_mark import BRIDGE_SETUP
+                from cairnmind.terminal.setup_mark import refusal as setup_refusal
                 reason = setup_refusal(self.settings.data_dir) if self.external is None else None
                 if reason:  # a change of setup stopped the service on purpose (#339): `cairnmind serve` is not the answer
                     raise RuntimeError(BRIDGE_SETUP.format(reason=str(reason))) from None
@@ -452,7 +479,7 @@ class StrictFastMCP(FastMCP):
         declared = next((set(tool.inputSchema.get("properties", {})) for tool in await self.list_tools()
                          if tool.name == name), None)
         extra = sorted(str(key)[:40] for key in arguments or {} if declared is not None and key not in declared)
-        if extra:
+        if extra and declared is not None:
             from mcp.server.fastmcp.exceptions import ToolError
             raise ToolError(f"Nothing was done: {name} has no argument named {', '.join(map(repr, extra[:5]))}. "
                             f"Its arguments are: {', '.join(sorted(declared)) or 'none'}.")
@@ -495,7 +522,7 @@ def create_server(settings: Settings, service: ServiceClient | None = None, *,
             raise ValueError("project and question must not be empty")
         if len(question) > 16000:
             raise ValueError("question is too long; ask a focused question")
-        payload = {"project": project, "question": question}
+        payload: dict[str, Any] = {"project": project, "question": question}
         if answer_schema is not None:
             refuse_if_code_replaced()
             from cairnmind.agents.answer_contract import prepare_answer_schema

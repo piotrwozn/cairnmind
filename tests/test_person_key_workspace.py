@@ -5,17 +5,18 @@ from __future__ import annotations
 import json
 import sys
 
-from fastapi.testclient import TestClient
 import httpx
 import pytest
-
-from cairnmind.terminal import cockpit as cockpit_module, person_proof
-from cairnmind.terminal.cockpit import create_cockpit_app
-from cairnmind.config import Settings
-from cairnmind.terminal.terminal_client import BrokerClient
-from cairnmind.terminal.workspace import WorkspaceManager
+from fastapi.testclient import TestClient
 from test_cockpit_server import ORIGIN, Runtime, login
 from test_person_proof import KEY, fake_tmux, workspace_socket  # noqa: F401 (the fixture)
+
+from cairnmind.config import Settings
+from cairnmind.terminal import cockpit as cockpit_module
+from cairnmind.terminal import person_proof
+from cairnmind.terminal.cockpit import create_cockpit_app
+from cairnmind.terminal.terminal_client import BrokerClient
+from cairnmind.terminal.workspace import WorkspaceManager
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX tmux person-key delivery")
 

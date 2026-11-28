@@ -13,19 +13,19 @@ user that uses the workspace's tmux server: docs/MEMORY_CONTRACTS.md says what r
 from __future__ import annotations
 
 import asyncio
-from contextvars import ContextVar
 import hmac
 import os
-from pathlib import Path
 import re
 import secrets
 import stat
 import subprocess
 import sys
+from contextvars import ContextVar
+from pathlib import Path
 
 from cairnmind.pal import person_pipe
-from cairnmind.terminal.runtime_selection import resolve_tmux
 from cairnmind.pal.runtime_sockets import MAX_SOCKET_PATH, socket_base, socket_directory, workspace_namespace
+from cairnmind.terminal.runtime_selection import resolve_tmux
 
 IS_WINDOWS = sys.platform == "win32"
 # In-process registry of open Windows standalone workspace Named Pipes (pipe_name -> True).
@@ -115,6 +115,8 @@ def workspace_socket(settings, value) -> Path | str | None:
     try:
         directory, node = os.lstat(socket.parent), os.lstat(socket)
     except OSError:
+        return None
+    if sys.platform == "win32":
         return None
     uid = os.getuid()
     if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != uid or stat.S_IMODE(directory.st_mode) != 0o700
@@ -218,7 +220,7 @@ def check(settings, headers, refusal=PROOF_MISSING) -> None:
     kind, key = read_key(settings, socket)
     if kind == "no_key":
         raise PersonProofRefused(NO_WORKSPACE_KEY)
-    if kind != "key" or not isinstance(given, str) or not hmac.compare_digest(key.encode(), given.encode()):
+    if kind != "key" or key is None or not isinstance(given, str) or not hmac.compare_digest(key.encode(), given.encode()):
         raise PersonProofRefused(PROOF_REFUSED)
 
 

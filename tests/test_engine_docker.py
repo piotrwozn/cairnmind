@@ -11,19 +11,33 @@ import sys
 from urllib.parse import urlparse
 
 import pytest
+from conftest import own_time
 from typer.testing import CliRunner
 
-from conftest import own_time
 from cairnmind import config
-from cairnmind.storage import engine, engine_docker
 from cairnmind.cli import app
-from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
+from cairnmind.storage import engine, engine_docker
+from cairnmind.storage.arcade import ArcadeClient, ArcadeError
 from cairnmind.storage.database_mode import MODE_INVALID, describe, engine_mode
-from cairnmind.storage.engine_docker import (CONTAINER_RUNS, EXITED, IMAGE_FILES_MISSING, NATIVE_RUNS, NOT_OURS,
-                                     OTHER_IMAGE, PATH_UNSAFE, RECORD_NOT_OURS, ROOT_REFUSED, SHORT_PASSWORD,
-                                     TIMED_OUT, UNPUBLISHED, container_name, labels, start_docker_engine,
-                                     stop_docker_engine)
+from cairnmind.storage.engine_docker import (
+    CONTAINER_RUNS,
+    EXITED,
+    IMAGE_FILES_MISSING,
+    NATIVE_RUNS,
+    NOT_OURS,
+    OTHER_IMAGE,
+    PATH_UNSAFE,
+    RECORD_NOT_OURS,
+    ROOT_REFUSED,
+    SHORT_PASSWORD,
+    TIMED_OUT,
+    UNPUBLISHED,
+    container_name,
+    labels,
+    start_docker_engine,
+    stop_docker_engine,
+)
 
 runner = CliRunner()
 DIGEST = "sha256:" + "ab" * 32
@@ -740,6 +754,7 @@ def test_engine_start_docker_through_a_docker_stand_in_on_path(tmp_path, monkeyp
 def init_run(docker, tmp_path, monkeypatch):
     """`cairnmind init` with the store replaced, Java and Docker as each test sets them; records the order."""
     import types
+
     from cairnmind import cli
     order, java = [], {"path": None, "major": None}
 

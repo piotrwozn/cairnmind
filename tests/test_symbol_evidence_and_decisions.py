@@ -2,26 +2,26 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import re
 import subprocess
+from pathlib import Path
 
 import pytest
+from test_store_readonly import BOOKKEEPING, changes, files, forbid_starting, record_requests
 from typer.testing import CliRunner
 
 from cairnmind import cli
-from cairnmind.terminal import setup_mark
 from cairnmind.cli_cmds import upgrade_mark
 from cairnmind.memory.code_decisions import get_decision_source, set_decision_source
 from cairnmind.memory.evidence import evidence_states, orphans_report, unanchored
-from cairnmind.scip.ingest import index_project
-from cairnmind.terminal.inspector import Inspector
-from cairnmind.storage.journal import TABLE_TYPES
 from cairnmind.memory.memory import MemoryManager
-from cairnmind.store import Store
+from cairnmind.scip.ingest import index_project
+from cairnmind.storage.journal import TABLE_TYPES
 from cairnmind.storage.store_readonly import ReadOnlyStoreError
 from cairnmind.storage.store_writer import StoreNotWriter
-from test_store_readonly import BOOKKEEPING, changes, files, forbid_starting, record_requests
+from cairnmind.store import Store
+from cairnmind.terminal import setup_mark
+from cairnmind.terminal.inspector import Inspector
 
 
 def git(root: Path, *args: str) -> str:

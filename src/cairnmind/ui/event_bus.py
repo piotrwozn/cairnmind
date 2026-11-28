@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections import deque
 from contextlib import suppress
 from copy import deepcopy
-import threading
 from typing import Any, Literal
 from uuid import uuid4
 

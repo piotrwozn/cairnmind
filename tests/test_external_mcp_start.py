@@ -11,11 +11,11 @@ import sys
 
 import httpx
 import pytest
-
 from conftest import own_time
+
 from cairnmind import cli
-from cairnmind.mcp import mcp_server
 from cairnmind.config import Settings
+from cairnmind.mcp import mcp_server
 
 UNAVAILABLE = "Cairnmind service is unavailable (ConnectError); start `cairnmind serve` or use the launcher."
 

@@ -2,11 +2,11 @@
 from copy import deepcopy
 
 import pytest
+from test_terminal_panels import settle, setup
 from textual.widgets import Input, Static, Switch
 
 from cairnmind.terminal.terminal_panels import CredentialModal, SidebarApp, profile_fields, profile_from_form
 from cairnmind.terminal.terminal_ui import FormModal
-from test_terminal_panels import setup, settle
 
 
 class ProfileBroker:

@@ -61,8 +61,8 @@ from functools import lru_cache
 from pathlib import PurePosixPath
 
 from cairnmind.agents.extraction_input import source_text
-from cairnmind.storage.storage_query import db_find_one
 from cairnmind.agents.support import support_citations
+from cairnmind.storage.storage_query import db_find_one
 
 # What an answer refused by this check says is missing: this fixed prefix, then the names as the
 # question wrote them (a person's text, kept as it is).
@@ -76,62 +76,14 @@ NAMES_GAP = "The quoted sources do not state the names the answer gives: "
 CHECK_ANSWER_NAMES = False
 
 # Words of the language that can be capitalised inside a sentence without naming anything.
-STOP = frozenset("""
-a an and are as at be by can did do does for from has have how i if in is it its may must no not
-of on or our should than that the their then there these this those to was were what when where
-which who whom whose why will with would you your e.g i.e etc ok yes
-monday tuesday wednesday thursday friday saturday sunday january february march april june july
-august september october november december
-""".split())
+STOP = frozenset(["a", "an", "and", "are", "as", "at", "be", "by", "can", "did", "do", "does", "for", "from", "has", "have", "how", "i", "if", "in", "is", "it", "its", "may", "must", "no", "not", "of", "on", "or", "our", "should", "than", "that", "the", "their", "then", "there", "these", "this", "those", "to", "was", "were", "what", "when", "where", "which", "who", "whom", "whose", "why", "will", "with", "would", "you", "your", "e.g", "i.e", "etc", "ok", "yes", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "january", "february", "march", "april", "june", "july", "august", "september", "october", "november", "december"])
 # Polish words no English question has: one of them, or a letter outside ASCII, marks a question
 # whose names may carry a case ending. They also open a sentence without naming anything.
-POLISH = frozenset("""
-czy dla ile jak jaka jaki jakie jaką jakiego jakiej jakim jakich jakiś jakaś która które który
-którą którego której którym których gdzie kiedy dlaczego czemu skąd kto kogo czego czym oraz ale
-więc jeśli jeżeli gdy przez przy bez między podaj pokaż wymień wyjaśnij opisz powiedz sprawdź
-znajdź wypisz proszę tego tej tym tych był była było będzie może można trzeba należy mają się są
-że jest domyślny domyślna domyślne domyślnie największy największa najmniejszy najmniejsza
-najdłuższy najkrótszy maksymalny maksymalna minimalny minimalna aktualny aktualna obecny obecna
-adres wersja nazwa wartość liczba rozmiar czas ścieżka katalog plik baza usługa ustawienie
-ustawienia licencja hasło klucz
-""".split())
+POLISH = frozenset(["czy", "dla", "ile", "jak", "jaka", "jaki", "jakie", "jaką", "jakiego", "jakiej", "jakim", "jakich", "jakiś", "jakaś", "która", "które", "który", "którą", "którego", "której", "którym", "których", "gdzie", "kiedy", "dlaczego", "czemu", "skąd", "kto", "kogo", "czego", "czym", "oraz", "ale", "więc", "jeśli", "jeżeli", "gdy", "przez", "przy", "bez", "między", "podaj", "pokaż", "wymień", "wyjaśnij", "opisz", "powiedz", "sprawdź", "znajdź", "wypisz", "proszę", "tego", "tej", "tym", "tych", "był", "była", "było", "będzie", "może", "można", "trzeba", "należy", "mają", "się", "są", "że", "jest", "domyślny", "domyślna", "domyślne", "domyślnie", "największy", "największa", "najmniejszy", "najmniejsza", "najdłuższy", "najkrótszy", "maksymalny", "maksymalna", "minimalny", "minimalna", "aktualny", "aktualna", "obecny", "obecna", "adres", "wersja", "nazwa", "wartość", "liczba", "rozmiar", "czas", "ścieżka", "katalog", "plik", "baza", "usługa", "ustawienie", "ustawienia", "licencja", "hasło", "klucz"])
 # Words that begin a question or a request: capitalised there by the language, never a name.
-OPENERS = POLISH | frozenset("""
-what which who whom whose where when why how
-is are was were am be been do does did has have had can could should shall would will may might must
-please show list tell give find explain describe name print get check look say summarize summarise
-compare count display provide return report state specify define help see read open search identify
-confirm verify clarify remind enumerate let using running run use add create delete remove set make
-import export prepare need want question
-in on at by for from with within without under over above below after before during about against
-between into through via per since until upon to of off out up down near inside outside across along
-and or but so also now then currently actually just ok okay hi hello hey thanks thank quick btw fyi
-again still well right sure maybe perhaps given assuming suppose if while once according regarding
-concerning besides apart except despite although though because as than not no yes
-the a an any all each every some most many much few several both either neither another other such
-same our my your his her their its this that these those there here one two three first second
-last next previous it we you they he she
-largest smallest biggest highest lowest longest shortest latest newest oldest earliest fastest
-slowest current present exact actual total full main primary only average typical usual
-recommended required supported allowed expected new old big small long short high low
-co na nie od po do ten ta te to ma pod nad
-""".split())
+OPENERS = POLISH | frozenset(["what", "which", "who", "whom", "whose", "where", "when", "why", "how", "is", "are", "was", "were", "am", "be", "been", "do", "does", "did", "has", "have", "had", "can", "could", "should", "shall", "would", "will", "may", "might", "must", "please", "show", "list", "tell", "give", "find", "explain", "describe", "name", "print", "get", "check", "look", "say", "summarize", "summarise", "compare", "count", "display", "provide", "return", "report", "state", "specify", "define", "help", "see", "read", "open", "search", "identify", "confirm", "verify", "clarify", "remind", "enumerate", "let", "using", "running", "run", "use", "add", "create", "delete", "remove", "set", "make", "import", "export", "prepare", "need", "want", "question", "in", "on", "at", "by", "for", "from", "with", "within", "without", "under", "over", "above", "below", "after", "before", "during", "about", "against", "between", "into", "through", "via", "per", "since", "until", "upon", "to", "of", "off", "out", "up", "down", "near", "inside", "outside", "across", "along", "and", "or", "but", "so", "also", "now", "then", "currently", "actually", "just", "ok", "okay", "hi", "hello", "hey", "thanks", "thank", "quick", "btw", "fyi", "again", "still", "well", "right", "sure", "maybe", "perhaps", "given", "assuming", "suppose", "if", "while", "once", "according", "regarding", "concerning", "besides", "apart", "except", "despite", "although", "though", "because", "as", "than", "not", "no", "yes", "the", "a", "an", "any", "all", "each", "every", "some", "most", "many", "much", "few", "several", "both", "either", "neither", "another", "other", "such", "same", "our", "my", "your", "his", "her", "their", "its", "this", "that", "these", "those", "there", "here", "one", "two", "three", "first", "second", "last", "next", "previous", "it", "we", "you", "they", "he", "she", "largest", "smallest", "biggest", "highest", "lowest", "longest", "shortest", "latest", "newest", "oldest", "earliest", "fastest", "slowest", "current", "present", "exact", "actual", "total", "full", "main", "primary", "only", "average", "typical", "usual", "recommended", "required", "supported", "allowed", "expected", "new", "old", "big", "small", "long", "short", "high", "low", "co", "na", "nie", "od", "po", "do", "ten", "ta", "te", "to", "ma", "pod", "nad"])
 # Words every project has: naming one of them does not name a subject.
-GENERIC = frozenset("""
-address api app application argument arguments array bool boolean branch bug build byte bytes cache
-changelog class classes cli client code command commands commit config configuration constant
-constants count data database db default defaults dict dir directory doc docs documentation engine
-enum env environment error event events example false field fields file files flag flags float
-folder format function functions guide header host id index input int integer interface item items
-key keys length library limit line lines list log logs max maximum memory message method methods
-min minimum model models module modules name names none null number object option options output
-package packages parameter parameters path paths port ports process project property queue readme
-record records release repo repository request response result root row rows schema script server
-service session setting settings size source sources state status str string table task test tests
-text thread time timeout token tokens tool tools true type types uri url user users value values
-variable variables version versions window worker
-base64 http2 ipv4 ipv6 md5 oauth2 sha1 sha256 sha512 utf8 utf16 x64 x86 x86_64
-""".split())
+GENERIC = frozenset(["address", "api", "app", "application", "argument", "arguments", "array", "bool", "boolean", "branch", "bug", "build", "byte", "bytes", "cache", "changelog", "class", "classes", "cli", "client", "code", "command", "commands", "commit", "config", "configuration", "constant", "constants", "count", "data", "database", "db", "default", "defaults", "dict", "dir", "directory", "doc", "docs", "documentation", "engine", "enum", "env", "environment", "error", "event", "events", "example", "false", "field", "fields", "file", "files", "flag", "flags", "float", "folder", "format", "function", "functions", "guide", "header", "host", "id", "index", "input", "int", "integer", "interface", "item", "items", "key", "keys", "length", "library", "limit", "line", "lines", "list", "log", "logs", "max", "maximum", "memory", "message", "method", "methods", "min", "minimum", "model", "models", "module", "modules", "name", "names", "none", "null", "number", "object", "option", "options", "output", "package", "packages", "parameter", "parameters", "path", "paths", "port", "ports", "process", "project", "property", "queue", "readme", "record", "records", "release", "repo", "repository", "request", "response", "result", "root", "row", "rows", "schema", "script", "server", "service", "session", "setting", "settings", "size", "source", "sources", "state", "status", "str", "string", "table", "task", "test", "tests", "text", "thread", "time", "timeout", "token", "tokens", "tool", "tools", "true", "type", "types", "uri", "url", "user", "users", "value", "values", "variable", "variables", "version", "versions", "window", "worker", "base64", "http2", "ipv4", "ipv6", "md5", "oauth2", "sha1", "sha256", "sha512", "utf8", "utf16", "x64", "x86", "x86_64"])
 
 _WORD = re.compile(r"\w+(?:\.\w+)*")
 _CODE = re.compile(r"`([^`\s]+)`")

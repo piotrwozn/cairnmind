@@ -2,20 +2,20 @@
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
 import threading
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
+from consent_steps import consent_drawn, form_ready
 from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
 from cairnmind.config import Settings
+from cairnmind.pal.terminal_safe import plain, safe_text
 from cairnmind.terminal.terminal_client import BrokerError
 from cairnmind.terminal.terminal_inspector import InspectorApp
 from cairnmind.terminal.terminal_panels import SidebarApp
-from cairnmind.pal.terminal_safe import plain, safe_text
 from cairnmind.terminal.terminal_ui import wide_dialog
-from consent_steps import consent_drawn, form_ready
 
 
 class FakeWorkspace:

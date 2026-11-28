@@ -15,19 +15,19 @@ from __future__ import annotations
 
 import hashlib
 import os
-from pathlib import Path
 import re
 import subprocess
+from pathlib import Path
 from typing import Any
 
-from cairnmind.storage.sql import utc_now
-from cairnmind.storage.storage_query import db_find, db_find_one, db_insert_document, db_update_where
 from cairnmind.memory.symbol_anchor import (
     COMMENT_TAGS,
     find_symbol_in_analysis,
     make_symbol_anchor,
     posix_path,
 )
+from cairnmind.storage.sql import utc_now
+from cairnmind.storage.storage_query import db_find, db_find_one, db_insert_document, db_update_where
 
 DECISION_SOURCES = ("off", "comments", "adr", "trailers")
 DEFAULT_DECISION_SOURCE = "off"
@@ -62,8 +62,8 @@ def _write_refusal(store) -> str | None:
         return getattr(store, "not_writer", None) or "store is read-only"
     if getattr(store, "_unfinished_restore", False):
         return "an unfinished restore holds this store"
-    from cairnmind.terminal import setup_mark
     from cairnmind.cli_cmds import upgrade_mark
+    from cairnmind.terminal import setup_mark
     reason = upgrade_mark.refusal()
     if reason:
         return str(reason)
@@ -84,8 +84,8 @@ def set_decision_source(store, project_id: str, source: str) -> dict[str, Any]:
     if getattr(store, "read_only", False):
         from cairnmind.storage.store_readonly import ReadOnlyStoreError
         raise ReadOnlyStoreError("A store opened for reading cannot change project decision settings")
-    from cairnmind.terminal import setup_mark
     from cairnmind.cli_cmds import upgrade_mark
+    from cairnmind.terminal import setup_mark
     for mark_reason in (upgrade_mark.refusal(), setup_mark.refusal(store.data_dir)):
         if mark_reason:
             raise ValueError(str(mark_reason))
@@ -131,20 +131,20 @@ def _text_sha256(text: str) -> str:
 def comment_decision_key(relative_path: str | Path, symbol: str | None, tag: str, text_sha256: str) -> str:
     """Deterministic key for a tagged comment so re-reading the same text creates one record."""
     rel = posix_path(relative_path)
-    digest = hashlib.sha256(f"{rel}\0{symbol or ''}\0{tag}\0{text_sha256}".encode("utf-8")).hexdigest()[:24]
+    digest = hashlib.sha256(f"{rel}\0{symbol or ''}\0{tag}\0{text_sha256}".encode()).hexdigest()[:24]
     return f"comment:{tag.lower()}:{digest}"
 
 
 def adr_decision_key(relative_path: str | Path, text_sha256: str) -> str:
     """Deterministic key for an ADR decision so re-reading the same text creates one record."""
     rel = posix_path(relative_path)
-    digest = hashlib.sha256(f"{rel}\0{text_sha256}".encode("utf-8")).hexdigest()[:24]
+    digest = hashlib.sha256(f"{rel}\0{text_sha256}".encode()).hexdigest()[:24]
     return f"adr:{digest}"
 
 
 def trailer_decision_key(tag: str, text_sha256: str) -> str:
     """Deterministic key for a Git trailer decision so reading the same text twice makes one record."""
-    digest = hashlib.sha256(f"{tag.lower()}\0{text_sha256}".encode("utf-8")).hexdigest()[:24]
+    digest = hashlib.sha256(f"{tag.lower()}\0{text_sha256}".encode()).hexdigest()[:24]
     return f"trailer:{tag.lower()}:{digest}"
 
 
@@ -315,7 +315,7 @@ def parse_commit_trailers(commit_sha: str, committed_at: str, subject: str, body
 
     refs: list[str] = []
     entries: list[dict[str, Any]] = []
-    for key, value, raw_line in trailer_lines:
+    for key, value, _raw_line in trailer_lines:
         low = key.lower()
         if low in ("refs", "ref", "adr"):
             for m in _ADR_REF_RE.finditer(value):

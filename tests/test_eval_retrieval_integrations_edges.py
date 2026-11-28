@@ -1,18 +1,18 @@
 """Fast-tier edge-case tests for evaluation.py, retrieval.py, and integrations.py."""
 from __future__ import annotations
 
-from dataclasses import replace
 import json
 import sys
+from dataclasses import replace
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from cairnmind.agents import evaluation, retrieval
+from cairnmind.config import Settings
 from cairnmind.memory import integrations
 from cairnmind.storage.arcade import ArcadeError
-from cairnmind.config import Settings
 
 
 def test_evaluation_schema_measured_ollama_and_fixture_mcp_edges(tmp_path, monkeypatch):
