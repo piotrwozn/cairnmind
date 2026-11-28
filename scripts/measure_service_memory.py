@@ -160,7 +160,7 @@ def free_port() -> int:
 def throwaway(workdir: Path) -> Path:
     """The directory, refused when it could be an installation's."""
     workdir = workdir.expanduser().resolve()
-    if any(part in str(workdir) for part in (".local/share", ".local/state")) or workdir == Path.home():
+    if any(part in workdir.as_posix() for part in (".local/share", ".local/state")) or workdir == Path.home():
         raise SystemExit(f"refused: {workdir} could be an installation's directory")
     return workdir
 
