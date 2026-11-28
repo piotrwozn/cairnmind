@@ -24,6 +24,7 @@ STORAGE_LAYER_FILES = frozenset({
     "arcade.py",
     "arcade_backend.py",
     "sqlite_backend.py",
+    "sqlite_vectors.py",
     "storage_query.py",
     "database_credentials.py",
     "journal.py",

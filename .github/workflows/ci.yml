@@ -121,6 +121,59 @@ jobs:
             uv run pytest -n 4 -m "not arcade and not tmux" -q
           fi
 
+  sqlite-tests:
+    # Dedicated SQLite backend CI: cross-cutting integration suites under CAIRNMIND_STORAGE_BACKEND=sqlite
+    # plus optional `cairnmind[vec]` (sqlite-vec vec0 ANN) and exact-cosine fallback verification.
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - run: test "${{ needs.changes.result }}" = success
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: SQLite core + cross-cutting integration suite (without vec extra)
+        env:
+          CAIRNMIND_STORAGE_BACKEND: sqlite
+        run: |
+          uv sync --locked --extra dev
+          uv run pytest tests/test_sqlite_vec_ann.py tests/test_phase4b_sqlite_try.py tests/test_phase5_scale_telemetry.py -q
+          uv run pytest tests/test_storage_contract.py -k "sqlite or temp_table" -q
+          uv run pytest -n 4 -q \
+            tests/test_brief.py \
+            tests/test_workflow.py \
+            tests/test_stages.py \
+            tests/test_memory_session_resume.py \
+            tests/test_published_memory_acts.py \
+            tests/test_published_memory_service.py \
+            tests/test_published_conflict_decision.py \
+            tests/test_project_clone_store.py \
+            tests/test_project_add_jobs.py \
+            tests/test_agent_reads.py \
+            tests/test_agent_write_guard.py \
+            tests/test_agent_own_extraction.py \
+            tests/test_extraction_input.py \
+            tests/test_extractor_stamp.py \
+            tests/test_context_selection.py \
+            tests/test_code_fingerprint.py \
+            tests/test_graph_parts.py \
+            tests/test_source_sensitivity.py \
+            tests/test_store_growth.py \
+            tests/test_quick_finding.py \
+            tests/test_acts_after_project_switch.py \
+            tests/test_reload_after_saved_act.py
+      - name: SQLite optional cairnmind[vec] (sqlite-vec vec0 ANN)
+        env:
+          CAIRNMIND_STORAGE_BACKEND: sqlite
+        run: |
+          uv sync --locked --extra dev --extra vec
+          uv run python -c "import sqlite_vec; print('sqlite_vec installed:', sqlite_vec.__file__)"
+          uv run pytest tests/test_sqlite_vec_ann.py -q
+          uv run pytest tests/test_storage_contract.py -k "sqlite or temp_table" -q
+
   eval-replay:
     # Deterministic VCR replay of evaluation suites without live Ollama/GPU (ADR-10).
     # Zero exit-3 (not_run) skips; any cassette miss or verification regression exits 1.

@@ -11,7 +11,6 @@ Provides full behavioral parity with ArcadeBackend across all 28 collections:
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import math
@@ -19,17 +18,25 @@ import random
 import re
 import shutil
 import sqlite3
-import struct
 import threading
 import time
-from array import array
 from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from cairnmind.storage import sqlite_vectors as _vec
 from cairnmind.storage.sql import clean_row, json_text
+from cairnmind.storage.sqlite_vectors import (
+    cosine_distance as cosine_distance,
+)
+from cairnmind.storage.sqlite_vectors import (
+    pack_vector as pack_vector,
+)
+from cairnmind.storage.sqlite_vectors import (
+    unpack_vector as unpack_vector,
+)
 from cairnmind.storage.storage_backend import ALL_COLLECTIONS, META_COLLECTION
 
 SQLITE_SCHEMA_VERSION = 4
@@ -176,30 +183,6 @@ _LOOKUP_INDEXES: tuple[tuple[str, str], ...] = (
     ("session_events", "session_id"),
     ("resume_packets", "session_id"),
 )
-
-
-def pack_vector(vector: list[float]) -> bytes:
-    """Pack a float vector as canonical little-endian float32 BLOB (ADR-03)."""
-    return struct.pack(f"<{len(vector)}f", *(float(v) for v in vector))
-
-
-def unpack_vector(blob: bytes) -> array:
-    arr = array("f")
-    arr.frombytes(blob)
-    return arr
-
-
-def cosine_distance(left: list[float] | tuple[float, ...] | array, right: list[float] | tuple[float, ...] | array) -> float:
-    if len(left) != len(right):
-        return 2.0
-    dot = math.sumprod(left, right)
-    norm_l = math.sumprod(left, left)
-    norm_r = math.sumprod(right, right)
-    denom = math.sqrt(norm_l) * math.sqrt(norm_r)
-    if denom <= 0.0:
-        return 1.0
-    sim = max(-1.0, min(1.0, dot / denom))
-    return 1.0 - sim
 
 
 def quote_fts5_query(words: list[str]) -> str:
@@ -428,6 +411,9 @@ class SQLiteBackend:
         self._memory_conn: sqlite3.Connection | None = None
         self._memory_lock = threading.RLock()
         self._sqlite_vec_available = False
+        self._vec0_synced: set[str] = set()
+        self._vec_ann_queries: int = 0
+        self._vec_fallback_queries: int = 0
         # Telemetry counters (consumed by PR #8 doctor scale detection)
         self.busy_retries: int = 0
         self._busy_timestamps: deque[float] = deque(maxlen=1000)
@@ -500,6 +486,8 @@ class SQLiteBackend:
             "fts_p95_ms": _p95(self._fts_latencies_ms),
             "graph_p95_ms": _p95(self._graph_latencies_ms),
             "sqlite_vec_loaded": self._sqlite_vec_available,
+            "vec_ann_queries": self._vec_ann_queries,
+            "vec_fallback_queries": self._vec_fallback_queries,
         }
 
     def _open_connection(self) -> sqlite3.Connection:
@@ -559,6 +547,7 @@ class SQLiteBackend:
             except (sqlite3.Error, OSError) as exc:
                 log.debug("Failed to close SQLite connection: %s", exc)
         self._memory_conn = None
+        self._vec0_synced.clear()
         if hasattr(self._local, "conn"):
             delattr(self._local, "conn")
 
@@ -763,6 +752,13 @@ class SQLiteBackend:
         except sqlite3.IntegrityError as exc:
             raise ValueError(f"Duplicate key in {collection}: {exc}") from exc
         self._sync_fts_upsert(conn, collection, row)
+        if collection == "embeddings":
+            _vec.sync_vec_upsert(
+                conn,
+                row,
+                sqlite_vec_available=self._sqlite_vec_available,
+                read_only=self._read_only,
+            )
 
     def _upsert_row(
         self,
@@ -827,7 +823,21 @@ class SQLiteBackend:
             raise ValueError(f"Duplicate key in {collection}: {exc}") from exc
         if old_id != row.get("id"):
             self._sync_fts_delete(conn, collection, [old_id])
+            if collection == "embeddings":
+                _vec.sync_vec_delete_rows(
+                    conn,
+                    [(old_id, row.get("project_id"), row.get("namespace"), row.get("dimension"))],
+                    sqlite_vec_available=self._sqlite_vec_available,
+                    read_only=self._read_only,
+                )
         self._sync_fts_upsert(conn, collection, row)
+        if collection == "embeddings":
+            _vec.sync_vec_upsert(
+                conn,
+                row,
+                sqlite_vec_available=self._sqlite_vec_available,
+                read_only=self._read_only,
+            )
 
     # --- StorageBackend Protocol Methods ---
 
@@ -1030,24 +1040,51 @@ class SQLiteBackend:
         pk = "name" if collection == META_COLLECTION else "id"
         table_cols = _table_column_names(collection)
         where_sql, params = compile_sqlite_where(conn, table_cols, where)
+        deleted_embeddings: list[tuple[str, str | None, str | None, int | None]] = []
         if limit is not None:
             lim = max(0, int(limit))
             if lim == 0:
                 return [{"count": 0}]
-            sql = f'SELECT "{pk}" FROM "{collection}"' + (f" WHERE {where_sql}" if where_sql else "") + f" LIMIT {lim}"
-            ids = [row[0] for row in conn.execute(sql, params).fetchall()]
+            if collection == "embeddings":
+                sql = (
+                    'SELECT id, project_id, namespace, dimension FROM "embeddings"'
+                    + (f" WHERE {where_sql}" if where_sql else "")
+                    + f" LIMIT {lim}"
+                )
+                emb_rows = conn.execute(sql, params).fetchall()
+                deleted_embeddings = [(str(r[0]), r[1], r[2], r[3]) for r in emb_rows]
+                ids = [r[0] for r in deleted_embeddings]
+            else:
+                sql = f'SELECT "{pk}" FROM "{collection}"' + (f" WHERE {where_sql}" if where_sql else "") + f" LIMIT {lim}"
+                ids = [row[0] for row in conn.execute(sql, params).fetchall()]
             if ids:
                 clause, id_params = sqlite_id_filter_sql(conn, f'"{pk}"', ids, slot=7)
                 conn.execute(f'DELETE FROM "{collection}" WHERE {clause}', id_params)
         else:
-            sql = f'SELECT "{pk}" FROM "{collection}"' + (f" WHERE {where_sql}" if where_sql else "")
-            ids = [row[0] for row in conn.execute(sql, params).fetchall()]
+            if collection == "embeddings":
+                sql = (
+                    'SELECT id, project_id, namespace, dimension FROM "embeddings"'
+                    + (f" WHERE {where_sql}" if where_sql else "")
+                )
+                emb_rows = conn.execute(sql, params).fetchall()
+                deleted_embeddings = [(str(r[0]), r[1], r[2], r[3]) for r in emb_rows]
+                ids = [r[0] for r in deleted_embeddings]
+            else:
+                sql = f'SELECT "{pk}" FROM "{collection}"' + (f" WHERE {where_sql}" if where_sql else "")
+                ids = [row[0] for row in conn.execute(sql, params).fetchall()]
             if where_sql:
                 conn.execute(f'DELETE FROM "{collection}" WHERE {where_sql}', params)
             else:
                 conn.execute(f'DELETE FROM "{collection}"')
         if collection in {"chunks", "records"} and ids:
             self._sync_fts_delete(conn, collection, [str(x) for x in ids])
+        elif collection == "embeddings" and deleted_embeddings:
+            _vec.sync_vec_delete_rows(
+                conn,
+                deleted_embeddings,
+                sqlite_vec_available=self._sqlite_vec_available,
+                read_only=self._read_only,
+            )
         return [{"count": len(ids)}]
 
     def find(
@@ -1178,7 +1215,7 @@ class SQLiteBackend:
         self._fts_latencies_ms.append((time.monotonic() - t0) * 1000.0)
         return [{**json.loads(row[0]), "search_score": float(row[1])} for row in rows]
 
-    # --- Vectors (ADR-03: float32 BLOB + C-level math.sumprod exact cosine / optional sqlite-vec) ---
+    # --- Vectors (ADR-03: native sqlite-vec vec0 KNN + float32 BLOB exact cosine fallback) ---
 
     def ensure_vector_index(
         self,
@@ -1187,13 +1224,12 @@ class SQLiteBackend:
         dimension: int,
         model: str,
     ) -> dict[str, Any] | None:
-        if not 1 <= dimension <= 8192:
+        if not 1 <= dimension <= _vec.VEC0_MAX_DIM:
             raise ValueError("Unsupported embedding dimension")
         conn = self._conn()
         if not conn.execute("SELECT id FROM projects WHERE id=?", (project_id,)).fetchone():
             return None
-        identity = json.dumps([project_id, namespace, dimension], separators=(",", ":"))
-        type_name = "vector_" + hashlib.sha256(identity.encode()).hexdigest()[:24]
+        type_name = _vec.vector_type_name(project_id, namespace, dimension)
         values = {
             "id": type_name,
             "project_id": project_id,
@@ -1207,6 +1243,9 @@ class SQLiteBackend:
             if not self._find_one_row(conn, "projects", {"id": project_id}, columns=("id",)):
                 return None
             self.upsert_document(tx, "vector_indexes", values, key_field="id")
+            if self._sqlite_vec_available and not self._read_only:
+                vec_table, _ = _vec.backfill_vec0_table(conn, project_id, namespace, dimension, type_name)
+                self._vec0_synced.add(vec_table)
         return values
 
     def has_vector_embedding(
@@ -1241,48 +1280,25 @@ class SQLiteBackend:
         eligible_sources: list[str],
         limit: int,
     ) -> tuple[bool, list[dict[str, Any]], str | None]:
-        from cairnmind.storage.storage_query import sqlite_id_filter_sql
         conn = self._conn()
-        dim = len(query_vector)
-        has_idx = conn.execute(
-            "SELECT id FROM vector_indexes WHERE project_id=? AND namespace=? AND dimension=?",
-            (project_id, namespace, dim),
-        ).fetchone()
-        if not has_idx:
-            return False, [], None
-        if not eligible_sources:
-            return True, [], None
-        src_clause, src_params = sqlite_id_filter_sql(conn, "source_id", eligible_sources, slot=0)
-        rows = conn.execute(
-            f"SELECT chunk_id, vector_blob, doc FROM embeddings "
-            f"WHERE project_id=? AND namespace=? AND dimension=? AND {src_clause}",
-            [project_id, namespace, dim, *src_params],
-        ).fetchall()
-        q_arr = array("f", query_vector)
-        q_norm = math.sqrt(math.sumprod(q_arr, q_arr))
-        scored: list[tuple[float, str]] = []
-        for row in rows:
-            blob = row[1]
-            if blob is not None:
-                vec = unpack_vector(blob)
+        present, neighbors, warning, used_vec0 = _vec.search_vectors(
+            conn,
+            project_id,
+            namespace,
+            query_vector,
+            eligible_sources,
+            limit,
+            sqlite_vec_available=self._sqlite_vec_available,
+            read_only=self._read_only,
+            synced_tables=self._vec0_synced,
+            raw_tx_factory=self.raw_transaction,
+        )
+        if present and eligible_sources and int(limit) > 0:
+            if used_vec0:
+                self._vec_ann_queries += 1
             else:
-                doc = json.loads(row[2])
-                vec = array("f", doc.get("vector") or ())
-            if len(vec) != dim:
-                continue
-            if q_norm <= 0.0:
-                dist = 1.0
-            else:
-                v_norm = math.sqrt(math.sumprod(vec, vec))
-                if v_norm <= 0.0:
-                    dist = 1.0
-                else:
-                    sim = max(-1.0, min(1.0, math.sumprod(q_arr, vec) / (q_norm * v_norm)))
-                    dist = 1.0 - sim
-            scored.append((dist, str(row[0])))
-        scored.sort(key=lambda item: (item[0], item[1]))
-        neighbors = [{"chunk_id": cid, "distance": dist} for dist, cid in scored[: int(limit)]]
-        return True, neighbors, None
+                self._vec_fallback_queries += 1
+        return present, neighbors, warning
 
     def delete_vectors_for_sources(self, tx: Any, source_ids: list[str]) -> None:
         if not source_ids:
@@ -1672,10 +1688,14 @@ class SQLiteBackend:
             )
 
     def ensure_restored_vector_types(self, vector_indexes: list[dict[str, Any]]) -> None:
+        conn = self._conn()
         for registry in vector_indexes:
             name, dimension = registry.get("type_name"), registry.get("dimension")
             if not isinstance(name, str) or not name.startswith("vector_") or type(dimension) is not int or dimension <= 0:
                 raise ValueError("Invalid vector namespace in backup")
+            if self._sqlite_vec_available and not self._read_only:
+                with self.raw_transaction():
+                    _vec.ensure_vec0_table(conn, name, dimension)
 
     def wipe_all_collections(self, collections: tuple[str, ...]) -> None:
         wipe_order = list(reversed(collections))
@@ -1684,6 +1704,8 @@ class SQLiteBackend:
                 tx._conn.execute(f'DELETE FROM "{col}"')
             tx._conn.execute("DELETE FROM chunks_fts")
             tx._conn.execute("DELETE FROM records_fts")
+            _vec.drop_all_vec0_tables(tx._conn)
+        self._vec0_synced.clear()
 
     def import_migration_batch(self, collection: str, rows: list[dict[str, Any]]) -> None:
         if not rows:
