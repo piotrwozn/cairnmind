@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX bash scripts/compare_model_paths.sh")
+
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "compare_model_paths.sh"
 OWN = {"port": 9101, "arcade_url": "http://127.0.0.1:9102"}
 

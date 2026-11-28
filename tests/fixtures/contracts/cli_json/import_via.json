@@ -1,0 +1,14 @@
+{
+  "archived": 1,
+  "chunks": 1,
+  "errors": [],
+  "events": 1,
+  "evidence_state": "degraded",
+  "files": 1,
+  "importer": "cli-conv",
+  "inbox": 0,
+  "path": "<FOREIGN_LOG>",
+  "source_ids": [
+    "<UUID_1>"
+  ]
+}

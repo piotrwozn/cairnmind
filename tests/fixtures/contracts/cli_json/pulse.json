@@ -1,0 +1,21 @@
+{
+  "backend": "arcadedb",
+  "backend_mode": "managed_native",
+  "branch_or_tree_diverged": false,
+  "broken_refs": [],
+  "degraded_entities": [],
+  "drift_files": [],
+  "git_available": true,
+  "integrity_errors": [],
+  "latency_ms": 0,
+  "project": {
+    "id": "<UUID_1>",
+    "name": "contract-app"
+  },
+  "recommended_actions": [],
+  "stale_test_tasks": [],
+  "status": "healthy",
+  "warnings": [],
+  "worktree": "<WORKTREE>",
+  "would_block_done": false
+}

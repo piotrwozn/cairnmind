@@ -268,8 +268,8 @@ async def test_more_leads_to_the_list_of_projects_to_delete(tmp_path, monkeypatc
         app.action_more()
         await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
         menu = app.screen.choices
-        assert menu[-1][0] == "Delete project memory"
-        for _ in range(len(menu) - 1):
+        position = [label for label, _ in menu].index("Delete project memory")
+        for _ in range(position):
             await pilot.press("down")
         await pilot.press("enter")
         await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal) and app.screen.choices != menu)

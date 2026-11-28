@@ -9,7 +9,6 @@ import base64
 import asyncio
 import contextlib
 from dataclasses import dataclass
-import fcntl
 import inspect
 import json
 import os
@@ -20,10 +19,13 @@ import socket
 import struct
 import subprocess
 import sys
-import termios
 import threading
 import time
 from uuid import uuid4
+
+if sys.platform != "win32":
+    import fcntl
+    import termios
 
 import httpx
 import pytest

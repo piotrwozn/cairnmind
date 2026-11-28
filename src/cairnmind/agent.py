@@ -30,8 +30,8 @@ from .retrieval import (Retriever, json_value, last_warnings, public_metadata, p
 from .store import validate_task_state
 from . import subject as _subject
 from .subject import NAMES_GAP, SUBJECT_GAP, found_names, unnamed_answer_names, unnamed_subject
-from .support import (NAMES_SCHEMA, NAMES_TOKENS, SUPPORT_SCHEMA, SUPPORT_TOKENS, names_messages, names_verdict,
-                      support_messages, support_verdict)
+from .support import (NAMES_SCHEMA, NAMES_SYSTEM, NAMES_TOKENS, SUPPORT_SCHEMA, SUPPORT_SYSTEM, SUPPORT_TOKENS,
+                      names_messages, names_verdict, support_messages, support_verdict)
 
 
 SYSTEM = """You are the local evidence-grounded knowledge agent for a programming workspace.
@@ -993,9 +993,12 @@ class KnowledgeAgent:
         return result, invalid_unknowns
 
     async def ask(self, project_id: str, question: str, worktree=None,
-                  answer_schema: dict | None = None, also_held=frozenset()) -> dict:
+                  answer_schema: dict | None = None, also_held=frozenset(),
+                  *, verifier: str = "llm", nli_scorer=None) -> dict:
+        if verifier not in ("llm", "nli"):
+            raise ValueError(f"Unsupported verifier {verifier!r}; choose 'llm' or 'nli'.")
         diagnostics = {"stage": "ask", "repair_attempted": False, "repair_outcome": "not_needed",
-                       "validation_codes": [], "model_calls": [],
+                       "validation_codes": [], "model_calls": [], "verifier": verifier,
                        "budget": {"timeout_seconds": self.settings.ask_timeout, "max_steps": self.settings.max_steps,
                                   "context_limit_chars": max(12000, context_tokens(self.settings) * 2)}}
         started = time.monotonic()
@@ -1004,7 +1007,8 @@ class KnowledgeAgent:
         gate = ask_gate(self.settings, self.store, also_held)
         token = ASK.set(gate)
         try:
-            result = await self._ask_impl(project_id, question, worktree, answer_schema, diagnostics)
+            result = await self._ask_impl(project_id, question, worktree, answer_schema, diagnostics,
+                                          verifier=verifier, nli_scorer=nli_scorer)
             in_part = diagnostics.pop("_hits_in_part", 0)
             now = time.monotonic()
             left = self.settings.ask_timeout - (now - started)
@@ -1022,7 +1026,7 @@ class KnowledgeAgent:
                 again = {**diagnostics, "model_calls": [], "validation_codes": [], "repair_attempted": False,
                          "repair_outcome": "not_needed"}
                 second = await self._ask_impl(project_id, question, worktree, answer_schema, again,
-                                              whole=True, timeout=left)
+                                              whole=True, timeout=left, verifier=verifier, nli_scorer=nli_scorer)
                 again.pop("_hits_in_part", None)
                 again.pop("_last_call_at", None)
                 if second.get("status") == "complete":
@@ -1052,7 +1056,8 @@ class KnowledgeAgent:
         return {**result, "diagnostics": diagnostics}
 
     async def _support_gate(self, project_id: str, question: str, result: dict, evidence: dict, started: float,
-                            diagnostics: dict, *, plain: bool = True) -> dict:
+                            diagnostics: dict, *, plain: bool = True, verifier: str = "llm",
+                            nli_scorer=None) -> dict:
         """The one place after the citation check (``_validate_final``) where a complete answer may
         lose its status. The checks run in this order and the first that fails decides:
         1. the support check: the subject check, then one judge call that its quotes state the answer;
@@ -1083,19 +1088,119 @@ class KnowledgeAgent:
             return self._result("partial", "The model's answer could not be verified in the sources.",
                                 evidence, [*result.get("unknowns", []), SUBJECT_GAP + ", ".join(unnamed)],
                                 started, result["sources"], code="answer_unsupported")
-        try:
-            response = await self.ollama.chat(
-                support_messages(question, result["answer"], result["sources"]), tools=None,
-                format=deepcopy(SUPPORT_SCHEMA), options={"num_predict": SUPPORT_TOKENS})
-        except OllamaUnavailable:
-            supported, reason = False, None
-            diagnostics["support_check"] = "failed"
+        from .nli_verifier import NEEDS_LLM_REVIEW_CODE, evaluate_tier1_nli
+        from .verdict_cache import VerdictCache, prompt_fingerprint, verdict_cache_key
+        vcache = VerdictCache(self.settings.data_dir) if getattr(self.settings, "data_dir", None) else None
+        if hasattr(self.ollama, "verdict_cache_id"):
+            model_cache_id = str(self.ollama.verdict_cache_id)
+        elif hasattr(self.ollama, "base_url") or hasattr(self.ollama, "cassette_path"):
+            model_cache_id = str(self.settings.chat_model)
         else:
-            diagnostics["model_calls"] = [*diagnostics["model_calls"][-1:],
-                                          _model_diagnostics(response, "support")]
-            supported, reason = support_verdict(response)
-            diagnostics["support_check"] = ("supported" if supported else
-                                            "unsupported" if reason else "failed")
+            # Injected test doubles without a transport URL are scoped per instance so swapping
+            # mocks within one test fixture never reuses another mock's verdict.
+            model_cache_id = f"{self.settings.chat_model}@mock:{id(self.ollama)}"
+
+        escalated_from_nli = False
+        if verifier == "nli":
+            nli_key = verdict_cache_key(
+                stage="support_nli",
+                question=question,
+                claim=result["answer"],
+                sources=result["sources"],
+                model_id=getattr(nli_scorer, "model_id", "local-nli"),
+                prompt_hash="tier1-nli-v1",
+                verification_mode="nli",
+                evidence=evidence,
+                source_text_fn=source_text,
+            ) if vcache is not None and nli_scorer is None else None
+            cached_nli = vcache.get(nli_key) if (vcache is not None and nli_key is not None) else None
+            if cached_nli is not None and cached_nli.get("decision") in {"accept", "reject"}:
+                diagnostics["verdict_cache"] = "hit"
+                diagnostics["verification_tier"] = 1
+                diagnostics["nli"] = cached_nli
+                if cached_nli["decision"] == "accept":
+                    diagnostics["support_check"] = "nli_supported"
+                    diagnostics["names_check_skipped"] = "tier1_nli_fast"
+                    return {**result, "elapsed_seconds": round(time.monotonic() - started, 3)}
+                diagnostics["support_check"] = "nli_contradicted"
+                return self._result("partial", "The model's answer could not be verified in the sources.",
+                                    evidence, [*result.get("unknowns", []),
+                                               f"The quotes do not support the answer: {cached_nli.get('reason', 'NLI contradiction.')}"],
+                                    started, result["sources"], code="answer_unsupported")
+
+            nli = await asyncio.to_thread(
+                evaluate_tier1_nli,
+                question,
+                result["answer"],
+                result["sources"],
+                evidence=evidence,
+                source_text_fn=source_text,
+                scorer=nli_scorer,
+                data_dir=getattr(self.settings, "data_dir", None),
+            )
+            nli_info = {
+                "decision": nli.decision,
+                "reason": nli.reason,
+                "entailment": round(nli.entailment, 4),
+                "contradiction": round(nli.contradiction, 4),
+                "model_id": nli.model_id,
+            }
+            diagnostics["nli"] = nli_info
+            if nli.decision == "accept":
+                diagnostics["verification_tier"] = 1
+                diagnostics["support_check"] = "nli_supported"
+                diagnostics["names_check_skipped"] = "tier1_nli_fast"
+                if vcache is not None and nli_key is not None:
+                    vcache.put(nli_key, "support_nli", nli_info)
+                return {**result, "elapsed_seconds": round(time.monotonic() - started, 3)}
+            if nli.decision == "reject":
+                diagnostics["verification_tier"] = 1
+                diagnostics["support_check"] = "nli_contradicted"
+                if vcache is not None and nli_key is not None:
+                    vcache.put(nli_key, "support_nli", nli_info)
+                return self._result("partial", "The model's answer could not be verified in the sources.",
+                                    evidence, [*result.get("unknowns", []),
+                                               f"The quotes do not support the answer: {nli.reason}"],
+                                    started, result["sources"], code="answer_unsupported")
+            escalated_from_nli = True
+            diagnostics["nli_escalated"] = nli.reason
+
+        diagnostics["verification_tier"] = 2
+        support_key = verdict_cache_key(
+            stage="support",
+            question=question,
+            claim=result["answer"],
+            sources=result["sources"],
+            model_id=model_cache_id,
+            prompt_hash=prompt_fingerprint(SUPPORT_SYSTEM, SUPPORT_SCHEMA),
+            verification_mode="strict_llm",
+            evidence=evidence,
+            source_text_fn=source_text,
+        ) if vcache is not None else None
+        cached_support = vcache.get(support_key) if (vcache is not None and support_key is not None) else None
+        if cached_support is not None:
+            supported = bool(cached_support.get("supported"))
+            reason = cached_support.get("reason")
+            diagnostics["support_check"] = "supported" if supported else "unsupported"
+            diagnostics["verdict_cache"] = "hit"
+        else:
+            try:
+                response = await self.ollama.chat(
+                    support_messages(question, result["answer"], result["sources"], evidence,
+                                     source_text_fn=source_text),
+                    tools=None, format=deepcopy(SUPPORT_SCHEMA), options={"num_predict": SUPPORT_TOKENS})
+            except OllamaUnavailable:
+                supported, reason = False, None
+                diagnostics["support_check"] = "failed"
+            else:
+                diagnostics["model_calls"] = [*diagnostics["model_calls"][-1:],
+                                              _model_diagnostics(response, "support")]
+                supported, reason = support_verdict(response)
+                diagnostics["support_check"] = ("supported" if supported else
+                                                "unsupported" if reason else "failed")
+                if vcache is not None and support_key is not None and (supported or reason is not None):
+                    vcache.put(support_key, "support", {"supported": supported, "reason": reason})
+                    diagnostics["verdict_cache"] = "miss"
         gap = None  # the sentence for a names check that withholds the answer; None: the judge's own gap
         if supported and plain:
             diagnostics["support_check"] = NAMES_PENDING  # a timeout from here on is a names check's
@@ -1108,15 +1213,34 @@ class KnowledgeAgent:
         if supported and plain:
             # One more call (#245): the names the answer asserts, each stated by the quotes or not. A lower-case
             # name has no shape for the subject check; this is how it is read. Fail closed, like the judge.
-            try:
-                response = await self.ollama.chat(
-                    names_messages(result["answer"], result["sources"]), tools=None,
-                    format=deepcopy(NAMES_SCHEMA), options={"num_predict": NAMES_TOKENS})
-            except OllamaUnavailable:
-                unstated = None
+            names_key = verdict_cache_key(
+                stage="names",
+                question="",
+                claim=result["answer"],
+                sources=result["sources"],
+                model_id=model_cache_id,
+                prompt_hash=prompt_fingerprint(NAMES_SYSTEM, NAMES_SCHEMA),
+                verification_mode="strict_llm",
+                evidence=evidence,
+                source_text_fn=source_text,
+            ) if vcache is not None else None
+            cached_names = vcache.get(names_key) if (vcache is not None and names_key is not None) else None
+            if cached_names is not None and isinstance(cached_names.get("unstated"), list):
+                unstated = list(cached_names["unstated"])
+                diagnostics["names_cache"] = "hit"
             else:
-                diagnostics["model_calls"] = [*diagnostics["model_calls"][-2:], _model_diagnostics(response, "names")]
-                unstated = names_verdict(response)
+                try:
+                    response = await self.ollama.chat(
+                        names_messages(result["answer"], result["sources"]), tools=None,
+                        format=deepcopy(NAMES_SCHEMA), options={"num_predict": NAMES_TOKENS})
+                except OllamaUnavailable:
+                    unstated = None
+                else:
+                    diagnostics["model_calls"] = [*diagnostics["model_calls"][-2:], _model_diagnostics(response, "names")]
+                    unstated = names_verdict(response)
+                    if vcache is not None and names_key is not None and unstated is not None:
+                        vcache.put(names_key, "names", {"unstated": unstated})
+                        diagnostics["names_cache"] = "miss"
             if unstated:
                 # A name the model calls unstated that a cited source has (the question does not count) is not one (#245);
                 # a reader sees both lists. Only a name found in neither withholds the answer.
@@ -1134,6 +1258,11 @@ class KnowledgeAgent:
         if supported:
             return {**result, "elapsed_seconds": round(time.monotonic() - started, 3)}
         if gap is None:  # the judge's own gap
+            if escalated_from_nli and reason is None:
+                gap = "Tier-1 NLI escalated to Tier-2 LLM review, but the local LLM judge was unavailable."
+                return self._result("partial", "The model's answer could not be verified in the sources.",
+                                    evidence, [*result.get("unknowns", []), gap], started, result["sources"],
+                                    code=NEEDS_LLM_REVIEW_CODE)
             gap = ("The quotes do not support the answer: " + reason if reason else
                    "Could not check whether the quotes support the answer.")
         return self._result("partial", "The model's answer could not be verified in the sources.",
@@ -1171,7 +1300,8 @@ class KnowledgeAgent:
         return None
 
     async def _ask_impl(self, project_id: str, question: str, worktree, answer_schema: dict | None,
-                        diagnostics: dict, *, whole: bool = False, timeout: float | None = None) -> dict:
+                        diagnostics: dict, *, whole: bool = False, timeout: float | None = None,
+                        verifier: str = "llm", nli_scorer=None) -> dict:
         """One pass over the question. ``whole`` is the second look (see ``ask``): the evidence is
         then the whole chunks of the first hits that the first pass showed in part, no definitions."""
         answer_schema = prepare_answer_schema(answer_schema)
@@ -1269,7 +1399,8 @@ class KnowledgeAgent:
                         if not repairable:
                             judged = validated
                             return await self._support_gate(project_id, question, validated, evidence, started, diagnostics,
-                                                            plain=answer_schema is None)
+                                                            plain=answer_schema is None, verifier=verifier,
+                                                            nli_scorer=nli_scorer)
                         repair_fallback = validated
                         diagnostics["validation_codes"] = [validated["diagnostics"]["code"]]
                         if _step + 1 >= self.settings.max_steps:
@@ -1308,7 +1439,8 @@ class KnowledgeAgent:
                             result["diagnostics"]["code"] == "source_stale" else "succeeded")
                         judged = result
                         return await self._support_gate(project_id, question, result, evidence, started, diagnostics,
-                                                        plain=answer_schema is None)
+                                                        plain=answer_schema is None, verifier=verifier,
+                                                        nli_scorer=nli_scorer)
                     if not isinstance(calls, list) or len(calls) > 6:
                         return self._result("partial", "The model returned an invalid list of tool calls.", evidence,
                                             ["The model broke the tool protocol."], started,

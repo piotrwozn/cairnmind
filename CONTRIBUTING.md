@@ -12,7 +12,7 @@ Cairnmind is built around one promise: memory that coding agents can trust. Chan
 
 ## Development environment
 
-Cairnmind runs on Linux or WSL2 Ubuntu. You need Python 3.12, [uv](https://docs.astral.sh/uv/), Java 21+ and tmux 3.4+.
+Cairnmind runs on Linux, native Windows 10/11, WSL2 Ubuntu and macOS. You need Python 3.12, [uv](https://docs.astral.sh/uv/), Java 21+ (and tmux 3.4+ on POSIX for the tmux workspace tests).
 
 ```bash
 git clone https://github.com/piotrwozn/cairnmind.git
@@ -103,6 +103,7 @@ If a change touches the knowledge agent, retrieval or extraction, include evalua
 2. Keep each pull request focused on one change, with tests.
 3. Make sure lint and the fast tier pass locally. CI runs the full suite.
 4. Describe what you changed, why, and what you could not verify.
+5. A branch that touches the store, the engine's errors or the graph write has `server-tests` and `restore-size` started on it by hand by a maintainer (`gh workflow run ci.yml --ref BRANCH`, on a copy of the branch in this repository for a fork) and green before its pull request is merged: no pull request runs them, and the engine of production mode words some errors differently from the one the tests start (#455).
 
 ## Reporting security issues
 

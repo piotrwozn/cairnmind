@@ -12,8 +12,10 @@ from textual.containers import VerticalScroll
 from textual.widgets import Button, DataTable, Footer, Input, Static
 
 from . import terminal_theme
+from .cli_human import NO_VERBATIM_EVIDENCE as _NO_VERBATIM_CODE, error_code_for_ask, has_degraded_origin
 from .cockpit_state import CockpitState
-from .first_start import ASK_NEXT, CLIENT_NAMES, GET_MODELS, MATCHES_HEADING, MODE_STATUS, STORED_FINDING
+from .first_start import (ASK_NEXT, CLIENT_NAMES, DEGRADED_ORIGIN_NOTE, GET_MODELS, MATCHES_HEADING, MODE_STATUS,
+                          NO_VERBATIM_EVIDENCE, STORED_FINDING)
 from .terminal_i18n_messages import ASK_STATUS, fixed_message
 from .terminal_safe import plain
 
@@ -39,6 +41,7 @@ COMMANDS = (
     # New entries go last: the position of every existing command stays the same.
     ("Run next stage", "Show the project and move to its Run next stage button", "command", "next_stage"),
     ("Notices", "Read the notices that were replaced on the notice line", "command", "notices"),
+    ("Clone repository", "Clone from GitHub or Git and register", "command", "clone_project"),
 )
 
 
@@ -237,16 +240,19 @@ def ask_summary(result, translate) -> str:
     if not isinstance(result, dict):
         return translate("The memory service returned no answer.")
     status = str(result.get("status", "unknown"))
+    sources = [source for source in result.get("sources", []) if isinstance(source, dict)][:8]
     answer = str(result.get("answer") or translate("No verified answer.")).strip()
     if status != "complete":
-        # Not a verified answer: the agent wrote one of its fixed sentences (or kept the model's text,
-        # which fixed_message leaves exactly as it is).
-        answer = fixed_message(answer, translate)
+        if error_code_for_ask(result) == _NO_VERBATIM_CODE and not sources:
+            answer = translate(NO_VERBATIM_EVIDENCE)
+        else:
+            # Not a verified answer: the agent wrote one of its fixed sentences (or kept the model's text,
+            # which fixed_message leaves exactly as it is).
+            answer = fixed_message(answer, translate)
     raw = result.get("unknowns", [])
     # Without models "unavailable" is the mode, not a failure: the status line says so; the JSON keeps unavailable (#313).
     label = MODE_STATUS if GET_MODELS in raw else ASK_STATUS.get(status, status)
     lines = [translate("Status") + ": " + translate(label), "", answer]
-    sources = [source for source in result.get("sources", []) if isinstance(source, dict)][:8]
     if sources:
         lines += ["", translate("Sources") + ":", *_passages(sources, "quote", translate)]
     matches = [match for match in result.get("full_text_matches", []) if isinstance(match, dict)][:8]
@@ -261,8 +267,13 @@ def ask_summary(result, translate) -> str:
         lines += ["", translate("Missing evidence") + ":"] + [f"- {item}" for item in unknowns]
     freshness = result.get("freshness")
     warnings = [str(w) for w in (freshness.get("warnings") or [])][:8] if isinstance(freshness, dict) else []
-    if warnings:  # a source that changed since it was indexed, an index error: said, not only in the JSON (#313)
-        lines += ["", translate("Warnings") + ":"] + [f"- {fixed_message(item, translate)}" for item in warnings]
+    rendered_warnings = [fixed_message(item, translate) for item in warnings]
+    if has_degraded_origin(result):
+        note = translate(DEGRADED_ORIGIN_NOTE)
+        if note not in rendered_warnings:
+            rendered_warnings.append(note)
+    if rendered_warnings:  # a source that changed since it was indexed, an index error: said, not only in the JSON (#313)
+        lines += ["", translate("Warnings") + ":"] + [f"- {item}" for item in rendered_warnings]
     coverage = result.get("coverage")
     if isinstance(coverage, dict) and coverage.get("answer_terms"):
         lines += ["", translate("Answer words found in quotes")

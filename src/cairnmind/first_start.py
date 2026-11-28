@@ -119,6 +119,14 @@ PROJECT_FOLDER_MISSING = ("{root} does not exist. cairnmind project add NAME FOL
 PROJECT_ADDED = 'Registered {project} in {root}; files indexed: {files}.'
 PROJECT_ADDED_NEXT = ('Next: cairnmind remember {project} "..." stores a first finding, and cairnmind brief {project} '
                       'shows it.')
+PROJECT_CLONED = 'Cloned {source} into {root} with {tool}.'
+CLONE_SNAPSHOT_FOUND = ('Found portable project memory in {snapshot}. Nothing was registered yet so its project '
+                        'identity can be preserved.')
+CLONE_SNAPSHOT_NEXT = ('Next: inspect it with cairnmind memory inspect {snapshot} and import with cairnmind memory '
+                       'import {snapshot} --root {root} --dry-run (or register a separate identity with cairnmind '
+                       'project add {project} {root}).')
+CLONE_PUBLISHED_FOUND = ('Found team published memory in {published}. Review and import it with cairnmind memory '
+                         'import-published {quoted_published} --project {project} --dry-run.')
 JOBS_HELD_STOPPED = ("Extraction and embedding jobs waiting: {count}. The Cairnmind service runs them, and it is not "
                      "running; project add does not start it. cairnmind index {project} starts it now.")
 JOBS_HELD_UPGRADE = ("Extraction and embedding jobs waiting: {count}. The Cairnmind service runs them, and it is not "
@@ -216,6 +224,20 @@ ENGINE_NOT_INSTALLED = ("The database engine (ArcadeDB) is not installed for thi
 ENGINE_EXITED = ("ArcadeDB exited during startup. See {log}. A port already in use ({url}) or too little memory "
                  "are the usual causes; after fixing it, run cairnmind engine start.")
 ENGINE_TIMED_OUT = "ArcadeDB startup timed out. See {log}. After fixing the cause, run cairnmind engine start."
+
+# Actionable human CLI messages mapped from core engine refusals and evidence states (v2 Phase 1).
+FINGERPRINT_MISMATCH = (
+    "Blocked: code changed after the last check run. Run the checks ({cmd}) and try again."
+)
+STALE_PLAN_VERSION = (
+    "Blocked: the plan was changed by another session. Read the current state before writing."
+)
+DEGRADED_ORIGIN_NOTE = (
+    "Note: written from an external MCP tool (no direct evidence from the engine)."
+)
+NO_VERBATIM_EVIDENCE = (
+    "unknown — no verbatim confirmation in the current project files."
+)
 
 MESSAGES = {
     WORKSPACE_NEEDS: "Środowisko terminalowe wymaga tmux 3.4 lub nowszego.",
@@ -424,6 +446,27 @@ MESSAGES[JOBS_HELD_NO_MODELS] = ("Zadania ekstrakcji i osadzania w kolejce: {cou
 MESSAGES[THIS_MAC] = "Ten Mac: {chip}, {gib} GiB pamięci zunifikowanej, współdzielonej z modelami."
 MESSAGES[PROCESS_OFF] = "Brak modeli. Uruchom `cairnmind models pull`, aby przetwarzać pamięć."
 MESSAGES[PROCESS_RESTART] = "Modele włączone. Zrestartuj usługę (`cairnmind stop`, potem start), by ich użyła."
+MESSAGES[FINGERPRINT_MISMATCH] = (
+    "Zablokowano: kod zmienił się po ostatnim uruchomieniu testów. Uruchom testy ({cmd}) i spróbuj ponownie."
+)
+MESSAGES[STALE_PLAN_VERSION] = (
+    "Zablokowano: plan został zmieniony przez inną sesję. Odczytaj aktualny stan przed zapisem."
+)
+MESSAGES[DEGRADED_ORIGIN_NOTE] = (
+    "Uwaga: zapis z zewnętrznego narzędzia MCP (brak bezpośredniego dowodu z silnika)."
+)
+MESSAGES[NO_VERBATIM_EVIDENCE] = (
+    "unknown — brak dosłownego potwierdzenia w aktualnych plikach projektu."
+)
+MESSAGES[PROJECT_CLONED] = "Sklonowano {source} do {root} przez {tool}."
+MESSAGES[CLONE_SNAPSHOT_FOUND] = ("Wykryto przenośną pamięć projektu w {snapshot}. Nic jeszcze nie zarejestrowano, "
+                                  "aby zachować tożsamość projektu.")
+MESSAGES[CLONE_SNAPSHOT_NEXT] = ("Dalej: sprawdź ją poleceniem cairnmind memory inspect {snapshot} i zaimportuj przez "
+                                 "cairnmind memory import {snapshot} --root {root} --dry-run (albo zarejestruj osobną "
+                                 "tożsamość poleceniem cairnmind project add {project} {root}).")
+MESSAGES[CLONE_PUBLISHED_FOUND] = ("Wykryto opublikowaną pamięć zespołu w {published}. Przejrzyj i zaimportuj ją "
+                                   "poleceniem cairnmind memory import-published {quoted_published} --project {project} "
+                                   "--dry-run.")
 
 
 def _version(found: dict) -> str:
@@ -433,7 +476,7 @@ def _version(found: dict) -> str:
 
 def cockpit_status(tmux: dict) -> str | None:
     """What doctor says about the workspace for a tmux block of NativeRuntime.diagnostics; None when ready."""
-    if tmux.get("code") == "ready":
+    if tmux.get("code") in ("ready", "standalone_windows"):
         return None
     version = _version(tmux)
     if version:

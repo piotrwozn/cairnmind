@@ -1,0 +1,13 @@
+{
+  "degraded": 0,
+  "evidence_replaced": 0,
+  "orphaned": 0,
+  "project": {
+    "id": "<UUID_1>",
+    "name": "contract-app"
+  },
+  "records": [],
+  "text": "Evidence of contract-app in <WORKTREE>, as of the last indexing of the project's files\nEvery record has a supporting source that still stands.",
+  "unverified": 0,
+  "worktree": "<WORKTREE>"
+}

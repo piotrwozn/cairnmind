@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 import subprocess
 import sys
 
@@ -125,8 +124,10 @@ def test_the_note_is_taken_once_when_the_task_enters_in_progress(workspace):
     folder = store.data_dir / "scope-baselines"
     assert not folder.exists()
     task = start(store, pid, root, saved, task)
+    from conftest import assert_private
     notes = list(folder.glob("*.json"))
-    assert len(notes) == 1 and stat.S_IMODE(notes[0].stat().st_mode) == 0o600
+    assert len(notes) == 1
+    assert_private(notes[0])
     taken = notes[0].read_text()
     (root / "src/billing/invoice.py").write_text("RATE = 2\n")
     plan = PlanManager(store).get(pid, saved["id"])["plan"]
@@ -252,8 +253,9 @@ def test_staging_or_committing_a_file_is_not_a_change(workspace):
     assert (drift["status"], drift["changed"]) == ("in_scope", 0)
     os.utime(root / "src/billing/invoice.py", ns=(1, 1))  # touched, same content
     assert scope_drift(store, task, root)["status"] == "in_scope"
-    (root / "src/billing/invoice.py").chmod(0o755)
-    assert scope_drift(store, task, root)["out_of_scope"] == ["src/billing/invoice.py"]
+    if sys.platform != "win32":
+        (root / "src/billing/invoice.py").chmod(0o755)
+        assert scope_drift(store, task, root)["out_of_scope"] == ["src/billing/invoice.py"]
 
 
 def test_an_unchanged_tree_is_compared_without_reading_a_file(workspace, monkeypatch):
@@ -414,7 +416,7 @@ def test_files_cairnmind_writes_itself_are_not_drift(workspace):
     assert scope_drift(store, task, root)["out_of_scope"] == [".codex/other.toml"]
 
 
-@pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses a file name that is not UTF-8 (EILSEQ)")
+@pytest.mark.skipif(sys.platform in {"darwin", "win32"}, reason="APFS and NTFS refuse a file name that is not valid UTF-8/UTF-16")
 def test_a_file_name_that_is_not_text_is_shown_safely(workspace):
     store, pid, root, settings = workspace
     saved, task = scoped_plan(store, pid, root)

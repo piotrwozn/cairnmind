@@ -1,14 +1,14 @@
 # Cairnmind 0.12.0 terminal workspace
 
-`cairnmind` starts the workspace in the current terminal. `cairnmind tui` is an alias for the same interface. tmux manages panes and detaching, and Textual renders projects, settings, the inspector and the graph. The Codex and Claude panes contain the real native CLIs, with their own screens, keyboard handling, sign-in and approvals. Ollama and API profiles use Cairnmind's own agent, and Copilot uses a separate adapter built on the official SDK.
+`cairnmind` starts the workspace in the current terminal. `cairnmind tui` is an alias for the same interface. On Linux, WSL2 and macOS, tmux manages panes and detaching, and Textual renders projects, settings, the inspector and the graph. On native Windows, `cairnmind` launches the standalone Textual workspace (`Projects`, `Memory`, `Activity`, `Graph` and `Settings` tabs, switched with keys `1`–`5`, quick finding with `f`, quit with `q`) without requiring tmux, holding the in-memory person key on an owner-only Windows Named Pipe. On POSIX, the Codex and Claude panes contain the real native CLIs, with their own screens, keyboard handling, sign-in and approvals. Ollama and API profiles use Cairnmind's own agent, and Copilot uses a separate adapter built on the official SDK.
 
 The default language is English. To switch the Cairnmind interface to Polish, choose **More → Settings → Language → Polski**. The language setting applies to the Cairnmind interface only; project content and the native client interfaces keep their own language.
 
 ## Getting started
 
-You need Linux or Ubuntu on WSL2, Java 21+ or Docker (for the database engine), tmux 3.4+ (only the workspace needs it), an installed Cairnmind and an interactive Unicode/UTF-8 terminal. Install the coding clients in the same WSL distribution. Using the prebuilt package does not require Node.js, npm or a frontend build.
+You need Linux, Ubuntu on WSL2, macOS on Apple silicon, or native Windows 10/11, Java 21+ or Docker (for the ArcadeDB engine, or `--backend sqlite` for embedded SQLite), an installed Cairnmind and an interactive Unicode/UTF-8 terminal. On POSIX (Linux, WSL2, macOS), the multi-pane workspace also requires `tmux 3.4+`; on native Windows, `cairnmind` opens the standalone Textual workspace directly in Windows Terminal or PowerShell without `tmux` or WSL2. Using the prebuilt package does not require Node.js, npm or a frontend build.
 
-In Windows Terminal, open Ubuntu, or enter it from PowerShell:
+On native Windows, run `cairnmind` directly in Windows Terminal or PowerShell. In WSL2, open Ubuntu from Windows Terminal or enter it from PowerShell:
 
 ```powershell
 wsl -d Ubuntu
@@ -22,7 +22,7 @@ cairnmind
 
 The command works from any directory. The project list comes from Cairnmind's shared local registry, not from the directory in which the terminal was opened. A separate `--data-dir` or `CAIRNMIND_HOME` means a separate store and registry.
 
-On first setup, choose **Add folder**. Enter a Linux or Windows path, for example `/home/piotr/src/app` or `C:\Users\piotr\src\app`. **Browse folders** opens a directory picker without shell commands: `Enter` opens a subfolder, `Alt+Up` goes up one level, and `Ctrl+S` selects the displayed directory. The project name can be left empty; it is then taken from the folder name. In the form, `Ctrl+S` saves and `Esc` goes back. You can also use the CLI:
+On first setup, choose **Add folder**. Enter a Linux or Windows path, for example `/home/piotr/src/app` or `C:\Users\piotr\src\app`. **Browse folders** opens a directory picker without shell commands: `Enter` opens a subfolder, `Alt+Up` goes up one level, and `Ctrl+S` selects the displayed directory. The project name can be left empty; it is then taken from the folder name. In the form, `Ctrl+S` saves and `Esc` goes back. To clone a GitHub or Git repository and register it in one step, open **More → Clone repository** (or search for **Clone repository** in the `Ctrl+B Space` menu), choose a parent folder, and pick `auto`, `gh` or `git`. You can also use the CLI:
 
 ```bash
 cairnmind project add my-app ~/src/my-app

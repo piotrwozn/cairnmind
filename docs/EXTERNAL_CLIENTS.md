@@ -19,7 +19,7 @@ cairnmind mcp --client external --project /path/to/my-app
 }
 ```
 
-Zed takes the same command and arguments as a custom context server in its settings; see Zed's documentation for the current form. An editor running on Windows reaches Cairnmind in WSL with `"command": "wsl.exe"` and the arguments `["-d", "Ubuntu", "--", "/home/me/.local/bin/cairnmind", "mcp", ...]`. None of these editors was connected in Cairnmind's own tests, which drive the server with the MCP SDK's client.
+Zed takes the same command and arguments as a custom context server in its settings; see Zed's documentation for the current form. On native Windows, point the editor directly at `cairnmind.exe` with `["mcp", "--client", "external", "--project", "my-app"]`. If you run Cairnmind inside WSL instead, an editor on Windows reaches it with `"command": "wsl.exe"` and the arguments `["-d", "Ubuntu", "--", "/home/me/.local/bin/cairnmind", "mcp", ...]`. None of these editors was connected in Cairnmind's own tests, which drive the server with the MCP SDK's client.
 
 ## What the session does
 

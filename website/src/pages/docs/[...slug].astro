@@ -1,0 +1,21 @@
+---
+import DocsLayout from '@/layouts/DocsLayout.astro';
+import { getAllDocs, type RenderedDoc } from '@/lib/docs';
+
+export async function getStaticPaths() {
+  const allDocs = await getAllDocs();
+  return allDocs.map((doc) => ({
+    params: { slug: doc.slug },
+    props: { doc, allDocs },
+  }));
+}
+
+interface Props {
+  doc: RenderedDoc;
+  allDocs: RenderedDoc[];
+}
+
+const { doc, allDocs } = Astro.props;
+---
+
+<DocsLayout doc={doc} allDocs={allDocs} />

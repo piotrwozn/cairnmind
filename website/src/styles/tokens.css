@@ -1,0 +1,197 @@
+/*
+ * Cairnmind Design Tokens — Obsidian Glass (Dark) & Frosted Mineral Glass (Light)
+ * Rooted directly in src/cairnmind/terminal_theme.py & ui/src/index.css.
+ * Every text-on-glass pairing meets or exceeds WCAG AA (4.5:1 body, 3:1 UI).
+ */
+
+:root {
+  --font-sans: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Dark (Obsidian Glass) — default */
+  color-scheme: dark;
+
+  --bg-void: #060709;
+  --bg-canvas: #0a0c10;
+  --bg-base: #121418;
+  --bg-panel: #1a1e25;
+  --bg-raised: #242a33;
+  --bg-code: #0c0f14;
+
+  /* Multi-layer Liquid Glass surfaces */
+  --glass-bg: rgba(18, 21, 27, 0.72);
+  --glass-bg-elevated: rgba(24, 29, 38, 0.80);
+  --glass-bg-floating: rgba(12, 15, 20, 0.88);
+  --glass-bg-subtle: rgba(29, 34, 43, 0.48);
+  --glass-solid: #161a21;
+  --glass-solid-elevated: #1d222b;
+
+  /* Optical edges, specular highlights & refraction */
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-border-hi: rgba(255, 255, 255, 0.17);
+  --glass-specular-top: rgba(255, 255, 255, 0.16);
+  --glass-specular-bottom: rgba(135, 175, 215, 0.14);
+  --glass-pointer-glint: rgba(167, 201, 234, 0.11);
+  --glass-shadow: 0 12px 40px rgba(0, 0, 0, 0.50), 0 1px 0 rgba(255, 255, 255, 0.04);
+  --glass-shadow-elevated: 0 22px 64px rgba(0, 0, 0, 0.65), 0 2px 10px rgba(0, 0, 0, 0.35);
+
+  /* Quiet architectural light caustics (desaturated steel-slate, zero neon slop) */
+  --ambient-1: rgba(135, 175, 215, 0.10);
+  --ambient-2: rgba(30, 74, 120, 0.16);
+  --ambient-3: rgba(143, 208, 138, 0.05);
+  --grid-line: rgba(255, 255, 255, 0.035);
+
+  /* Ink & contrast */
+  --text-strong: #f1f5f9;
+  --text-primary: #dadee3;
+  --text-muted: #98a4b4;
+  --text-dim: #768394;
+
+  /* Brand & semantic tokens from terminal_theme.py */
+  --accent: #87afd7;
+  --accent-hi: #a9cbe9;
+  --accent-solid: #1e4a78;
+  --accent-solid-hover: #255a91;
+  --accent-surface: rgba(30, 74, 120, 0.34);
+  --accent-border: rgba(135, 175, 215, 0.36);
+
+  --ok: #8fd08a;
+  --ok-surface: rgba(143, 208, 138, 0.12);
+  --ok-border: rgba(143, 208, 138, 0.32);
+
+  --warn: #f0cf87;
+  --warn-surface: rgba(240, 207, 135, 0.12);
+  --warn-border: rgba(240, 207, 135, 0.32);
+
+  --danger: #f47067;
+  --danger-surface: rgba(244, 112, 103, 0.12);
+  --danger-border: rgba(244, 112, 103, 0.34);
+
+  --focus-ring: #87afd7;
+
+  /* Layout & radii */
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+  --header-h: 64px;
+  --max-w: 1200px;
+}
+
+/* Light theme (Frosted Mineral Glass) — explicit toggle or system preference */
+:root[data-theme="mineral"] {
+  color-scheme: light;
+
+  --bg-void: #e9eef4;
+  --bg-canvas: #f2f5f9;
+  --bg-base: #f7f9fc;
+  --bg-panel: #ffffff;
+  --bg-raised: #e6ecf4;
+  --bg-code: #f0f4f8;
+
+  --glass-bg: rgba(255, 255, 255, 0.74);
+  --glass-bg-elevated: rgba(255, 255, 255, 0.88);
+  --glass-bg-floating: rgba(250, 252, 255, 0.92);
+  --glass-bg-subtle: rgba(255, 255, 255, 0.56);
+  --glass-solid: #ffffff;
+  --glass-solid-elevated: #f8fafd;
+
+  --glass-border: rgba(15, 23, 42, 0.11);
+  --glass-border-hi: rgba(15, 23, 42, 0.22);
+  --glass-specular-top: rgba(255, 255, 255, 0.96);
+  --glass-specular-bottom: rgba(30, 74, 120, 0.14);
+  --glass-pointer-glint: rgba(30, 74, 120, 0.08);
+  --glass-shadow: 0 10px 30px rgba(15, 23, 42, 0.07), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --glass-shadow-elevated: 0 18px 48px rgba(15, 23, 42, 0.11), 0 2px 6px rgba(15, 23, 42, 0.05);
+
+  --ambient-1: rgba(30, 74, 120, 0.08);
+  --ambient-2: rgba(135, 175, 215, 0.16);
+  --ambient-3: rgba(31, 111, 59, 0.05);
+  --grid-line: rgba(15, 23, 42, 0.045);
+
+  --text-strong: #0c121b;
+  --text-primary: #1f2937;
+  --text-muted: #4a5768;
+  --text-dim: #5d6b7d;
+
+  --accent: #1b4b7c;
+  --accent-hi: #12375c;
+  --accent-solid: #1b4b7c;
+  --accent-solid-hover: #143b63;
+  --accent-surface: rgba(27, 75, 124, 0.10);
+  --accent-border: rgba(27, 75, 124, 0.30);
+
+  --ok: #1d6b38;
+  --ok-surface: rgba(29, 107, 56, 0.10);
+  --ok-border: rgba(29, 107, 56, 0.28);
+
+  --warn: #855600;
+  --warn-surface: rgba(133, 86, 0, 0.10);
+  --warn-border: rgba(133, 86, 0, 0.28);
+
+  --danger: #b42318;
+  --danger-surface: rgba(180, 35, 24, 0.10);
+  --danger-border: rgba(180, 35, 24, 0.28);
+
+  --focus-ring: #1b4b7c;
+}
+
+/* Respect system light preference when user has not explicitly picked a theme (including with JS off) */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="obsidian"]) {
+    color-scheme: light;
+
+    --bg-void: #e9eef4;
+    --bg-canvas: #f2f5f9;
+    --bg-base: #f7f9fc;
+    --bg-panel: #ffffff;
+    --bg-raised: #e6ecf4;
+    --bg-code: #f0f4f8;
+
+    --glass-bg: rgba(255, 255, 255, 0.74);
+    --glass-bg-elevated: rgba(255, 255, 255, 0.88);
+    --glass-bg-floating: rgba(250, 252, 255, 0.92);
+    --glass-bg-subtle: rgba(255, 255, 255, 0.56);
+    --glass-solid: #ffffff;
+    --glass-solid-elevated: #f8fafd;
+
+    --glass-border: rgba(15, 23, 42, 0.11);
+    --glass-border-hi: rgba(15, 23, 42, 0.22);
+    --glass-specular-top: rgba(255, 255, 255, 0.96);
+    --glass-specular-bottom: rgba(30, 74, 120, 0.14);
+    --glass-pointer-glint: rgba(30, 74, 120, 0.08);
+    --glass-shadow: 0 10px 30px rgba(15, 23, 42, 0.07), 0 1px 2px rgba(15, 23, 42, 0.04);
+    --glass-shadow-elevated: 0 18px 48px rgba(15, 23, 42, 0.11), 0 2px 6px rgba(15, 23, 42, 0.05);
+
+    --ambient-1: rgba(30, 74, 120, 0.08);
+    --ambient-2: rgba(135, 175, 215, 0.16);
+    --ambient-3: rgba(31, 111, 59, 0.05);
+    --grid-line: rgba(15, 23, 42, 0.045);
+
+    --text-strong: #0c121b;
+    --text-primary: #1f2937;
+    --text-muted: #4a5768;
+    --text-dim: #5d6b7d;
+
+    --accent: #1b4b7c;
+    --accent-hi: #12375c;
+    --accent-solid: #1b4b7c;
+    --accent-solid-hover: #143b63;
+    --accent-surface: rgba(27, 75, 124, 0.10);
+    --accent-border: rgba(27, 75, 124, 0.30);
+
+    --ok: #1d6b38;
+    --ok-surface: rgba(29, 107, 56, 0.10);
+    --ok-border: rgba(29, 107, 56, 0.28);
+
+    --warn: #855600;
+    --warn-surface: rgba(133, 86, 0, 0.10);
+    --warn-border: rgba(133, 86, 0, 0.28);
+
+    --danger: #b42318;
+    --danger-surface: rgba(180, 35, 24, 0.10);
+    --danger-border: rgba(180, 35, 24, 0.28);
+
+    --focus-ring: #1b4b7c;
+  }
+}

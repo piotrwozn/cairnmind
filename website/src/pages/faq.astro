@@ -1,0 +1,61 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import Breadcrumbs from '@/components/astro/Breadcrumbs.astro';
+import { FAQ_ITEMS, renderInlineCode } from '@/data/faq';
+import { breadcrumbListJsonLd, faqPageJsonLd } from '@/lib/seo';
+
+const pathname = '/faq/';
+const crumbs = [
+  { label: 'Home', href: '/' },
+  { label: 'FAQ', href: pathname },
+];
+const jsonLd = [faqPageJsonLd(FAQ_ITEMS), breadcrumbListJsonLd(crumbs)];
+const categories = Array.from(new Set(FAQ_ITEMS.map((item) => item.category)));
+---
+
+<BaseLayout
+  title="Cairnmind FAQ: Setup, Security & 1.0 Contract"
+  description="Concrete answers on Cairnmind: zero-GPU mode, native Windows support, MCP clients, verbatim citations, human confirmation, and frozen 1.0 contract."
+  pathname={pathname}
+  jsonLd={jsonLd}
+>
+  <div class="container-shell section-band">
+    <Breadcrumbs items={crumbs} />
+
+    <header class="mt-5 max-w-3xl">
+      <p class="eyebrow">Frequently Asked Questions</p>
+      <h1 class="mt-2 text-3xl sm:text-5xl font-semibold">
+        Concrete technical answers
+      </h1>
+      <p class="mt-4 text-lg text-[var(--text-muted)] leading-relaxed">
+        Short, verifiable answers grounded in the repository’s code and contracts. Every item below is rendered as static HTML and published as structured <code class="code-inline">FAQPage</code> metadata.
+      </p>
+    </header>
+
+    <div class="mt-10 space-y-10">
+      {categories.map((category) => (
+        <section aria-labelledby={`cat-${category.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}>
+          <h2
+            id={`cat-${category.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
+            class="text-xl font-semibold pb-3 border-b border-[var(--glass-border)] mb-4"
+          >
+            {category}
+          </h2>
+          <div class="space-y-4">
+            {FAQ_ITEMS.filter((i) => i.category === category).map((item) => (
+              <article id={item.id} class="glass-surface p-5 sm:p-6">
+                <h3 class="text-lg font-semibold text-[var(--text-strong)]">{item.question}</h3>
+                <p class="mt-2.5 text-sm sm:text-base text-[var(--text-primary)] leading-relaxed" set:html={renderInlineCode(item.answer)} />
+                {item.docHref && item.docLabel && (
+                  <p class="mt-3 font-mono text-xs">
+                    <a href={item.docHref}>{item.docLabel} →</a>
+                  </p>
+                )}
+              </article>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  </div>
+</BaseLayout>

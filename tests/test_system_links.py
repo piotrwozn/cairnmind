@@ -19,6 +19,8 @@ from cairnmind.system_links import (SYSTEM_LINKS, owned_by_system, passes_plante
                                     system_spelling, verified_links)
 from cairnmind.terminal_preview import preview_settings
 
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX/macOS root-owned system symlinks")
+
 
 def fake_system_link(tmp_path: Path, monkeypatch, *, platform: str | None = None) -> tuple[Path, Path]:
     """`<tmp>/systmp -> <tmp>/private`, a system link of `platform` (the running one by default)."""

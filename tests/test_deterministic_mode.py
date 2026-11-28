@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 import logging
+from pathlib import Path
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -301,7 +302,7 @@ def test_full_text_matches_stay_in_the_project_the_worktree_and_the_session(work
         assert reply.status_code == 200, reply.text
         uris = [match["uri"] for match in reply.json()["full_text_matches"]]
         assert all(uri.startswith(str(under)) for uri in uris), uris  # a basename alone would hide a leak
-        return {uri.rsplit("/", 1)[-1] for uri in uris}
+        return {Path(uri).name for uri in uris}
 
     with TestClient(create_app(settings, start_worker=False, ollama=model)) as client:  # the lifespan runs the queue
         assert names(client, root, worktree=str(root)) == {"notes.md"}  # not the feature root, not the other project

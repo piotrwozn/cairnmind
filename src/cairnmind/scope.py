@@ -32,7 +32,8 @@ import os
 from pathlib import Path
 import stat
 import subprocess
-import tempfile
+
+from .private_files import ensure_private_dir, write_durable_private
 import threading
 import time
 
@@ -45,8 +46,10 @@ _RACY_NS = 2_000_000_000
 _WAIT_SECONDS = 5
 # Written by Cairnmind itself, some of them on every launch: never somebody's drift.
 _MANAGED = pathspec.GitIgnoreSpec.from_lines([
-    "/.cairnmind/", "/.devbrain/", "/.mcp.json", "/.codex/config.toml", "/.codex/hooks.json",
-    "/.claude/settings.local.json", "/.claude/agents/cairnmind-recorder.md", "/AGENTS.md", "/CLAUDE.md", "*.cairnmind-backup-*", "*.devbrain-backup-*"])
+    "/.cairnmind/", "/.devbrain/", "/.mcp.json", "/.cursor/mcp.json", "/.vscode/mcp.json", "/.roo/mcp.json",
+    "/.codex/config.toml", "/.codex/hooks.json", "/.gemini/settings.json", "/.zed/settings.json",
+    "/.claude/settings.local.json", "/.claude/agents/cairnmind-recorder.md", "/AGENTS.md", "/CLAUDE.md",
+    "*.cairnmind.bak", "*.cairnmind-backup-*", "*.devbrain-backup-*"])
 
 
 def _shown(value, limit: int = 200) -> str:
@@ -170,15 +173,9 @@ def _read_note(path: Path, task_id: str, worktree: str) -> dict | None:
 
 def _write(store, path: Path, note: dict) -> None:
     folder = _folder(store)
-    folder.mkdir(mode=0o700, exist_ok=True)
-    descriptor, name = tempfile.mkstemp(prefix=".note-", dir=folder)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(note, handle)
-        os.chmod(name, 0o600)
-        os.replace(name, path)
-    finally:
-        Path(name).unlink(missing_ok=True)
+    if not folder.exists():
+        ensure_private_dir(folder)
+    write_durable_private(path, json.dumps(note), prefix=".note-")
     cutoff = time.time() - 86400
     for old in folder.glob(".note-*"):  # what an interrupted write left behind
         try:

@@ -1,6 +1,7 @@
 """Terminal panels use explicit intents, scoped projections and literal archived text."""
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 import threading
 from types import SimpleNamespace
@@ -111,9 +112,9 @@ def setup(tmp_path, monkeypatch, *, managed=False, project=True):
     return settings, broker, workspace
 
 
-async def settle(app, pilot):
+async def settle(app, pilot, timeout=30.0):
     for _ in range(3):
-        await app.workers.wait_for_complete()
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout)
         await pilot.pause()
 
 

@@ -92,8 +92,9 @@ def test_credential_mutations_require_native_consent_session_and_csrf(broker):
     assert client.post('/api/profiles/api/credential', json={'key': 'test-key'}).status_code == 403
     assert client.post('/api/profiles/codex/credential', headers=headers, json={'key': 'test-key'}).status_code == 422
     assert client.post('/api/profiles/api/credential', headers=headers, json={'key': 'test-key', 'persist': 'yes'}).status_code == 422
+    from conftest import assert_private
     assert client.post('/api/profiles/api/credential', headers=headers, json={'key': 'test-key', 'persist': True}).status_code == 200
-    assert runtime.credentials.path.stat().st_mode & 0o777 == 0o600
+    assert_private(runtime.credentials.path)
     assert client.delete('/api/profiles/api/credential', headers=headers).status_code == 200
     assert client.get('/api/profiles/api/status').json()['configured'] is False
 

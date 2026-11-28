@@ -6,7 +6,6 @@ real run would: a hang or a leak there must end inside that run, and this test c
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -21,7 +20,10 @@ import time
 import pytest
 
 import run_guard
+from cairnmind import file_locks
 from cairnmind.arcade import ArcadeError
+
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="run_guard SIGALRM/killpg tests are POSIX-only")
 
 HERE = Path(__file__).resolve().parent
 # Longer than any inner run needs once the guard works; without it the inner run hangs until this ends.
@@ -158,11 +160,11 @@ def test_a_test_waiting_at_the_gate_fails_in_time(tmp_path):
         pytest.skip("this run has no time limit (CAIRNMIND_TEST_TIME_LIMIT=0 or not the main thread)")
     gate = tmp_path / "test-slot.gate"
     with gate.open("a") as holder, gate.open("a") as waiter:
-        fcntl.flock(holder, fcntl.LOCK_EX)  # another worker's test that never ends
+        file_locks.lock_exclusive(holder)  # another worker's test that never ends
         started = time.monotonic()
         with pytest.raises(pytest.fail.Exception, match="waiting for the test slot took longer than 1 s"):
             with run_guard.waiting(1, "waiting for the test slot"):
-                fcntl.flock(waiter, fcntl.LOCK_EX)
+                file_locks.lock_exclusive(waiter)
         assert time.monotonic() - started < 10
 
 

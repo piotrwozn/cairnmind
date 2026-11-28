@@ -4,12 +4,13 @@ from __future__ import annotations
 import json
 import os
 import secrets
-import fcntl
-import tempfile
 import hashlib
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+from .file_locks import lock_exclusive
+from .private_files import ensure_private_dir, write_durable_private
 
 
 # Environment variables are spelled CAIRNMIND_<NAME>. The earlier spelling DEVBRAIN_<NAME> is
@@ -61,7 +62,7 @@ def derived_database(root: Path) -> str:
     earlier = "devbrain_" + digest
     config = root / "config.json"
     try:
-        stored = json.loads(config.read_text()).get("arcade_database") if config.exists() else "new"
+        stored = json.loads(config.read_text(encoding="utf-8")).get("arcade_database") if config.exists() else "new"
     except (OSError, ValueError, AttributeError):
         stored = ""
     if not stored or stored == earlier or (root / "arcade" / "databases" / earlier).exists():
@@ -149,6 +150,17 @@ def _holds_a_store(path: Path) -> bool:
         return False
 
 
+def _default_data_base(environ=None) -> Path:
+    """Base directory for the default data directory: %LOCALAPPDATA% on Windows, ~/.local/share on POSIX."""
+    if sys.platform == "win32":
+        env = os.environ if environ is None else environ
+        local = env.get("LOCALAPPDATA")
+        if local:
+            return Path(local)
+        return Path.home() / "AppData" / "Local"
+    return Path("~/.local/share").expanduser()
+
+
 def default_data_dir(environ=None) -> Path:
     """Where this installation keeps its data when no --data-dir is given.
 
@@ -160,7 +172,7 @@ def default_data_dir(environ=None) -> Path:
     chosen = _home_override(environ)
     if chosen:
         return Path(chosen).expanduser().resolve()
-    base = Path("~/.local/share").expanduser()
+    base = _default_data_base(environ)
     current, earlier = (base / name for name in DATA_DIR_NAMES)
     if _holds_a_store(earlier):
         return earlier.resolve()
@@ -171,7 +183,7 @@ def data_dir_note() -> str | None:
     """What a user should know about the directory chosen by default, or None."""
     if _home_override():
         return None
-    base = Path("~/.local/share").expanduser()
+    base = _default_data_base()
     current, earlier = (base / name for name in DATA_DIR_NAMES)
     if _holds_a_store(earlier) and (current / "config.json").is_file():
         return (f"Both {earlier} and {current} hold data; {earlier} is used. "
@@ -208,6 +220,11 @@ class Settings:
     ask_timeout: float = 60.0
     poll_seconds: float = 10.0
     token: str = ""
+    # Storage backend selection (ADR-01): "sqlite" (embedded WAL + FTS5 + vectors) or "arcade" (ArcadeDB server).
+    # "" preserves existing ArcadeDB behavior unless state.db or db_path selects SQLite.
+    storage_backend: str = ""
+    # Optional explicit SQLite database path (ADR-01; e.g. ":memory:" or a custom file path).
+    db_path: str = ""
     arcade_url: str = "http://127.0.0.1:2480"
     arcade_user: str = "root"
     arcade_password: str = field(default="", repr=False)
@@ -243,6 +260,12 @@ class Settings:
     engine_log_bytes: int = 10 * 1024 * 1024
     engine_log_copies: int = 3
     job_history_days: int = 30
+    # Automatic SCIP multi-language code indexing: "auto" (enqueue on project add/change),
+    # "manual" (only on explicit `cairnmind scip index`/`import`), or "off".
+    scip_mode: str = "auto"
+    scip_timeout: float = 300.0
+    scip_docker_fallback: bool = True
+    scip_languages: list = field(default_factory=list)
 
     @property
     def url(self) -> str:
@@ -254,9 +277,10 @@ class Settings:
         root = (data_dir or default_data_dir()).expanduser().resolve()
         path = root / "config.json"
         if create:
-            root.mkdir(parents=True, exist_ok=True, mode=0o700)
-            with (root / "config.lock").open("a") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX)
+            if not root.exists():
+                ensure_private_dir(root)
+            with (root / "config.lock").open("a", encoding="utf-8") as lock:
+                lock_exclusive(lock)
                 obj = cls.load(root, create=False)
                 changed = False
                 if not obj.token:
@@ -286,7 +310,7 @@ class Settings:
                 if changed:
                     obj.save()
                 return obj
-        values = json.loads(path.read_text()) if path.exists() else {}
+        values = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         values.pop("data_dir", None)
         values = {k: v for k, v in values.items() if k in cls.__dataclass_fields__ and not k.startswith("_")}
         if path.exists():
@@ -296,7 +320,9 @@ class Settings:
         stored = dict(values)
         kept = {}
         environment = {}  # field -> the spelling of the variable that supplied it (topology.py names it)
-        for name, variable in (("arcade_url", "ARCADE_URL"),
+        for name, variable in (("storage_backend", "BACKEND"),
+                               ("db_path", "DB_PATH"),
+                               ("arcade_url", "ARCADE_URL"),
                                ("arcade_user", "ARCADE_USER"),
                                ("arcade_database", "ARCADE_DATABASE"),
                                ("arcade_password_file", "ARCADE_PASSWORD_FILE"),
@@ -306,9 +332,14 @@ class Settings:
                                ("tmux_executable", "TMUX_EXECUTABLE"),
                                ("port", "PORT"),
                                ("cockpit_port", "COCKPIT_PORT"),
-                               ("ollama_url", "OLLAMA_URL")):
+                               ("ollama_url", "OLLAMA_URL"),
+                               ("scip_mode", "SCIP_MODE"),
+                               ("scip_timeout", "SCIP_TIMEOUT"),
+                               ("scip_docker_fallback", "SCIP_DOCKER_FALLBACK")):
             spelling = ENV_PREFIXES[0] + variable
-            if name in ("port", "cockpit_port", "ollama_url", "arcade_connect_url"):
+            if name in ("port", "cockpit_port", "ollama_url", "arcade_connect_url",
+                        "storage_backend", "db_path",
+                        "scip_mode", "scip_timeout", "scip_docker_fallback"):
                 # an empty variable (a project file can forward one) names nothing: the first spelling that is not empty;
                 # for the connect address it must not turn a connect-only installation into a managed one
                 spelling = next((key for key in env_names(variable) if os.environ.get(key)), None)
@@ -325,6 +356,25 @@ class Settings:
                         raise ValueError
                 except ValueError:
                     raise ValueError(f"{spelling} must be a port number from 1 to 65535.") from None
+            elif name == "scip_mode":
+                override = override.strip().lower()
+                if override not in {"auto", "manual", "off"}:
+                    raise ValueError(f"{spelling} must be one of: auto, manual, off.")
+            elif name == "scip_timeout":
+                try:
+                    override = float(override)
+                    if override <= 0:
+                        raise ValueError
+                except ValueError:
+                    raise ValueError(f"{spelling} must be a positive number of seconds.") from None
+            elif name == "scip_docker_fallback":
+                lowered = override.strip().lower()
+                if lowered in {"1", "true", "yes", "on"}:
+                    override = True
+                elif lowered in {"0", "false", "no", "off"}:
+                    override = False
+                else:
+                    raise ValueError(f"{spelling} must be true or false.")
             values[name] = override
             kept[name] = (stored.get(name), override)
             if override != stored.get(name):  # a variable that repeats config.json supplies nothing
@@ -367,7 +417,8 @@ class Settings:
         return obj
 
     def save(self) -> None:
-        self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not self.data_dir.exists():
+            ensure_private_dir(self.data_dir)
         values = asdict(self)
         values.pop("_origin", None)
         values["data_dir"] = str(self.data_dir)
@@ -381,15 +432,30 @@ class Settings:
                     values[name] = stored
         path = self.data_dir / "config.json"
         # Atomic, owner-readable configuration, including the local bearer token.
-        fd, name = tempfile.mkstemp(prefix=".config-", dir=self.data_dir)
-        tmp = Path(name)
-        try:
-            with os.fdopen(fd, "w") as handle:
-                json.dump(values, handle, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(tmp, 0o600)
-            tmp.replace(path)
-        finally:
-            tmp.unlink(missing_ok=True)
+        write_durable_private(path, json.dumps(values, indent=2), prefix=".config-")
+
+
+def resolved_backend(settings: Settings) -> str:
+    """Resolve active storage backend ('sqlite' or 'arcade') per ADR-01."""
+    chosen = (getattr(settings, "storage_backend", "") or "").strip().lower()
+    if chosen in {"sqlite", "arcade"}:
+        return chosen
+    if chosen:
+        raise ValueError(f"Unsupported storage_backend: {chosen!r} (expected 'sqlite' or 'arcade').")
+    if getattr(settings, "db_path", ""):
+        return "sqlite"
+    data_dir = Path(settings.data_dir)
+    if (data_dir / "state.db").is_file() and not (data_dir / "arcade" / "databases").exists():
+        return "sqlite"
+    return "arcade"
+
+
+def sqlite_db_path(settings: Settings) -> Path | str:
+    """Resolve the SQLite database path (``data_dir/state.db`` or ``db_path`` override, ADR-01)."""
+    override = (getattr(settings, "db_path", "") or "").strip()
+    if override == ":memory:":
+        return ":memory:"
+    if override:
+        return Path(override).expanduser().resolve()
+    return Path(settings.data_dir).expanduser().resolve() / "state.db"
 

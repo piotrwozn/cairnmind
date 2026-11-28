@@ -17,7 +17,8 @@ from typing import Any
 # Bump when syntax-to-fact semantics change, independently of grammar upgrades.
 # syntax-v2: Python module constants and class fields are symbols too.
 # syntax-v3: keys of TOML files and Python parameter defaults are symbols too.
-PARSER_VERSION = "syntax-v3"
+# syntax-v4: normalised AST symbol body hashes, qualified names, and tagged decision comments (#411, #412).
+PARSER_VERSION = "syntax-v4"
 MAX_CONFIG_KEYS = 1000  # symbols kept from one configuration file
 _TOML_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
@@ -297,7 +298,7 @@ def analyze_code(path: Path, content: str) -> dict[str, Any]:
         ".toml": "toml",
     }.get(suffix, "text")
     result: dict[str, Any] = {
-        "language": name, "symbols": [], "imports": [], "calls": [], "errors": []
+        "language": name, "symbols": [], "imports": [], "calls": [], "errors": [], "tagged_comments": [],
     }
     if name == "toml":
         result["symbols"], result["errors"] = _toml_keys(content)
@@ -310,6 +311,14 @@ def analyze_code(path: Path, content: str) -> dict[str, Any]:
     except (ImportError, TypeError, ValueError, RuntimeError) as exc:
         result["errors"].append(f"Parser unavailable: {exc}")
         return result
+
+    from .symbol_anchor import (
+        SYMBOL_ANCHOR_KINDS,
+        enclosing_chain,
+        extract_tagged_comments,
+        symbol_ast_target,
+        symbol_body_hash,
+    )
 
     symbol_kinds = {
         "function_definition": "function", "class_definition": "class",
@@ -326,18 +335,40 @@ def analyze_code(path: Path, content: str) -> dict[str, Any]:
         if node.type in symbol_kinds:
             label = _text(node.child_by_field_name("name"))
             if label:
-                result["symbols"].append({
-                    "name": label, "kind": symbol_kinds[node.type],
+                kind = symbol_kinds[node.type]
+                chain = enclosing_chain(node)
+                if name == "python" and node.type == "function_definition" and chain and chain[-1][0] == "class":
+                    kind = "method"
+                qualified = ".".join([*(part for _, part in chain), label]) if chain else label
+                entry: dict[str, Any] = {
+                    "name": label,
+                    "kind": kind,
                     "line_start": node.start_point.row + 1,
                     "line_end": node.end_point.row + 1,
-                })
+                }
+                if kind in SYMBOL_ANCHOR_KINDS:
+                    target = symbol_ast_target(node)
+                    entry["qualified_name"] = qualified
+                    entry["body_hash"] = symbol_body_hash(target, name)
+                    if target is not node:
+                        entry["decorator_line_start"] = target.start_point.row + 1
+                    if chain and chain[-1][0] == "class":
+                        entry["owner"] = ".".join(part for _, part in chain)
+                        entry["member"] = label
+                result["symbols"].append(entry)
         elif node.type == "variable_declarator":
             value = node.child_by_field_name("value")
             label_node = node.child_by_field_name("name")
             if value is not None and value.type in {"arrow_function", "function_expression", "generator_function"}:
                 if label_node is not None and label_node.type == "identifier":
+                    label = _text(label_node)
+                    chain = enclosing_chain(node)
+                    qualified = ".".join([*(part for _, part in chain), label]) if chain else label
                     result["symbols"].append({
-                        "name": _text(label_node), "kind": "function",
+                        "name": label,
+                        "kind": "function",
+                        "qualified_name": qualified,
+                        "body_hash": symbol_body_hash(node, name),
                         "line_start": node.start_point.row + 1,
                         "line_end": node.end_point.row + 1,
                     })
@@ -402,6 +433,7 @@ def analyze_code(path: Path, content: str) -> dict[str, Any]:
     if name == "python":
         result["symbols"].extend(_python_assignments(tree.root_node))
         result["symbols"].extend(_python_parameter_defaults(tree.root_node))
+    result["tagged_comments"] = extract_tagged_comments(tree.root_node, name, result["symbols"])
     if tree.root_node.has_error and not result["errors"]:
         # Missing punctuation can be an unnamed node, outside the fact walk.
         result["errors"].append("Syntax tree contains missing or invalid tokens")

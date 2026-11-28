@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import json
 import re
 import subprocess
@@ -8,6 +7,7 @@ import sys
 
 from typer.testing import CliRunner
 
+from cairnmind import file_locks
 from cairnmind.cli import app
 from cairnmind.config import Settings
 from cairnmind.store import Store
@@ -72,8 +72,7 @@ def test_restore_requires_service_lock_even_if_health_is_down(tmp_path, monkeypa
     monkeypatch.setattr("cairnmind.cli.service_alive", lambda settings: False)
     settings = Settings.load(tmp_path / "memory", create=True)
     backup = Store(settings.data_dir).backup(tmp_path / "backup.devbrain.json.gz")
-    with (settings.data_dir / "service.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with file_locks.locked_path(settings.data_dir / "service.lock", blocking=False):
         result = CliRunner().invoke(app, ["--data-dir", str(settings.data_dir), "restore", str(backup)])
     assert result.exit_code != 0
     plain = " ".join(re.sub(r"\x1b\[[0-9;]*m|[^\w\s]", "", result.output).split())

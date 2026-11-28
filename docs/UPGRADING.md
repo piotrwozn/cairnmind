@@ -307,7 +307,11 @@ The installer no longer stops when tmux 3.4+ is missing: it says that the worksp
 
 The installer now ends with the exit code of `cairnmind doctor`: 1 when something required is missing. A connect-only installation whose database user does not exist yet therefore ends with 1 until `cairnmind db create-user` has run; do not chain other commands to the installer with `&&`. It says that it stopped the service of the installed version once that service has ended, and it no longer announces the download when the pinned engine is already unpacked. It may also print two lines about the removed `devbrain` command; see "The `devbrain` command is gone" below.
 
-The same script installs on macOS ([INSTALL.md](INSTALL.md)).
+The same script installs on macOS ([INSTALL.md](INSTALL.md)). On native Windows 10/11 (PowerShell), unpack the release archive and run the native Windows installer instead:
+
+```powershell
+pwsh -File scripts/install-windows.ps1
+```
 
 ### 4. Reconnect your projects
 

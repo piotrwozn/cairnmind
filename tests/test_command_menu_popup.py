@@ -20,7 +20,7 @@ from cairnmind.terminal_i18n import tr
 
 def test_the_popup_size_this_test_assumes_is_the_one_the_workspace_opens():
     # tmux: -w 90% -h 85% of a 80x24 terminal is 72x20; the border takes one cell on each side.
-    assert Path(workspace.__file__).read_text().count('"-w", "90%", "-h", "85%"') == 3
+    assert Path(workspace.__file__).read_text(encoding="utf-8").count('"-w", "90%", "-h", "85%"') == 3
     assert (int(80 * .9) - 2, int(24 * .85) - 2) == (70, 18)
 
 

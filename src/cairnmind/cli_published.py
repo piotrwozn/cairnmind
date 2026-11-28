@@ -6,7 +6,10 @@ from typing import Annotated
 
 import typer
 
-from cairnmind.cli_arguments import BaseArg, HeadArg, PlanArg, ProjectArg, PublishedArg, RecordArg, RevisionArg
+from cairnmind.cli_arguments import (
+    AuditPathArg, BaseArg, HeadArg, OursSnapshotArg, PlanArg, ProjectArg, PublishedArg, RecordArg, RevisionArg,
+    TheirsSnapshotArg,
+)
 
 
 def register(memory_app, initialized):
@@ -224,3 +227,45 @@ def register(memory_app, initialized):
         from cairnmind.cli import refuse
         # The command line confirms nothing (#214). The options stay so that a script gets this sentence.
         refuse(confirmation.CLI_PLAN_REFUSED)
+
+    @memory_app.command("audit")
+    def memory_audit(ctx: typer.Context, path: AuditPathArg = Path("."),
+                     config: Annotated[Path | None, typer.Option(
+                         "--config", help="Secrets and allowlist rules; default: .cairnmind/publication.toml.")] = None,
+                     no_history: Annotated[bool, typer.Option(
+                         "--no-history", help="Skip scanning Git history for earlier contains_transcripts commits.")] = False,
+                     as_json: Annotated[bool, typer.Option("--json", help="Print the audit report as JSON.")] = False):
+        """Audit .memory/cairnmind/ and .memory/cairnmind-published/ without a store, service or model.
+
+        Exits 0 when clean, 1 when transcripts, secrets, uncommitted working-tree refs or .cairnmindignore violations are found, and 2 on invalid path or configuration. Also warns if Git history contains an earlier snapshot with contains_transcripts=true.
+        """
+        from cairnmind.cli import output
+        from cairnmind.memory_audit import audit_memory, render_audit_text
+        from cairnmind.memory_published_secrets import SecretRulesError
+        from cairnmind.terminal_safe import safe_text
+        try:
+            report = audit_memory(path, config=config, check_history=not no_history)
+        except SecretRulesError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--config") from None
+        except ValueError as exc:
+            raise typer.BadParameter(safe_text(str(exc)), param_hint="PATH") from None
+        if as_json:
+            for warning in report.get("history_warnings", []):
+                typer.echo(safe_text(warning["message"]), err=True)
+            output(report)
+        else:
+            typer.echo(render_audit_text(report))
+        if report["status"] != "passed":
+            raise typer.Exit(1)
+
+    @memory_app.command("merge")
+    def memory_merge(ctx: typer.Context, ours: OursSnapshotArg, theirs: TheirsSnapshotArg,
+                     output_dir: Annotated[Path, typer.Option(
+                         "--output", help="Directory where the merged snapshot package will be written.")]):
+        """Merge two portable memory snapshots deterministically by entity version and fingerprint.
+
+        Resolves branch conflicts in .memory/cairnmind/ without a store, service or model. Raises a conflict if both sides edited the same entity at the same version with different content.
+        """
+        from cairnmind.cli import output
+        from cairnmind.snapshot_privacy import merge_snapshots
+        output(merge_snapshots(ours, theirs, output_dir))

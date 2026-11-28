@@ -1,0 +1,373 @@
+{
+  "entries": {
+    "01e900f69d67151d79e3ac60fc6ca63aa465a79948aa02e59e7c1498a5df69c6": {
+      "key": "01e900f69d67151d79e3ac60fc6ca63aa465a79948aa02e59e7c1498a5df69c6",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": [{\"kind\": \"task\", \"key\": \"nightly-report-bug\", \"content\": \"Investigate why the nightly report job sends yesterday numbers.\", \"evidence\": \"The nightly report job keeps sending yesterday's numbers. Find out why.\", \"metadata\": {\"state\": \"todo\"}}]}"
+        }
+      }
+    },
+    "08f8dc129683654cf8f82db52c6f1175a705b7f96839359ada097af035772278": {
+      "key": "08f8dc129683654cf8f82db52c6f1175a705b7f96839359ada097af035772278",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "1fadfd7e6a76c3d8fd0ee046efef4dbec10af4ca1a4d7541ef3fafd18d57337f": {
+      "key": "1fadfd7e6a76c3d8fd0ee046efef4dbec10af4ca1a4d7541ef3fafd18d57337f",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": [{\"kind\": \"fact\", \"key\": \"scheduler-local-time\", \"content\": \"The scheduler computes the report date in local time while the database stores timestamps in UTC.\", \"evidence\": \"the scheduler computes the report date in local time while the database stores timestamps in UTC\", \"metadata\": {}}]}"
+        }
+      }
+    },
+    "2026beabf8628ab80771c53a41e5d27dfb6c75097c83b8a5ce9f97e72de8bea0": {
+      "key": "2026beabf8628ab80771c53a41e5d27dfb6c75097c83b8a5ce9f97e72de8bea0",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "213648ea7ca0e8309bb956d5a05f32a5d58da87395d933e6c0bb349f611cfbc5": {
+      "key": "213648ea7ca0e8309bb956d5a05f32a5d58da87395d933e6c0bb349f611cfbc5",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "21a8d05be13cf825ed175ab0a5d02b3e37ae7a9da5c4d9d1164682e6a77f4ffb": {
+      "key": "21a8d05be13cf825ed175ab0a5d02b3e37ae7a9da5c4d9d1164682e6a77f4ffb",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "2f28fe44d0f7e567ed5d2e6e8cd45acc23b7f4888f86b85a045be7fdebd21bfa": {
+      "key": "2f28fe44d0f7e567ed5d2e6e8cd45acc23b7f4888f86b85a045be7fdebd21bfa",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": [{\"kind\": \"decision\", \"key\": \"resume-context-hash\", \"content\": \"resume_context must return the packet hash in every response, including partial packets.\", \"evidence\": \"resume_context must return the packet hash in every response, also for a partial packet\", \"metadata\": {}}]}"
+        }
+      }
+    },
+    "30387ba4a92d591d6db06cfe9dd73740bd49e3eb99691fe74c01abd7eff10ddb": {
+      "key": "30387ba4a92d591d6db06cfe9dd73740bd49e3eb99691fe74c01abd7eff10ddb",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "3bf09e03f4b039fafe6a16fcf0fd1a14d6b43229bb02b4d1ac0b201d6cdd99f2": {
+      "key": "3bf09e03f4b039fafe6a16fcf0fd1a14d6b43229bb02b4d1ac0b201d6cdd99f2",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "3dac9ed1bb8ef9432c894e3e5491d9a197f18e09e5be4af5cfa6ea9e7b5ad896": {
+      "key": "3dac9ed1bb8ef9432c894e3e5491d9a197f18e09e5be4af5cfa6ea9e7b5ad896",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "45ace408fa1c9226045315f9b5216822867542e7c2a3d8c61acd6fe5aef094a2": {
+      "key": "45ace408fa1c9226045315f9b5216822867542e7c2a3d8c61acd6fe5aef094a2",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "4c5950cbad13f7546eaa4ed9f86154ec0903911771ed24e60d4f9a3e9fddf7c8": {
+      "key": "4c5950cbad13f7546eaa4ed9f86154ec0903911771ed24e60d4f9a3e9fddf7c8",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": [{\"kind\": \"decision\", \"key\": \"originals-object-storage\", \"content\": \"Upload service stores original photos in S3-compatible object storage instead of local API disk.\", \"evidence\": \"the upload service stores original photos in S3-compatible object storage, not on the local disk of the API server.\", \"metadata\": {}}]}"
+        }
+      }
+    },
+    "52d22db8655f6aa977034b3ddc9da6c961bc2a43d9068aff35ba51cb0fdd092d": {
+      "key": "52d22db8655f6aa977034b3ddc9da6c961bc2a43d9068aff35ba51cb0fdd092d",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": [{\"kind\": \"decision\", \"key\": \"api-version-in-path\", \"content\": \"Public API versioning uses the URL path (/v1/, /v2/) rather than the Accept header.\", \"evidence\": \"publiczne API wersjonujemy w ścieżce (/v1/, /v2/), a nie w nagłówku Accept.\", \"metadata\": {}}]}"
+        }
+      }
+    },
+    "5650cfc7c9df1692d06c71bb1b71b3f986784afff3b967a7fc9e5bc340f03347": {
+      "key": "5650cfc7c9df1692d06c71bb1b71b3f986784afff3b967a7fc9e5bc340f03347",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": [{\"kind\": \"fact\", \"key\": \"thumbnail-inline-today\", \"content\": \"In src/upload/handler.py the thumbnail is generated inline inside handle_upload().\", \"evidence\": \"In src/upload/handler.py the thumbnail is generated inline inside handle_upload()\", \"metadata\": {}}]}"
+        }
+      }
+    },
+    "569079266fa0b8dfdbbbaeaba24a43e307bf2fddfe38951fe98e656f041ddd96": {
+      "key": "569079266fa0b8dfdbbbaeaba24a43e307bf2fddfe38951fe98e656f041ddd96",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "61861015b8b79740b7738d1a0490adb22f035c3a602ca75fd15899ddfbad7b14": {
+      "key": "61861015b8b79740b7738d1a0490adb22f035c3a602ca75fd15899ddfbad7b14",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "6938b3d2d3a039e4ab83560f2675531ccee3ee67f530a746b898878f23595a76": {
+      "key": "6938b3d2d3a039e4ab83560f2675531ccee3ee67f530a746b898878f23595a76",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "879838da4ffeb74f108f9e8da2583e1eddb52cf8d4fd9d0365abec96fbab2289": {
+      "key": "879838da4ffeb74f108f9e8da2583e1eddb52cf8d4fd9d0365abec96fbab2289",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "8bc38df96768940660bbf684e9e022daa9a0092abb46a02514c35f02b63148c8": {
+      "key": "8bc38df96768940660bbf684e9e022daa9a0092abb46a02514c35f02b63148c8",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "8c2f1ef1d0bb1f6b46e25e9b16bace4d342bc05d58557b1244ffd458d90ccc4c": {
+      "key": "8c2f1ef1d0bb1f6b46e25e9b16bace4d342bc05d58557b1244ffd458d90ccc4c",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "8df3201b8da3250f433832a3a8ac29a57721962db7a0bc4dc9345b1013d528ad": {
+      "key": "8df3201b8da3250f433832a3a8ac29a57721962db7a0bc4dc9345b1013d528ad",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": [{\"kind\": \"decision\", \"key\": \"ruff-instead-of-flake8\", \"content\": \"The project uses ruff instead of flake8 for linting.\", \"evidence\": \"the project uses ruff instead of flake8; I already removed the flake8 config.\", \"metadata\": {}}]}"
+        }
+      }
+    },
+    "8e5fdd9b2ce5362fe5b5f33168fb415441790fc4cd1a6d851f8a191fd80d3dd5": {
+      "key": "8e5fdd9b2ce5362fe5b5f33168fb415441790fc4cd1a6d851f8a191fd80d3dd5",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "9d76a103b6a759bd57d7360a552a7ee854c80eece6c405a3aef227e18bb7c969": {
+      "key": "9d76a103b6a759bd57d7360a552a7ee854c80eece6c405a3aef227e18bb7c969",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "a799a472f07c03347f39d6dd8b32d374e49e996e32e42d46fbdd25a512fc8043": {
+      "key": "a799a472f07c03347f39d6dd8b32d374e49e996e32e42d46fbdd25a512fc8043",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "b08bd938b092a170ef1374b445b4ca070d22d5729cb50cd4eef12b22ad219bd4": {
+      "key": "b08bd938b092a170ef1374b445b4ca070d22d5729cb50cd4eef12b22ad219bd4",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "c512323bd7d4ebc82749966dbae257bbdccecb3706924a03e207d2febab7cb18": {
+      "key": "c512323bd7d4ebc82749966dbae257bbdccecb3706924a03e207d2febab7cb18",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "c56648c24d47669bd03f1081199b44f7a24bd23411f17bc7f12d094c885d098e": {
+      "key": "c56648c24d47669bd03f1081199b44f7a24bd23411f17bc7f12d094c885d098e",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": [{\"kind\": \"constraint\", \"key\": \"thumbnails-not-synchronous\", \"content\": \"Thumbnails must never be generated synchronously in the upload request.\", \"evidence\": \"thumbnails must never be generated synchronously in the upload request.\", \"metadata\": {}}, {\"kind\": \"constraint\", \"key\": \"upload-latency-budget\", \"content\": \"The upload endpoint has a 300 ms latency budget.\", \"evidence\": \"The upload endpoint has a 300 ms latency budget.\", \"metadata\": {}}]}"
+        }
+      }
+    },
+    "ceb5c27e2863679c8822245edbf952ba1898b9b7150ee9afcb2bdbaba4b0f6b6": {
+      "key": "ceb5c27e2863679c8822245edbf952ba1898b9b7150ee9afcb2bdbaba4b0f6b6",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "d390fb0bc01d57dcbbd5c7c9171e349b4eab53661fd8a98eb77f0c26c9c13090": {
+      "key": "d390fb0bc01d57dcbbd5c7c9171e349b4eab53661fd8a98eb77f0c26c9c13090",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": [{\"kind\": \"task\", \"key\": \"task-ack-stale-hash\", \"content\": \"Add a test that ack_resume rejects a stale packet hash with a 409 response.\", \"evidence\": \"We still need a test that ack_resume rejects a stale packet hash with a 409 response.\", \"metadata\": {\"state\": \"todo\"}}]}"
+        }
+      }
+    },
+    "dffc8ea7132cc0259a3fe8433d0b2c241c9e13b3ffacd170c9d86dbac1b06871": {
+      "key": "dffc8ea7132cc0259a3fe8433d0b2c241c9e13b3ffacd170c9d86dbac1b06871",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "e57e8619d579b0b8e6eb238baa294bc4622b6cacdc48cb1281f02a344c003b6e": {
+      "key": "e57e8619d579b0b8e6eb238baa294bc4622b6cacdc48cb1281f02a344c003b6e",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": [{\"kind\": \"constraint\", \"key\": \"reports-utc\", \"content\": \"Every date in the reports module must be computed in UTC; never use local time.\", \"evidence\": \"every date in the reports module is computed in UTC; never use local time there.\", \"metadata\": {}}]}"
+        }
+      }
+    },
+    "e638c2e12086e1acc81a0215931eb83f4080f09f04f84e80d5db11ea7dbb38b4": {
+      "key": "e638c2e12086e1acc81a0215931eb83f4080f09f04f84e80d5db11ea7dbb38b4",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": [{\"kind\": \"question\", \"key\": \"exif-question\", \"content\": \"Should the image resizer keep EXIF location data or strip it on upload?\", \"evidence\": \"should the image resizer keep EXIF location data, or strip it on upload? Nobody has decided yet.\", \"metadata\": {}}]}"
+        }
+      }
+    },
+    "e718cc04d115a638f34134a6b091d087d0ca39afa56c02f615b35973d976eac0": {
+      "key": "e718cc04d115a638f34134a6b091d087d0ca39afa56c02f615b35973d976eac0",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "e88f13c81c455cb0b6c6aee449ba8959f96c0f6bb11d3b553f53d0d1dc7de3c1": {
+      "key": "e88f13c81c455cb0b6c6aee449ba8959f96c0f6bb11d3b553f53d0d1dc7de3c1",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": []}"
+        }
+      }
+    },
+    "ee64d0bf3b5d0fabe72cde8dfe4c5ec87e77bb327a3fdd96e04d5854228ea6a4": {
+      "key": "ee64d0bf3b5d0fabe72cde8dfe4c5ec87e77bb327a3fdd96e04d5854228ea6a4",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": [{\"kind\": \"task\", \"key\": \"task-thumbnail-worker\", \"content\": \"Move thumbnail generation to the background worker with a test that upload returns before thumbnail exists.\", \"evidence\": \"move thumbnail generation to the background worker, with a test that the upload request returns before the thumbnail exists.\", \"metadata\": {\"state\": \"todo\"}}]}"
+        }
+      }
+    },
+    "f1b05deda264067962d81d2e129712d94a98a1a857fbbce3a3982ea508a70bcb": {
+      "key": "f1b05deda264067962d81d2e129712d94a98a1a857fbbce3a3982ea508a70bcb",
+      "op": "chat",
+      "response": {
+        "eval_count": 64,
+        "message": {
+          "content": "{\"records\": [{\"kind\": \"decision\", \"key\": \"migrations-alembic\", \"content\": \"Database migrations switch from hand-written SQL files to Alembic.\", \"evidence\": \"switching database migrations from hand-written SQL files to Alembic, that's decided.\", \"metadata\": {}}, {\"kind\": \"constraint\", \"key\": \"legacy-sql-kept\", \"content\": \"Keep the old SQL migration files under migrations/legacy/ for reference.\", \"evidence\": \"Keep the old SQL files under migrations/legacy/ for reference.\", \"metadata\": {}}]}"
+        }
+      }
+    }
+  },
+  "format": "cairnmind-vcr-cassette",
+  "format_version": 1,
+  "model_digests": {
+    "qwen3.5:9b": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "model_identities": {
+    "qwen3.5:9b": "qwen3.5:9b@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "suite": "eval_extraction"
+}

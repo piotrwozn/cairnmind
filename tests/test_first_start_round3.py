@@ -71,6 +71,7 @@ def stand_in(path: Path, body: str) -> Path:
     return path
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX bash scripts/install-wsl.sh")
 def test_the_installer_shows_one_line_for_a_good_install_and_uvs_own_output_for_a_bad_one(tmp_path):
     script = SCRIPT.read_text()
     start = script.index("# uv's list of every package is shown only")
@@ -99,6 +100,7 @@ def test_the_installer_shows_one_line_for_a_good_install_and_uvs_own_output_for_
     assert not list(tmp_path.glob("cairnmind-install.*"))
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Tests POSIX bash scripts/install-wsl.sh")
 def test_the_installer_prints_no_init_block_and_keeps_the_one_time_marks(tmp_path):
     script = SCRIPT.read_text()
     assert script.count('init_said="$("$cairnmind_bin" init --json)"') == 3  # connect-only, Docker and native

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <style>
+    .stone-base { fill: #f1f5f9; }
+    .stone-mid { fill: #87afd7; }
+    .stone-top { fill: #dadee3; }
+    .bg { fill: #0c0e12; }
+    @media (prefers-color-scheme: light) {
+      .bg { fill: #f2f5f9; }
+      .stone-base { fill: #0c121b; }
+      .stone-mid { fill: #1b4b7c; }
+      .stone-top { fill: #4a5768; }
+    }
+  </style>
+  <rect class="bg" width="32" height="32" rx="8" />
+  <rect class="stone-base" x="5" y="21" width="22" height="5.2" rx="2.6" />
+  <rect class="stone-mid" x="8.2" y="13.8" width="15.6" height="5" rx="2.5" />
+  <rect class="stone-top" x="11.6" y="6.8" width="8.8" height="4.8" rx="2.4" />
+</svg>

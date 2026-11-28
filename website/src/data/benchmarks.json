@@ -1,0 +1,103 @@
+{
+  "sourceDocs": ["docs/EVALUATION.md", "docs/evaluation/RESULTS.md"],
+  "environment": {
+    "hardware": "NVIDIA RTX 4080 Super (16 GB), WSL2 Ubuntu, Python 3.12",
+    "engine": "ArcadeDB 26.11.1 (isolated throwaway database per run)",
+    "chatModel": "qwen3.5:9b (Q4_K_M, digest 56671c2a…, 16,384 context)",
+    "embeddingModel": "qwen3-embedding:0.6b (digest ac6da0df…)",
+    "releaseMeasured": "v0.11.0 / v0.12.0 release gate & 22 Nov 2026 main evaluations"
+  },
+  "headlineMetrics": [
+    {
+      "id": "recall-20",
+      "value": "100%",
+      "unit": "20/20 · v0.12",
+      "label": "Golden recall accuracy",
+      "detail": "20 of 20 on v0.12.0 (101 s) and v0.11.0 (89 s). 100% across 6 of 6 runs on v0.8.0.",
+      "command": "cairnmind eval run",
+      "source": "docs/EVALUATION.md",
+      "tone": "ok"
+    },
+    {
+      "id": "repo-qa",
+      "value": "19 / 20",
+      "unit": "0 wrong · 20/20 v0.11",
+      "label": "Real repository Q&A",
+      "detail": "19 of 20 on v0.12.0 (440 files) and 20 of 20 on v0.11.0. Zero complete-and-wrong answers.",
+      "command": "cairnmind eval repository .",
+      "source": "docs/EVALUATION.md",
+      "tone": "ok"
+    },
+    {
+      "id": "absent-refusal",
+      "value": "20 / 21",
+      "unit": "24/24 on main",
+      "label": "Absent-feature refusal",
+      "detail": "20 of 21 refused in v0.12.0. 24 of 24 refused on main (22 Nov 2026) after subject and names checks.",
+      "command": "cairnmind eval repository . --questions docs/evaluation/absent-questions.json",
+      "source": "docs/evaluation/RESULTS.md",
+      "tone": "accent"
+    },
+    {
+      "id": "extraction-noise",
+      "value": "29%",
+      "unit": "down from 65%",
+      "label": "Extraction noise share",
+      "detail": "8 of 28 proposals rejected/duplicate across 3 runs (down from 36 of 55 in v0.10.0), 15/15 kept found.",
+      "command": "cairnmind eval extraction --runs 3",
+      "source": "docs/EVALUATION.md",
+      "tone": "ok"
+    }
+  ],
+  "releaseGateTable": [
+    {
+      "command": "cairnmind eval run",
+      "what": "20 golden recall questions in a disposable Git worktree & isolated ArcadeDB",
+      "result012": "passed: 20 of 20, factual accuracy 1.0, every critical fact and deterministic check true",
+      "time012": "101 s",
+      "time011": "89 s"
+    },
+    {
+      "command": "cairnmind eval memory",
+      "what": "Extraction of fact/decision/task, portable transfer across isolated DBs, cited recall, cross-project abstention",
+      "result012": "passed: extraction, portable transfer, cited recall in second DB, abstention about neighbouring project",
+      "time012": "36 s",
+      "time011": "31 s"
+    },
+    {
+      "command": "cairnmind eval extraction --runs 3",
+      "what": "Conversation proposal precision across 40 messages / 15 kept records (incl. Polish & protocol traps)",
+      "result012": "passed: 3 identical runs, 28 proposals, 8 rejected/duplicate (29%), 15 of 15 kept records found",
+      "time012": "122 s",
+      "time011": "106 s"
+    },
+    {
+      "command": "cairnmind eval repository .",
+      "what": "20 factual questions about Cairnmind's own repository (440 files, 2,383 chunks on v0.12.0)",
+      "result012": "passed: 19 of 20 complete and right, none complete and wrong (20 of 20 on v0.11.0)",
+      "time012": "320 s",
+      "time011": "287 s"
+    },
+    {
+      "command": "cairnmind eval repository . --questions docs/evaluation/absent-questions.json",
+      "what": "Questions about technologies Cairnmind never uses (nginx, Redis, Kafka, Zookeeper, etc.)",
+      "result012": "20 of 21 refused on v0.12.0 (nginx lower-case missed). 24 of 24 refused on main (22 Nov 2026) with subject and names checks.",
+      "time012": "421 s",
+      "time011": "384 s"
+    },
+    {
+      "command": "cairnmind eval injection --runs 3",
+      "what": "Planted prompt-injection instructions across README, code comment, messages, and MCP tool results",
+      "result012": "Answers obeyed 0 of 12 · built-in agent obeyed 0 of 9 (0 invariants broken) · extraction restated the canary in 6 of 12 (README & code comment)",
+      "time012": "measured (22 Nov 2026)",
+      "time011": "n/a"
+    }
+  ],
+  "honestCaveats": [
+    "Zero-GPU / zero-model mode runs test gates, code-fingerprint stale detection, OCC handoffs, 12-language code graph, pulse, and exact full-text passage search with zero GPU. The RTX 4080 Super numbers above measure only the optional local 9B LLM synthesis & extraction layer (qwen3.5:9b).",
+    "Current repository Q&A figures were measured on Cairnmind's own 440-file repository. Run `cairnmind eval repository /path/to/any-repo` to reproduce them on your own codebase. Ordinary laptop measurements are tracked in issue #35.",
+    "On Apple M3 Pro, a single extraction call took up to 52 s in one measured run (docs/evaluation/RESULTS.md).",
+    "In prompt-injection testing (22 Nov 2026, main 3ea6aa1), answers (0/12) and the built-in agent (0/9) ignored every planted instruction, while automatic extraction restated canaries planted in a README and code comment (6/12). That is why extracted records always stay proposed until a person confirms them.",
+    "An acknowledgement proves a session received and echoed specific plan/task versions, not that the underlying LLM understood them."
+  ]
+}

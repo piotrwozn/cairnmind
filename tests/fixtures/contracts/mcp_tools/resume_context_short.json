@@ -1,0 +1,13 @@
+{
+  "acknowledged": true,
+  "epoch": 1,
+  "evidence": "degraded",
+  "history": "unarchived",
+  "newer_automatic_proposals": 0,
+  "note": "Unchanged: this session acknowledged this packet and nothing it promises has changed, so the acknowledgement still holds. This answer is not an acknowledgement and extends none. A client that no longer has the packet asks for the full packet again.",
+  "packet_hash": "<SHA256_1>",
+  "packet_id": "<UUID_1>",
+  "session_id": "<UUID_2>",
+  "status": "ready",
+  "unchanged": true
+}

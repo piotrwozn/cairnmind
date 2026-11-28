@@ -1,0 +1,127 @@
+{
+  "archived": 4,
+  "background": {
+    "inference": {
+      "mode": "disabled",
+      "project_ids": [],
+      "worker_running": false
+    },
+    "memory_error": null,
+    "model_error": null,
+    "scanner_error": null,
+    "scip_error": null
+  },
+  "cached_answers": 0,
+  "check_runs": 0,
+  "chunks": 2,
+  "deleted_projects": [],
+  "edges": 8,
+  "embeddings": 0,
+  "get_models": "To use models: `cairnmind models pull` downloads the local models into Ollama (about 7 GB); `cairnmind models set` chooses a model server.",
+  "inbox": 0,
+  "indexed": 2,
+  "inference_queue": 0,
+  "jobs": {
+    "completed": 0,
+    "failed": 0,
+    "pending": 3,
+    "running": 0
+  },
+  "jobs_held": 3,
+  "models": "not configured (deterministic-only mode)",
+  "nodes": 10,
+  "pipeline_jobs": {
+    "archive": {
+      "completed": 0,
+      "failed": 0,
+      "pending": 0,
+      "running": 0
+    },
+    "extraction": {
+      "completed": 0,
+      "failed": 0,
+      "pending": 1,
+      "running": 0
+    },
+    "indexing": {
+      "completed": 0,
+      "failed": 0,
+      "pending": 2,
+      "running": 0
+    },
+    "other": {
+      "completed": 0,
+      "failed": 0,
+      "pending": 0,
+      "running": 0
+    }
+  },
+  "plans": 1,
+  "processed": 0,
+  "projects": 1,
+  "recent_job_errors": [],
+  "records": 2,
+  "removed_projects": 0,
+  "service_url": "http://127.0.0.1:<PORT>",
+  "sessions": 1,
+  "sources": 4,
+  "storage": {
+    "engine": "native",
+    "host": "<HOST>",
+    "mode": "managed",
+    "url": "http://127.0.0.1:<ARCADE_PORT>"
+  },
+  "topology": {
+    "lines": [
+      "Storage: ArcadeDB on this machine at http://127.0.0.1:<ARCADE_PORT>, started and stopped by Cairnmind (native engine, Java 21 or newer). The address is set by the environment variable CAIRNMIND_ARCADE_URL, for this process only. This installation is the one that writes to the store.",
+      "Memory models: none in use; the knowledge agent is disabled (deterministic-only mode).",
+      "On this machine: the knowledge service at http://127.0.0.1:<PORT>; the ArcadeDB engine (native, Java 21 or newer)."
+    ],
+    "models": {
+      "evaluated": null,
+      "knowledge_agent": "disabled"
+    },
+    "storage": {
+      "engine": "native",
+      "host": "<HOST>",
+      "mode": "managed",
+      "on_this_machine": true,
+      "setting": "arcade_url",
+      "source": "environment",
+      "url": "http://127.0.0.1:<ARCADE_PORT>",
+      "variable": "CAIRNMIND_ARCADE_URL",
+      "writer": {
+        "role": "writer"
+      }
+    },
+    "this_machine": [
+      {
+        "kind": "service",
+        "url": "http://127.0.0.1:<PORT>"
+      },
+      {
+        "engine": "native",
+        "kind": "engine"
+      }
+    ]
+  },
+  "unassigned_sources": 0,
+  "unavailable_folders": [],
+  "writer": {
+    "installation": "<ID32_1>",
+    "role": "writer",
+    "writer": {
+      "history": [
+        {
+          "at": "<TIMESTAMP>",
+          "host": "<HOST>",
+          "how": "first",
+          "installation_id": "<ID32_1>"
+        }
+      ],
+      "host": "<HOST>",
+      "installation": "<ID32_1>",
+      "since": "<TIMESTAMP>"
+    }
+  }
+}

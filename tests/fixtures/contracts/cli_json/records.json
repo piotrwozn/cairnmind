@@ -1,0 +1,66 @@
+[
+  {
+    "active_key": "[\"<UUID_1>\",\"task\",\"plan:<UUID_2>:step-one\"]",
+    "content": "Verify frozen CLI and MCP responses.",
+    "created_at": "<TIMESTAMP>",
+    "id": "<UUID_3>",
+    "key": "plan:<UUID_2>:step-one",
+    "kind": "task",
+    "metadata": {
+      "acceptance_criteria": [
+        "All frozen JSON fields match"
+      ],
+      "depends_on": [],
+      "evidence_basis": "observed",
+      "evidence_earliest": "<TIMESTAMP>",
+      "evidence_latest": "<TIMESTAMP>",
+      "plan_archived": false,
+      "plan_context_hash": "<SHA256_1>",
+      "plan_ref": "<UUID_2>",
+      "requires_review": false,
+      "requires_test": false,
+      "state": "todo",
+      "step_index": 0,
+      "step_key": "step-one"
+    },
+    "project_id": "<UUID_1>",
+    "source_ids": [
+      "<UUID_4>"
+    ],
+    "status": "proposed",
+    "supersedes": null,
+    "updated_at": "<TIMESTAMP>",
+    "version": 1
+  },
+  {
+    "active_key": "[\"<UUID_1>\",\"decision\",\"sync-compute\"]",
+    "content": "Keep compute_total synchronous and deterministic.",
+    "created_at": "<TIMESTAMP>",
+    "id": "<UUID_5>",
+    "key": "sync-compute",
+    "kind": "decision",
+    "metadata": {
+      "evidence": "def compute_total",
+      "evidence_basis": "observed",
+      "evidence_earliest": "<TIMESTAMP>",
+      "evidence_latest": "<TIMESTAMP>",
+      "root": "<WORKTREE>",
+      "symbol_anchor": {
+        "body_hash": "<SHA256_2>",
+        "kind": "function",
+        "norm_version": 1,
+        "path": "src/app.py",
+        "symbol": "compute_total"
+      }
+    },
+    "project_id": "<UUID_1>",
+    "source_ids": [
+      "<UUID_6>",
+      "<UUID_7>"
+    ],
+    "status": "proposed",
+    "supersedes": null,
+    "updated_at": "<TIMESTAMP>",
+    "version": 1
+  }
+]

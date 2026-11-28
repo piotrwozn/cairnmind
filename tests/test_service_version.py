@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import re
-import shlex
 
 import httpx
 import pytest
 
 from cairnmind import __version__, service_version
 from cairnmind.config import Settings
+from cairnmind.process_control import format_command
 from cairnmind.service_version import NO_HEALTH, OTHER_VERSION, VERSION_UNKNOWN, instance_id, refusal
 from cairnmind.terminal_i18n import CATALOG
 
@@ -32,7 +32,7 @@ def health(settings, **changes):
 
 
 def command(settings):
-    return f"cairnmind --data-dir {shlex.quote(str(settings.data_dir))} stop"
+    return format_command(["cairnmind", "--data-dir", str(settings.data_dir), "stop"])
 
 
 def test_a_service_of_this_version_or_none_at_all_is_no_reason(settings, monkeypatch):

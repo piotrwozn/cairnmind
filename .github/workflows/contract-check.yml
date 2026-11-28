@@ -1,0 +1,29 @@
+name: Contract declaration
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  contract-declaration:
+    name: contract-declaration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: List changed files in pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename' > changed_files.txt
+      - name: Verify contract declaration and label
+        run: |
+          python3 scripts/check_contract_pr.py \
+            --changed-files-file changed_files.txt \
+            --event-path "${GITHUB_EVENT_PATH}"

@@ -1,0 +1,19 @@
+---
+import ComparisonLayout from '@/layouts/ComparisonLayout.astro';
+import { COMPARISON_PAGES, type ComparisonPageData } from '@/data/comparisons';
+
+export function getStaticPaths() {
+  return COMPARISON_PAGES.map((page) => ({
+    params: { slug: page.slug },
+    props: { page },
+  }));
+}
+
+interface Props {
+  page: ComparisonPageData;
+}
+
+const { page } = Astro.props;
+---
+
+<ComparisonLayout page={page} />

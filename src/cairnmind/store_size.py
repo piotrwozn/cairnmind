@@ -185,9 +185,14 @@ def _vector_types(store, project_id):
     registry = {row.get("type_name"): row for row in store.query(
         "SELECT type_name, namespace, dimension, project_id FROM vector_indexes")}
     # A name that is not a plain identifier is not one the product made, and is not queried.
-    names = sorted(str(row.get("name")) for row in store.query("SELECT name FROM schema:types")
-                   if str(row.get("name", "")).startswith("vector_") and row.get("name") not in EXPORT_TYPES
-                   and IDENTIFIER.fullmatch(str(row.get("name"))))
+    collections = (
+        store.backend.list_collections(store)
+        if hasattr(store, "backend")
+        else {str(row.get("name")) for row in store.query("SELECT name FROM schema:types") if row.get("name")}
+    )
+    names = sorted(name for name in collections
+                   if name.startswith("vector_") and name not in EXPORT_TYPES
+                   and IDENTIFIER.fullmatch(name))
     found = []
     for name in names:
         entry = registry.get(name) or {}
