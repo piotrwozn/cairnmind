@@ -949,7 +949,8 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["restore_unfinished"] = None  # the mark of a restore that did not finish (#362); never None when unknown
     from cairnmind.restore_staged import RestoreUnfinished
     result["project_folders"] = None  # the folders this machine cannot read, by project (#371); None likewise
-    result["vertices_stored_twice"] = None  # vertices that share an id with another (#456); None likewise
+    result["vertices_stored_twice"] = result["edges_stored_twice"] = None  # rows that share an id with another (#456); None likewise
+    result["graphs_stored_twice"] = []  # the projects that hold such rows, each with its counts
     try:
         # What a person accepted as technical, per project, and how to withdraw it (#210).
         store = store_for_read(ctx.obj)
@@ -957,8 +958,10 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         result["projects"] = len(store.list_projects())
         from cairnmind.project_folders import unavailable
         result["project_folders"] = unavailable(store)
-        from cairnmind.graph_duplicates import surplus
-        result["vertices_stored_twice"] = surplus(store)
+        from cairnmind.graph_duplicates import by_project, surplus
+        result["vertices_stored_twice"], result["edges_stored_twice"] = surplus(store), surplus(store, None, "edges")
+        if result["vertices_stored_twice"] or result["edges_stored_twice"]:
+            result["graphs_stored_twice"] = by_project(store)
     except RestoreUnfinished as exc:
         # A required thing is missing: the store holds part of a backup. The sentence names the way out.
         result["restore_unfinished"] = exc.mark or {"unreadable": True}
