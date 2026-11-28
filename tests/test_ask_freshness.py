@@ -229,7 +229,7 @@ def test_cache_stamp_reads_only_new_journal_events(workspace, monkeypatch):
     original = store.query
     monkeypatch.setattr(store, "query", lambda *a, **k: queries.append(a[0]) or original(*a, **k))
     store.cache_stamp(pid)
-    assert queries == ["SELECT epoch,seq,first_seq FROM journal_state WHERE id='current'"]
+    assert queries == ["SELECT epoch, seq, first_seq FROM journal_state WHERE id=:w0 LIMIT 1"]
     monkeypatch.undo()
     for index in range(1203):
         store.remember(pid, {"kind": "fact", "content": f"Fact {index}"}, [source["id"]])

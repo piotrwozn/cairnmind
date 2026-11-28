@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -37,7 +38,7 @@ def test_pulse_arcade_end_to_end_read_only_and_sub_500ms(tmp_path, monkeypatch):
     _init_git_repo(root)
     (root / ".cairnmind").mkdir()
     (root / ".cairnmind" / "checks.toml").write_text(
-        '[checks.unit]\nargv = ["python3", "-c", "import sys; sys.exit(0)"]\n',
+        f'[checks.unit]\nargv = [{json.dumps(sys.executable)}, "-c", "import sys; sys.exit(0)"]\n',
         encoding="utf-8",
     )
     subprocess.run(["git", "-C", str(root), "add", ".cairnmind/checks.toml"], check=True, capture_output=True)

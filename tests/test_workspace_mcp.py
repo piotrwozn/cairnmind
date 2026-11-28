@@ -171,7 +171,7 @@ def test_form_parsing_and_every_new_string_has_a_polish_entry():
     # The form names every variable that is refused.
     for name in LOADER_ENV:
         assert name in LOADER_NOTE or name.startswith("LD_") and "LD_*" in LOADER_NOTE, name
-    source = Path(__file__).parents[1] / "src" / "cairnmind" / "mcp_servers.py"
+    source = Path(__file__).parents[1] / "src" / "cairnmind" / "mcp" / "mcp_servers.py"
     for message in re.findall(r'raise ValueError\("([^"]+)"\)', source.read_text()):
         assert message in CATALOG, message
 

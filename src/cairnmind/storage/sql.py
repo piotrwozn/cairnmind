@@ -12,6 +12,12 @@ _ARCADE_RESERVED = frozenset({
     "skip", "set", "remove", "delete", "insert", "update", "into", "values",
     "in", "not", "and", "or", "is", "null", "true", "false", "as", "distinct",
     "to", "index", "type", "class", "content", "upsert",
+    "backup", "before", "after", "begin", "commit", "rollback", "return",
+    "default", "lock", "timeout", "batch", "retry", "wait", "export", "import",
+    "database", "user", "bucket", "vertex", "edge", "document", "property",
+    "match", "while", "case", "when", "then", "desc", "asc", "between", "like",
+    "contains", "traverse", "unwind", "truncate", "grant", "revoke", "sleep",
+    "explain", "profile", "rebuild",
 })
 
 

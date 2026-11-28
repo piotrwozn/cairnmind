@@ -596,7 +596,7 @@ def test_the_menu_help_and_the_guide_do_not_say_the_menu_holds_every_command():
     from cairnmind.terminal.terminal_commands import COMMANDS
     from cairnmind.terminal.terminal_i18n import tr
     assert "activ" not in " ".join(title.lower() for title, *_ in COMMANDS)
-    source = (Path(__file__).resolve().parents[1] / "src" / "cairnmind" / "terminal_commands.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[1] / "src" / "cairnmind" / "terminal" / "terminal_commands.py").read_text(encoding="utf-8")
     assert "search all commands" not in source and "Ctrl+B, then Space: search the main commands" in source
     assert "Ctrl+B, then a: activity panel" in source
     english = source.split("help_text(self.translate(")[1].split("))")[0]

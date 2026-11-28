@@ -190,7 +190,7 @@ class JournalTransaction:
             return int(self.native.count(collection, where))
         where_sql, params = compile_arcade_where(where)
         clause = f" WHERE {where_sql}" if where_sql else ""
-        rows = self.query(f"SELECT count(*) AS total FROM {quote_name(collection)}{clause}", params)
+        rows = self.query(f"SELECT count(*) AS total FROM {_arcade_ident(collection)}{clause}", params)
         return int(rows[0]["total"]) if rows and rows[0].get("total") is not None else 0
 
     def group_counts(self, collection: str, group_by, where=(), *, count_alias: str = "total") -> list[dict]:
@@ -202,8 +202,8 @@ class JournalTransaction:
         clause = f" WHERE {where_sql}" if where_sql else ""
         group_expr = ", ".join(fields)
         rows = self.query(
-            f"SELECT {group_expr}, count(*) AS {quote_name(count_alias)} "
-            f"FROM {quote_name(collection)}{clause} GROUP BY {group_expr}",
+            f"SELECT {group_expr}, count(*) AS {_arcade_ident(count_alias)} "
+            f"FROM {_arcade_ident(collection)}{clause} GROUP BY {group_expr}",
             params,
         )
         return [_clean(row) for row in rows]
@@ -345,7 +345,7 @@ class JournalTransaction:
         if hasattr(self.native, "insert_document"):
             self.native.insert_document(collection, data)
         else:
-            self.native.command(f"INSERT INTO {quote_name(collection)} CONTENT {json_text(data)}")
+            self.native.command(f"INSERT INTO {_arcade_ident(collection)} CONTENT {json_text(data)}")
         if self._is_tracked(collection) and self.reset_reason is None:
             project = data.get("id") if collection == "projects" else data.get("project_id")
             if not self._skip_graph_row_tracking(collection, project):
@@ -368,7 +368,7 @@ class JournalTransaction:
                     if not self._skip_graph_row_tracking(collection, first_project):
                         self._record(collection, [], cleaned)
             return stored
-        stored = self.command(f"INSERT INTO {quote_name(collection)} CONTENT :rows", {"rows": rows})
+        stored = self.command(f"INSERT INTO {_arcade_ident(collection)} CONTENT :rows", {"rows": rows})
         if not isinstance(stored, list) or len(stored) != len(rows):
             raise RuntimeError(f"The database did not store every row of a group in {collection}")
         return stored

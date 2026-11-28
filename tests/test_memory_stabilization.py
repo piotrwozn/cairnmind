@@ -243,7 +243,10 @@ async def test_service_watchdog_still_stops_stalled_work_and_embedding_keeps_thi
             # Observe the real embedding budget without sleeping for 30 seconds.
             return asyncio.wait_for(operation, .05 if kind == "embed" else timeout)
 
-    monkeypatch.setattr(service_module, "asyncio", ServiceAsyncio())
+    import cairnmind.mcp.service_workers as service_workers_module
+    service_asyncio = ServiceAsyncio()
+    monkeypatch.setattr(service_module, "asyncio", service_asyncio)
+    monkeypatch.setattr(service_workers_module, "asyncio", service_asyncio)
     app, job_id, claims = service_job_fixture(workspace, monkeypatch, ServiceScriptedOllama([]), kind=kind)
     before = memory_snapshot(store)
     async with app.router.lifespan_context(app):

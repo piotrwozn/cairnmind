@@ -256,10 +256,11 @@ def test_store_load_checked_sources_and_record_graph_unit():
 
         def query(self, statement, params=None):
             self.queries.append((statement, params))
-            if "FROM sources WHERE id IN :ids" in statement:
-                return [src_row] if sid in params["ids"] else []
-            if "FROM nodes WHERE id IN :ids" in statement:
-                return [existing_src_node] if f"source:{sid}" in params["ids"] else []
+            ids = (params or {}).get("ids") or (params or {}).get("w0") or ()
+            if "FROM sources WHERE id IN :" in statement:
+                return [src_row] if sid in ids else []
+            if "FROM nodes WHERE id IN :" in statement:
+                return [existing_src_node] if f"source:{sid}" in ids else []
             return []
 
         def command(self, statement, params=None):

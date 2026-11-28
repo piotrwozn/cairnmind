@@ -345,7 +345,7 @@ def failed_removal(tmp_path, monkeypatch, rows):
 
     def failing_update(self, collection, *, set_fields=None, remove_fields=(), where=()):
         result = real_update(self, collection, set_fields=set_fields, remove_fields=remove_fields, where=where)
-        if rows is None and collection == "projects" and isinstance(set_fields, dict) and "graph_fingerprint" in set_fields:
+        if rows is None and collection == "projects" and isinstance(set_fields, dict) and set_fields.get("graph_fingerprint"):
             raise RuntimeError("the connection dropped")
         return result
     with monkeypatch.context() as patch:

@@ -307,8 +307,12 @@ def test_no_mcp_tool_or_built_in_agent_tool_can_reach_an_acceptance():
     # A coding client and the built-in agent reach the service through these modules only; none names the routes.
     import cairnmind
     package = Path(cairnmind.__file__).parent
-    for name in ("mcp_server.py", "mcp_schema.py", "mcp_agent.py", "agent_tools.py", "agent.py", "api_agent.py",
-                 "agent_reads.py", "agent_write_guard.py", "copilot_adapter.py", "workspace_mcp.py"):
+    for name in (
+        "mcp/mcp_server.py", "mcp/mcp_schema.py", "mcp/mcp_agent.py",
+        "agents/agent_tools.py", "agents/agent.py", "agents/api_agent.py",
+        "agents/agent_reads.py", "agents/agent_write_guard.py", "agents/copilot_adapter.py",
+        "terminal/workspace_mcp.py",
+    ):
         text = (package / name).read_text(encoding="utf-8")
         assert "record-kinds" not in text and "record_kinds" not in text and "record-kind" not in text, name
 

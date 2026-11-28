@@ -260,7 +260,7 @@ def test_fast_forward_archived_plan_step_is_not_reactivated(fixture):
 def test_automatic_publication_stops_at_external_valid_manifest(fixture, tmp_path):
     origin, manager, project = fixture["source"], fixture["manager"], fixture["project"]
     manager.configure_auto(project["id"], True, interval_minutes=15)
-    now = portable.datetime.now(portable.timezone.utc).timestamp()
+    now = portable.datetime.now(portable.UTC).timestamp()
     first_tick = manager.tick(now=now)
     assert not first_tick["errors"]
     head = Path(fixture["initial"]["path"])

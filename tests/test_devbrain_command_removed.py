@@ -25,8 +25,8 @@ BASH = "/bin/bash" if Path("/bin/bash").exists() else shutil.which("bash")
 def test_the_package_installs_one_command():
     data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert data["project"]["scripts"] == {"cairnmind": "cairnmind.cli:entrypoint"}
-    # The import alias that DevBrain 0.8.0 entries run through is still packaged.
-    assert data["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["src/cairnmind", "src/devbrain"]
+    # The legacy src/devbrain import alias was removed; only src/cairnmind is packaged.
+    assert data["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["src/cairnmind"]
 
 
 def _leftover_function():

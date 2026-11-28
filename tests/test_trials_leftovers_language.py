@@ -7,7 +7,7 @@ import pytest
 
 from cairnmind.terminal.terminal_i18n import CATALOG, LEGACY, tr
 
-SOURCE = Path(__file__).resolve().parents[1] / "src" / "cairnmind"
+SOURCE = Path(__file__).resolve().parents[1] / "src" / "cairnmind" / "terminal"
 POLISH = re.compile("[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]")
 PANELS = ("terminal_panels.py", "terminal_inspector.py", "terminal_impact.py")
 
