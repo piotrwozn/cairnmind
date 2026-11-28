@@ -131,6 +131,7 @@ def cockpit(tmp_path, monkeypatch):
     with TestClient(app, base_url=ORIGIN) as client:
         yield settings, app, client, runtime, project, requests, outage
     assert runtime.closed is True
+    assert not app.state.service_client  # the client of the requests to the service was closed with the broker
 
 
 def login(app, client):
@@ -139,6 +140,52 @@ def login(app, client):
     assert response.status_code == 200
     assert "HttpOnly" in response.headers["set-cookie"] and "SameSite=strict" in response.headers["set-cookie"]
     return {"Origin": ORIGIN, "X-CSRF-Token": response.json()["csrf"]}
+
+
+def test_the_broker_makes_one_client_for_its_requests_to_the_service_and_keeps_no_connection(cockpit, monkeypatch):
+    """A client of its own for each request loaded the system's certificate store each time (#450): one is made, and
+    it keeps no connection, so a service that was restarted is found at the next request."""
+    settings, app, client, runtime, project, requests, outage = cockpit
+    made = []
+
+    class Counted(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            made.append(kwargs)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", Counted)
+    login(app, client)
+    for _ in range(12):
+        assert client.get("/api/state").status_code == 200
+        assert client.get("/api/status").status_code == 200
+    assert len(requests) > 24 and len(made) == 1
+    assert made[0]["verify"] is False and made[0]["limits"].max_keepalive_connections == 0
+    assert app.state.service_client["client"].is_closed is False
+
+
+def test_the_answers_of_the_service_are_freed_when_the_request_ends_not_at_the_next_collection(tmp_path):
+    """httpx binds the stream of an answer to the answer: a reference cycle that only a collection frees, and a run of the
+    collector comes rarer as the heap grows, so the bodies of the graph (megabytes each) piled up in the broker (#450)."""
+    import gc
+    import weakref
+    settings = Settings.load(tmp_path / "data", create=True)
+    answers = []
+
+    def upstream(request):
+        answers.append(weakref.ref(response := httpx.Response(200, json={"ok": True, "text": "x" * 100000})))
+        return response
+
+    app = create_cockpit_app(settings, runtime=Runtime(), proxy_transport=httpx.MockTransport(upstream), public_url=ORIGIN)
+    with TestClient(app, base_url=ORIGIN) as client:
+        login(app, client)
+        gc.collect()
+        gc.disable()
+        try:
+            for _ in range(10):
+                assert client.get("/api/status").status_code == 200
+            assert len(answers) == 10 and [ref() for ref in answers] == [None] * 10
+        finally:
+            gc.enable()
 
 
 def test_bootstrap_tickets_expire_are_one_use_and_sessions_expire():
