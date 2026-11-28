@@ -106,8 +106,6 @@ ignore = ["S603", "S607"]
 [tool.ruff.lint.per-file-ignores]
 # Sealed storage-layer query builders validate every collection/column name via quote_name/_arcade_ident/validate_field_path.
 "src/cairnmind/storage/*.py" = ["S608"]
-# The inspector's page reads (#450): ArcadeDB queries assembled from constant table and field names; every value is bound.
-"src/cairnmind/terminal/inspector_graph.py" = ["S608"]
 "tests/**/*.py" = [
   "S101", "S104", "S105", "S106", "S107", "S108", "S110", "S311", "S314", "S606", "S608",
   "B017", "B023",

@@ -18,6 +18,7 @@ from cairnmind.agents.retrieval import Retriever, public_record, public_source_m
 from cairnmind.memory.memory_paths import bound_metadata, memory_bindings
 from cairnmind.memory.sensitivity import record_classes, source_sensitivity
 from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
+from cairnmind.storage import inspector_graph
 from cairnmind.storage.sql import clean_row, json_text, unregistered_root, utc_now
 from cairnmind.storage.storage_query import (
     asc,
@@ -29,7 +30,6 @@ from cairnmind.storage.storage_query import (
     gt,
     is_in,
 )
-from cairnmind.terminal import inspector_graph
 
 TABLES = {"records", "sources", "plans", "check_runs", "jobs"}
 NODE_LIMIT = 2000

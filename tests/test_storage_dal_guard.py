@@ -25,6 +25,7 @@ STORAGE_LAYER_FILES = frozenset({
     "arcade_backend.py",
     "arcade_graph.py",
     "arcade_measure.py",
+    "inspector_graph.py",  # the inspector's page reads (#450): ArcadeDB queries; SQLite is read whole
     "sqlite_backend.py",
     "sqlite_crud.py",
     "sqlite_graph.py",

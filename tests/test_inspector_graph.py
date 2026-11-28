@@ -279,7 +279,7 @@ def compare_graph(store, pid, worktree, limits=(1, 3, 2000)):
 def test_the_fixture_holds_nothing_back(stores):
     store, project, root, other = stores
     inspector = Inspector(store)
-    from cairnmind.terminal import inspector_graph
+    from cairnmind.storage import inspector_graph
     assert inspector_graph.held(inspector, inspector._scope(project["id"], None)).empty
     assert inspector_graph.held(inspector, inspector._scope(project["id"], root)).empty
 
@@ -328,7 +328,7 @@ def add_roots(stores, tmp_path):
 
 @pytest.mark.parametrize("which", [None, "root", "other", "third"])
 def test_rows_of_two_more_roots_are_paged_with_the_same_answers(stores, tmp_path, which):
-    from cairnmind.terminal import inspector_graph
+    from cairnmind.storage import inspector_graph
     store, project, root, other = stores
     pid = project["id"]
     third = add_roots(stores, tmp_path)
@@ -343,7 +343,7 @@ def test_rows_of_two_more_roots_are_paged_with_the_same_answers(stores, tmp_path
 
 
 def test_a_scope_that_holds_back_more_than_the_limit_is_read_whole_with_the_same_answers(stores, tmp_path, monkeypatch):
-    from cairnmind.terminal import inspector_graph
+    from cairnmind.storage import inspector_graph
     store, project, root, other = stores
     add_roots(stores, tmp_path)
     inspector = Inspector(store)
@@ -357,7 +357,7 @@ def test_a_scope_that_holds_back_more_than_the_limit_is_read_whole_with_the_same
 def test_the_scope_is_remembered_at_a_watermark_found_again_after_a_write_and_bounded(stores, tmp_path):
     """Finding what a worktree holds back scans each table: the same scope at the same watermark is not scanned again, a
     write moves the watermark so that the scope is found anew (the counts follow), and only CACHED scopes are kept."""
-    from cairnmind.terminal import inspector_graph
+    from cairnmind.storage import inspector_graph
     store, project, root, other = stores
     add_roots(stores, tmp_path)
     pid, inspector, asked = project["id"], Inspector(store), []
@@ -393,7 +393,7 @@ def test_the_scope_is_remembered_at_a_watermark_found_again_after_a_write_and_bo
 
 def hold_back(stores, how):
     """One row of the project that only `how` shows to belong elsewhere: the scope check must see it and hold it back."""
-    from cairnmind.terminal import inspector_graph
+    from cairnmind.storage import inspector_graph
     store, project, root, other = stores
     pid = project["id"]
     if how == "path":  # stored with this root, but the file lies under another registered root
@@ -520,8 +520,8 @@ def test_the_project_row_counts_the_code_graph_only_so_the_counts_come_from_the_
     """graph_nodes and graph_edges are what the indexer wrote (its vertices, its six kinds of edge): a record, a plan and
     the vertices kept for them are in the tables and not in the row, so the totals of the whole graph cannot come from it."""
     from cairnmind.scip import ingest
+    from cairnmind.storage import inspector_graph
     from cairnmind.store import Store
-    from cairnmind.terminal import inspector_graph
     root = tmp_path / "project"
     root.mkdir()
     (root / "a.py").write_text("def a():\n    return 1\n")
@@ -572,8 +572,8 @@ def test_no_path_leaves_a_vertex_of_a_record_plan_or_source_without_its_row(stor
 def test_a_store_that_runs_no_raw_sql_is_read_whole(tmp_path):
     """The page reads are ArcadeDB queries. On the SQLite backend the three routes answer from the whole read."""
     from cairnmind.config import Settings
+    from cairnmind.storage import inspector_graph
     from cairnmind.store import Store
-    from cairnmind.terminal import inspector_graph
     settings = Settings.load(tmp_path / "data", create=True)
     settings.storage_backend = "sqlite"
     settings.save()
