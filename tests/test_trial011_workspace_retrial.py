@@ -47,6 +47,30 @@ async def test_opening_a_project_with_a_launch_problem_records_it_once(tmp_path,
         assert last.text == MISSING_KEY[language] and last.count == 1  # not "(x2)" for one press
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_a_workspace_write_during_the_hold_does_not_count_the_launch_problem_again(
+        tmp_path, monkeypatch, size, language):
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    errors = [{"slot_id": "codex", "client": "api", "code": "credential_missing"}]
+    async with app.run_test(size=size) as pilot:
+        await settle(app, pilot)
+        workspace.update({"launch_errors": errors})
+        await wait_until(pilot, lambda: notice_of(app) == MISSING_KEY[language])
+        app.notice("Another event")
+        workspace.update({"launch_errors": errors})  # a new revision of the state, the same problem
+        await pilot.pause(.7)
+        app.select_project("inspect")
+        await settle(app, pilot)
+        await pilot.pause(.7)
+        await settle(app, pilot)
+        last = app.notice_history.entries[-1]
+        assert last.text == MISSING_KEY[language] and last.count == 1
+
+
 # Check connection prints the sentence and then the bare code.
 
 @pytest.mark.parametrize("language", ["en", "pl"])

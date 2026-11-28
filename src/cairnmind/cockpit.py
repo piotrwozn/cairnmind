@@ -112,6 +112,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     launches = OrderedDict()
     launch_lock = asyncio.Lock()
     readiness = {}
+    service = {}  # the one client of the broker's requests to the service, made at the first of them (#450)
     project_cache = []
     completed_auth = set()
     profile_observations = {}
@@ -122,6 +123,8 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         yield
         discovery.cancel()
         credentials.clear_session()
+        if service:
+            await service.pop("client").aclose()
         close = getattr(runtime, "aclose", getattr(runtime, "close", None))
         if close is not None:
             result = close()
@@ -136,6 +139,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     app.state.public_url = public_url
     app.state.cookie_name = cookie_name
     app.state.credentials = credentials
+    app.state.service_client = service
     app.state.shutdown = None
 
     def origin_allowed(headers):
@@ -211,11 +215,20 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     async def upstream(method, path, *, params=None, data=None, person=None):
         # `person` is the workspace's proof of a person's act, passed on as the panel sent it; the broker
         # holds and checks nothing (person_proof, #214).
+        if not service:
+            # A client for each request loaded the system's certificate store (a plain http address needs none) and let
+            # it go again, four times in one call of /api/state. No connection is kept: the service may have been restarted.
+            service["client"] = httpx.AsyncClient(
+                base_url=settings.url, transport=proxy_transport, trust_env=False, verify=tls_verify(settings.url),
+                timeout=settings.ask_timeout + 120, limits=httpx.Limits(max_keepalive_connections=0),
+                headers={"Authorization": f"Bearer {settings.token}"})
         try:
-            async with httpx.AsyncClient(base_url=settings.url, transport=proxy_transport, trust_env=False,
-                                       timeout=settings.ask_timeout + 120, verify=tls_verify(settings.url),
-                                       headers={"Authorization": f"Bearer {settings.token}"}) as client:
-                return await client.request(method, path, params=params, json=data, headers=person)
+            response = await service["client"].request(method, path, params=params, json=data, headers=person)
+            # httpx binds the answer's stream to the answer, a reference cycle that only a run of the collector frees, and
+            # the runs come rarer as the heap grows: the bodies of the graph piled up in the broker (#450). The body is
+            # read and the stream closed already, so the cycle is cut, as for the database's answers (arcade.py).
+            response.stream = httpx.ByteStream(response.content)
+            return response
         except httpx.HTTPError:
             from .setup_mark import refusal as setup_refusal
             # A change of setup stopped the service on purpose: the panels say that, not "restart" (#339).
