@@ -478,7 +478,7 @@ class BasePanel(App):
         self._outcome = None
         if held is None or not stands:
             return
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, KeyError):
             self._paint(plain(held.text), held.kind)
             self._line_scope = self._workspace_scope()
             self.notice_history.put_on_line(held)
@@ -539,7 +539,7 @@ class BasePanel(App):
             value = broker_error_text(value, self.t)  # "Broker 503: …" with a fixed detail translated
         background = BACKGROUND.get()
         if background and self._outcome_holds():
-            with suppress(Exception):
+            with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, KeyError):
                 text = plain(self.t(value)).plain
                 self.notice_history.add(text, self._notice_about or self.workspace_data, kind, on_line=False)
                 # the newest one waits for the end of the hold; an empty one (the failure is over) cancels it
