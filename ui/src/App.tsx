@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle2, Loader2, RefreshCw, X } from 'lucide-react';
 import {
@@ -7,28 +7,14 @@ import {
   triggerReindex,
   triggerReverify,
 } from '@/api/client';
-import { AskDrawer } from '@/components/ask/AskDrawer';
-import { AskPanel } from '@/components/ask/AskPanel';
-import { GuardrailAuditTable } from '@/components/audit/GuardrailAuditTable';
-import { DraftModals, type DraftModalState } from '@/components/drafts/DraftModals';
-import { DraftStateManager } from '@/components/drafts/DraftStateManager';
-import { PlanDriftMonitor } from '@/components/drift/PlanDriftMonitor';
-import { BlastRadiusGraph } from '@/components/graph/BlastRadiusGraph';
+import type { DraftModalState } from '@/components/drafts/DraftModals';
 import { AppShell } from '@/components/layout/AppShell';
-import { CommandPalette } from '@/components/layout/CommandPalette';
 import { EventDock } from '@/components/layout/EventDock';
-import { InspectorDrawer } from '@/components/layout/InspectorDrawer';
 import { NavRail } from '@/components/layout/NavRail';
 import { TopStatusBar } from '@/components/layout/TopStatusBar';
 import { SessionStrip } from '@/components/matrix/SessionStrip';
 import { TaskGateTable } from '@/components/matrix/TaskGateTable';
-import { DoctorModal } from '@/components/ops/DoctorModal';
-import { ExportSnapshotModal } from '@/components/ops/ExportSnapshotModal';
-import { ClaimList } from '@/components/provenance/ClaimList';
-import {
-  VersionHistoryModal,
-  type VersionModalTarget,
-} from '@/components/versions/VersionHistoryModal';
+import type { VersionModalTarget } from '@/components/versions/VersionHistoryModal';
 import { useKeyboardNavigation } from '@/hooks/useKeyboardNavigation';
 import { useLiveInvalidation } from '@/hooks/useLiveInvalidation';
 import type {
@@ -39,6 +25,57 @@ import type {
   OriginFilter,
   PlanSummary,
 } from '@/types/contracts';
+
+const ClaimList = lazy(() =>
+  import('@/components/provenance/ClaimList').then((m) => ({ default: m.ClaimList })),
+);
+const BlastRadiusGraph = lazy(() =>
+  import('@/components/graph/BlastRadiusGraph').then((m) => ({ default: m.BlastRadiusGraph })),
+);
+const GuardrailAuditTable = lazy(() =>
+  import('@/components/audit/GuardrailAuditTable').then((m) => ({ default: m.GuardrailAuditTable })),
+);
+const AskPanel = lazy(() =>
+  import('@/components/ask/AskPanel').then((m) => ({ default: m.AskPanel })),
+);
+const AskDrawer = lazy(() =>
+  import('@/components/ask/AskDrawer').then((m) => ({ default: m.AskDrawer })),
+);
+const PlanDriftMonitor = lazy(() =>
+  import('@/components/drift/PlanDriftMonitor').then((m) => ({ default: m.PlanDriftMonitor })),
+);
+const DraftStateManager = lazy(() =>
+  import('@/components/drafts/DraftStateManager').then((m) => ({ default: m.DraftStateManager })),
+);
+const DraftModals = lazy(() =>
+  import('@/components/drafts/DraftModals').then((m) => ({ default: m.DraftModals })),
+);
+const VersionHistoryModal = lazy(() =>
+  import('@/components/versions/VersionHistoryModal').then((m) => ({
+    default: m.VersionHistoryModal,
+  })),
+);
+const DoctorModal = lazy(() =>
+  import('@/components/ops/DoctorModal').then((m) => ({ default: m.DoctorModal })),
+);
+const ExportSnapshotModal = lazy(() =>
+  import('@/components/ops/ExportSnapshotModal').then((m) => ({ default: m.ExportSnapshotModal })),
+);
+const CommandPalette = lazy(() =>
+  import('@/components/layout/CommandPalette').then((m) => ({ default: m.CommandPalette })),
+);
+const InspectorDrawer = lazy(() =>
+  import('@/components/layout/InspectorDrawer').then((m) => ({ default: m.InspectorDrawer })),
+);
+
+function ViewChunkFallback() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-zinc-400 font-mono-tabular">
+      <Loader2 className="h-4 w-4 animate-spin text-sky-400" strokeWidth={1.5} />
+      <span>Loading cockpit view…</span>
+    </div>
+  );
+}
 
 function readInitialRoute(): {
   view: ActiveView;
@@ -526,18 +563,22 @@ export function App() {
           counts={navCounts}
         />
       }
-      mainStage={renderMainStage()}
+      mainStage={<Suspense fallback={<ViewChunkFallback />}>{renderMainStage()}</Suspense>}
       showInspector={selection !== null}
       inspectorDrawer={
-        <InspectorDrawer
-          selection={selection}
-          snapshot={snapshot}
-          onClose={() => setSelection(null)}
-          onJumpTo={handleJumpTo}
-          onDropSession={(id) => dropSessionMutation.mutate(id)}
-          droppingSessionId={droppingSessionId}
-          onOpenVersions={(kind, id, label) => setVersionModal({ kind, id, label })}
-        />
+        selection !== null ? (
+          <Suspense fallback={null}>
+            <InspectorDrawer
+              selection={selection}
+              snapshot={snapshot}
+              onClose={() => setSelection(null)}
+              onJumpTo={handleJumpTo}
+              onDropSession={(id) => dropSessionMutation.mutate(id)}
+              droppingSessionId={droppingSessionId}
+              onOpenVersions={(kind, id, label) => setVersionModal({ kind, id, label })}
+            />
+          </Suspense>
+        ) : null
       }
       bottomDock={
         <EventDock
@@ -549,68 +590,92 @@ export function App() {
       }
       overlay={
         <>
-          <CommandPalette
-            open={paletteOpen}
-            onClose={() => setPaletteOpen(false)}
-            snapshot={snapshot}
-            onSelectView={setActiveView}
-            onSelectEntity={handleJumpTo}
-            onReverify={() => reverifyMutation.mutate()}
-            onReindex={() => reindexMutation.mutate()}
-            onOpenDoctor={() => setDoctorOpen(true)}
-            onOpenExport={() => setExportOpen(true)}
-            onAskQuestion={(q) => {
-              setPendingAskQuery(q);
-              setAskDrawerOpen(true);
-            }}
-            onOpenAskDrawer={() => setAskDrawerOpen(true)}
-            onOpenDraftModal={setDraftModal}
-          />
+          {paletteOpen && (
+            <Suspense fallback={null}>
+              <CommandPalette
+                open={paletteOpen}
+                onClose={() => setPaletteOpen(false)}
+                snapshot={snapshot}
+                onSelectView={setActiveView}
+                onSelectEntity={handleJumpTo}
+                onReverify={() => reverifyMutation.mutate()}
+                onReindex={() => reindexMutation.mutate()}
+                onOpenDoctor={() => setDoctorOpen(true)}
+                onOpenExport={() => setExportOpen(true)}
+                onAskQuestion={(q) => {
+                  setPendingAskQuery(q);
+                  setAskDrawerOpen(true);
+                }}
+                onOpenAskDrawer={() => setAskDrawerOpen(true)}
+                onOpenDraftModal={setDraftModal}
+              />
+            </Suspense>
+          )}
 
-          <AskDrawer
-            open={askDrawerOpen}
-            onClose={() => setAskDrawerOpen(false)}
-            onExpandToTab={() => setActiveView('ask')}
-            snapshot={snapshot}
-            initialQuery={pendingAskQuery}
-            onConsumeInitialQuery={() => setPendingAskQuery(null)}
-            changedFingerprints={changedFingerprints}
-            liveStaleClaimIds={liveStaleClaimIds}
-            onSelectCitation={handleSelectAskCitation}
-            onPinAsFact={handlePinAskAnswerAsFact}
-          />
+          {askDrawerOpen && (
+            <Suspense fallback={null}>
+              <AskDrawer
+                open={askDrawerOpen}
+                onClose={() => setAskDrawerOpen(false)}
+                onExpandToTab={() => setActiveView('ask')}
+                snapshot={snapshot}
+                initialQuery={pendingAskQuery}
+                onConsumeInitialQuery={() => setPendingAskQuery(null)}
+                changedFingerprints={changedFingerprints}
+                liveStaleClaimIds={liveStaleClaimIds}
+                onSelectCitation={handleSelectAskCitation}
+                onPinAsFact={handlePinAskAnswerAsFact}
+              />
+            </Suspense>
+          )}
 
-          <DraftModals
-            modal={draftModal}
-            snapshot={snapshot}
-            onClose={() => setDraftModal(null)}
-            onSuccess={(msg) => {
-              void queryClient.invalidateQueries({ queryKey: ['ui-snapshot'] });
-              void queryClient.invalidateQueries({ queryKey: ['ui-drift'] });
-              showToast(msg);
-            }}
-          />
+          {draftModal !== null && (
+            <Suspense fallback={null}>
+              <DraftModals
+                modal={draftModal}
+                snapshot={snapshot}
+                onClose={() => setDraftModal(null)}
+                onSuccess={(msg) => {
+                  void queryClient.invalidateQueries({ queryKey: ['ui-snapshot'] });
+                  void queryClient.invalidateQueries({ queryKey: ['ui-drift'] });
+                  showToast(msg);
+                }}
+              />
+            </Suspense>
+          )}
 
-          <VersionHistoryModal
-            target={versionModal}
-            writable={writable}
-            readOnlyReason={readOnlyReason}
-            onClose={() => setVersionModal(null)}
-            onJumpToAudit={(auditId) => handleJumpTo('audit', { kind: 'audit', id: auditId })}
-            onClonedDraft={(msg) => {
-              showToast(msg);
-              setActiveView('drafts');
-            }}
-          />
+          {versionModal !== null && (
+            <Suspense fallback={null}>
+              <VersionHistoryModal
+                target={versionModal}
+                writable={writable}
+                readOnlyReason={readOnlyReason}
+                onClose={() => setVersionModal(null)}
+                onJumpToAudit={(auditId) => handleJumpTo('audit', { kind: 'audit', id: auditId })}
+                onClonedDraft={(msg) => {
+                  showToast(msg);
+                  setActiveView('drafts');
+                }}
+              />
+            </Suspense>
+          )}
 
-          <DoctorModal open={doctorOpen} onClose={() => setDoctorOpen(false)} />
+          {doctorOpen && (
+            <Suspense fallback={null}>
+              <DoctorModal open={doctorOpen} onClose={() => setDoctorOpen(false)} />
+            </Suspense>
+          )}
 
-          <ExportSnapshotModal
-            open={exportOpen}
-            writable={writable}
-            readOnlyReason={readOnlyReason}
-            onClose={() => setExportOpen(false)}
-          />
+          {exportOpen && (
+            <Suspense fallback={null}>
+              <ExportSnapshotModal
+                open={exportOpen}
+                writable={writable}
+                readOnlyReason={readOnlyReason}
+                onClose={() => setExportOpen(false)}
+              />
+            </Suspense>
+          )}
 
           {toast && (
             <div

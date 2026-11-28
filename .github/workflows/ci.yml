@@ -83,6 +83,12 @@ jobs:
           npm run typecheck
           npm test
           npm run build
+      - name: Run Playwright E2E against live cairnmind ui server
+        run: |
+          uv sync --locked --extra dev
+          cd ui
+          npx playwright install --with-deps chromium
+          npm run test:e2e
       - name: Build wheel with bundled ui_dist and verify contents
         env:
           CAIRNMIND_BUILD_UI: "1"
