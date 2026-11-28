@@ -1,9 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { findRepoRoot } from '@/lib/repoMeta';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const FIXTURES_ROOT = path.resolve(__dirname, '..', '..', '..', 'tests', 'fixtures', 'contracts');
+const FIXTURES_ROOT = path.join(findRepoRoot(), 'tests', 'fixtures', 'contracts');
 
 export interface ContractSample {
   id: string;

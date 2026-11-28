@@ -2,8 +2,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
+export function findRepoRoot(): string {
+  const starts = [process.cwd(), path.dirname(fileURLToPath(import.meta.url))];
+  for (const start of starts) {
+    let dir = path.resolve(start);
+    for (let i = 0; i < 8; i += 1) {
+      if (fs.existsSync(path.join(dir, 'pyproject.toml')) && fs.existsSync(path.join(dir, 'docs'))) {
+        return dir;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return path.resolve(process.cwd(), '..');
+}
+
+const REPO_ROOT = findRepoRoot();
 
 function walkFiles(dir: string, predicate: (name: string) => boolean): string[] {
   if (!fs.existsSync(dir)) return [];

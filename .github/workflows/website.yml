@@ -78,9 +78,12 @@ jobs:
           pytest -q tests/test_website_sync.py tests/test_doc_links.py
 
       - name: Trigger Cloudflare Pages deploy hook (on release or daily schedule)
-        if: >-
-          ${{ (github.event_name == 'release' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-          && secrets.CLOUDFLARE_DEPLOY_HOOK != '' }}
+        if: github.event_name == 'release' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         env:
           CLOUDFLARE_DEPLOY_HOOK: ${{ secrets.CLOUDFLARE_DEPLOY_HOOK }}
-        run: curl -fsS -X POST "${CLOUDFLARE_DEPLOY_HOOK}"
+        run: |
+          if [ -n "${CLOUDFLARE_DEPLOY_HOOK:-}" ]; then
+            curl -fsS -X POST "${CLOUDFLARE_DEPLOY_HOOK}"
+          else
+            echo "CLOUDFLARE_DEPLOY_HOOK secret not configured; skipping deploy hook."
+          fi

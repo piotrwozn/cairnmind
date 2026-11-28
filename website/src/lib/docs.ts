@@ -1,12 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { Marked, type Tokens } from 'marked';
 import { createHighlighter, type Highlighter } from 'shiki';
 import { SITE } from '@/data/site';
+import { findRepoRoot } from '@/lib/repoMeta';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
+const REPO_ROOT = findRepoRoot();
 const DOCS_ROOT = path.join(REPO_ROOT, 'docs');
 
 export interface DocMeta {
