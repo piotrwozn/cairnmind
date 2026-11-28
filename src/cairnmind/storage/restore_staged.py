@@ -24,9 +24,11 @@ from __future__ import annotations
 
 import hashlib
 import re
+import sqlite3
 import time
+import zlib
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn
 from uuid import uuid4
 
 from cairnmind.pal.terminal_safe import safe_text
@@ -161,6 +163,8 @@ MESSAGES = {
 }
 
 _TEXT_FIELDS = ("backup", "before", "installation_id", "before_installation", "started_at")
+_MARK_ERRORS = (OSError, RuntimeError, ValueError, sqlite3.Error)
+_RESTORE_ERRORS = (OSError, RuntimeError, ValueError, TypeError, LookupError, EOFError, sqlite3.Error, zlib.error)
 
 
 class RestoreFailed(ValueError):
@@ -170,12 +174,12 @@ class RestoreFailed(ValueError):
 class RestoreUnfinished(StoreNotReady):
     """The store carries the mark of a restore that did not finish; ``mark`` is empty when it cannot be read."""
 
-    def __init__(self, message: str, mark: dict):
+    def __init__(self, message: str, mark: dict[str, Any]) -> None:
         super().__init__(message)
         self.mark = mark
 
 
-def unfinished(reader) -> dict | None:
+def unfinished(reader: Any) -> dict[str, Any] | None:
     """The mark of an unfinished restore, None when there is none, and {} when a row is there that cannot be read.
 
     The row may have been written by another installation, so every field is checked here."""
@@ -195,7 +199,7 @@ def unfinished(reader) -> dict | None:
     return mark
 
 
-def refusal(mark: dict) -> str:
+def refusal(mark: dict[str, Any]) -> str:
     if not mark:
         return UNREADABLE
     template = UNDO_UNFINISHED if mark["undoing"] else UNFINISHED
@@ -204,13 +208,13 @@ def refusal(mark: dict) -> str:
                            before_installation=safe_text(mark["before_installation"]))
 
 
-def refuse_if_unfinished(reader) -> None:
+def refuse_if_unfinished(reader: Any) -> None:
     mark = unfinished(reader)
     if mark is not None:
         raise RestoreUnfinished(refusal(mark), mark)
 
 
-def write_mark(store, mark: dict) -> None:
+def write_mark(store: Any, mark: dict[str, Any]) -> None:
     from cairnmind.storage.storage_query import db_find_one, db_insert_document, db_update_where
     with store.transaction(RESTORE_COMMIT_TIMEOUT) as tx:
         if db_find_one(tx, "devbrain_meta", {"name": MARK}):
@@ -219,7 +223,7 @@ def write_mark(store, mark: dict) -> None:
             db_insert_document(tx, "devbrain_meta", {"name": MARK, **mark})
 
 
-def clear_mark(store) -> None:
+def clear_mark(store: Any) -> None:
     from cairnmind.storage.storage_query import db_delete_where
     with store.transaction(RESTORE_COMMIT_TIMEOUT) as tx:
         db_delete_where(tx, "devbrain_meta", {"name": MARK})
@@ -233,7 +237,7 @@ class Batches(BoundedTransactions):
     (graph_transactions.BoundedTransactions); the bounds are the restore's own, because of the client's wait."""
     timeout = (RESTORE_COMMIT_TIMEOUT,)
 
-    def begin(self, tx) -> None:
+    def begin(self, tx: Any) -> None:
         from cairnmind.storage.journal import Journal
         Journal.reset(tx, reason="restore")
 
@@ -242,7 +246,7 @@ class Batches(BoundedTransactions):
                 or time.monotonic() - self.opened >= TIME_PER_TRANSACTION)
 
 
-def clear(store, types: list[str]) -> None:
+def clear(store: Any, types: list[str]) -> None:
     """Delete every row of ``types``, in order, at most ``ROWS_PER_TRANSACTION`` rows and ``TIME_PER_TRANSACTION``
     seconds per transaction; a delete that was slow makes the next ones smaller."""
     from cairnmind.storage.journal import Journal
@@ -277,11 +281,11 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _engine_log(settings) -> Path:
+def _engine_log(settings: Any) -> Path:
     return settings.data_dir / "arcade" / "engine.log"
 
 
-def _log_size(settings) -> int | None:
+def _log_size(settings: Any) -> int | None:
     """The size of the managed native engine's log now, to read what it says during the restore; None when there is
     no such log to read (a server, a container) or it cannot be asked."""
     from cairnmind.storage.database_mode import connect_only
@@ -295,7 +299,7 @@ def _log_size(settings) -> int | None:
         return None
 
 
-def _log_names_memory(settings, offset: int) -> bool:
+def _log_names_memory(settings: Any, offset: int) -> bool:
     try:
         with _engine_log(settings).open("rb") as handle:
             size = handle.seek(0, 2)
@@ -306,7 +310,7 @@ def _log_names_memory(settings, offset: int) -> bool:
         return False
 
 
-def memory_hint(exc: BaseException, settings, offset: int | None) -> str | None:
+def memory_hint(exc: BaseException, settings: Any, offset: int | None) -> str | None:
     """Say that the engine ran out of memory, or may have, and where its heap is set; None for any other error.
 
     Only an answer of 500 and a dropped or unanswered request are what an engine out of memory gives (in production
@@ -328,14 +332,14 @@ def memory_hint(exc: BaseException, settings, offset: int | None) -> str | None:
     return f"{MEMORY_SEEN if seen else MEMORY_MAYBE} {where}"
 
 
-def _described(exc: BaseException, settings, offset: int | None) -> str:
+def _described(exc: BaseException, settings: Any, offset: int | None) -> str:
     text = str(exc).strip() or type(exc).__name__
     text = text if text.endswith((".", "!", "?", ")")) else text + "."
     hint = memory_hint(exc, settings, offset)
     return f"{text} {hint}" if hint else text
 
 
-def staged_restore(store, source, path: Path, claims) -> None:
+def staged_restore(store: Any, source: Any, path: Path, claims: Any) -> None:
     """Replace the store with the validated backup `source` (read from `path`), as one outcome: the backup, or the
     store as it was. Called by ``Store.restore`` once the writer is known."""
     # The writer lock is held from here to the end, as the one transaction of 0.12.0 held it: another command of this
@@ -345,7 +349,7 @@ def staged_restore(store, source, path: Path, claims) -> None:
     store._unfinished_restore = False
 
 
-def _staged(store, source, path: Path, claims) -> None:
+def _staged(store: Any, source: Any, path: Path, claims: Any) -> None:
     from cairnmind.config import BACKUP_SUFFIXES
     offset = _log_size(store.settings)
     found = unfinished(store.client)
@@ -368,26 +372,26 @@ def _staged(store, source, path: Path, claims) -> None:
     store.restore_changed = False
     try:
         store._restore_from(source, claims)
-    except Exception as exc:  # noqa: BLE001 - every failure is undone or leaves the mark; none passes as it was
+    except _RESTORE_ERRORS as exc:
         error = _described(exc, store.settings, offset)
         if unknown or mark is None:
             raise RestoreFailed(UNKNOWN_STATE.format(error=error)) from exc
         if found is None and not store.restore_changed:
             try:
                 clear_mark(store)  # failed before the first delete: the store was never touched, so nothing to undo
-            except Exception as second:  # noqa: BLE001 - the engine that failed is likely gone: say both, the mark stays
+            except _MARK_ERRORS as second:
                 raise RestoreFailed(MARK_KEPT.format(error=error, backup=safe_text(path),
                                                      mark_error=_described(second, store.settings, None).rstrip("."))) from exc
             raise RestoreFailed(NOTHING_CHANGED.format(error=error)) from exc
         _undo(store, mark, error, exc)
     try:
         clear_mark(store)
-    except Exception as exc:  # noqa: BLE001 - every row is written: say so, and that the mark stays until a restore ends
+    except _MARK_ERRORS as exc:
         raise RestoreFailed(MARK_NOT_CLEARED.format(
             error=_described(exc, store.settings, None).rstrip("."), backup=safe_text(path))) from exc
 
 
-def _undo(store, mark: dict, error: str, cause: BaseException) -> NoReturn:
+def _undo(store: Any, mark: dict[str, Any], error: str, cause: BaseException) -> NoReturn:
     """Put the store back from the copy made before the restore, then raise ``RestoreFailed`` saying so."""
     from cairnmind.storage.backup_reader import opened_backup
     from cairnmind.store import RESTORE_TYPES
@@ -403,7 +407,7 @@ def _undo(store, mark: dict, error: str, cause: BaseException) -> NoReturn:
                 raise ValueError(COPY_CHANGED.format(before=safe_text(before)))
             store._restore_from(copy, None)
         clear_mark(store)
-    except Exception as second:  # noqa: BLE001 - the mark stays, and the person is told how to finish
+    except _RESTORE_ERRORS as second:
         raise RestoreFailed(NOT_UNDONE.format(error=error, undo_error=_described(second, store.settings, None).rstrip("."),
                                               before=safe_text(before), backup=backup)) from cause
     from cairnmind.storage.restore_claims import vectors_template
@@ -413,7 +417,7 @@ def _undo(store, mark: dict, error: str, cause: BaseException) -> NoReturn:
     raise RestoreFailed(f"{said} {vectors_template(store.settings).format(jobs=jobs)}" if jobs else said) from cause
 
 
-def replace(store, source, claims) -> int | None:
+def replace(store: Any, source: Any, claims: Any) -> int | None:
     """Delete every row of the store and write the backup's, in transactions of bounded size.
 
     Returns how many embed jobs were set back to pending (Store._requeue_embed_jobs). A failure leaves the store

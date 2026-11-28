@@ -57,6 +57,7 @@ jobs:
       - run: uv sync --locked --extra dev
       - run: uv run ruff check src tests hatch_build.py
       - run: uv run pyright
+      - run: uv run pyright -p pyrightconfig.standard.json
 
   ui-tests-and-wheel:
     # Type-checks, tests, and builds the React Engineer Cockpit (`ui/`) and verifies the wheel bundles `cairnmind/ui_dist/`.
@@ -256,6 +257,7 @@ jobs:
       - run: uv sync --locked --extra dev
       - run: uv run ruff check src tests hatch_build.py
       - run: uv run pyright
+      - run: uv run pyright -p pyrightconfig.standard.json
       - name: Fast tier
         shell: pwsh
         timeout-minutes: 25

@@ -5,6 +5,7 @@ import asyncio
 import inspect
 import json
 import os
+import subprocess
 import threading
 from collections.abc import Callable
 from contextlib import suppress
@@ -14,11 +15,13 @@ from typing import TYPE_CHECKING, Any
 
 from rich.cells import cell_len
 from textual import on, work
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, ScreenStackError
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import QueryError
+from textual.dom import NoScreen
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Static, TextArea
-from textual.worker import WorkerState
+from textual.worker import NoActiveWorker, WorkerState
 
 from cairnmind.pal.terminal_safe import plain, safe_text
 from cairnmind.terminal import terminal_theme
@@ -29,7 +32,7 @@ from cairnmind.terminal.terminal_i18n_messages import broker_error_text
 def localize_select_menus(node, language):
     """The open list of a Select has a Footer key of its own ("Dismiss menu"); translate it too."""
     from textual.widgets._select import SelectOverlay
-    with suppress(Exception):
+    with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, KeyError):
         for overlay in node.query(SelectOverlay):
             localize_bindings(overlay, language)
 
@@ -53,7 +56,7 @@ def relabel_select(select, options, value) -> None:
     with select.prevent(Select.Changed):
         select.set_options(options)
         select.value = value
-    with suppress(Exception):
+    with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, KeyError, TypeError):
         select.query_one(SelectCurrent).update(dict((v, label) for label, v in options)[value])
 
 
@@ -75,7 +78,7 @@ class LocalizedModal:
 
     def fit_dialog(self):
         """Size follows content: the body scrolls only when the terminal has no more rows to give."""
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, TypeError):
             for body in self.query(".cm-dialog-body"):
                 terminal_theme.fit_body(self, body, self.BODY_CHROME)
 
@@ -362,7 +365,7 @@ class MessageModal(LocalizedModal, ModalScreen[Any]):
 
     def fit_hint(self):
         """PgUp/PgDn are named only while the body has more than it shows."""
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, TypeError):
             body, hint = self.query_one(".cm-dialog-body"), self.query_one(".cm-hint", Static)
             scrolls = body.virtual_size.height > body.scrollable_content_region.height
             hint.update(self.t(self.SCROLL_HINT if scrolls else self.CLOSE_HINT))
@@ -374,7 +377,7 @@ class MessageModal(LocalizedModal, ModalScreen[Any]):
         self.query_one("#message-body", Static).update(plain(json.dumps(self.value, ensure_ascii=False, indent=2)
             if self.details else summary_text(self.value, getattr(self.app, "language", "en"))))
         event.button.label = self.t("Hide technical details" if self.details else "Technical details")
-        with suppress(Exception):  # the indented JSON gets the wide frame; the summary its own size
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError):  # the indented JSON gets the wide frame; the summary its own size
             wide = self.details or not self.short_summary()
             dialog = self.query_one(".cm-dialog")
             dialog.set_class(wide, "-wide")
@@ -456,7 +459,7 @@ class BasePanel(App):
         shown = None
         if isinstance(value, BaseException):
             value = broker_error_text(value, self.t)  # "Broker 503: …" with a fixed detail translated
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, KeyError):
             shown = plain(self.t(value))
             line = self.query_one("#panel-notice", Static)
             line.update(shown)
@@ -465,7 +468,7 @@ class BasePanel(App):
             line.set_class(kind == "error", "-error")
         if shown is not None:
             self._line_scope = self._workspace_scope() if shown.plain else None
-            with suppress(Exception):
+            with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, KeyError):
                 self.notice_history.add(shown.plain, self._notice_about or self.workspace_data, kind)
                 self.show_notice_mark()
             self.publish_notices(later=True)
@@ -485,7 +488,7 @@ class BasePanel(App):
 
     def _publish_now(self) -> None:
         self._feed_timer = None
-        with suppress(Exception):
+        with suppress(NoActiveWorker, NoScreen, AttributeError, RuntimeError, ValueError, TypeError, OSError):
             from cairnmind.terminal.terminal_notice_feed import snapshot
             self._feed_rows = snapshot(self.notice_history)  # read here: the history is not shared with a thread
             self.run_worker(self._send_notices, thread=True, group="notice-feed", exit_on_error=False)
@@ -497,7 +500,7 @@ class BasePanel(App):
             if rows is not self._feed_sent:
                 role = getattr(self, "panel_role", None)
                 if role is not None:
-                    with suppress(Exception):
+                    with suppress(OSError, RuntimeError, ValueError, TypeError, subprocess.SubprocessError):
                         publish(self.settings, self.workspace_id, role, rows)
                 self._feed_sent = rows
 
@@ -524,7 +527,7 @@ class BasePanel(App):
     def notice_elsewhere(self, about, value, kind="info") -> None:
         """A notice about a project that is not shown now: kept in Notices under that project, with the
         mark, and never put on the notice line over the shown project's own text."""
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, KeyError):
             self.notice_history.add(plain(self.t(value)).plain, about, kind, on_line=False)
             self.show_notice_mark()
         self.publish_notices(later=True)
@@ -547,7 +550,7 @@ class BasePanel(App):
             # The same rule as the Notices list uses to label an entry with its project.
             folder = shown.get("worktree")
             return project_id != shown.get("project_id") or bool(worktree and folder and worktree != folder)
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, KeyError):
             entry = self.notice_history.on_line()
             if entry is None or not differs(entry.project_id, entry.worktree):
                 return
@@ -563,7 +566,7 @@ class BasePanel(App):
 
     def show_notice_mark(self) -> None:
         """A small mark in its own line, so the notice text itself is never changed."""
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, KeyError):
             text = self.notice_history.mark(self.t)
             if text == self._mark_text:
                 return  # nothing to repaint: most notices leave the mark as it was
@@ -635,7 +638,7 @@ class BasePanel(App):
 
     def on_mount(self):
         terminal_theme.size_classes(self)
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError):
             line = self.query_one("#panel-notice", Static)
             if not str(line.render()):
                 line.display = False
@@ -645,7 +648,7 @@ class BasePanel(App):
         terminal_theme.size_classes(self, event.size)
 
     def on_unmount(self):
-        with suppress(Exception):
+        with suppress(NoActiveWorker, AttributeError, RuntimeError, ValueError):
             self.workers.cancel_all()
 
     def on_worker_state_changed(self, event):
@@ -721,7 +724,7 @@ class ChoiceModal(LocalizedModal, ModalScreen[str | None]):
 
     def fill_width(self):
         """The cursor row spans the dialog; a row longer than the dialog keeps its full text and scrolls."""
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, KeyError):
             terminal_theme.fill_column(self.query_one("#choices", DataTable), "choice", self._longest)
 
     @on(Button.Pressed, "#choice-cancel")

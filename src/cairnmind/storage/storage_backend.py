@@ -7,9 +7,21 @@ the underlying StorageBackend is ArcadeBackend (PR #6) or SQLiteBackend (PR #7).
 """
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import AbstractContextManager
 from typing import Any, Protocol, runtime_checkable
+
+from cairnmind.storage.domain_types import (
+    BackendKind,
+    ChunkRecord,
+    EmbeddingRecord,
+    GraphEdgeRecord,
+    GraphNodeRecord,
+    MemoryRecord,
+    SourceRecord,
+    VectorIndexRecord,
+    VectorNeighbor,
+)
 
 # Canonical collections matching Store.EXPORT_TYPES (26 document types + nodes + edges).
 ALL_COLLECTIONS: tuple[str, ...] = (
@@ -143,7 +155,7 @@ class StorageBackend(Protocol):
     """Unified persistence contract implemented by ArcadeBackend and SQLiteBackend."""
 
     @property
-    def backend_kind(self) -> str:
+    def backend_kind(self) -> BackendKind:
         """Identifier of the active backend: ``'arcade'`` or ``'sqlite'``."""
         ...
 
@@ -263,7 +275,7 @@ class StorageBackend(Protocol):
         words: list[str],
         eligible_sources: list[str],
         limit: int,
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[ChunkRecord]: ...
 
     def search_records_fts(
         self,
@@ -271,7 +283,7 @@ class StorageBackend(Protocol):
         words: list[str],
         eligible_records: list[str],
         limit: int,
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[MemoryRecord]: ...
 
     # --- Vectors (ADR-03 parity) ---
     def ensure_vector_index(
@@ -280,7 +292,7 @@ class StorageBackend(Protocol):
         namespace: str,
         dimension: int,
         model: str,
-    ) -> dict[str, Any] | None: ...
+    ) -> VectorIndexRecord | None: ...
 
     def has_vector_embedding(
         self,
@@ -294,8 +306,8 @@ class StorageBackend(Protocol):
     def upsert_embedding(
         self,
         tx: Any,
-        values: dict[str, Any],
-        index_info: dict[str, Any] | None = None,
+        values: EmbeddingRecord | Mapping[str, Any],
+        index_info: VectorIndexRecord | Mapping[str, Any] | None = None,
     ) -> None: ...
 
     def search_vectors(
@@ -305,7 +317,7 @@ class StorageBackend(Protocol):
         query_vector: list[float],
         eligible_sources: list[str],
         limit: int,
-    ) -> tuple[bool, list[dict[str, Any]], str | None]:
+    ) -> tuple[bool, list[VectorNeighbor], str | None]:
         """Search vector embeddings for ``(project_id, namespace, len(query_vector))``.
 
         Returns ``(index_present, neighbors, warning_or_none)`` where each neighbor
@@ -318,23 +330,29 @@ class StorageBackend(Protocol):
     def delete_vectors_for_project(self, tx: Any, project_id: str) -> None: ...
 
     # --- Graph (Vertices, Edges, Bounded BFS) ---
-    def upsert_vertex(self, tx: Any, node: dict[str, Any], *, existing: bool = False) -> dict[str, Any]: ...
+    def upsert_vertex(
+        self,
+        tx: Any,
+        node: GraphNodeRecord | Mapping[str, Any],
+        *,
+        existing: bool = False,
+    ) -> GraphNodeRecord: ...
 
     def upsert_edge(
         self,
         tx: Any,
-        edge: dict[str, Any],
+        edge: GraphEdgeRecord | Mapping[str, Any],
         *,
-        existing: dict[str, Any] | None = None,
-    ) -> dict[str, Any]: ...
+        existing: GraphEdgeRecord | Mapping[str, Any] | None = None,
+    ) -> GraphEdgeRecord: ...
 
     def write_graph_batch(
         self,
         tx: Any,
         project_id: str,
-        created_nodes: list[dict[str, Any]],
-        updated_nodes: list[dict[str, Any]],
-        created_edges: list[dict[str, Any]],
+        created_nodes: list[GraphNodeRecord] | list[dict[str, Any]],
+        updated_nodes: list[GraphNodeRecord] | list[dict[str, Any]],
+        created_edges: list[GraphEdgeRecord] | list[dict[str, Any]],
     ) -> None: ...
 
     def delete_graph_nodes(
@@ -361,7 +379,7 @@ class StorageBackend(Protocol):
         words: list[str],
         eligible_nodes: list[str],
         limit: int = 7,
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[GraphNodeRecord]: ...
 
     def traverse_graph(
         self,
@@ -372,7 +390,7 @@ class StorageBackend(Protocol):
         *,
         max_depth: int = 4,
         limit: int = 30,
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[GraphNodeRecord]: ...
 
     # --- Symbol & URI Search ---
     def search_definition_nodes(
@@ -386,14 +404,14 @@ class StorageBackend(Protocol):
         owner: str | None = None,
         file_pattern: str | None = None,
         limit: int = 80,
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[GraphNodeRecord]: ...
 
     def search_sources_by_uri_substring(
         self,
         project_id: str,
         substring: str,
         limit: int = 50,
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[SourceRecord]: ...
 
     # --- Streaming Export / Migration Introspection ---
     def iter_collection(

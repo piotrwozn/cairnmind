@@ -19,11 +19,19 @@ import sqlite3
 import threading
 import time
 from collections import deque
-from contextlib import contextmanager
+from collections.abc import Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from cairnmind.storage import sqlite_vectors as _vec
+from cairnmind.storage.domain_types import (
+    BackendKind,
+    EmbeddingRecord,
+    SQLiteMetricsSnapshot,
+    VectorIndexRecord,
+    VectorNeighbor,
+)
 from cairnmind.storage.sqlite_crud import _SQLiteCrudMixin
 from cairnmind.storage.sqlite_graph import _SQLiteGraphMixin
 from cairnmind.storage.sqlite_measure import _SQLiteMeasureMixin
@@ -88,7 +96,7 @@ class SQLiteBackend(_SQLiteCrudMixin, _SQLiteGraphMixin, _SQLiteMeasureMixin):
         *,
         read_only: bool = False,
         store: Any = None,
-    ):
+    ) -> None:
         self._store = store
         self._read_only = bool(read_only)
         self._is_memory = str(db_path) == ":memory:"
@@ -128,12 +136,12 @@ class SQLiteBackend(_SQLiteCrudMixin, _SQLiteGraphMixin, _SQLiteMeasureMixin):
         try:
             from cairnmind.storage.sqlite_telemetry import record_sqlite_metrics
 
-            record_sqlite_metrics(data_dir, self.metrics_snapshot())
+            record_sqlite_metrics(data_dir, cast(dict[str, Any], self.metrics_snapshot()))
         except (OSError, ValueError, TypeError) as exc:
             log.debug("Failed to persist SQLite metrics: %s", exc)
 
     @property
-    def backend_kind(self) -> str:
+    def backend_kind(self) -> BackendKind:
         return "sqlite"
 
     @property
@@ -144,7 +152,7 @@ class SQLiteBackend(_SQLiteCrudMixin, _SQLiteGraphMixin, _SQLiteMeasureMixin):
     def sqlite_vec_loaded(self) -> bool:
         return self._sqlite_vec_available
 
-    def metrics_snapshot(self) -> dict[str, Any]:
+    def metrics_snapshot(self) -> SQLiteMetricsSnapshot:
         """Return live SQLite telemetry for doctor/scale checks (PR #8)."""
         now = time.time()
         recent_busy = sum(1 for ts in self._busy_timestamps if now - ts <= 600.0)
@@ -277,7 +285,7 @@ class SQLiteBackend(_SQLiteCrudMixin, _SQLiteGraphMixin, _SQLiteMeasureMixin):
         init_sqlite_schema(self, self._conn())
 
     @contextmanager
-    def raw_transaction(self, commit_timeout: float = 30.0):
+    def raw_transaction(self, commit_timeout: float = 30.0) -> Iterator[SQLiteTransaction]:
         """Low-level SQLite transaction with BEGIN IMMEDIATE + jittered SQLITE_BUSY retry."""
         conn = self._conn()
         lock = self._memory_lock if self._is_memory else None
@@ -315,7 +323,7 @@ class SQLiteBackend(_SQLiteCrudMixin, _SQLiteGraphMixin, _SQLiteMeasureMixin):
             if lock is not None:
                 lock.release()
 
-    def transaction(self, commit_timeout: float = 30.0):
+    def transaction(self, commit_timeout: float = 30.0) -> AbstractContextManager[Any]:
         if self._store is not None:
             return self._store.transaction(commit_timeout=commit_timeout)
         return self.raw_transaction(commit_timeout=commit_timeout)
@@ -337,14 +345,14 @@ class SQLiteBackend(_SQLiteCrudMixin, _SQLiteGraphMixin, _SQLiteMeasureMixin):
         namespace: str,
         dimension: int,
         model: str,
-    ) -> dict[str, Any] | None:
+    ) -> VectorIndexRecord | None:
         if not 1 <= dimension <= _vec.VEC0_MAX_DIM:
             raise ValueError("Unsupported embedding dimension")
         conn = self._conn()
         if not conn.execute("SELECT id FROM projects WHERE id=?", (project_id,)).fetchone():
             return None
         type_name = _vec.vector_type_name(project_id, namespace, dimension)
-        values = {
+        values: VectorIndexRecord = {
             "id": type_name,
             "project_id": project_id,
             "model": model,
@@ -356,7 +364,7 @@ class SQLiteBackend(_SQLiteCrudMixin, _SQLiteGraphMixin, _SQLiteMeasureMixin):
         with self.transaction() as tx:
             if not self._find_one_row(conn, "projects", {"id": project_id}, columns=("id",)):
                 return None
-            self.upsert_document(tx, "vector_indexes", values, key_field="id")
+            self.upsert_document(tx, "vector_indexes", cast(dict[str, Any], values), key_field="id")
             if self._sqlite_vec_available and not self._read_only:
                 vec_table, _ = _vec.backfill_vec0_table(conn, project_id, namespace, dimension, type_name)
                 self._vec0_synced.add(vec_table)
@@ -381,8 +389,8 @@ class SQLiteBackend(_SQLiteCrudMixin, _SQLiteGraphMixin, _SQLiteMeasureMixin):
     def upsert_embedding(
         self,
         tx: Any,
-        values: dict[str, Any],
-        index_info: dict[str, Any] | None = None,
+        values: EmbeddingRecord | Mapping[str, Any],
+        index_info: VectorIndexRecord | Mapping[str, Any] | None = None,
     ) -> None:
         self.upsert_document(tx, "embeddings", {**values, "is_current": True}, key_field="id")
 
@@ -393,7 +401,7 @@ class SQLiteBackend(_SQLiteCrudMixin, _SQLiteGraphMixin, _SQLiteMeasureMixin):
         query_vector: list[float],
         eligible_sources: list[str],
         limit: int,
-    ) -> tuple[bool, list[dict[str, Any]], str | None]:
+    ) -> tuple[bool, list[VectorNeighbor], str | None]:
         conn = self._conn()
         present, neighbors, warning, used_vec0 = _vec.search_vectors(
             conn,

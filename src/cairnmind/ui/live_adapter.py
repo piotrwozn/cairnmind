@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.storage.storage_query import (
     asc,
     db_count,
@@ -81,7 +83,7 @@ class LiveCockpitMixin(_LivePlansMixin, _LiveOpsMixin):
             from cairnmind.agents import knowledge_mode
 
             return bool(knowledge_mode.enabled(self.settings))
-        except Exception as exc:
+        except (ImportError, OSError, ValueError, TypeError, RuntimeError, AttributeError) as exc:
             log.debug("Unable to determine LLM knowledge mode status: %s", exc)
             return False
 
@@ -135,7 +137,7 @@ class LiveUiAdapter(LiveCockpitMixin):
             seq = int(cursor.get("seq", 0))
             if seq > 0:
                 return seq
-        except Exception as exc:
+        except (ArcadeError, OSError, ValueError, TypeError, RuntimeError, KeyError, AttributeError) as exc:
             log.debug("Journal cursor unavailable; falling back to record count: %s", exc)
         return db_count(self.store, "records", {"project_id": project_id})
 
@@ -152,7 +154,16 @@ class LiveUiAdapter(LiveCockpitMixin):
         code = {"branch": None, "head": None, "fingerprint": None}
         try:
             code = capture_code_state(self.store, pid, str(root_path))
-        except Exception as exc:
+        except (
+            ArcadeError,
+            OSError,
+            subprocess.SubprocessError,
+            ValueError,
+            TypeError,
+            RuntimeError,
+            KeyError,
+            AttributeError,
+        ) as exc:
             log.debug("Code state capture unavailable for %s: %s", pid, exc)
 
         # 1. Sessions & OCC sync status
@@ -338,7 +349,16 @@ class LiveUiAdapter(LiveCockpitMixin):
             ver = None
             try:
                 ver = verification_status(self.store, task, str(root_path))
-            except Exception as exc:
+            except (
+                ArcadeError,
+                OSError,
+                subprocess.SubprocessError,
+                ValueError,
+                TypeError,
+                RuntimeError,
+                KeyError,
+                AttributeError,
+            ) as exc:
                 log.debug("Verification status unavailable for task %s: %s", task["id"], exc)
 
             gate_status = "MISSING"
@@ -490,7 +510,16 @@ class LiveUiAdapter(LiveCockpitMixin):
         pid = proj["id"]
         try:
             index_project_if_changed(self.store, pid)
-        except Exception as exc:
+        except (
+            ArcadeError,
+            OSError,
+            subprocess.SubprocessError,
+            ValueError,
+            TypeError,
+            RuntimeError,
+            KeyError,
+            AttributeError,
+        ) as exc:
             log.debug("Re-index during reverify failed for %s: %s", pid, exc)
         snap = self.snapshot(pid)
         stale = [c["id"] for c in snap["claims"] if c["provenance_status"] == "STALE"]

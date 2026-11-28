@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import os
 import threading
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, TypeVar, cast
 from uuid import uuid4
 
 from cairnmind.cli_cmds.first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN, UNKNOWN_PROJECT_NEXT
@@ -17,6 +19,15 @@ from cairnmind.pal.path_spelling import lies_in
 from cairnmind.pal.terminal_safe import safe_text
 from cairnmind.storage import store_graph, store_jobs
 from cairnmind.storage.arcade import REQUEST_TIMEOUT
+from cairnmind.storage.domain_types import (
+    GraphEdgeRecord,
+    GraphNodeRecord,
+    JobRecord,
+    MemoryRecord,
+    ProjectRecord,
+    ResumePacketRecord,
+    SourceRecord,
+)
 from cairnmind.storage.sql import clean_row, utc_now
 from cairnmind.storage.storage_query import (
     any_of,
@@ -85,6 +96,7 @@ LOOKUP_INDEXES = (
 LOOKUP_INDEX_SET = 1
 # Graph rows written by one request of Store.write_graph (issue #167).
 GRAPH_ROWS_PER_REQUEST = 250
+_T = TypeVar("_T")
 
 
 class Store(_StoreRecordsMixin, _StoreBackupMixin):
@@ -92,38 +104,38 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
     # installation is not the writer of its database (#70, store_writer).
     read_only = False
     # Why this installation only reads the store (another installation is its writer), or None.
-    not_writer = None
+    not_writer: str | None = None
     # Set when another installation took over writing after this store was opened: every write is refused.
-    _writer_lost = None
-    installation = None
+    _writer_lost: str | None = None
+    installation: Any = None
     # False in the service: its working directory is not the caller's, so resolve_project refuses a relative path.
     relative_paths = True
-    _writable = None
+    _writable: Any = None
     # Store(path, for_takeover=True) of a reader whose store this release cannot read: why (see take_over_at).
-    not_ready = None
+    not_ready: str | None = None
     _for_takeover = False
     # Store(path, for_restore=True): the only opening that passes the mark of an unfinished restore (restore_staged).
     _for_restore = False
     _unfinished_restore = False
     # What the one-time step that marks records confirmed before 0.11.0 did when it ran on this open or the
     # last restore ({"marked", "before_rule", "at"}, confirmation_upgrade, #215); None when it did not run.
-    confirmations_before_rule = None
-    _backend = None
+    confirmations_before_rule: dict[str, Any] | None = None
+    _backend: Any = None
 
     @property
-    def backend(self):
+    def backend(self) -> Any:
         if self._backend is None:
             from cairnmind.storage.arcade_backend import ArcadeBackend
             self._backend = ArcadeBackend(self)
         return self._backend
 
     @backend.setter
-    def backend(self, value) -> None:
+    def backend(self, value: Any) -> None:
         self._backend = value
 
     # After a restore: how many completed embed jobs it set back to pending because the backup brought no vectors
     # (#187); None when the backup brought them or nothing was restored.
-    embed_jobs_requeued = None
+    embed_jobs_requeued: int | None = None
     restore_changed = False  # restore_staged: a delete of the restore may have been committed
 
     @classmethod
@@ -132,7 +144,7 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
         from cairnmind.storage.store_readonly import open_readonly
         return open_readonly(cls, settings)
 
-    def read_consistently(self, read, kinds):
+    def read_consistently(self, read: Callable[[], tuple[str | None, _T]], kinds: Iterable[str]) -> _T:
         """The result of ``read()``, which returns ``(project_id, result)`` and reads the journal entity ``kinds``.
 
         A read-only store repeats it while a change of those kinds in that project landed during it
@@ -170,7 +182,7 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
         for_restore: bool = False,
         backend: str | None = None,
         db_path: Path | str | None = None,
-    ):
+    ) -> None:
         from cairnmind.config import resolved_backend, sqlite_db_path
         self._for_takeover = bool(for_takeover)
         self._for_restore = bool(for_restore)
@@ -186,7 +198,7 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
             from cairnmind.storage.sqlite_backend import SQLiteBackend
             target_db = db_path if db_path is not None else sqlite_db_path(self.settings)
             self.backend = SQLiteBackend(target_db, store=self)
-            self.client = self.backend.as_client_proxy()
+            self.client: Any = self.backend.as_client_proxy()
             self.backend.ensure_database()
         elif chosen == "arcade":
             from cairnmind.storage.arcade import ArcadeClient
@@ -200,11 +212,14 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
             raise ValueError(f"Unsupported storage backend: {chosen!r}")
         self._local = threading.local()
         self._stamp_lock = threading.Lock()
-        self._stamp_cursor, self._stamp_base, self._stamp_global, self._stamp_seq = None, 0, 0, {}
+        self._stamp_cursor: dict[str, Any] | None = None
+        self._stamp_base = 0
+        self._stamp_global = 0
+        self._stamp_seq: dict[Any, int] = {}
         self.init()
 
     @contextmanager
-    def held(self):
+    def held(self) -> Iterator[None]:
         """Keep the writer lock across the transactions this thread runs inside, as a restore does (#362): their
         own ``_lock`` is then this one, and every other process and thread waits."""
         with self._lock():
@@ -215,7 +230,7 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
                 self._local.lock_held = False
 
     @contextmanager
-    def _lock(self):
+    def _lock(self) -> Iterator[None]:
         if getattr(self._local, "lock_held", False):
             yield  # this thread holds it already; a second flock on a new handle would wait for itself
             return
@@ -226,19 +241,19 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
             finally:
                 unlock(handle)
 
-    def query(self, sql, params=None):
+    def query(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         return (getattr(self._local, "transaction", None) or self.client).query(sql, params)
 
     def find(
         self,
         collection: str,
-        where=(),
+        where: Any = (),
         *,
-        columns=None,
-        order_by=(),
+        columns: Any = None,
+        order_by: Any = (),
         limit: int | None = None,
         distinct: bool = False,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         tx = getattr(self._local, "transaction", None)
         if tx is not None and hasattr(tx, "find"):
             return tx.find(collection, where, columns=columns, order_by=order_by, limit=limit, distinct=distinct)
@@ -249,12 +264,12 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
     def find_one(
         self,
         collection: str,
-        where=(),
+        where: Any = (),
         *,
-        columns=None,
-        order_by=(),
+        columns: Any = None,
+        order_by: Any = (),
         required: bool = False,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         tx = getattr(self._local, "transaction", None)
         if tx is not None and hasattr(tx, "find_one"):
             return tx.find_one(collection, where, columns=columns, order_by=order_by, required=required)
@@ -262,19 +277,33 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
             collection, where, columns=columns, order_by=order_by, required=required, reader=tx
         )
 
-    def count(self, collection: str, where=()) -> int:
+    def count(self, collection: str, where: Any = ()) -> int:
         tx = getattr(self._local, "transaction", None)
         if tx is not None and hasattr(tx, "count"):
             return int(tx.count(collection, where))
         return int(self.backend.count(collection, where, reader=tx))
 
-    def group_counts(self, collection: str, group_by, where=(), *, count_alias: str = "total") -> list[dict]:
+    def group_counts(
+        self,
+        collection: str,
+        group_by: Any,
+        where: Any = (),
+        *,
+        count_alias: str = "total",
+    ) -> list[dict[str, Any]]:
         tx = getattr(self._local, "transaction", None)
         if tx is not None and hasattr(tx, "group_counts"):
             return tx.group_counts(collection, group_by, where, count_alias=count_alias)
         return self.backend.group_counts(collection, group_by, where, count_alias=count_alias, reader=tx)
 
-    def update_where(self, collection: str, *, set_fields=None, remove_fields=(), where=()) -> list[dict]:
+    def update_where(
+        self,
+        collection: str,
+        *,
+        set_fields: dict[str, Any] | None = None,
+        remove_fields: Any = (),
+        where: Any = (),
+    ) -> list[dict[str, Any]]:
         if self.read_only:
             if self.not_writer:
                 from cairnmind.storage.store_writer import StoreNotWriter
@@ -291,7 +320,13 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
                 active_tx, collection, set_fields=set_fields, remove_fields=remove_fields, where=where
             )
 
-    def delete_where(self, collection: str, where=(), *, limit: int | None = None) -> list[dict]:
+    def delete_where(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
         if self.read_only:
             if self.not_writer:
                 from cairnmind.storage.store_writer import StoreNotWriter
@@ -304,7 +339,7 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
         with self.transaction() as active_tx:
             return self.backend.delete_where(active_tx, collection, where, limit=limit)
 
-    def command(self, sql, params=None):
+    def command(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         from cairnmind.storage.journal import mutation
         if self.read_only:
             if self.not_writer:
@@ -325,7 +360,7 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
             return self.client.command(sql, params)
 
     @contextmanager
-    def transaction(self, commit_timeout=REQUEST_TIMEOUT):
+    def transaction(self, commit_timeout: float = REQUEST_TIMEOUT) -> Iterator[Any]:
         """``commit_timeout``: seconds the client waits for the commit (a restore's transactions ask for longer)."""
         active = getattr(self._local, "transaction", None)
         if active:
@@ -368,7 +403,7 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
             call()
 
     @contextmanager
-    def write_origin(self, mark):
+    def write_origin(self, mark: Mapping[str, Any] | None) -> Iterator[None]:
         """Stamp every record and source this thread writes inside the block with a session mark.
 
         The mark comes from the service's session row, never from the caller's payload. A record keeps
@@ -381,11 +416,11 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
         finally:
             self._local.write_origin = previous
 
-    def current_origin(self):
+    def current_origin(self) -> dict[str, Any] | None:
         return getattr(self._local, "write_origin", None)
 
     @contextmanager
-    def session_write(self, session_id):
+    def session_write(self, session_id: str | None) -> Iterator[None]:
         """Mark what this thread writes inside the block as a session's: never a person's act (#177)."""
         previous = getattr(self._local, "session_write", None)
         self._local.session_write = session_id or previous
@@ -395,7 +430,7 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
             self._local.session_write = previous
 
     @contextmanager
-    def person_act(self, route, source_id):
+    def person_act(self, route: str, source_id: str) -> Iterator[None]:
         """Open a person's act for the record writes of this thread inside the block (#177).
 
         Only the code of a person's route opens it, where it knows a person is acting, and it names the
@@ -416,7 +451,7 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
         finally:
             self._local.person_act = previous
 
-    def _proven_act(self):
+    def _proven_act(self) -> dict[str, str] | None:
         """The person's act open on this thread, counted only when the request that opened it carried the
         workspace's key (#214). Evaluation seed data is not a person and needs none."""
         act = getattr(self._local, "person_act", None)
@@ -435,22 +470,28 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
             self.current_origin() or getattr(self._local, "session_write", None)
         )
 
-    def open_person_act(self):
+    def open_person_act(self) -> dict[str, str] | None:
         """The person's act open on this thread ({route, source_id}), or None when this write is not one."""
         return dict(self._local.person_act) if self._persons_act() else None
 
-    def _kept(self, record) -> bool:
+    def _kept(self, record: Any) -> bool:
         """Whether this write is not a person's act and `record` is confirmed by a person here (#177)."""
         from cairnmind.memory.confirmation import kept_verdict
         return not self._persons_act() and kept_verdict(record)
 
-    def _keep_verdict(self, record, change, status=None, differs=()):
+    def _keep_verdict(
+        self,
+        record: Any,
+        change: str,
+        status: str | None = None,
+        differs: Sequence[str] = (),
+    ) -> None:
         """A write that is not a person's act never takes a person's confirmation away (#177): refused."""
         from cairnmind.memory.confirmation import VerdictKept
         if self._kept(record):
             raise VerdictKept(record, change, status, differs)
 
-    def init(self):
+    def init(self) -> None:
         from cairnmind.storage.arcade import ArcadeError
         from cairnmind.storage.store_writer import (
             claimed_meanwhile,
@@ -507,7 +548,7 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
         from cairnmind.memory.confirmation_upgrade import mark_confirmed_before_rule
         self.confirmations_before_rule = mark_confirmed_before_rule(self)
 
-    def _open_as_reader(self, writer):
+    def _open_as_reader(self, writer: dict[str, Any]) -> None:
         """Go on as a store that reads only: every write is refused with the reason (store_writer)."""
         from cairnmind.storage.store_readonly import ReadOnlyClient, StoreNotReady, check_ready
         from cairnmind.storage.store_writer import reader_reason
@@ -527,22 +568,22 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
         self.client = ReadOnlyClient(self.client, self.not_writer)
         self.read_only = True
 
-    def writer_state(self):
+    def writer_state(self) -> dict[str, Any]:
         """Which installation writes this store, and whether this one is the writer, a reader or lost it (#70)."""
         from cairnmind.storage.store_writer import state
         return state(self)
 
-    def _prepare_schema(self):
+    def _prepare_schema(self) -> None:
         """Create or upgrade the schema; called by init, with the writer lock held, when no other installation writes."""
         self.backend.init_schema(self)
 
-    def _lookup_indexes(self, recorded):
+    def _lookup_indexes(self, recorded: Any) -> None:
         """Create the lookup indexes that are missing (delegated to backend)."""
         if hasattr(self.backend, "_lookup_indexes"):
             self.backend._lookup_indexes(self, recorded)
 
     @staticmethod
-    def _require_project(tx, project_id):
+    def _require_project(tx: Any, project_id: str | None) -> None:
         known = getattr(tx, "known", None)
         if known is not None and project_id in known["projects"]:
             return
@@ -552,7 +593,7 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
             known["projects"].add(project_id)
 
     @staticmethod
-    def _remembered(tx, table, identifier, load):
+    def _remembered(tx: Any, table: str, identifier: str, load: Callable[[], _T]) -> _T:
         """A row as this transaction already read or wrote it, else read now. Without prefetch_graph: always read."""
         known = getattr(tx, "known", None)
         if known is None:
@@ -563,16 +604,21 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
 
     @staticmethod
     @contextmanager
-    def _keeping(tx):
+    def _keeping(tx: Any) -> Iterator[dict[str, Any] | None]:
         """Graph writes that keep what the transaction remembers current, instead of forgetting it."""
         with store_graph.keeping_known(tx) as known:
             yield known
 
-    def prefetch_graph(self, tx, nodes, edges):
+    def prefetch_graph(
+        self,
+        tx: Any,
+        nodes: Iterable[GraphNodeRecord | Mapping[str, Any]],
+        edges: Iterable[GraphEdgeRecord | Mapping[str, Any]],
+    ) -> None:
         """Read, in a few requests, what upsert_node and upsert_edge would look up row by row."""
         return store_graph.prefetch_graph(self, tx, nodes, edges)
 
-    def require_safe_project_root(self, root):
+    def require_safe_project_root(self, root: Path | str) -> str:
         path = str(Path(root).expanduser().resolve())
         if lies_in(path, self.data_dir):
             # Indexing always leaves the data directory out, so such a folder would report 0 files (#295).
@@ -584,7 +630,7 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
             raise ValueError("Project root cannot contain Cairnmind's private credential store")
         return path
 
-    def add_project(self, name, root, restore=True):
+    def add_project(self, name: str, root: Path | str, restore: bool = True) -> dict[str, Any]:
         name, path = name.strip(), self.require_safe_project_root(root)
         if not name:
             raise ValueError("Project name must not be empty")
@@ -603,13 +649,13 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
             restored = restore_in(tx, name, path, restore)  # the same name and folder as a removed project (#327)
             if restored:
                 return restored
-            project = {"id": str(uuid4()), "name": name, "root": path, "created_at": utc_now()}
-            db_insert_document(tx, "projects", project)
+            project: ProjectRecord = {"id": str(uuid4()), "name": name, "root": path, "created_at": utc_now()}
+            db_insert_document(tx, "projects", cast(dict[str, Any], project))
             from cairnmind.memory.project_folders import stamp
             db_insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project["id"], "path": path, **stamp()})
-            return project
+            return cast(dict[str, Any], project)
 
-    def add_project_root(self, project_id, path) -> dict:
+    def add_project_root(self, project_id: str, path: Path | str) -> dict[str, Any]:
         """Register a folder of the project, recording this machine as the one that has it (#371). A folder that
         another machine registered is moved to this one, and `moved_from` says from which host."""
         from cairnmind.memory.project_folders import stamp, this_machine
@@ -628,10 +674,13 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
                     return {"moved_from": label(existing.get("host"))}
         return {}
 
-    def list_projects(self):
-        return [clean_row(row) for row in self.find("projects", is_null("removed_at"), order_by=(asc("name"),))]
+    def list_projects(self) -> list[ProjectRecord]:
+        return [
+            cast(ProjectRecord, clean_row(row))
+            for row in self.find("projects", is_null("removed_at"), order_by=(asc("name"),))
+        ]
 
-    def resolve_project(self, identifier, *, recorded: bool = False):
+    def resolve_project(self, identifier: Path | str, *, recorded: bool = False) -> dict[str, Any]:
         """The project of an id, a name, or a path inside one of its registered folders (#238).
 
         A value that matches no id or name is read as a path only when it is written as one (absolute,
@@ -666,49 +715,85 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
         ]
         if candidates:
             selected = max(candidates, key=lambda row: len(row["path"]))
-            return db_find_one(self, "projects", {"id": selected["project_id"]}, required=True)
+            found = db_find_one(self, "projects", {"id": selected["project_id"]}, required=True)
+            if found is None:
+                raise ValueError(f"Unknown project: {selected['project_id']}")
+            return found
         removed = find_removed(self, value, path)
         if removed:
             raise unknown_removed(value, removed, self.data_dir)
         raise ValueError(f"Unknown project: {value}. {UNKNOWN_PROJECT_NEXT}")
 
-    def _delete_old_vectors(self, tx, source_ids):
+    def _delete_old_vectors(self, tx: Any, source_ids: list[str]) -> None:
         self.backend.delete_vectors_for_sources(tx, source_ids)
 
-    def enqueue_new(self, tx, kind, project_id, payload, dedupe_key):
+    def enqueue_new(
+        self,
+        tx: Any,
+        kind: str,
+        project_id: str | None,
+        payload: Any,
+        dedupe_key: str,
+    ) -> str:
         """A job whose key cannot exist yet, because it names a row created in this same transaction."""
         return store_jobs.enqueue_new(self, tx, kind, project_id, payload, dedupe_key)
 
-    def upsert_node(self, node, tx=None):
+    def upsert_node(self, node: GraphNodeRecord | Mapping[str, Any], tx: Any = None) -> GraphNodeRecord:
         return store_graph.upsert_node(self, node, tx=tx)
 
-    def _checked_node(self, tx, node):
+    def _checked_node(
+        self,
+        tx: Any,
+        node: GraphNodeRecord | Mapping[str, Any],
+    ) -> tuple[GraphNodeRecord, dict[str, Any] | None]:
         """The vertex upsert_node writes, after its checks, and the stored row with its ID if there is one."""
         return store_graph.checked_node(self, tx, node)
 
-    def upsert_edge(self, edge, tx=None):
+    def upsert_edge(self, edge: GraphEdgeRecord | Mapping[str, Any], tx: Any = None) -> GraphEdgeRecord:
         return store_graph.upsert_edge(self, edge, tx=tx)
 
-    def _checked_edge(self, tx, edge):
+    def _checked_edge(
+        self,
+        tx: Any,
+        edge: GraphEdgeRecord | Mapping[str, Any],
+    ) -> tuple[GraphEdgeRecord, dict[str, Any] | None]:
         """The edge upsert_edge writes, after its checks, and the stored row with its ID if there is one."""
         return store_graph.checked_edge(self, tx, edge)
 
-    def write_graph(self, tx, project_id, nodes, edges):
+    def write_graph(
+        self,
+        tx: Any,
+        project_id: str,
+        nodes: Iterable[GraphNodeRecord | Mapping[str, Any]],
+        edges: Iterable[GraphEdgeRecord | Mapping[str, Any]],
+    ) -> None:
         """Write graph rows as upsert_node, then upsert_edge, would for each, with one request per group of rows."""
         return store_graph.write_graph(self, tx, project_id, nodes, edges)
 
-    def remove_graph_nodes(self, tx, project_id, identifiers):
+    def remove_graph_nodes(self, tx: Any, project_id: str, identifiers: Iterable[Any]) -> list[str]:
         """Delete the project's vertices among `identifiers` that no edge names, one group per request."""
         return store_graph.remove_graph_nodes(self, tx, project_id, identifiers)
 
     @staticmethod
-    def _load_checked_sources(tx, project_id, sources):
+    def _load_checked_sources(tx: Any, project_id: str, sources: Any) -> dict[str, SourceRecord]:
         return store_graph.load_checked_sources(tx, project_id, sources)
 
-    def _record_graph(self, tx, record, *, source_rows=None):
+    def _record_graph(
+        self,
+        tx: Any,
+        record: MemoryRecord | Mapping[str, Any],
+        *,
+        source_rows: Mapping[str, SourceRecord | Mapping[str, Any]] | None = None,
+    ) -> None:
         return store_graph.record_graph(self, tx, record, source_rows=source_rows)
 
-    def _revision(self, tx, record, *, source_rows=None):
+    def _revision(
+        self,
+        tx: Any,
+        record: MemoryRecord | Mapping[str, Any],
+        *,
+        source_rows: Mapping[str, SourceRecord | Mapping[str, Any]] | None = None,
+    ) -> None:
         db_insert_document(
             tx,
             "record_revisions",
@@ -723,83 +808,133 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
         )
         self._record_graph(tx, record, source_rows=source_rows)
 
-    def _after_commit(self, call):
+    def _after_commit(self, call: Callable[[], Any]) -> None:
         pending = getattr(self._local, "after_commit", None)
         if pending is not None:
             pending.append(call)
 
-    def enqueue(self, kind, project_id, payload, dedupe_key):
+    def enqueue(self, kind: str, project_id: str | None, payload: Any, dedupe_key: str) -> str:
         return store_jobs.enqueue(self, kind, project_id, payload, dedupe_key)
 
-    def claim_job(self, worker, lease_seconds=60, kinds=None, *, project_ids=None):
+    def claim_job(
+        self,
+        worker: str,
+        lease_seconds: float = 60,
+        kinds: Iterable[str] | None = None,
+        *,
+        project_ids: Sequence[str] | None = None,
+    ) -> dict[str, Any] | None:
         return store_jobs.claim_job(self, worker, lease_seconds=lease_seconds, kinds=kinds, project_ids=project_ids)
 
     @staticmethod
-    def _job_event(job, event, *, state=None, error=_JOB_UNSET):
+    def _job_event(
+        job: JobRecord | Mapping[str, Any],
+        event: str,
+        *,
+        state: str | None = None,
+        error: Any = _JOB_UNSET,
+    ) -> list[dict[str, Any]]:
         return store_jobs.job_event(job, event, state=state, error=error)
 
-    def set_job_diagnostics(self, job_id, diagnostics, *, expected_attempts=None, worker=None):
+    def set_job_diagnostics(
+        self,
+        job_id: str,
+        diagnostics: Any,
+        *,
+        expected_attempts: int | None = None,
+        worker: str | None = None,
+    ) -> bool:
         """Publish sanitized attempt diagnostics without completing/reclaiming a job."""
         return store_jobs.set_job_diagnostics(
             self, job_id, diagnostics, expected_attempts=expected_attempts, worker=worker
         )
 
-    def finish_job(self, job_id, error=None, *, worker=None, expected_attempts=None):
+    def finish_job(
+        self,
+        job_id: str,
+        error: str | None = None,
+        *,
+        worker: str | None = None,
+        expected_attempts: int | None = None,
+    ) -> None:
         return store_jobs.finish_job(
             self, job_id, error=error, worker=worker, expected_attempts=expected_attempts
         )
 
-    def job_summary(self, project_id=None):
+    def job_summary(self, project_id: str | None = None) -> dict[str, dict[str, int]]:
         return store_jobs.job_summary(self, project_id=project_id)
 
-    def list_jobs(self, project_id, state=None, kind=None, limit=50):
+    def list_jobs(
+        self,
+        project_id: str,
+        state: str | None = None,
+        kind: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
         return store_jobs.list_jobs(self, project_id, state=state, kind=kind, limit=limit)
 
-    def job_status(self, project_id, job_id):
+    def job_status(self, project_id: str, job_id: str) -> dict[str, Any]:
         return store_jobs.job_status(self, project_id, job_id)
 
-    def _job_proofs(self, project_id):
+    def _job_proofs(self, project_id: str) -> list[dict[str, Any]]:
         return store_jobs.job_proofs(self, project_id)
 
-    def _import_job_coverage(self, job, packets):
+    def _import_job_coverage(
+        self,
+        job: JobRecord | Mapping[str, Any],
+        packets: Iterable[ResumePacketRecord | Mapping[str, Any]],
+    ) -> dict[str, Any]:
         return store_jobs.import_job_coverage(self, job, packets)
 
-    def _public_job(self, job, *, detail=False, packets=()):
+    def _public_job(
+        self,
+        job: JobRecord | Mapping[str, Any],
+        *,
+        detail: bool = False,
+        packets: Iterable[ResumePacketRecord | Mapping[str, Any]] = (),
+    ) -> dict[str, Any]:
         return store_jobs.public_job(self, job, detail=detail, packets=packets)
 
     @staticmethod
-    def _job_error(error, diagnostics):
+    def _job_error(error: Any, diagnostics: Mapping[str, Any]) -> dict[str, str | None]:
         """Expose actionable fixed categories; keep original exceptions in storage/export."""
         return store_jobs.public_job_error(error, diagnostics)
 
-    def retry_job(self, project_id, job_id, expected_attempts, *, include_omissions=False):
+    def retry_job(
+        self,
+        project_id: str,
+        job_id: str,
+        expected_attempts: int,
+        *,
+        include_omissions: bool = False,
+    ) -> dict[str, Any]:
         return store_jobs.retry_job(
             self, project_id, job_id, expected_attempts, include_omissions=include_omissions
         )
 
     @staticmethod
-    def _all_proposals_rejected(job):
+    def _all_proposals_rejected(job: JobRecord | Mapping[str, Any]) -> bool:
         return store_jobs.all_proposals_rejected(job)
 
-    def _retry_job_locked(self, tx, job):
+    def _retry_job_locked(self, tx: Any, job: JobRecord | Mapping[str, Any]) -> None:
         return store_jobs.retry_job_locked(self, tx, job)
 
-    def _count(self, collection, project_id=None, extra=()):
+    def _count(self, collection: str, project_id: str | None = None, extra: Any = ()) -> int:
         return store_jobs.count_rows(self, collection, project_id=project_id, extra=extra)
 
-    def status(self, project_id=None):
+    def status(self, project_id: str | None = None) -> dict[str, Any]:
         return store_jobs.status(self, project_id=project_id)
 
-    def recent_job_errors(self, project_id=None, limit=10):
+    def recent_job_errors(self, project_id: str | None = None, limit: int = 10) -> list[dict[str, Any]]:
         return store_jobs.recent_job_errors(self, project_id=project_id, limit=limit)
 
-    def retry_jobs(self):
+    def retry_jobs(self) -> dict[str, Any]:
         """Explicit legacy global compatibility; every requeue retains its audit."""
         return store_jobs.retry_jobs(self)
 
-    def missing_embeddings(self, namespace, project_id=None):
+    def missing_embeddings(self, namespace: str, project_id: str | None = None) -> list[dict[str, Any]]:
         return store_jobs.missing_embeddings(self, namespace, project_id=project_id)
 
-    def delete_embeddings(self, project_id):
+    def delete_embeddings(self, project_id: str) -> None:
         with self.transaction() as tx:
             self.backend.delete_vectors_for_project(tx, project_id)

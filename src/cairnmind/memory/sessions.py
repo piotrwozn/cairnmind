@@ -9,8 +9,9 @@ from __future__ import annotations
 import hashlib
 import json
 import tomllib
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from cairnmind.agents.recorder_agent import RECORDER_PATH, agent_file
 from cairnmind.memory.sessions_archive import _SessionArchiveMixin
@@ -53,6 +54,13 @@ from cairnmind.memory.sessions_packets import (
 from cairnmind.memory.sessions_packets import (
     format_packet as format_packet,
 )
+from cairnmind.storage.domain_types import (
+    MemoryRecord,
+    ProjectRecord,
+    ResumePacketRecord,
+    SessionRecord,
+    SourceRecord,
+)
 from cairnmind.storage.sql import clean_row
 from cairnmind.storage.sql import json_text as json_text
 from cairnmind.storage.storage_query import (
@@ -65,7 +73,7 @@ from cairnmind.storage.storage_query import (
 from cairnmind.store import EXTRACTION_MARK
 
 
-def origin_mark(session: dict) -> dict | None:
+def origin_mark(session: SessionRecord | Mapping[str, Any]) -> dict[str, str] | None:
     """The mark a write made in this session carries, derived from the session row alone."""
     if session.get("client") != EXTERNAL_CLIENT:
         return None
@@ -89,17 +97,20 @@ def stale_reason(message: str) -> str:
     return "continuity"
 
 
-def _current_schema(packet: dict) -> bool:
+def _current_schema(packet: ResumePacketRecord | Mapping[str, Any]) -> bool:
     return packet.get("schema_version") == PACKET_SCHEMA_VERSION
 
 
-def _registered_roots(reader) -> list[str]:
+def _registered_roots(reader: Any) -> list[str]:
     """Every registered project root as stored: the rows that decide what a code manifest leaves out (#255)."""
     return sorted({row["path"] for row in db_find(reader, "project_roots", columns=("path",))
                    if isinstance(row.get("path"), str)})
 
 
-def _automatic_proposal(record: dict, sources_by_id: dict) -> bool:
+def _automatic_proposal(
+    record: MemoryRecord | Mapping[str, Any],
+    sources_by_id: Mapping[str, SourceRecord | Mapping[str, Any]],
+) -> bool:
     """Whether ``record`` is a proposal the extraction worker wrote and nobody has touched since (#256).
 
     Such a proposal is not part of the state an ACK is given for: the packet shows it, labelled, but does
@@ -115,23 +126,29 @@ def _automatic_proposal(record: dict, sources_by_id: dict) -> bool:
                 and sources_by_id.get(mark, {}).get("project_id") == record.get("project_id"))
 
 
-def _code_identity(code: dict) -> dict:
+def _code_identity(code: Mapping[str, Any]) -> dict[str, Any]:
     return {key: code.get(key) for key in
             ("status", "worktree", "head", "branch", "fingerprint", "manifest_hash",
              "unverified_scope_fingerprint")}
 
 
-def _managed_empty_file(relative: str, raw: bytes, settings, project: dict) -> bool:
+def _managed_empty_file(
+    relative: str,
+    raw: bytes,
+    settings: Any,
+    project: ProjectRecord | Mapping[str, Any],
+) -> bool:
     """Recognize our complete generated files; a filename/substring is not enough."""
     from cairnmind.memory.integrations import BEGIN, END, _command, _earlier_command, _instructions
 
     try:
         text = raw.decode("utf-8").replace("\r\n", "\n")
+        project_dict = cast(dict[str, Any], project)
         if relative == RECORDER_PATH:
-            return text == agent_file(settings, project)
+            return text == agent_file(settings, project_dict)
         if relative in {"AGENTS.md", "CLAUDE.md"}:
             # Existing user instructions surrounding our block are real prior state.
-            return (text.strip() == _instructions(project, settings).strip()
+            return (text.strip() == _instructions(project_dict, settings).strip()
                     and text.count(BEGIN) == 1 and text.count(END) == 1)
         # A file generated before the module was renamed is as much ours as a new one.
         return any(_managed_command_file(relative, text, settings, builder)
@@ -140,7 +157,12 @@ def _managed_empty_file(relative: str, raw: bytes, settings, project: dict) -> b
         return False
 
 
-def _managed_command_file(relative: str, text: str, settings, _command) -> bool:
+def _managed_command_file(
+    relative: str,
+    text: str,
+    settings: Any,
+    _command: Callable[..., list[str]],
+) -> bool:
     """Whether a generated MCP or hook file is exactly what `_command` would produce."""
     from cairnmind.memory.integrations import (
         EARLIER_SERVER,
@@ -192,7 +214,11 @@ def _managed_command_file(relative: str, text: str, settings, _command) -> bool:
     return json.loads(text) == {"hooks": hooks}
 
 
-def _empty_scope(root: str, settings, project: dict) -> tuple[bool, str, set[str]]:
+def _empty_scope(
+    root: str,
+    settings: Any,
+    project: ProjectRecord | Mapping[str, Any],
+) -> tuple[bool, str, set[str]]:
     """Only a new empty directory and identifiable managed integration files."""
     allowed = {"AGENTS.md", "CLAUDE.md", ".mcp.json", ".codex/config.toml", ".codex/hooks.json",
                ".claude/settings.json", ".claude/settings.local.json", RECORDER_PATH}
@@ -223,7 +249,7 @@ def _empty_scope(root: str, settings, project: dict) -> tuple[bool, str, set[str
 
 
 class SessionManager(_SessionArchiveMixin, _SessionPacketMixin):
-    def __init__(self, store, settings):
+    def __init__(self, store: Any, settings: Any) -> None:
         self.store, self.settings = store, settings
 
     def _packet_byte_budget(self) -> int:
@@ -235,10 +261,10 @@ class SessionManager(_SessionArchiveMixin, _SessionPacketMixin):
     def _schema_version(self) -> int:
         return PACKET_SCHEMA_VERSION
 
-    def _is_current_schema(self, packet: dict) -> bool:
+    def _is_current_schema(self, packet: ResumePacketRecord | Mapping[str, Any]) -> bool:
         return _current_schema(packet)
 
-    def _session(self, session_id: str) -> dict:
+    def _session(self, session_id: str) -> dict[str, Any]:
         if not isinstance(session_id, str) or not session_id:
             raise ValueError("A logical session ID is required")
         session = db_find_one(self.store, "sessions", {"id": session_id}, required=True)
@@ -252,20 +278,21 @@ class SessionManager(_SessionArchiveMixin, _SessionPacketMixin):
             raise ValueError(f"Unknown project: {removed['id']}. " + removed_text(removed, self.store.data_dir))
         return session
 
-    def _packet(self, session: dict) -> dict | None:
-        if not session.get("packet_id"):
+    def _packet(self, session: SessionRecord | Mapping[str, Any]) -> dict[str, Any] | None:
+        packet_id = session.get("packet_id")
+        if not packet_id:
             return None
-        row = db_find_one(self.store, "resume_packets", {"id": session["packet_id"]})
+        row = db_find_one(self.store, "resume_packets", {"id": packet_id})
         return row.get("payload") if row else None
 
-    def _own_continuity(self, session: dict) -> list[str]:
+    def _own_continuity(self, session: SessionRecord | Mapping[str, Any]) -> list[str]:
         if session.get("client") not in AGENT_CLIENTS:
             return []
         from cairnmind.agents.agent_memory import agent_continuity_unknowns
-        return agent_continuity_unknowns(self.store, self.settings, session)
+        return agent_continuity_unknowns(self.store, self.settings, cast(dict[str, Any], session))
 
-    def _root(self, project_id: str, worktree: str | None) -> tuple[dict, str]:
-        project = self.store.resolve_project(project_id)
+    def _root(self, project_id: str, worktree: str | None) -> tuple[ProjectRecord, str]:
+        project = cast(ProjectRecord, self.store.resolve_project(project_id))
         root = str(Path(worktree or project["root"]).expanduser().resolve())
         roots = db_find(self.store, "project_roots", {"project_id": project["id"]}, columns=("path",))
         if root not in {str(Path(row["path"]).resolve()) for row in roots}:
@@ -274,7 +301,7 @@ class SessionManager(_SessionArchiveMixin, _SessionPacketMixin):
             raise ValueError("Resume worktree does not exist")
         return project, root
 
-    def _require_scope(self, tx, project_id: str, root: str) -> None:
+    def _require_scope(self, tx: Any, project_id: str, root: str) -> None:
         """Writer-transaction recheck; prior path resolution may race forgetting."""
         self.store._require_project(tx, project_id)
         roots = db_find(tx, "project_roots", {"project_id": project_id}, columns=("path",))

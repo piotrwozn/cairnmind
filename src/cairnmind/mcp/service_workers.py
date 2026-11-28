@@ -6,7 +6,7 @@ import itertools
 import json
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -40,7 +40,10 @@ class InferenceQueue:
                     continue
                 operation_task = asyncio.create_task(operation())
 
-                def cancel_abandoned(f, task=operation_task):
+                def cancel_abandoned(
+                    f: asyncio.Future[Any],
+                    task: asyncio.Task[Any] = operation_task,
+                ) -> None:
                     if f.cancelled():
                         task.cancel()
 
@@ -66,7 +69,7 @@ class InferenceQueue:
                 self.queue.task_done()
 
 
-def compact_job_history(store, settings) -> dict | None:
+def compact_job_history(store: Any, settings: Settings) -> dict[str, Any] | None:
     """The daily compaction of old completed jobs (store_prune.compact_old_jobs); None when the setting turns it off."""
     from cairnmind.storage.store_prune import compact_old_jobs, valid_days
 
@@ -79,7 +82,7 @@ def compact_job_history(store, settings) -> dict | None:
     return report
 
 
-def daily_backups(backup_dir) -> list[Path]:
+def daily_backups(backup_dir: Path | str) -> list[Path]:
     """The scheduled backups of a data directory, oldest first, under the current and the earlier suffix.
 
     Only files named by the time they were written are scheduled backups. The safety copies made
@@ -96,13 +99,13 @@ def daily_backups(backup_dir) -> list[Path]:
 
 
 def schedule_embeddings(
-    store,
+    store: Any,
     namespace: str,
     *,
-    project_ids=None,
-    settings=None,
-    report=None,
-    known_held=None,
+    project_ids: Iterable[str] | None = None,
+    settings: Settings | None = None,
+    report: dict[str, Any] | None = None,
+    known_held: Any = None,
 ) -> int:
     """Repair missing/digest-changed derived vectors without touching archived evidence.
 
@@ -134,12 +137,12 @@ def schedule_embeddings(
 
 
 def finish_job_if_present(
-    store,
+    store: Any,
     job_id: str,
     error: str | None = None,
     *,
-    worker=None,
-    expected_attempts=None,
+    worker: str | None = None,
+    expected_attempts: int | None = None,
 ) -> None:
     """Project deletion cancels in-flight work instead of creating a model failure."""
     try:
@@ -542,7 +545,7 @@ async def run_model_worker(ctx: ServiceContext) -> None:
             if job:
                 try:
 
-                    async def process(current_job=job):
+                    async def process(current_job: dict[str, Any] = job) -> Any:
                         if current_job["kind"] == "embed":
                             return await ctx.retriever.embed_pending(current_job)
                         return await ctx.agent.extract(current_job)

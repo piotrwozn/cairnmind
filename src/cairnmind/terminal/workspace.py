@@ -35,6 +35,7 @@ from cairnmind.terminal import workspace_activity as column
 from cairnmind.terminal import workspace_border as border
 from cairnmind.terminal.cockpit_state import CockpitState, _atomic, _private_directory, _private_lock
 from cairnmind.terminal.runtime_selection import resolve_tmux
+from cairnmind.terminal.terminal_client import BrokerError
 from cairnmind.terminal.terminal_theme import TMUX
 from cairnmind.terminal.workspace_activity import ACTIVITY_WIDTH, COCKPIT_MIN_WIDTH  # noqa: F401 (re-exported)
 from cairnmind.terminal.workspace_state import UI_COMMANDS, WorkspaceState
@@ -1139,7 +1140,7 @@ def stop_workspace(settings, stop_clients=False):
                     # still clears the dead pane tmux keeps for it, and keeps the run's own end (NativeRuntime.stop).
                     ended.append(run_id)
                     finished[run_id] = run["lifecycle"]
-                    with suppress(Exception):
+                    with suppress(BrokerError, OSError, RuntimeError, ValueError, KeyError):
                         manager.broker.request("POST", "/api/client-runs/" + run_id + "/stop",
                                                json={"generation": run["generation"]})
                     continue

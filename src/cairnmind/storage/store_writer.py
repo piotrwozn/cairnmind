@@ -322,6 +322,7 @@ def read_fence(reader) -> tuple[dict | None, str | None]:
     that did not change means no takeover was committed between the reads.
     """
     row = read_writer(reader)
+    named: str | None = None
     for _ in range(3):
         named = head_writer(reader) if row else None
         again = read_writer(reader)

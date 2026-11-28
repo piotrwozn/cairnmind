@@ -15,6 +15,7 @@ import stat
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -194,7 +195,7 @@ if sys.platform == "win32":
     _advapi32.GetAce.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
     _advapi32.GetAce.restype = wintypes.BOOL
 
-    def _sid_to_string(sid_ptr) -> str:
+    def _sid_to_string(sid_ptr: Any) -> str:
         str_ptr = ctypes.c_void_p()
         if not _advapi32.ConvertSidToStringSidW(sid_ptr, ctypes.byref(str_ptr)):
             raise ctypes.WinError(ctypes.get_last_error())
@@ -750,7 +751,7 @@ def write_durable_private(path: Path | str, data: bytes | str, *, mode: int = 0o
 _MAX_INT64 = (1 << 63) - 1
 
 
-def decode_file_id(value) -> int | None:
+def decode_file_id(value: Any) -> int | None:
     """Decode a stored st_dev/st_ino identifier (accepts non-negative int or decimal string)."""
     if type(value) is int and value >= 0:
         return value

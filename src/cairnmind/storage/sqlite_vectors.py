@@ -27,7 +27,10 @@ import sqlite3
 import struct
 from array import array
 from collections import defaultdict
+from collections.abc import Mapping
 from typing import Any
+
+from cairnmind.storage.domain_types import EmbeddingRecord, VectorNeighbor
 
 log = logging.getLogger(__name__)
 
@@ -163,7 +166,7 @@ def backfill_vec0_table(
 
 def sync_vec_upsert(
     conn: sqlite3.Connection,
-    row: dict[str, Any],
+    row: EmbeddingRecord | Mapping[str, Any],
     *,
     sqlite_vec_available: bool,
     read_only: bool,
@@ -241,7 +244,7 @@ def _exact_cosine_scan(
     query_vector: list[float],
     eligible_sources: list[str],
     limit: int,
-) -> list[dict[str, Any]]:
+) -> list[VectorNeighbor]:
     from cairnmind.storage.storage_query import sqlite_id_filter_sql
 
     src_clause, src_params = sqlite_id_filter_sql(conn, "source_id", eligible_sources, slot=0)
@@ -308,7 +311,7 @@ def search_vectors(
     read_only: bool,
     synced_tables: set[str],
     raw_tx_factory: Any = None,
-) -> tuple[bool, list[dict[str, Any]], str | None, bool]:
+) -> tuple[bool, list[VectorNeighbor], str | None, bool]:
     """Execute vector KNN search via ``vec0`` when available, falling back to exact cosine scan.
 
     Returns ``(index_present, neighbors, warning, used_vec0)``.
@@ -362,7 +365,7 @@ def search_vectors(
                 for row in rows
             ]
             scored.sort(key=lambda item: (item[0], item[1]))
-            neighbors = [{"chunk_id": cid, "distance": dist} for dist, cid in scored[:lim]]
+            neighbors: list[VectorNeighbor] = [{"chunk_id": cid, "distance": dist} for dist, cid in scored[:lim]]
             return True, neighbors, None, True
 
     neighbors = _exact_cosine_scan(conn, project_id, namespace, dim, query_vector, eligible_sources, lim)

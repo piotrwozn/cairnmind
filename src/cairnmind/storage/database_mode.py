@@ -19,6 +19,7 @@ config.json for a host other than this machine. A loopback ``arcade_url`` withou
 """
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import urlparse
 
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
@@ -61,19 +62,21 @@ def address(settings) -> str:
     return shown(settings.arcade_url)
 
 
-def shown(url) -> str:
+def shown(url: Any) -> str:
     """Any address (the database's, a model server's) as a message may show it: see address."""
     if isinstance(url, str) and not any(mark in url for mark in "@?#"):
         return url
+    parsed_path = ""
     try:
         parsed = urlparse(url)
         name, port, scheme = parsed.hostname, parsed.port, parsed.scheme
+        parsed_path = parsed.path.rstrip("/")
     except (ValueError, TypeError, AttributeError):
         name = port = scheme = None
     if not name or scheme not in ("http", "https"):
         return "an address that is not valid"
     name = f"[{name}]" if ":" in name else name
-    return f"{scheme}://{name}" + (f":{port}" if port else "") + parsed.path.rstrip("/")
+    return f"{scheme}://{name}" + (f":{port}" if port else "") + parsed_path
 
 
 def savable(url) -> bool:

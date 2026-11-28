@@ -9,6 +9,8 @@ host, and only a code from the fixed set below and a well-formed id are accepted
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+from typing import Any
 
 from cairnmind.terminal.terminal_notices import about
 
@@ -43,27 +45,27 @@ MAX_SHOWN = 1000  # (run, generation, server) keys remembered by one sidebar; a 
 _LIVE = {"starting", "running"}
 
 
-def valid_report(server_id, code) -> bool:
+def valid_report(server_id: Any, code: Any) -> bool:
     """A report the broker can keep: a code of the fixed set and a well-formed id, nothing else."""
     return (isinstance(code, str) and code in START_FAILURE_CODES
             and isinstance(server_id, str) and SERVER_ID.fullmatch(server_id) is not None)
 
 
-def reason(code, translate) -> str:
+def reason(code: Any, translate: Callable[..., str]) -> str:
     """The translated reason of a fixed code; a code outside the set stays "unknown", never its text."""
     return translate(REASONS[code]) if isinstance(code, str) and code in REASONS else "unknown"
 
 
-def notice_text(server_id, code, translate) -> str:
+def notice_text(server_id: str, code: Any, translate: Callable[..., str]) -> str:
     return translate(NOTICE, server=server_id, reason=reason(code, translate))
 
 
-def failures(run) -> list[tuple[str, str]]:
+def failures(run: Any) -> list[tuple[str, str]]:
     """The validated (server id, code) pairs a run record carries; anything else in it is ignored."""
     rows = run.get("mcp_failures") if isinstance(run, dict) else None
     if not isinstance(rows, list):
         return []
-    found = []
+    found: list[tuple[str, str]] = []
     for row in rows[:16]:
         if isinstance(row, dict) and valid_report(row.get("server_id"), row.get("code")):
             pair = (row["server_id"], row["code"])
@@ -72,7 +74,7 @@ def failures(run) -> list[tuple[str, str]]:
     return found
 
 
-def announce(app, runs) -> None:
+def announce(app: Any, runs: Any) -> None:
     """Post the failures of live agent runs not posted yet by this sidebar: one notice per server per run.
 
     A run of the project shown gets the notice line; a run of another project or folder only Notices,

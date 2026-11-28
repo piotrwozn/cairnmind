@@ -29,8 +29,11 @@ import asyncio
 import hashlib
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError, ValidationError
 
 from cairnmind.pal.terminal_safe import safe_text
 
@@ -61,16 +64,16 @@ class Unsupported(ValueError):
     pass
 
 
-def canonical(value) -> bytes:
+def canonical(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True,
                       allow_nan=False).encode("utf-8")
 
 
-def sha(value) -> str:
+def sha(value: Any) -> str:
     return hashlib.sha256(canonical(value)).hexdigest()
 
 
-def clean(value, depth=0):
+def clean(value: Any, depth: int = 0) -> Any:
     """Server JSON with every string encodable: a lone surrogate would make the journal refuse the event."""
     if depth > 64:
         return None
@@ -83,12 +86,12 @@ def clean(value, depth=0):
     return value
 
 
-def text(value, limit=None) -> str:
+def text(value: Any, limit: int | None = None) -> str:
     """Server text as it may be shown or journaled: escaped, and with lone surrogates replaced."""
     return safe_text(value, limit=limit).encode("utf-8", "replace").decode("utf-8")
 
 
-def convert(result, base) -> dict:
+def convert(result: Any, base: dict[str, Any]) -> dict[str, Any]:
     """A server's tools/call result as the host shows it to the model: text blocks, bounded, marked."""
     cleaned = clean(result)
     if not isinstance(cleaned, dict):
@@ -125,7 +128,7 @@ def convert(result, base) -> dict:
     return value
 
 
-def _types(value):
+def _types(value: Any) -> str | list[str]:
     names = [value] if isinstance(value, str) else value
     if not isinstance(names, list) or not 1 <= len(names) <= 4 or len(set(map(str, names))) != len(names) \
             or any(name not in TYPES for name in names):
@@ -133,12 +136,18 @@ def _types(value):
     return value
 
 
-def _schema(value, depth, top=False, budget=None, in_any=False):
+def _schema(
+    value: Any,
+    depth: int,
+    top: bool = False,
+    budget: dict[str, int] | None = None,
+    in_any: bool = False,
+) -> dict[str, Any]:
     budget = budget if budget is not None else {"nodes": 0, "branches": 0, "enum": 0}
     budget["nodes"] += 1
     if not isinstance(value, dict) or depth > MAX_DEPTH or budget["nodes"] > MAX_NODES:
         raise Unsupported()
-    result = {}
+    result: dict[str, Any] = {}
     for key, item in value.items():
         if key in DROPPED:
             continue
@@ -193,7 +202,7 @@ def _schema(value, depth, top=False, budget=None, in_any=False):
     return result
 
 
-def admit(schema) -> tuple[dict | None, str | None]:
+def admit(schema: Any) -> tuple[dict[str, Any] | None, str | None]:
     """The schema offered to the model and checked on each call, or None and the reason it was refused."""
     if not isinstance(schema, dict) or schema.get("type") != "object":
         return None, "invalid_schema"
@@ -205,12 +214,12 @@ def admit(schema) -> tuple[dict | None, str | None]:
         json.dumps(admitted, allow_nan=False).encode("utf-8")
     except Unsupported:
         return None, "schema_unsupported"
-    except Exception:
+    except (SchemaError, ValidationError, ValueError, TypeError, RecursionError):
         return None, "invalid_schema"
     return admitted, None
 
 
-def weight(schema) -> int:
+def weight(schema: Any) -> int:
     """Schema nodes plus enum values: what one argument node can at most be checked against."""
     total, stack = 0, [schema]
     while stack:
@@ -223,7 +232,7 @@ def weight(schema) -> int:
     return total
 
 
-def nodes(value, limit) -> int:
+def nodes(value: Any, limit: int) -> int:
     """JSON nodes of an argument, counted up to ``limit``."""
     count, stack = 0, [value]
     while stack and count <= limit:
@@ -236,26 +245,25 @@ def nodes(value, limit) -> int:
     return count
 
 
-def affordable(schema, arguments) -> bool:
+def affordable(schema: Any, arguments: Any) -> bool:
     """Whether checking these arguments stays within MAX_COST basic checks. Without nested anyOf, every
     argument node is checked against at most every schema node and enum value once."""
     cost = weight(schema)
     return nodes(arguments, MAX_COST // max(cost, 1) + 1) * cost <= MAX_COST
 
 
-_EXECUTOR = None
+_EXECUTOR: ThreadPoolExecutor | None = None
 
 
-def _executor():
+def _executor() -> ThreadPoolExecutor:
     # One dedicated thread: a validation past its time limit occupies this one, never the default pool.
     global _EXECUTOR
     if _EXECUTOR is None:
-        from concurrent.futures import ThreadPoolExecutor
         _EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cairnmind-mcp-validate")
     return _EXECUTOR
 
 
-async def valid_arguments(schema, arguments):
+async def valid_arguments(schema: dict[str, Any], arguments: Any) -> bool | None:
     """True or False, evaluated off the event loop; None when the time limit ran out. Any failure is False."""
     loop = asyncio.get_running_loop()
     try:
@@ -263,11 +271,11 @@ async def valid_arguments(schema, arguments):
                                                            arguments), VALIDATION_SECONDS)
     except TimeoutError:
         return None
-    except Exception:
+    except (SchemaError, ValidationError, ValueError, TypeError, RecursionError, RuntimeError):
         return False
 
 
-async def argument_problem(schema, arguments) -> dict:
+async def argument_problem(schema: dict[str, Any], arguments: Any) -> dict[str, Any]:
     """Why arguments a check refused do not fit (agent_arguments, #240), under the same time limit; {} when
     that cannot be told in time or at all."""
     from cairnmind.agents.agent_arguments import argument_problem as problem
@@ -275,5 +283,5 @@ async def argument_problem(schema, arguments) -> dict:
     try:
         return await asyncio.wait_for(loop.run_in_executor(_executor(), problem, schema, arguments),
                                       VALIDATION_SECONDS) or {}
-    except Exception:
+    except (TimeoutError, SchemaError, ValidationError, ValueError, TypeError, RecursionError, RuntimeError):
         return {}

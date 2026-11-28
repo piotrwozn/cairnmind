@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable, Mapping
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
+from cairnmind.storage.domain_types import MemoryRecord, SourceRecord
 from cairnmind.storage.sql import clean_row, evidence_time, json_text, parse_utc, utc_now
 from cairnmind.storage.storage_query import (
     asc,
@@ -84,7 +86,17 @@ class _StoreRecordsMixin:
 
         def _after_commit(self, call: Any) -> None: ...
 
-    def _confirmation(self, tx, project_id, old, asked, status, statement, sources, version):
+    def _confirmation(
+        self,
+        tx: Any,
+        project_id: str,
+        old: Mapping[str, Any] | None,
+        asked: Any,
+        status: str,
+        statement: Any,
+        sources: list[str],
+        version: int,
+    ) -> tuple[str, dict[str, Any] | None]:
         """The one rule for the status confirmed (#177): (status, mark) as this write stores them.
 
         A write stores `confirmed` only (a) as a person's act the store checks here, or (b) by keeping a
@@ -143,16 +155,24 @@ class _StoreRecordsMixin:
         return "proposed", None if act else lowered(old, "proposed", version)
 
     @staticmethod
-    def drop_chunks(tx, source_ids):
+    def drop_chunks(tx: Any, source_ids: Iterable[str]) -> None:
         """Delete the chunks of sources that stop being current, in the transaction that replaces them (#186).
 
         Nothing reads a chunk of a source that is not current: search, vectors and the reparse of a transcript take
         current chunks only, and an import rebuilds chunks from the source text. The source itself, its text and
         its hash stay, so evidence that cites the old version can still be read and checked."""
-        if source_ids:
-            db_delete_where(tx, "chunks", is_in("source_id", list(source_ids)))
+        ids = list(source_ids)
+        if ids:
+            db_delete_where(tx, "chunks", is_in("source_id", ids))
 
-    def snapshot(self, project_id, uri, content, kind="document", metadata=None):
+    def snapshot(
+        self,
+        project_id: str,
+        uri: str,
+        content: str,
+        kind: str = "document",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> SourceRecord:
         if not isinstance(content, str) or not isinstance(uri, str) or not uri:
             raise ValueError("Source requires a URI and text content")
         digest, key = hashlib.sha256(content.encode()).hexdigest(), json_text([project_id, uri])
@@ -160,7 +180,7 @@ class _StoreRecordsMixin:
             self._require_project(tx, project_id)
             existing = db_find_one(tx, "sources", {"current_key": key, "is_current": True})
             if existing and existing["sha256"] == digest:
-                return existing
+                return cast(SourceRecord, existing)
             if existing:
                 db_update_where(
                     tx, "sources", set_fields={"is_current": False, "current_key": None}, where={"id": existing["id"]}
@@ -188,7 +208,7 @@ class _StoreRecordsMixin:
                     ],
                 )
                 self._delete_old_vectors(tx, [existing["id"]])
-            source = {
+            source: SourceRecord = {
                 "id": str(uuid4()),
                 "project_id": project_id,
                 "uri": uri,
@@ -200,10 +220,18 @@ class _StoreRecordsMixin:
                 "current_key": key,
                 "created_at": utc_now(),
             }
-            db_insert_document(tx, "sources", source)
+            db_insert_document(tx, "sources", cast(dict[str, Any], source))
             return source
 
-    def snapshot_new(self, tx, project_id, uri, content, kind="document", metadata=None):
+    def snapshot_new(
+        self,
+        tx: Any,
+        project_id: str,
+        uri: str,
+        content: str,
+        kind: str = "document",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> SourceRecord | None:
         """The source of a URI that has no current one, written inside the caller's transaction.
 
         Returns None, having written nothing, when the URI has a current source: the caller then
@@ -217,14 +245,22 @@ class _StoreRecordsMixin:
             return None
         return self.new_source(tx, project_id, uri, content, kind, metadata)
 
-    def new_source(self, tx, project_id, uri, content, kind="document", metadata=None):
+    def new_source(
+        self,
+        tx: Any,
+        project_id: str,
+        uri: str,
+        content: str,
+        kind: str = "document",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> SourceRecord:
         """Insert the current source of a URI whose earlier one, if any, this transaction already deactivated.
 
         The row is the one ``snapshot`` writes; the unique index on the current key refuses a second current one.
         """
         if not isinstance(content, str) or not isinstance(uri, str) or not uri:
             raise ValueError("Source requires a URI and text content")
-        source = {
+        source: SourceRecord = {
             "id": str(uuid4()),
             "project_id": project_id,
             "uri": uri,
@@ -236,14 +272,17 @@ class _StoreRecordsMixin:
             "current_key": json_text([project_id, uri]),
             "created_at": utc_now(),
         }
-        db_insert_document(tx, "sources", source)
+        db_insert_document(tx, "sources", cast(dict[str, Any], source))
         return source
 
-    def get_source(self, source_id):
-        return db_find_one(self, "sources", {"id": source_id}, required=True)
+    def get_source(self, source_id: str) -> dict[str, Any]:
+        row = db_find_one(self, "sources", {"id": source_id}, required=True)
+        if row is None:
+            raise ValueError(f"Unknown source: {source_id}")
+        return row
 
     @staticmethod
-    def _validate_sources(tx, project_id, sources):
+    def _validate_sources(tx: Any, project_id: str, sources: Any) -> None:
         if not isinstance(sources, list) or not sources or not all(isinstance(item, str) for item in sources):
             raise ValueError(
                 "A memory record requires at least one source ID: cite a source you read, "
@@ -255,8 +294,16 @@ class _StoreRecordsMixin:
                 raise ValueError("Sources must exist and belong to the same project")
 
     def _validate_task(
-        self, tx, project_id, record_id, metadata, sources, *, assert_completion=True, validate_dependencies=True
-    ):
+        self,
+        tx: Any,
+        project_id: str,
+        record_id: str,
+        metadata: dict[str, Any],
+        sources: list[str],
+        *,
+        assert_completion: bool = True,
+        validate_dependencies: bool = True,
+    ) -> None:
         for key, value in {
             "state": "todo",
             "depends_on": [],
@@ -324,7 +371,15 @@ class _StoreRecordsMixin:
                 if not all(isinstance(x, str) and x in sources for x in evidence):
                     raise ValueError(f"{field} must reference this record's source IDs")
 
-    def _derive_symbol_anchor(self, tx, project_id, sources, metadata, *, source_rows=None):
+    def _derive_symbol_anchor(
+        self,
+        tx: Any,
+        project_id: str,
+        sources: list[str],
+        metadata: Mapping[str, Any],
+        *,
+        source_rows: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """Derive a cross-OS symbol anchor from cited code sources when metadata names a symbol or quote."""
         from cairnmind.memory.symbol_anchor import posix_path, resolve_symbol_anchor
         from cairnmind.scip.parsing import analyze_code
@@ -389,26 +444,26 @@ class _StoreRecordsMixin:
 
     def _remember(
         self,
-        tx,
-        project_id,
-        record,
-        sources,
+        tx: Any,
+        project_id: str,
+        record: Any,
+        sources: list[str],
         *,
-        managed_batch=False,
-        conflict_review=False,
-        replace_origin=False,
-        replace_metadata=False,
-        mark_only_changes=False,
-        extracted_from=None,
-        extractor=None,
-        slot=False,
-        new_id=None,
-        symbol_anchor=None,
-        comment_anchor=None,
-        adr_anchor=None,
-        trailer_anchor=None,
-        quote_ref=None,
-    ):
+        managed_batch: bool = False,
+        conflict_review: bool = False,
+        replace_origin: bool = False,
+        replace_metadata: bool = False,
+        mark_only_changes: bool = False,
+        extracted_from: str | None = None,
+        extractor: Any = None,
+        slot: bool = False,
+        new_id: str | None = None,
+        symbol_anchor: Any = None,
+        comment_anchor: Any = None,
+        adr_anchor: Any = None,
+        trailer_anchor: Any = None,
+        quote_ref: Any = None,
+    ) -> MemoryRecord:
         """Write one record version.
 
         new_id: the ID of a new record, chosen by a person's act whose audit names it before the write (#222).
@@ -667,7 +722,7 @@ class _StoreRecordsMixin:
             self._keep_verdict(db_find_one(tx, "records", {"id": collision["id"]}, required=True), "key")
             raise KeyTaken(collision["id"])
         now = utc_now()
-        result = {
+        result: dict[str, Any] = {
             "id": record_id,
             "project_id": project_id,
             "kind": kind,
@@ -721,38 +776,41 @@ class _StoreRecordsMixin:
                 worktree = record.get("worktree")
                 change_kind: str = change
                 self._after_commit(lambda: note_progress(self, result, worktree, change_kind))
-        return result
+        return cast(MemoryRecord, result)
 
     def remember(
         self,
-        project_id,
-        record,
-        sources,
+        project_id: str,
+        record: Any,
+        sources: list[str],
         *,
-        conflict_review=False,
-        extracted_from=None,
-        extractor=None,
-        symbol_anchor=None,
-        comment_anchor=None,
-        adr_anchor=None,
-        trailer_anchor=None,
-    ):
+        conflict_review: bool = False,
+        extracted_from: str | None = None,
+        extractor: Any = None,
+        symbol_anchor: Any = None,
+        comment_anchor: Any = None,
+        adr_anchor: Any = None,
+        trailer_anchor: Any = None,
+    ) -> dict[str, Any]:
         with self.transaction() as tx:
-            return self._remember(
-                tx,
-                project_id,
-                record,
-                sources,
-                conflict_review=conflict_review,
-                extracted_from=extracted_from,
-                extractor=extractor,
-                symbol_anchor=symbol_anchor,
-                comment_anchor=comment_anchor,
-                adr_anchor=adr_anchor,
-                trailer_anchor=trailer_anchor,
+            return cast(
+                dict[str, Any],
+                self._remember(
+                    tx,
+                    project_id,
+                    record,
+                    sources,
+                    conflict_review=conflict_review,
+                    extracted_from=extracted_from,
+                    extractor=extractor,
+                    symbol_anchor=symbol_anchor,
+                    comment_anchor=comment_anchor,
+                    adr_anchor=adr_anchor,
+                    trailer_anchor=trailer_anchor,
+                ),
             )
 
-    def checkpoint(self, project_id, state):
+    def checkpoint(self, project_id: str, state: Any) -> MemoryRecord:
         if not isinstance(state, dict):
             raise ValueError("Checkpoint state must be an object")
         content = json_text(state)
@@ -783,15 +841,18 @@ class _StoreRecordsMixin:
                 tx, project_id, record, [source["id"]], replace_origin=True, replace_metadata=fresh, slot=True
             )
 
-    def list_records(self, project_id, include_history=False):
+    def list_records(self, project_id: str, include_history: bool = False) -> list[dict[str, Any]]:
         self._require_project(self, project_id)
         conds = [eq("project_id", project_id)]
         if not include_history:
             conds.append(ne("status", "superseded"))
-        return [clean_row(row) for row in self.find("records", conds, order_by=(desc("updated_at"), asc("id")))]
-
-    def record_history(self, record_id):
         return [
-            row["snapshot"]
+            clean_row(row)
+            for row in self.find("records", conds, order_by=(desc("updated_at"), asc("id")))
+        ]
+
+    def record_history(self, record_id: str) -> list[MemoryRecord]:
+        return [
+            cast(MemoryRecord, row["snapshot"])
             for row in self.find("record_revisions", {"record_id": record_id}, columns=("snapshot",), order_by=(asc("version"),))
         ]

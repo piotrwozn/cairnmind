@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+import subprocess
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -10,6 +11,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.storage.storage_query import db_find_one, db_update_where
 from cairnmind.ui.schemas import (
     DecisionActionRequest,
@@ -332,7 +334,16 @@ class _LiveOpsMixin:
         try:
             result = index_project_if_changed(self.store, pid)
             changed = int((result or {}).get("changed", 0))
-        except Exception as exc:
+        except (
+            ArcadeError,
+            OSError,
+            subprocess.SubprocessError,
+            ValueError,
+            TypeError,
+            RuntimeError,
+            KeyError,
+            AttributeError,
+        ) as exc:
             log.debug("Repository re-index failed for %s: %s", pid, exc)
         self.bus.publish(
             "reindex.progress",

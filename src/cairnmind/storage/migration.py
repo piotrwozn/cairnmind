@@ -61,7 +61,7 @@ MIGRATION_COLLECTIONS: tuple[str, ...] = tuple(ALL_COLLECTIONS)
 class MigrationError(ValueError):
     """Base error for refused or failed storage migrations."""
 
-    def __init__(self, message: str, *, code: str = "migration_error"):
+    def __init__(self, message: str, *, code: str = "migration_error") -> None:
         super().__init__(message)
         self.code = code
 
@@ -215,7 +215,13 @@ def _check_arcade_server(target_settings: Settings) -> dict[str, Any]:
     return info
 
 
-def _open_store_for_backend(settings: Settings, *, backend: str, database: str | None = None, db_path: str | None = None):
+def _open_store_for_backend(
+    settings: Settings,
+    *,
+    backend: str,
+    database: str | None = None,
+    db_path: str | None = None,
+) -> tuple[Any, Settings]:
     from cairnmind.store import Store
 
     target = replace(

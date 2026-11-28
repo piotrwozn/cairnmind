@@ -580,7 +580,7 @@ class AgentApp(App):
         if self._turn_task and not self._turn_task.done():
             self._turn_task.cancel()
         if self.engine is not None:
-            with suppress(Exception):
+            with suppress(TimeoutError, OSError, RuntimeError, ValueError, AttributeError, ConnectionError):
                 result = self.engine.close()
                 if inspect.isawaitable(result):
                     await result

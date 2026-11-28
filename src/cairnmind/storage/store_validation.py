@@ -194,7 +194,7 @@ def normalise_criteria(metadata: dict[str, Any]) -> None:
 class KeyTaken(ValueError):
     """Another current record of the same kind holds the key of this write; it names that record (#238)."""
 
-    def __init__(self, record_id: Any):
+    def __init__(self, record_id: Any) -> None:
         self.record_id = record_id
         super().__init__(
             f"Active record key already exists: record {record_id} holds it. Update that record "

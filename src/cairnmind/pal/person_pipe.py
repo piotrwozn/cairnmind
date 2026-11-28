@@ -16,6 +16,8 @@ from __future__ import annotations
 import re
 import sys
 import threading
+from pathlib import Path
+from typing import Any
 
 from cairnmind.pal.private_files import IS_WINDOWS, current_user_sid
 from cairnmind.pal.runtime_sockets import workspace_namespace
@@ -121,12 +123,12 @@ if sys.platform == "win32":
     _advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
 
 
-def pipe_name_for(data_dir) -> str:
+def pipe_name_for(data_dir: Path | str) -> str:
     """Canonical Windows Named Pipe path for one installation's open workspace."""
-    return PIPE_PREFIX + workspace_namespace(data_dir)
+    return PIPE_PREFIX + workspace_namespace(Path(data_dir))
 
 
-def is_valid_pipe_name(settings, value) -> bool:
+def is_valid_pipe_name(settings: Any, value: Any) -> bool:
     """True iff ``value`` is the exact expected Named Pipe name for ``settings.data_dir``."""
     if not isinstance(value, str) or not value or "\0" in value:
         return False
@@ -201,7 +203,7 @@ def _process_owner_sid(pid: int) -> str | None:
 class PersonPipeServer:
     """Owner-only Windows Named Pipe server holding one in-memory 64-hex person key."""
 
-    def __init__(self, data_dir, key: str):
+    def __init__(self, data_dir: Path | str, key: str) -> None:
         if sys.platform != "win32" or not IS_WINDOWS:
             raise OSError("PersonPipeServer is only supported on Windows")
         if not _KEY.fullmatch(key):
@@ -303,11 +305,11 @@ class PersonPipeServer:
         self.start()
         return self
 
-    def __exit__(self, *args) -> None:
+    def __exit__(self, *args: object) -> None:
         self.close()
 
 
-def read_pipe_key(settings, pipe_name: str, *, timeout_ms: int = 2000) -> tuple[str, str | None]:
+def read_pipe_key(settings: Any, pipe_name: str, *, timeout_ms: int = 2000) -> tuple[str, str | None]:
     """Query the open workspace's Named Pipe for its in-memory person key.
 
     Returns ("key", key) only when the pipe exists, its server process belongs to the current user,

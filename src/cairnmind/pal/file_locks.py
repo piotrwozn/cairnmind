@@ -9,8 +9,14 @@ from __future__ import annotations
 import errno
 import os
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
+from typing import IO, Protocol
+
+
+class _HasFileno(Protocol):
+    def fileno(self) -> int: ...
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -111,11 +117,11 @@ else:
             raise ctypes.WinError(error)
 
 
-def _fileno(file_or_fd) -> int:
+def _fileno(file_or_fd: int | _HasFileno) -> int:
     return file_or_fd if isinstance(file_or_fd, int) else file_or_fd.fileno()
 
 
-def lock_exclusive(file_or_fd, *, blocking: bool = True) -> None:
+def lock_exclusive(file_or_fd: int | _HasFileno, *, blocking: bool = True) -> None:
     """Acquire an exclusive lock on an open file object or file descriptor.
 
     Raises BlockingIOError when blocking=False and the lock is already held.
@@ -123,7 +129,7 @@ def lock_exclusive(file_or_fd, *, blocking: bool = True) -> None:
     _lock_exclusive_fd(_fileno(file_or_fd), blocking=blocking)
 
 
-def lock_shared(file_or_fd, *, blocking: bool = True) -> None:
+def lock_shared(file_or_fd: int | _HasFileno, *, blocking: bool = True) -> None:
     """Acquire a shared lock on an open file object or file descriptor.
 
     Raises BlockingIOError when blocking=False and an exclusive lock is held.
@@ -131,13 +137,13 @@ def lock_shared(file_or_fd, *, blocking: bool = True) -> None:
     _lock_shared_fd(_fileno(file_or_fd), blocking=blocking)
 
 
-def unlock(file_or_fd) -> None:
+def unlock(file_or_fd: int | _HasFileno) -> None:
     """Release an exclusive or shared lock on an open file object or file descriptor."""
     _unlock_fd(_fileno(file_or_fd))
 
 
 @contextmanager
-def locked_path(path: Path, *, blocking: bool = True):
+def locked_path(path: Path | str, *, blocking: bool = True) -> Iterator[IO[str]]:
     """Open path in append mode (non-inheritable) and hold an exclusive lock for the context."""
     with Path(path).open("a", encoding="utf-8") as handle:
         os.set_inheritable(handle.fileno(), False)

@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from cairnmind.storage.arcade import ArcadeError
 from cairnmind.storage.storage_query import (
     asc,
     db_find,
@@ -69,7 +70,7 @@ class _LivePlansMixin:
             )
             if wt_rows:
                 active_plan_id = wt_rows[0].get("active_plan_id")
-        except Exception as exc:
+        except (ArcadeError, OSError, ValueError, TypeError, RuntimeError, KeyError, AttributeError) as exc:
             log.debug("Failed to read active plan from worktree_states for %s: %s", pid, exc)
 
         tasks_by_plan: dict[str, list[dict[str, Any]]] = {}
@@ -176,7 +177,7 @@ class _LivePlansMixin:
                     "snapshot": {"plan": doc, "tasks": []},
                     "recorded_at": now,
                 })
-            except Exception as exc:
+            except (ArcadeError, OSError, ValueError, TypeError, RuntimeError, KeyError, AttributeError) as exc:
                 log.debug("Optional plan_revisions insert skipped for %s: %s", plan_id, exc)
         rev = self._state_rev(pid)
         self.bus.publish("state.updated", {"state_rev": rev, "reason": "plan_created", "plan_id": plan_id})
@@ -292,7 +293,7 @@ class _LivePlansMixin:
                     "snapshot": {"plan": updated, "tasks": []},
                     "recorded_at": now,
                 })
-            except Exception as exc:
+            except (ArcadeError, OSError, ValueError, TypeError, RuntimeError, KeyError, AttributeError) as exc:
                 log.debug("Optional plan_revisions update skipped for %s: %s", plan_id, exc)
         rev = self._state_rev(pid)
         self.bus.publish("state.updated", {"state_rev": rev, "reason": "plan_updated", "plan_id": plan_id})

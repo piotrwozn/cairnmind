@@ -4,6 +4,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+from collections.abc import Iterable
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -83,7 +84,7 @@ class _StoreBackupMixin:
 
         def _delete_old_vectors(self, tx: Any, source_ids: Any) -> None: ...
 
-    def cache_stamp(self, project_id):
+    def cache_stamp(self, project_id: str) -> str:
         """A value that changes whenever a committed write could change an answer for the project.
 
         It is a counter read from the change journal, which every mutation of the store
@@ -137,13 +138,19 @@ class _StoreBackupMixin:
             parts = [head["epoch"], self._stamp_base, self._stamp_global, self._stamp_seq.get(project_id, 0)]
         return hashlib.sha256(json_text(parts).encode()).hexdigest()
 
-    def export(self, project_id=None):
+    def export(self, project_id: str | None = None) -> dict[str, Any]:
         from cairnmind.storage.restore_staged import refuse_if_unfinished
         refuse_if_unfinished(self.client)  # part of a backup is not an export of the store (#362)
         with self.transaction() as tx:
             return self._export_snapshot(tx, project_id, EXPORT_TYPES, 5)
 
-    def _export_snapshot(self, tx, project_id, collections, format_version):
+    def _export_snapshot(
+        self,
+        tx: Any,
+        project_id: str | None,
+        collections: Iterable[str],
+        format_version: int,
+    ) -> dict[str, Any]:
         result: dict[str, Any] = {"format_version": format_version, "backend": "arcadedb", "exported_at": utc_now()}
         self._require_project(tx, project_id)
         for collection in collections:
@@ -154,7 +161,7 @@ class _StoreBackupMixin:
         result["vector_data"] = {}  # no vectors in an export, as in a backup (#187)
         return result
 
-    def backup(self, destination):
+    def backup(self, destination: Path | str) -> Path:
         from cairnmind.storage.restore_staged import refuse_if_unfinished
         refuse_if_unfinished(self.client)  # a backup of part of a restore would pass for a whole one (#362)
         destination = Path(destination).expanduser().resolve()
@@ -165,11 +172,11 @@ class _StoreBackupMixin:
         return streamed_backup(self.transaction, destination, EXPORT_TYPES, 5)
 
     @staticmethod
-    def _write_backup(destination, payload):
+    def _write_backup(destination: Path | str, payload: dict[str, Any]) -> Path:
         return write_backup(destination, payload)
 
     @staticmethod
-    def _validated_backup(path):
+    def _validated_backup(path: Path | str) -> dict[str, Any]:
         try:
             with gzip.open(path, "rt", encoding="utf-8") as handle:
                 envelope = json.load(handle)
@@ -246,7 +253,7 @@ class _StoreBackupMixin:
         except (OSError, EOFError, KeyError, TypeError, json.JSONDecodeError) as exc:
             raise ValueError("Invalid or corrupt Cairnmind backup") from exc
 
-    def restore(self, backup, *, claims=None):
+    def restore(self, backup: Path | str, *, claims: Any = None) -> None:
         """Restore validated data as one outcome: the whole backup, or the store as it was. Stop Cairnmind workers
         before calling. The rows are written in transactions of bounded size, so a failure is undone from the safety
         copy, and a restore that was cut off leaves a mark that refuses the store until a restore finishes (#362).
@@ -270,7 +277,7 @@ class _StoreBackupMixin:
         from cairnmind.memory.confirmation_upgrade import mark_confirmed_before_rule
         self.confirmations_before_rule = mark_confirmed_before_rule(self, force=True)
 
-    def _restore_from(self, source, claims=None):
+    def _restore_from(self, source: Any, claims: Any = None) -> None:
         # DDL is deliberately outside the data transaction; no live data has been removed.
         self.backend.ensure_restored_vector_types(source.vector_indexes)
         # Rows are deleted and written in transactions of bounded size, the engine's heap holding a transaction (#362).
@@ -278,7 +285,7 @@ class _StoreBackupMixin:
         self.embed_jobs_requeued = replace(self, source, claims)
 
     @staticmethod
-    def _requeue_embed_jobs(batches):
+    def _requeue_embed_jobs(batches: Any) -> int | None:
         """A backup holds no vectors (#187): set each completed embed job of a current chunk back to pending, in the
         restore's transactions, and return how many. None when the backup brought vectors, which stay as they are."""
         tx = batches.tx
@@ -302,7 +309,7 @@ class _StoreBackupMixin:
             batches.wrote(len(ids[start:start + 500]))
         return len(ids)
 
-    def forget_project(self, project_id):
+    def forget_project(self, project_id: str) -> None:
         from cairnmind.memory.confirmation import ConfirmationRefused
         from cairnmind.terminal.person_proof import FORGET_REFUSED, present
         if not present():

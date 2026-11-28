@@ -5,10 +5,12 @@ import hashlib
 import json
 import os
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from cairnmind.memory.sessions_packets import AGENT_CLIENTS, _hash, _scope_contains
+from cairnmind.storage.domain_types import SessionRecord
 from cairnmind.storage.sql import utc_now
 from cairnmind.storage.storage_query import asc, db_find, db_find_one, db_update_where, desc, eq, is_in, lt
 
@@ -20,12 +22,12 @@ class _SessionArchiveMixin:
         store: Any
         settings: Any
 
-        def _session(self, session_id: str) -> dict: ...
+        def _session(self, session_id: str) -> dict[str, Any]: ...
         def _require_scope(self, tx: Any, project_id: str, root: str) -> None: ...
-        def _own_continuity(self, session: dict) -> list[str]: ...
+        def _own_continuity(self, session: SessionRecord | Mapping[str, Any]) -> list[str]: ...
 
     @staticmethod
-    def _encode_watermark(watermark):
+    def _encode_watermark(watermark: Any) -> Any:
         """Encode 64-bit unsigned device/inode values for ArcadeDB JSON storage (#441)."""
         if not isinstance(watermark, dict):
             return watermark

@@ -697,7 +697,9 @@ class CopilotAdapter:
         self._accept_tools = False
         await self._cancel_tools()
         if self._session is not None:
-            with suppress(Exception):
+            with suppress(
+                CopilotError, TimeoutError, OSError, RuntimeError, ValueError, AttributeError, ConnectionError
+            ):
                 await asyncio.wait_for(self._session.abort(), 5)
 
     async def _cancel_tools(self):
@@ -713,7 +715,9 @@ class CopilotAdapter:
     async def reset_context(self):
         await self.interrupt()
         if self._session is not None:
-            with suppress(Exception):
+            with suppress(
+                CopilotError, TimeoutError, OSError, RuntimeError, ValueError, AttributeError, ConnectionError
+            ):
                 await asyncio.wait_for(self._session.disconnect(), 5)
         self._session = None
         self._catalog_hash = None
@@ -722,11 +726,15 @@ class CopilotAdapter:
     async def close(self):
         await self.interrupt()
         if self._session is not None:
-            with suppress(Exception):
+            with suppress(
+                CopilotError, TimeoutError, OSError, RuntimeError, ValueError, AttributeError, ConnectionError
+            ):
                 await asyncio.wait_for(self._session.disconnect(), 5)
             self._session = None
         if self._client is not None:
-            with suppress(Exception):
+            with suppress(
+                CopilotError, TimeoutError, OSError, RuntimeError, ValueError, AttributeError, ConnectionError
+            ):
                 await asyncio.wait_for(self._client.stop(), 5)
             self._client = None
 
@@ -792,7 +800,9 @@ async def _login(settings):
         raise CopilotError("copilot_auth_required")
     finally:
         if flow_id and adapter._session is not None:
-            with suppress(Exception):
+            with suppress(
+                CopilotError, TimeoutError, OSError, RuntimeError, ValueError, AttributeError, ConnectionError
+            ):
                 await adapter._session.rpc.accounts.login.cancel(AuthLoginCancelRequest(flow_id=flow_id), timeout=5)
         await adapter.close()
 

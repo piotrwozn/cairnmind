@@ -5,14 +5,16 @@ import hashlib
 import logging
 import math
 import time
+from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from cairnmind.memory.confirmation import confirmed_by
 from cairnmind.memory.integrations import DATA_NOT_INSTRUCTIONS
 from cairnmind.memory.memory_egress import HOSTED_PACKET_NOTE, Gate, ordered
 from cairnmind.memory.packet_origin import omitted_by_origin, preview_key, record_origins
+from cairnmind.storage.domain_types import ProjectRecord, ResumePacketRecord, SessionRecord
 from cairnmind.storage.sql import clean_row, json_text, utc_now
 from cairnmind.storage.storage_query import (
     db_find,
@@ -60,31 +62,35 @@ def _scope_contains(root: str, cwd: Any) -> bool:
         return False
 
 
-def _readback(packet: dict) -> dict:
+def _readback(packet: ResumePacketRecord | Mapping[str, Any]) -> dict[str, dict[str, Any] | None]:
     return {name: ({"id": packet[key]["id"], "version": packet[key]["version"]}
                    if packet.get(key) else None)
             for name, key in (("plan", "active_plan"), ("task", "active_task"))}
 
 
-def format_packet(packet: dict) -> str:
+def format_packet(packet: ResumePacketRecord | Mapping[str, Any]) -> str:
     """Small hook/launcher bootstrap; the complete bounded packet is an MCP read."""
-    plan, task = packet.get("active_plan"), packet.get("active_task")
-    external = packet.get("history") == "unarchived"
+    data = cast(Mapping[str, Any], packet)
+    plan, task = data.get("active_plan"), data.get("active_task")
+    external = data.get("history") == "unarchived"
     # A plan or task an external session wrote is never presented as verified, not even to a native client.
     unverified_plan = bool(plan) and plan.get("origin_evidence") == "degraded"
     unverified_task = bool(task) and task.get("origin_evidence") == "degraded"
     # Written by the built-in agent after a third-party MCP tool result (origin_client mcp:<server>) has its own
     # wording; an external client's wording stays for what an external client wrote.
 
-    def third_party(item):
+    def third_party(item: Mapping[str, Any]) -> bool:
         return str(item.get("origin_client", "")).startswith("mcp:")
 
-    def note(item):
+    def note(item: Mapping[str, Any]) -> str:
         return (" [written after a third-party tool result in a built-in agent session; not verified]"
                 if third_party(item) else " [written by an external client's session; not verified]")
 
-    only_third_party = all(third_party(item) for item, unverified in ((plan, unverified_plan),
-                                                                      (task, unverified_task)) if unverified)
+    only_third_party = all(
+        third_party(item)
+        for item, unverified in ((plan, unverified_plan), (task, unverified_task))
+        if unverified and item is not None
+    )
     result = [
         ("Cairnmind external-client resume bootstrap: history unarchived, evidence degraded "
          "(receipt is not proof of understanding)." if external else
@@ -95,9 +101,9 @@ def format_packet(packet: dict) -> str:
           "and is not verified (receipt is not proof of understanding).")
          if unverified_plan or unverified_task else
          "Cairnmind verified resume bootstrap (receipt is not proof of understanding)."),
-        f"Logical session: {packet['session_id']}; epoch: {packet['epoch']}.",
-        f"Packet: {packet['id']}; SHA-256: {packet['hash']}.",
-        f"Project: {packet['project_id']}; worktree: {packet['worktree']}.",
+        f"Logical session: {data['session_id']}; epoch: {data['epoch']}.",
+        f"Packet: {data['id']}; SHA-256: {data['hash']}.",
+        f"Project: {data['project_id']}; worktree: {data['worktree']}.",
         "Before normal shared-memory writes, call the Cairnmind MCP tool resume_context, read the complete "
         "packet, then call ack_resume with its exact id/hash and this readback shape:",
         json_text(_readback(packet)),
@@ -136,28 +142,56 @@ class _SessionPacketMixin:
         store: Any
         settings: Any
 
-        def _session(self, session_id: str) -> dict: ...
-        def _packet(self, session: dict) -> dict | None: ...
-        def _own_continuity(self, session: dict) -> list[str]: ...
-        def _root(self, project_id: str, worktree: str | None) -> tuple[dict, str]: ...
+        def _session(self, session_id: str) -> dict[str, Any]: ...
+        def _packet(self, session: SessionRecord | Mapping[str, Any]) -> dict[str, Any] | None: ...
+        def _own_continuity(self, session: SessionRecord | Mapping[str, Any]) -> list[str]: ...
+        def _root(self, project_id: str, worktree: str | None) -> tuple[ProjectRecord, str]: ...
         def _require_scope(self, tx: Any, project_id: str, root: str) -> None: ...
-        def _code(self, session: dict) -> dict: ...
-        def _state(self, session: dict, code: dict | None = None) -> dict: ...
-        def _state_locked(self, session: dict, code: dict) -> dict: ...
-        def _write_refusal(self, session: dict, packet_id: str | None) -> str | None: ...
+        def _code(self, session: SessionRecord | Mapping[str, Any]) -> dict[str, Any]: ...
+        def _state(
+            self,
+            session: SessionRecord | Mapping[str, Any],
+            code: dict[str, Any] | None = None,
+        ) -> dict[str, Any]: ...
+        def _state_locked(
+            self,
+            session: SessionRecord | Mapping[str, Any],
+            code: dict[str, Any],
+        ) -> dict[str, Any]: ...
+        def _write_refusal(
+            self,
+            session: SessionRecord | Mapping[str, Any],
+            packet_id: str | None,
+        ) -> str | None: ...
         @staticmethod
-        def _with_newer(reply: dict, state: dict, packet: dict) -> dict: ...
+        def _with_newer(
+            reply: dict[str, Any],
+            state: dict[str, Any],
+            packet: ResumePacketRecord | Mapping[str, Any],
+        ) -> dict[str, Any]: ...
         @staticmethod
-        def _newer_count(state: dict, packet: dict) -> int: ...
+        def _newer_count(
+            state: dict[str, Any],
+            packet: ResumePacketRecord | Mapping[str, Any],
+        ) -> int: ...
         @staticmethod
         def _encode_watermark(watermark: Any) -> Any: ...
         @staticmethod
-        def _target(path: str, client: str, watermark: dict | None = None) -> dict: ...
+        def _target(path: str, client: str, watermark: dict[str, Any] | None = None) -> dict[str, Any]: ...
         @classmethod
-        def _merge_targets(cls, result: list[dict]) -> list[dict]: ...
-        def _targets(self, session: dict, deadline: float) -> list[dict]: ...
-        def _legacy_action_targets(self, session: dict, packet: dict) -> list[dict] | None: ...
-        def _archive(self, session: dict, target: dict, deadline: float) -> dict: ...
+        def _merge_targets(cls, result: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
+        def _targets(self, session: SessionRecord | Mapping[str, Any], deadline: float) -> list[dict[str, Any]]: ...
+        def _legacy_action_targets(
+            self,
+            session: SessionRecord | Mapping[str, Any],
+            packet: ResumePacketRecord | Mapping[str, Any],
+        ) -> list[dict[str, Any]] | None: ...
+        def _archive(
+            self,
+            session: SessionRecord | Mapping[str, Any],
+            target: dict[str, Any],
+            deadline: float,
+        ) -> dict[str, Any]: ...
 
     def _packet_byte_budget(self) -> int:
         return MAX_PACKET_BYTES
@@ -168,7 +202,7 @@ class _SessionPacketMixin:
     def _schema_version(self) -> int:
         return PACKET_SCHEMA_VERSION
 
-    def _is_current_schema(self, packet: dict) -> bool:
+    def _is_current_schema(self, packet: ResumePacketRecord | Mapping[str, Any]) -> bool:
         return packet.get("schema_version") == self._schema_version()
 
     def _pending_status(self, project_id: str, kind: str) -> dict:

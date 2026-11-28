@@ -13,6 +13,9 @@ import json
 import os
 import re
 import sys
+from collections.abc import Iterable, Iterator
+from pathlib import Path
+from typing import Any
 
 from cairnmind.config import ENV_PREFIXES
 from cairnmind.pal.path_spelling import ignores_case, path_identity, same_or_below
@@ -49,7 +52,7 @@ def loader_name(name: str) -> bool:
     return name.upper() in LOADER_ENV or name.upper().startswith(LOADER_PREFIXES)
 
 
-def _text(value) -> bool:
+def _text(value: Any) -> bool:
     """Literal text that can be written to a process: bounded, no NUL, encodable as UTF-8."""
     if not isinstance(value, str) or len(value) > MAX_TEXT or "\0" in value:
         return False
@@ -70,7 +73,7 @@ def _is_absolute_command(command: str) -> bool:
     return False
 
 
-def validate_server(value) -> dict:
+def validate_server(value: Any) -> dict[str, Any]:
     """One server definition; unknown fields, relative commands and secret-looking names are refused."""
     if not isinstance(value, dict) or set(value) - _FIELDS or not {"id", "command"} <= set(value):
         raise ValueError("A server has an id and an absolute command, and may have args and env.")
@@ -104,11 +107,10 @@ _WIN_SEPARATORS = re.compile(r"[=,;\s&|<>`$()'\"]+")
 _PATH_CHARACTER = re.compile(r"[A-Za-z0-9._-]")
 
 
-def server_directory():
+def server_directory() -> Path:
     """What a relative path in a server definition is relative to: the server's working directory, a private
     directory created directly under the system temporary directory when it starts (mcp_host)."""
     import tempfile
-    from pathlib import Path
     return Path(tempfile.gettempdir()) / "cairnmind-mcp-server"
 
 
@@ -119,10 +121,10 @@ def _normal(text: str) -> str:
     return text
 
 
-def _tokens(text: str):
+def _tokens(text: str) -> Iterator[str]:
     """Every piece of a value that can be a path: split on '=', ':', ',', ';', whitespace, quotes and the shell
     operators, and in each piece also the part from its first '/' on (an option such as '-f/path')."""
-    seen = set()
+    seen: set[str] = set()
     splitters = (_SEPARATORS, _WIN_SEPARATORS) if sys.platform == "win32" else (_SEPARATORS,)
     for splitter in splitters:
         for token in splitter.split(text):
@@ -136,7 +138,7 @@ def _tokens(text: str):
                     yield token[slash:]
 
 
-def _names_root(text: str, roots, fold: bool = False) -> bool:
+def _names_root(text: str, roots: Iterable[str], fold: bool = False) -> bool:
     """Whether a spelling of the worktree root appears in a value as a path prefix: followed by the end, a
     '/' or a character that cannot continue a file name, so 'app-mcp' or 'app.venv' next to 'app' do not.
     With ``fold`` (a worktree on a file system that ignores case) case is ignored; ``roots`` are case-folded."""
@@ -151,7 +153,7 @@ def _names_root(text: str, roots, fold: bool = False) -> bool:
     return False
 
 
-def inside_worktree(definition: dict, worktree) -> bool:
+def inside_worktree(definition: dict[str, Any], worktree: Path | str) -> bool:
     """Whether the program, an argument or an environment value of a server names a path in the worktree.
 
     A coding session edits the worktree without an approval, so code there would let it choose what runs
@@ -167,7 +169,6 @@ def inside_worktree(definition: dict, worktree) -> bool:
     A sibling that merely shares a name prefix is not inside. A value that only becomes a path inside the
     server (a name it looks up, a configuration file it reads, ``$HOME`` expanded by a shell) cannot be seen.
     """
-    from pathlib import Path
     given = Path(os.path.abspath(worktree))
     root = given.resolve()
     roots = {_normal(str(given)), _normal(str(root))}
@@ -194,7 +195,7 @@ def inside_worktree(definition: dict, worktree) -> bool:
     return False
 
 
-def validate_servers(value) -> list[dict]:
+def validate_servers(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list) or len(value) > MAX_SERVERS:
         raise ValueError("A project has at most 4 MCP servers.")
     servers = [validate_server(row) for row in value]
@@ -206,7 +207,11 @@ def validate_servers(value) -> list[dict]:
     return servers
 
 
-def frozen_servers(preferences: dict, project_id: str, worktree) -> tuple[list[dict], list[dict]]:
+def frozen_servers(
+    preferences: dict[str, Any],
+    project_id: str,
+    worktree: Path | str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """The servers a run of this project gets, fixed at launch, and fixed codes for what was left out.
 
     An invalid stored list gives no servers and the run still starts; so does a server whose program
@@ -228,7 +233,7 @@ def frozen_servers(preferences: dict, project_id: str, worktree) -> tuple[list[d
     return kept, problems
 
 
-def apply_project_edit(stored: dict, edit) -> dict:
+def apply_project_edit(stored: dict[str, Any], edit: Any) -> dict[str, Any]:
     """One project's list replaced, only if it is still the list the editor showed (compare and swap).
 
     The editor sends the list it read and the list it wants; the other projects' lists are taken from the
@@ -248,7 +253,7 @@ def apply_project_edit(stored: dict, edit) -> dict:
     return result
 
 
-def validate_project_mcp_servers(value) -> dict:
+def validate_project_mcp_servers(value: Any) -> dict[str, list[dict[str, Any]]]:
     if not isinstance(value, dict) or len(value) > 1000:
         raise ValueError("Invalid MCP server lists.")
     result = {}
