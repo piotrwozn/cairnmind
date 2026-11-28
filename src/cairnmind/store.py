@@ -128,6 +128,9 @@ class Store(_StoreRecordsMixin, _StoreBackupMixin):
     def _insert_doc(self, tx: Any, collection: str, data: dict[str, Any]) -> dict[str, Any]:
         return db_insert_document(tx, collection, data)
 
+    def _validate_scope(self, scope: Any) -> None:
+        validate_scope(scope)
+
     @property
     def backend(self) -> Any:
         if self._backend is None:

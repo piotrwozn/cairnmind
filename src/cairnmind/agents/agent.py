@@ -8,6 +8,8 @@ import logging
 import time
 from typing import Any
 
+from jsonschema import Draft202012Validator as Draft202012Validator
+
 from cairnmind.agents.agent_extract import (
     _RESERVED_EXTRACTION_METADATA as _RESERVED_EXTRACTION_METADATA,
 )

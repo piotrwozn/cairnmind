@@ -160,6 +160,9 @@ class _StoreRecordsMixin:
     def _insert_doc(self, tx: Any, collection: str, data: dict[str, Any]) -> dict[str, Any]:
         return db_insert_document(tx, collection, data)
 
+    def _validate_scope(self, scope: Any) -> None:
+        validate_scope(scope)
+
     @staticmethod
     def drop_chunks(tx: Any, source_ids: Iterable[str]) -> None:
         """Delete the chunks of sources that stop being current, in the transaction that replaces them (#186).
@@ -559,7 +562,7 @@ class _StoreRecordsMixin:
             # Checked when it is set, not whenever the task is written: a task that already carries
             # something else under this name stays writable, and is simply never compared.
             if "scope" in updates and updates["scope"] != (old or {}).get("metadata", {}).get("scope"):
-                validate_scope(updates["scope"])
+                self._validate_scope(updates["scope"])
         evidence = evidence_time(tx, sources, source_rows=source_rows)
         metadata.update(
             evidence_earliest=evidence["earliest"],
