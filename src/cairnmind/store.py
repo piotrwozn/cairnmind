@@ -1164,6 +1164,20 @@ class Store:
         for item in existing_edges:  # rare here: an edge that is kept is not written again
             self.upsert_edge(item, tx)
 
+    def write_node_at(self, tx, rid, node):
+        """Write a graph vertex on the stored one at `rid`: for the repair of an id stored twice (#456), where the index of ids is not asked."""
+        node, _ = self._checked_node(tx, node)
+        sets = ",".join(f"{quote_name(key)}=:u_{key}" for key in node)
+        tx.command(f"UPDATE nodes SET {sets} WHERE @rid=:rid",
+                   {**{f"u_{key}": value for key, value in node.items()}, "rid": rid, "project_id": node["project_id"]})
+
+    @staticmethod
+    def write_edge_between(tx, out, into, edge):
+        """Create a graph edge between the vertices at two record ids, for the same repair: its ends are not looked up by id."""
+        if not all(isinstance(rid, str) and re.fullmatch(r"#\d+:\d+", rid) for rid in (out, into)):
+            raise ValueError("An edge is written between two record ids")
+        tx.command(f"CREATE EDGE edges FROM {out} TO {into} CONTENT :edge", {"edge": edge, "project_id": edge["project_id"]})
+
     def remove_graph_nodes(self, tx, project_id, identifiers):
         """Delete the project's vertices among `identifiers` that no edge names, one group per request.
 
@@ -1177,6 +1191,7 @@ class Store:
         # made it 80 times more scans for a replaced graph (#402). The count is vertices only.
         group = graph_transactions.ROWS_PER_TRANSACTION
         kept = []  # returned: the caller counts the vertices the store still holds (#426)
+        tx.extra_copies = 0  # read by the caller: the copies deleted beyond the ids asked (#456)
         for offset in range(0, len(identifiers), group):
             part = identifiers[offset:offset + group]
             named = set()
@@ -1190,8 +1205,10 @@ class Store:
             deleted = tx.command("DELETE FROM nodes WHERE project_id=:project AND id IN :ids",
                                  {"project": project_id, "ids": unlinked})
             count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
-            if type(count) is not int or count != len(unlinked):
+            # More than asked: an id stored twice (#456) goes with every copy, and the pass says how many extra went.
+            if type(count) is not int or count < len(unlinked):
                 raise RuntimeError("The database did not delete every graph vertex of a group")
+            tx.extra_copies += count - len(unlinked)
         return kept
 
     @staticmethod

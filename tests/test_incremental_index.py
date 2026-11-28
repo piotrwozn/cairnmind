@@ -435,7 +435,8 @@ def test_a_pass_after_one_edit_asks_the_database_and_computes_graph_rows_in_prop
     monkeypatch.undo()
     # 62 requests for 19 files; a pass that walked and looked the project up three times asked 64 (#409), and none of
     # them grows with the project. Digests are made of the nodes that were computed, not of every node.
-    assert len(asked) <= 63, len(asked)
+    # Two more since #456: the counts of the project's vertices and edges by id, after a pass that wrote rows.
+    assert len(asked) <= 65, len(asked)
     assert 0 < len(digested) <= 8 < first["nodes"] / 4, (len(digested), first["nodes"])
 
 

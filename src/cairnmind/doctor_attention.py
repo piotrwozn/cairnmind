@@ -10,10 +10,12 @@ anything (#373): the summary says so and who writes.
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 
 from . import platform_hints
 from .engine_docker import DOCKER_ATTENTION
+from .graph_duplicates import IN_PROJECT
 from .first_start import (
     CLIENT_NAMES, CLIENT_OFF, CLIENT_ON, DATA_DIR, ENGINE_DOWN, ENGINE_NOT_INSTALLED, ENGINE_ON_DEMAND, ENGINE_READY,
     ENGINE_RELEASE, FULL_REPORT, JAVA_NEEDED, KNOWLEDGE_DISABLED, MODELS_OFF, MODELS_ON, NEXT_FIX, NEXT_PROJECTS,
@@ -247,6 +249,8 @@ def summary(report: dict) -> list[str]:
     # A project folder this machine cannot read (#371): a note, never a fault; the exit code does not change.
     folders = [e["message"] for e in report.get("project_folders") or []
                if isinstance(e, dict) and isinstance(e.get("message"), str)]
+    twice = [IN_PROJECT.format(project=shlex.quote(safe_text(row["project"])), vertices=row.get("vertices", 0), edges=row.get("edges", 0))
+             for row in report.get("graphs_stored_twice") or [] if isinstance(row, dict) and isinstance(row.get("project"), str)]  # #456
     sqlite_warnings = [
         str(w) for w in ((report.get("sqlite") or {}).get("warnings") or []) if isinstance(w, str) and w
     ]
@@ -257,10 +261,10 @@ def summary(report: dict) -> list[str]:
     preflight_lines = _preflight_summary(report)
     for heading, items in ((OPTIONAL_BROKEN, broken), (OPTIONAL_OFF, off), (OPTIONAL_ON, on),
                            ("Pre-flight:", preflight_lines),
-                           (NOTES, [n for n in notes if n not in blockers] + folders + sqlite_warnings + preflight_warnings)):
+                           (NOTES, [n for n in notes if n not in blockers] + folders + twice + sqlite_warnings + preflight_warnings)):
         if items:
             lines.append(heading)
-            lines += [f"  - {_line(item, limit=900 if item in folders else 300)}" for item in items]
+            lines += [f"  - {_line(item, limit=900 if item in folders or item in twice else 300)}" for item in items]
     lines += [FULL_REPORT, NEXT_FIX if missing else NEXT_PROJECTS if report.get("projects") else NEXT_START]
     return lines
 
