@@ -442,7 +442,7 @@ class ProcessListFailed(RuntimeError):
 
 def stop_strays(roots: list[Path], leave: str = "") -> list[str]:
     """Stop what still runs with one of `roots` in its command line, after everything else was stopped."""
-    if not roots:
+    if not roots or sys.platform == "win32":  # nothing is listed there (see processes_under)
         return []
     found = processes_under(*roots, leave=leave)
     # A server the test stopped (tmux kill-server) takes a moment to end: only what outlives that is left.
