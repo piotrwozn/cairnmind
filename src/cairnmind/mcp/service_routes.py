@@ -6,8 +6,9 @@ import hmac
 import json
 import logging
 import time
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -44,10 +45,49 @@ from cairnmind.mcp.service_models import (
     SessionPrepareBody,
 )
 from cairnmind.mcp.service_workers import ServiceContext
+from cairnmind.storage.domain_types import (
+    CheckRunRecord,
+    MemoryRecord,
+    ProjectRecord,
+    TaskRecord,
+)
 from cairnmind.storage.storage_query import asc, db_find, db_find_one, desc
 from cairnmind.terminal import person_proof
 
 log = logging.getLogger(__name__)
+
+
+class _MemoryWriteAuthorizer:
+    """Callable authorization guard with a ``refresh()`` hook run outside DB transactions."""
+
+    def __init__(
+        self,
+        ctx: ServiceContext,
+        pid: str,
+        requested: str | None,
+        session_id: str,
+        packet_id: str | None,
+        code: Any,
+    ) -> None:
+        self._ctx = ctx
+        self._pid = pid
+        self._requested = requested
+        self._session_id = session_id
+        self._packet_id = packet_id
+        self._code = code
+
+    def __call__(self) -> str | None:
+        self._ctx.sessions.require_ack(self._session_id, self._packet_id, self._code)
+        session = db_find_one(
+            self._ctx.store, "sessions", {"id": self._session_id}, columns=["project_id", "worktree"]
+        )
+        if not session or session["project_id"] != self._pid:
+            raise ValueError("resume_required: memory belongs to another project")
+        return selected_memory_scope(self._pid, self._requested, session["worktree"])
+
+    def refresh(self) -> None:
+        if getattr(self._ctx.store._local, "transaction", None) is None:  # inside one, keep the earlier capture
+            self._code = self._ctx.sessions.code_scope(self._session_id, self._packet_id)
 
 
 def make_auth_dependency(ctx: ServiceContext) -> list[Any]:
@@ -59,14 +99,20 @@ def make_auth_dependency(ctx: ServiceContext) -> list[Any]:
     return [Depends(authorize)]
 
 
-def resolve_project(ctx: ServiceContext, identifier: str) -> dict:
+def resolve_project(ctx: ServiceContext, identifier: str) -> ProjectRecord:
     try:
-        return ctx.store.resolve_project(identifier)
+        return cast(ProjectRecord, ctx.store.resolve_project(identifier))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-def write_scoped(ctx: ServiceContext, pid: str, session_id: str | None, packet_id: str | None, operation):
+def write_scoped[T](
+    ctx: ServiceContext,
+    pid: str,
+    session_id: str | None,
+    packet_id: str | None,
+    operation: Callable[[str | None], T],
+) -> T:
     """Session validation and the resulting mutation share one writer transaction.
 
     The worktree's code state is hashed before that transaction begins: inside it, a slow worktree let
@@ -106,13 +152,13 @@ def write_scoped(ctx: ServiceContext, pid: str, session_id: str | None, packet_i
             return operation(scope)
 
 
-def with_dropped(ctx: ServiceContext, result: dict) -> dict:
+def with_dropped(ctx: ServiceContext, result: MemoryRecord | dict[str, Any]) -> dict[str, Any]:
     """A copy of a write's result for the answer only (#325): the metadata keys the version before it held
     and this one does not (reported proof, criteria links, an external checkpoint's fields). Read from the
     immutable revision before, so the store's result, and everything stored from it, stays as it was.
     """
     if result.get("version", 1) < 2:
-        return result
+        return dict(result)
     prev = db_find_one(
         ctx.store,
         "record_revisions",
@@ -121,7 +167,7 @@ def with_dropped(ctx: ServiceContext, result: dict) -> dict:
     )
     held = ((prev.get("snapshot") or {}).get("metadata") or {}) if prev else {}
     dropped = sorted(name for name in held if name not in (result.get("metadata") or {}))
-    return {**result, "metadata_dropped": dropped} if dropped else result
+    return {**result, "metadata_dropped": dropped} if dropped else dict(result)
 
 
 def read_scope(
@@ -141,13 +187,13 @@ def read_scope(
     return scope
 
 
-def selected_memory_scope(pid: str, requested: str | None, scope: str | None):
+def selected_memory_scope(pid: str, requested: str | None, scope: str | None) -> str | None:
     if scope and requested and str(Path(requested).expanduser().resolve()) != scope:
         raise ValueError("resume_required: memory worktree does not match the session")
     return scope or requested
 
 
-def person_imports(body) -> None:
+def person_imports(body: Any) -> None:
     """A memory import writes records that count as confirmed and can move on what a person confirmed
     here, so only a person runs it (#177): never a request that names a session. A dry run writes
     nothing and stays open to a session.
@@ -158,7 +204,7 @@ def person_imports(body) -> None:
         raise ValueError(IMPORT_IN_SESSION)
 
 
-def needs_shown_list(body) -> None:
+def needs_shown_list(body: Any) -> None:
     """A published import that replaces a person's verdicts carries the list the person was shown (#304)."""
     if body.expected_replaced is None:
         raise ValueError(
@@ -173,7 +219,7 @@ def memory_write_authorization(
     requested: str | None,
     session_id: str | None,
     packet_id: str | None,
-):
+) -> tuple[str | None, _MemoryWriteAuthorizer | None]:
     """Keep file-lock -> DB-lock ordering, rechecking the actor in core's transaction.
 
     The worktree is hashed outside any transaction (#255): here for the first check, and again by
@@ -186,26 +232,21 @@ def memory_write_authorization(
 
     drain_hook_spool(ctx.settings, ctx.store)
     code = ctx.sessions.code_scope(session_id, packet_id)
-
-    def require():
-        ctx.sessions.require_ack(session_id, packet_id, code)
-        session = db_find_one(ctx.store, "sessions", {"id": session_id}, columns=["project_id", "worktree"])
-        if not session or session["project_id"] != pid:
-            raise ValueError("resume_required: memory belongs to another project")
-        return selected_memory_scope(pid, requested, session["worktree"])
-
-    def refresh():
-        nonlocal code
-        if getattr(ctx.store._local, "transaction", None) is None:  # inside one, keep the earlier capture
-            code = ctx.sessions.code_scope(session_id, packet_id)
-
-    require.refresh = refresh
+    require = _MemoryWriteAuthorizer(ctx, pid, requested, session_id, packet_id, code)
     # Reject an already-unacknowledged actor before creating filesystem output.
     # Core invokes require again while capturing/importing in its transaction.
     return require(), require
 
 
-async def log_answer(ctx: ServiceContext, pid, body, scope, answer_schema, code, result) -> None:
+async def log_answer(
+    ctx: ServiceContext,
+    pid: str,
+    body: AskBody,
+    scope: str | None,
+    answer_schema: dict[str, Any] | None,
+    code: dict[str, Any],
+    result: dict[str, Any],
+) -> None:
     """Runs after the response is sent: a slow digest lookup or disk never delays an answer."""
     from cairnmind.agents import answer_log
 
@@ -238,7 +279,7 @@ def register_middleware_and_handlers(app: FastAPI, ctx: ServiceContext) -> None:
     from cairnmind.storage.arcade import ArcadeError
 
     @app.middleware("http")
-    async def migration_quiesce_middleware(request: Request, call_next):
+    async def migration_quiesce_middleware(request: Request, call_next: Callable[[Request], Any]) -> Any:
         from cairnmind.storage.migration import is_migration_in_progress
 
         if request.url.path not in {"/health", "/shutdown", "/internal/reload-store"} and is_migration_in_progress(
@@ -254,7 +295,7 @@ def register_middleware_and_handlers(app: FastAPI, ctx: ServiceContext) -> None:
         return await call_next(request)
 
     @app.exception_handler(ValueError)
-    async def bad_input(request: Request, exc: ValueError):
+    async def bad_input(request: Request, exc: ValueError) -> JSONResponse:
         from cairnmind.memory.confirmation import ConfirmationRefused
         from cairnmind.store import RecordRefused
 
@@ -276,13 +317,13 @@ def register_middleware_and_handlers(app: FastAPI, ctx: ServiceContext) -> None:
         return JSONResponse(status_code=status, content={"detail": str(exc)})
 
     @app.exception_handler(ArcadeError)
-    async def backend_unavailable(request: Request, exc: ArcadeError):
+    async def backend_unavailable(request: Request, exc: ArcadeError) -> JSONResponse:
         return JSONResponse(status_code=503, content={"detail": str(exc), "backend": "arcadedb"})
 
 
 def register_admin_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> None:
     @app.get("/health")
-    async def health():
+    async def health() -> dict[str, Any]:
         return {
             "service": SERVICE_NAMES[0],
             "version": __version__,
@@ -291,7 +332,7 @@ def register_admin_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) ->
         }
 
     @app.post("/internal/reload-store", dependencies=auth)
-    async def reload_store():
+    async def reload_store() -> dict[str, Any]:
         from cairnmind.storage.store_writer import StoreNotWriter
         from cairnmind.store import Store
 
@@ -321,7 +362,7 @@ def register_admin_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) ->
         return {"reloaded": True, "backend": ctx.active_backend_label()}
 
     @app.get("/status", dependencies=auth)
-    async def status(project: str | None = None):
+    async def status(project: str | None = None) -> dict[str, Any]:
         from cairnmind.agents import knowledge_mode
         from cairnmind.cli_cmds.topology import topology
         from cairnmind.memory.project_folders import unavailable
@@ -355,14 +396,14 @@ def register_admin_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) ->
         return report
 
     @app.post("/background-inference/enable", dependencies=auth)
-    async def enable_background_inference(body: BackgroundInferenceBody):
+    async def enable_background_inference(body: BackgroundInferenceBody) -> dict[str, Any]:
         from cairnmind.agents import knowledge_mode
         from cairnmind.cli_cmds.first_start import PROCESS_OFF, PROCESS_RESTART
 
         selected = await asyncio.to_thread(resolve_project, ctx, body.project)
         pid = selected["id"]
 
-        def authorize_enable(scope):
+        def authorize_enable(scope: str | None) -> None:
             requested = selected_memory_scope(pid, body.worktree, scope) or selected["root"]
             root = str(Path(requested).expanduser().resolve())
             if not db_find_one(ctx.store, "project_roots", {"project_id": pid, "path": root}, columns=["path"]):
@@ -383,7 +424,7 @@ def register_admin_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) ->
         kind: str | None = None,
         limit: int = 50,
         session_id: str | None = None,
-    ):
+    ) -> dict[str, Any]:
         try:
             pid = ctx.store.resolve_project(project)["id"]
         except ValueError:
@@ -393,7 +434,7 @@ def register_admin_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) ->
         return {"jobs": rows, "summary": await asyncio.to_thread(ctx.store.job_summary, pid), "limit": limit}
 
     @app.get("/jobs/{job_id}", dependencies=auth)
-    async def job_show(job_id: str, project: str, session_id: str | None = None):
+    async def job_show(job_id: str, project: str, session_id: str | None = None) -> dict[str, Any]:
         from cairnmind.store import JobNotFoundError
 
         try:
@@ -407,7 +448,7 @@ def register_admin_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) ->
             raise HTTPException(status_code=404, detail=str(exc)) from None
 
     @app.post("/jobs/{job_id}/retry", dependencies=auth)
-    async def job_retry(job_id: str, body: JobRetryBody):
+    async def job_retry(job_id: str, body: JobRetryBody) -> dict[str, Any]:
         from cairnmind.store import JobNotFoundError
 
         try:
@@ -433,7 +474,7 @@ def register_admin_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) ->
         return response
 
     @app.post("/shutdown", dependencies=auth)
-    async def shutdown():
+    async def shutdown() -> dict[str, Any]:
         callback = getattr(app.state, "shutdown", None)
         if callback:
             callback()
@@ -456,11 +497,11 @@ def _resolve_worktree_path(raw_worktree: str) -> str:
 
 def register_project_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> None:
     @app.get("/projects", dependencies=auth)
-    async def projects():
+    async def projects() -> list[dict[str, Any]]:
         return await asyncio.to_thread(ctx.store.list_projects)
 
     @app.post("/projects", dependencies=auth)
-    async def register_project(body: RegisterProjectBody):
+    async def register_project(body: RegisterProjectBody) -> dict[str, Any]:
         root = await asyncio.to_thread(_resolve_project_root, body.root)
         from cairnmind.memory.project_removal import add_outcome, removed_rows
 
@@ -480,7 +521,7 @@ def register_project_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) 
         return {"project": created, **scip_extra, **add_outcome(removed, known, created)[2]}
 
     @app.get("/project-roots", dependencies=auth)
-    async def project_roots(project: str):
+    async def project_roots(project: str) -> dict[str, Any]:
         found = ctx.store.resolve_project(project)
         rows = await asyncio.to_thread(
             db_find,
@@ -503,7 +544,7 @@ def register_project_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) 
         return {"roots": [row["path"] for row in rows], "unavailable": sorted(away, key=lambda i: i["root"])}
 
     @app.post("/ingest", dependencies=auth)
-    async def ingest(body: ProjectBody):
+    async def ingest(body: ProjectBody) -> dict[str, Any]:
         from cairnmind.scip.ingest import index_project
 
         result = await asyncio.to_thread(index_project, ctx.store, resolve_project(ctx, body.project)["id"])
@@ -511,7 +552,7 @@ def register_project_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) 
         return result
 
     @app.post("/import", dependencies=auth)
-    async def import_sources(body: ImportBody):
+    async def import_sources(body: ImportBody) -> dict[str, Any]:
         from cairnmind.scip.ingest import import_history
 
         pid = resolve_project(ctx, body.project)["id"] if body.project else None
@@ -522,7 +563,7 @@ def register_project_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) 
 
 def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> None:
     @app.post("/memory/preview", dependencies=auth)
-    async def memory_preview(body: MemoryPreviewBody):
+    async def memory_preview(body: MemoryPreviewBody) -> dict[str, Any]:
         pid = resolve_project(ctx, body.project)["id"]
         scope = await asyncio.to_thread(read_scope, ctx, pid, body.worktree, body.session_id)
         return await asyncio.to_thread(
@@ -536,7 +577,7 @@ def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -
         )
 
     @app.post("/memory/snapshot", dependencies=auth)
-    async def memory_snapshot(body: MemorySnapshotExportBody):
+    async def memory_snapshot(body: MemorySnapshotExportBody) -> dict[str, Any]:
         pid = resolve_project(ctx, body.project)["id"]
         scope, authorize = await asyncio.to_thread(
             memory_write_authorization, ctx, pid, body.worktree, body.session_id, body.packet_id
@@ -553,7 +594,7 @@ def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -
         )
 
     @app.post("/memory/inspect", dependencies=auth)
-    async def memory_inspect(body: MemoryInspectBody):
+    async def memory_inspect(body: MemoryInspectBody) -> dict[str, Any]:
         from cairnmind.memory.memory import inspect_snapshot
 
         result = await asyncio.to_thread(inspect_snapshot, body.path)
@@ -562,7 +603,7 @@ def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -
         return result
 
     @app.post("/memory/import", dependencies=auth)
-    async def memory_import(body: MemoryImportBody, request: Request):
+    async def memory_import(body: MemoryImportBody, request: Request) -> dict[str, Any]:
         from cairnmind.memory.memory import inspect_snapshot
 
         if body.replace_confirmed and not body.dry_run and not body.session_id:
@@ -574,7 +615,7 @@ def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -
         inspected = await asyncio.to_thread(inspect_snapshot, body.path)
         pid = inspected["project"]["id"]
 
-        def restore(scope, authorize=None):
+        def restore(scope: str | None, authorize: _MemoryWriteAuthorizer | None = None) -> dict[str, Any]:
             selected_memory_scope(pid, body.root, scope)
             person_imports(body)  # After the scope checks: a session learns of another project's memory as before.
             return ctx.memory.import_snapshot(
@@ -604,7 +645,7 @@ def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -
         return result
 
     @app.post("/memory/publish", dependencies=auth)
-    async def memory_publish(body: MemoryPublishBody):
+    async def memory_publish(body: MemoryPublishBody) -> dict[str, Any]:
         # Team memory (#170): one file per confirmed record, written into the worktree; never committed.
         from cairnmind.memory.memory_published import Publisher
 
@@ -622,7 +663,7 @@ def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -
         )
 
     @app.post("/memory/carrier", dependencies=auth)
-    async def memory_carrier(body: MemoryCarrierBody):
+    async def memory_carrier(body: MemoryCarrierBody) -> dict[str, Any]:
         # Where published memory goes (#173): a person's choice, never a coding session's; nothing is moved.
         from cairnmind.memory.memory_published_carrier import configure
 
@@ -633,7 +674,7 @@ def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -
         return await asyncio.to_thread(configure, ctx.store, pid, body.kind, body.path, worktree)
 
     @app.post("/memory/import-published", dependencies=auth)
-    async def memory_import_published(body: MemoryImportPublishedBody, request: Request):
+    async def memory_import_published(body: MemoryImportPublishedBody, request: Request) -> dict[str, Any]:
         if body.replace_confirmed and not body.dry_run and not body.session_id:
             # A request that names a session is refused below with its own sentence; it never carries the proof.
             await person_proof.require(request, ctx.settings, person_proof.IMPORT_REPLACE)
@@ -676,7 +717,7 @@ def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -
         return result
 
     @app.post("/memory/import-commit", dependencies=auth)
-    async def memory_import_commit(body: MemoryImportCommitBody, request: Request):
+    async def memory_import_commit(body: MemoryImportCommitBody, request: Request) -> dict[str, Any]:
         if body.replace_confirmed and not body.dry_run and not body.session_id:
             # A request that names a session is refused below with its own sentence; it never carries the proof.
             await person_proof.require(request, ctx.settings, person_proof.IMPORT_REPLACE)
@@ -710,7 +751,7 @@ def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -
         return result
 
     @app.post("/memory/heal", dependencies=auth)
-    async def memory_heal(body: MemoryHealBody):
+    async def memory_heal(body: MemoryHealBody) -> dict[str, Any]:
         from cairnmind.memory.quote_healing import heal_project_quotes
 
         pid = resolve_project(ctx, body.project)["id"]
@@ -756,7 +797,7 @@ def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -
         record_id: str | None = None,
         limit: int = 100,
         session_id: str | None = None,
-    ):
+    ) -> dict[str, Any]:
         from cairnmind.memory.quote_healing import healing_audit_log
 
         pid = ctx.store.resolve_project(project)["id"]
@@ -765,7 +806,11 @@ def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -
         return {"project_id": pid, "items": items, "total": len(items)}
 
     @app.get("/memory/status", dependencies=auth)
-    async def memory_status(project: str, worktree: str | None = None, session_id: str | None = None):
+    async def memory_status(
+        project: str,
+        worktree: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         pid = ctx.store.resolve_project(project)["id"]
         scope = await asyncio.to_thread(read_scope, ctx, pid, worktree, session_id)
         result = await asyncio.to_thread(ctx.memory.status, pid, scope)
@@ -775,7 +820,7 @@ def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -
         return result
 
     @app.patch("/memory/settings", dependencies=auth)
-    async def memory_settings(body: MemorySettingsBody):
+    async def memory_settings(body: MemorySettingsBody) -> dict[str, Any]:
         pid = resolve_project(ctx, body.project)["id"]
         return await asyncio.to_thread(
             write_scoped,
@@ -794,18 +839,18 @@ def register_memory_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -
 
 def register_plan_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> None:
     @app.get("/plans", dependencies=auth)
-    async def list_plans(project: str):
+    async def list_plans(project: str) -> dict[str, Any]:
         return {"plans": await asyncio.to_thread(ctx.plans.list, ctx.store.resolve_project(project)["id"])}
 
     @app.get("/plans/{plan_id}", dependencies=auth)
-    async def get_plan(plan_id: str, project: str):
+    async def get_plan(plan_id: str, project: str) -> dict[str, Any]:
         return await asyncio.to_thread(ctx.plans.get, ctx.store.resolve_project(project)["id"], plan_id)
 
     @app.post("/plans/save", dependencies=auth)
-    async def save_plan(body: PlanSaveBody):
+    async def save_plan(body: PlanSaveBody) -> dict[str, Any]:
         pid = resolve_project(ctx, body.project)["id"]
 
-        def save(scope):
+        def save(scope: str | None) -> dict[str, Any]:
             if scope and body.worktree and str(Path(body.worktree).expanduser().resolve()) != scope:
                 raise ValueError("resume_required: worktree does not match the session")
             return ctx.plans.save(
@@ -824,11 +869,11 @@ def register_plan_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> 
         return result
 
     @app.post("/plans/next", dependencies=auth)
-    async def next_task(body: PlanNextBody):
+    async def next_task(body: PlanNextBody) -> dict[str, Any]:
         pid = resolve_project(ctx, body.project)["id"]
         scope = await asyncio.to_thread(read_scope, ctx, pid, body.worktree, body.session_id)
 
-        def read():
+        def read() -> dict[str, Any]:
             result = ctx.plans.next_task(pid, body.plan_id, scope)
             if result.get("task") and result["task"].get("metadata", {}).get("scope"):
                 from cairnmind.memory.scope import drift_warning, scope_drift
@@ -841,10 +886,10 @@ def register_plan_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> 
         return await asyncio.to_thread(read)
 
     @app.post("/plans/activate", dependencies=auth)
-    async def activate_plan(body: PlanActivateBody):
+    async def activate_plan(body: PlanActivateBody) -> dict[str, Any]:
         pid = resolve_project(ctx, body.project)["id"]
 
-        def activate(scope):
+        def activate(scope: str | None) -> dict[str, Any]:
             if scope and body.worktree and str(Path(body.worktree).expanduser().resolve()) != scope:
                 raise ValueError("resume_required: worktree does not match the session")
             return ctx.plans.activate(pid, body.plan_id, scope or body.worktree)
@@ -856,7 +901,7 @@ def register_plan_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> 
 
 def register_session_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> None:
     @app.post("/sessions/prepare", dependencies=auth)
-    async def prepare_session(body: SessionPrepareBody):
+    async def prepare_session(body: SessionPrepareBody) -> dict[str, Any]:
         from cairnmind.memory.integrations import drain_hook_spool
 
         await asyncio.to_thread(drain_hook_spool, ctx.settings, ctx.store)
@@ -871,7 +916,7 @@ def register_session_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) 
         )
 
     @app.post("/sessions/context", dependencies=auth)
-    async def resume_context(body: SessionContextBody):
+    async def resume_context(body: SessionContextBody) -> dict[str, Any]:
         from cairnmind.memory.integrations import drain_hook_spool
 
         await asyncio.to_thread(drain_hook_spool, ctx.settings, ctx.store)
@@ -892,7 +937,7 @@ def register_session_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) 
         return await asyncio.to_thread(ctx.sessions.resume_context, body.session_id, body.short)
 
     @app.post("/sessions/ack", dependencies=auth)
-    async def acknowledge_resume(body: SessionAckBody):
+    async def acknowledge_resume(body: SessionAckBody) -> dict[str, Any]:
         from cairnmind.memory.integrations import drain_hook_spool
 
         await asyncio.to_thread(drain_hook_spool, ctx.settings, ctx.store)
@@ -901,7 +946,7 @@ def register_session_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) 
         )
 
     @app.post("/sessions/agent/archive", dependencies=auth)
-    async def archive_agent_session(body: AgentArchiveBody):
+    async def archive_agent_session(body: AgentArchiveBody) -> dict[str, Any]:
         # The body selects only a bound logical session. Paths, events and
         # claims of successful archiving are never supplied by the caller.
         result = await asyncio.to_thread(ctx.sessions.archive_agent_journal, body.session_id)
@@ -909,19 +954,27 @@ def register_session_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) 
         return result
 
     @app.get("/sessions/{session_id}", dependencies=auth)
-    async def session_status(session_id: str):
+    async def session_status(session_id: str) -> dict[str, Any]:
         return await asyncio.to_thread(ctx.sessions.status, session_id)
 
 
 def register_core_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> None:
     @app.get("/context", dependencies=auth)
-    async def context(project: str, worktree: str | None = None, session_id: str | None = None):
+    async def context(
+        project: str,
+        worktree: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         pid = ctx.store.resolve_project(project)["id"]
         scope = await asyncio.to_thread(read_scope, ctx, pid, worktree, session_id)
         return await asyncio.to_thread(ctx.retriever.context, pid, scope)
 
     @app.get("/brief", dependencies=auth)
-    async def brief(project: str, worktree: str | None = None, session_id: str | None = None):
+    async def brief(
+        project: str,
+        worktree: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         # Built from stored rows and Git only; this route never reaches the model queue.
         from cairnmind.memory.brief import build_brief
 
@@ -935,7 +988,7 @@ def register_core_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> 
         task_id: str | None = None,
         worktree: str | None = None,
         session_id: str | None = None,
-    ):
+    ) -> dict[str, Any]:
         from cairnmind.memory.verification import recover_interrupted_runs, verification_status
 
         pid = ctx.store.resolve_project(project)["id"]
@@ -946,7 +999,7 @@ def register_core_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> 
             check_where["task_id"] = task_id
         if scope:
             check_where["worktree"] = scope
-        rows = await asyncio.to_thread(
+        rows: Sequence[CheckRunRecord | Mapping[str, Any]] = await asyncio.to_thread(
             db_find,
             ctx.store,
             "check_runs",
@@ -974,7 +1027,7 @@ def register_core_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> 
         )
         result: dict[str, Any] = {"checks": [{key: row.get(key) for key in fields if key in row} for row in rows]}
         if task_id:
-            task = await asyncio.to_thread(
+            task: TaskRecord | dict[str, Any] | None = await asyncio.to_thread(
                 db_find_one,
                 ctx.store,
                 "records",
@@ -986,7 +1039,7 @@ def register_core_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> 
         return result
 
     @app.post("/ask", dependencies=auth)
-    async def ask(body: AskBody, background: BackgroundTasks):
+    async def ask(body: AskBody, background: BackgroundTasks) -> dict[str, Any]:
         from cairnmind.agents import knowledge_mode
         from cairnmind.agents.answer_contract import prepare_answer_schema
         from cairnmind.memory.verification import capture_code_state, load_profiles
@@ -1019,9 +1072,9 @@ def register_core_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> 
                 }
             return knowledge_mode.unavailable_answer(found, [*indexed.get("errors", []), *pending.get("errors", [])])
         keep = body.log if body.log is not None else getattr(ctx.settings, "answer_log", False) is True
-        code_state: dict = {}
+        code_state: dict[str, Any] = {}
 
-        def code_identity():
+        def code_identity() -> tuple[str, tuple[tuple[str, str], ...]] | None:
             try:
                 profiles = load_profiles(ctx.store, pid, scope)
                 inputs = sorted({path for profile in profiles.values() for path in profile["extra_inputs"]})
@@ -1098,7 +1151,7 @@ def register_core_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> 
         return {**result, "cached": False}
 
     @app.post("/remember", dependencies=auth)
-    async def remember(body: RememberBody):
+    async def remember(body: RememberBody) -> Any:
         from cairnmind.memory.remember_input import external_report_source, record_error
 
         error = record_error(body.record)
@@ -1108,7 +1161,7 @@ def register_core_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> 
             return JSONResponse(status_code=400, content={"detail": error, "refusal": "record"})
         pid = resolve_project(ctx, body.project)["id"]
 
-        def save(scope):
+        def save(scope: str | None) -> MemoryRecord:
             record = dict(body.record)
             if scope:
                 requested = record.get("worktree")
@@ -1126,7 +1179,7 @@ def register_core_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> 
         return await asyncio.to_thread(with_dropped, ctx, result) if body.name_dropped else result
 
     @app.post("/findings", dependencies=auth)
-    async def finding(body: FindingBody, request: Request):
+    async def finding(body: FindingBody, request: Request) -> dict[str, Any]:
         """A finding with a source created here, so it cannot claim another origin's id.
 
         Without a session it is a person's own write (origin workspace_form); with one, it is the
@@ -1144,7 +1197,7 @@ def register_core_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> 
         if error:
             raise ValueError(error)
 
-        def save(scope):
+        def save(scope: str | None) -> dict[str, Any]:
             # write_scoped calls this only after an acknowledged session check when a session is named.
             # The worktree only checks that the caller's view is genuine; the finding is project-wide.
             requested = selected_memory_scope(pid, body.worktree, scope) or selected["root"]
@@ -1167,7 +1220,7 @@ def register_core_routes(app: FastAPI, ctx: ServiceContext, auth: list[Any]) -> 
         return result
 
     @app.post("/checkpoint", dependencies=auth)
-    async def checkpoint(body: CheckpointBody):
+    async def checkpoint(body: CheckpointBody) -> dict[str, Any]:
         pid = resolve_project(ctx, body.project)["id"]
         result = await asyncio.to_thread(
             write_scoped,

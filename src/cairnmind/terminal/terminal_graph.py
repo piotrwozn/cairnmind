@@ -23,7 +23,8 @@ from textual.app import ComposeResult, ScreenStackError
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
-from textual.css.query import NoMatches
+from textual.css.query import NoMatches, QueryError
+from textual.dom import NoScreen
 from textual.screen import ModalScreen
 from textual.strip import Strip
 from textual.widget import Widget
@@ -35,6 +36,7 @@ from cairnmind.pal.terminal_safe import plain, safe_text
 from cairnmind.scip.code_graph import CODE_GRAPH_NOT_BUILT
 from cairnmind.terminal import terminal_theme
 from cairnmind.terminal.runtime_selection import resolve_tmux
+from cairnmind.terminal.terminal_client import BrokerError
 from cairnmind.terminal.terminal_i18n import localize_bindings
 from cairnmind.terminal.terminal_i18n_messages import display_word
 from cairnmind.terminal.terminal_ui import BasePanel
@@ -371,7 +373,7 @@ class TerminalGraph(Widget, can_focus=True):
 
     def mark_heading(self, focused):
         """The canvas has no frame of its own: the heading above it shows that the keys go to it."""
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError):
             self.app.query_one("#graph-heading").set_class(focused, "-focus")
 
     def action_left(self):
@@ -465,7 +467,7 @@ class GroupPicker(ModalScreen[dict | None]):
         self.fit_dialog()
 
     def fit_dialog(self):
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, TypeError):
             terminal_theme.fit_body(self, self.query_one(OptionList), 10 + self.notice_rows)
 
     @work(group="graph-group-page", exclusive=True)
@@ -815,5 +817,7 @@ class GraphApp(BasePanel):
     def on_unmount(self):
         self._active = False
         super().on_unmount()
-        with suppress(Exception):
-            self.broker.close()
+        close = getattr(self.broker, "close", None)
+        if callable(close):
+            with suppress(BrokerError, OSError, RuntimeError, ValueError):
+                close()

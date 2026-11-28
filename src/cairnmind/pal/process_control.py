@@ -12,7 +12,9 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Iterable
 from contextlib import suppress
+from typing import Any
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -86,19 +88,19 @@ if sys.platform == "win32":
     _kernel32.CloseHandle.restype = wintypes.BOOL
 
 
-def quote_arg(value) -> str:
+def quote_arg(value: object) -> str:
     """Quote a single CLI argument for display or command execution (Windows cmd/PS vs POSIX sh)."""
     text = str(value)
     return subprocess.list2cmdline([text]) if IS_WINDOWS else shlex.quote(text)
 
 
-def format_command(argv) -> str:
+def format_command(argv: Iterable[object]) -> str:
     """Format argv for display or command execution (list2cmdline on Windows, shlex.join on POSIX)."""
     items = [str(part) for part in argv]
     return subprocess.list2cmdline(items) if IS_WINDOWS else shlex.join(items)
 
 
-def detached_popen_kwargs() -> dict:
+def detached_popen_kwargs() -> dict[str, Any]:
     """Keyword arguments for spawning a long-lived background process (service, engine, broker)."""
     if not IS_WINDOWS or sys.platform != "win32":
         return {"start_new_session": True}
@@ -108,7 +110,7 @@ def detached_popen_kwargs() -> dict:
     return {"creationflags": flags}
 
 
-def group_popen_kwargs() -> dict:
+def group_popen_kwargs() -> dict[str, Any]:
     """Keyword arguments for spawning a child process in its own controllable group."""
     if not IS_WINDOWS or sys.platform != "win32":
         return {"start_new_session": True}

@@ -6,725 +6,98 @@ syntax, never from filename resemblance or generated answers.
 from __future__ import annotations
 
 import hashlib
-import json
-import math
 import os
-import re
-import subprocess
+import subprocess  # noqa: F401 - kept on module for tests patching ingest.subprocess.run
 import time
-from contextlib import contextmanager, suppress
-from datetime import UTC, datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
-from uuid import UUID
 
-import pathspec
-
-from cairnmind.agents.agent_memory import is_mcp_source
 from cairnmind.memory import project_folders
-from cairnmind.memory.impact_verdicts import is_verdict_source
 from cairnmind.memory.memory_paths import (
     bound_metadata,
     imported_source_ids,
     is_memory_path,
-    is_reserved_below,
     memory_bindings,
-    nested_reserved,
 )
-from cairnmind.memory.quote_healing import is_healing_audit_source
-from cairnmind.memory.secret_mask import ingest_masker, masked_metadata
-from cairnmind.pal.file_locks import lock_exclusive, unlock
+from cairnmind.memory.secret_mask import ingest_masker, masked_metadata  # noqa: F401
+from cairnmind.pal.file_locks import lock_exclusive, unlock  # noqa: F401
 from cairnmind.pal.path_spelling import has_alias, lies_in, path_identity, same_or_below
 from cairnmind.pal.terminal_safe import safe_text
-from cairnmind.scip.code_graph import code_graph_pending
-from cairnmind.scip.parsing import analyze_code, parser_identity
-from cairnmind.storage import graph_transactions
-from cairnmind.storage.arcade import ArcadeError
-from cairnmind.storage.embed_jobs import queue_embed_jobs
-from cairnmind.storage.graph_transactions import GraphTransactions, await_vertices
-from cairnmind.storage.journal import MAX_TRANSACTION_EVENTS
-from cairnmind.storage.sql import json_text as _json_text
-from cairnmind.storage.storage_query import (
-    any_of,
-    asc,
-    col,
-    db_count,
-    db_delete_where,
-    db_find,
-    db_find_one,
-    db_group_counts,
-    db_insert_document,
-    db_update_where,
-    db_upsert_document,
-    eq,
-    is_in,
-    is_not_null,
-    is_null,
-    ne,
-    not_in,
+from cairnmind.scip import ingest_batch as _ingest_batch
+from cairnmind.scip import ingest_graph as _ingest_graph
+from cairnmind.scip import ingest_history as _ingest_history
+from cairnmind.scip import ingest_walk as _ingest_walk
+from cairnmind.scip.ingest_batch import (  # noqa: F401 - re-exported for callers and tests
+    _KEPT_EDGE_KINDS,
+    _KEPT_NODE_KINDS,
+    _deactivate_source,
+    _deactivate_together,
+    _hanging_events,
+    _source_before,
+    _TooManyEvents,
+    _vector_tables,
 )
-
-MAX_FILE_BYTES = 2 * 1024 * 1024
-EXCLUDED_DIRS = {
-    ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__",
-    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".next", ".nuxt", "dist", "build",
-    "target", "vendor", ".idea", ".cairnmind", ".devbrain", ".terraform", ".ssh", ".aws", ".azure", ".gnupg",
-    ".codex", ".claude",
-}
-
-
-def excluded_directory(name: str) -> bool:
-    """Whether the indexer skips a directory of this name. A name with a leading dot (Git's, credentials',
-    clients') is compared without case: on a file system that ignores case `.SSH` is `.ssh` (#230). The
-    others (`Build`, `Vendor`) are compared exactly, as different folders on a file system that respects case."""
-    return name in EXCLUDED_DIRS or (name[:1] == "." and name.casefold() in EXCLUDED_DIRS)
-
-
-SECRET_NAMES = {".env", ".netrc", ".npmrc", ".pypirc", "credentials", "credentials.json", "id_rsa", "id_ed25519"}
-SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".keystore", ".sqlite", ".sqlite3", ".db"}
-GRAPH_EDGE_KINDS = ("imports", "defines", "calls", "references", "test_imports", "snapshot_of")
-GRAPH_NODE_KINDS = ("file", "symbol", "external_module", "unresolved_reference")
-TRANSCRIPT_PARSER_REVISION = 3
-UNKNOWN_TRANSCRIPT_WARNING = "Unknown transcript schema; raw record retained"
-CODEX_TECHNICAL_RECORDS = {"world_state", "token_usage_record"}
-_CLAUDE_TECHNICAL_FIELDS = {
-    "mode": {"mode": str},
-    "permission-mode": {"permissionMode": str},
-    "session-owner": {"accountUuid": str, "organizationUuid": str},
-    "atis-latch": {"atis": str},
-    "attachment": {"parentUuid": (type(None), str), "isSidechain": bool, "attachment": dict,
-                   "uuid": str, "timestamp": str, "userType": str, "entrypoint": str,
-                   "cwd": str, "version": str, "gitBranch": str},
-    "api-request-shape": {"shapeHash": str, "timestamp": str, "version": str, "shape": dict},
-    "api-request": {"id": str, "timestamp": str, "version": str, "querySource": str,
-                    "shapeHash": str, "params": dict, "keep": int, "tail": list,
-                    "cacheControl": list, "requestDigest": str},
-    "last-prompt": {"leafUuid": str},
-    "cost-state": {"totalCostUSD": (int, float), "totalAPIDuration": int,
-                   "totalAPIDurationWithoutRetries": int, "totalToolDuration": int,
-                   "totalLinesAdded": int, "totalLinesRemoved": int, "totalDuration": int,
-                   "startTime": int, "modelUsage": dict, "hasUnknownModelCost": bool},
-    "ai-title": {"aiTitle": str},
-    "tools-used": {"tools": list},
-}
-# Fields some client versions omit: absent is accepted, present must still have the type.
-# Claude Code 2.1.325 writes last-prompt records with only leafUuid (#155).
-_CLAUDE_OPTIONAL_FIELDS = {"last-prompt": {"lastPrompt": str}}
-CLAUDE_TECHNICAL_RECORDS = set(_CLAUDE_TECHNICAL_FIELDS)
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
-
-
-def _metadata(value: Any) -> dict:
-    if isinstance(value, dict):
-        return value
-    try:
-        return json.loads(value or "{}")
-    except (TypeError, ValueError):
-        return {}
-
-
-def _identifier(*parts: Any) -> str:
-    return hashlib.sha256("\x00".join(str(p) for p in parts).encode()).hexdigest()
-
-
-@contextmanager
-def _ingestion_lock(store, category: str, identity: str, *, deadline: float | None = None,
-                    waited: list | None = None):
-    """Serialize whole ingest operations across workers and CLI processes.
-
-    Native database transactions protect writes, but cannot prevent an older
-    filesystem scan from publishing its source snapshot after a newer scan.
-    These advisory locks cover that read/parse/write operation as one unit.
-    """
-    folder = store.data_dir / "locks"
-    folder.mkdir(exist_ok=True, mode=0o700)
-    filename = folder / f"{category}-{_identifier(identity)}.lock"
-    descriptor = os.open(filename, os.O_CREAT | os.O_RDWR, 0o600)
-    try:
-        if deadline is None:
-            try:
-                lock_exclusive(descriptor, blocking=False)
-            except BlockingIOError:
-                if waited is not None:
-                    waited.append(True)  # whoever held it may have changed what was read before
-                lock_exclusive(descriptor, blocking=True)
-        else:
-            while True:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("Transcript reparse deadline exceeded")
-                try:
-                    lock_exclusive(descriptor, blocking=False)
-                    break
-                except BlockingIOError:
-                    time.sleep(min(0.01, max(0, deadline - time.monotonic())))
-        yield
-    finally:
-        unlock(descriptor)
-        os.close(descriptor)
-
-
-def _git(root: Path, *args: str) -> str:
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(root), *args], capture_output=True, timeout=15,
-            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"}, check=False,
-        )
-        return result.stdout.decode("utf-8", "replace").strip() if result.returncode == 0 else ""
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-
-
-def _is_secret(path: Path) -> bool:
-    lower = path.name.lower()
-    return (
-        lower in SECRET_NAMES or lower.startswith(".env.") or lower.endswith(".credentials.json")
-        or path.suffix.lower() in SECRET_SUFFIXES
-    )
-
-
-_MANAGED_MCP_FILES = frozenset({
-    ".mcp.json",
-    ".cursor/mcp.json",
-    ".vscode/mcp.json",
-    ".roo/mcp.json",
-    ".codex/config.toml",
-    ".gemini/settings.json",
-    ".zed/settings.json",
-})
-_BACKUP_MARKERS = (".cairnmind.bak", ".cairnmind-backup-", ".devbrain-backup-")
-
-
-def _is_managed_mcp_config(path: Path, root: Path) -> bool:
-    """Skip generated MCP preset files and Cairnmind backups so adding a preset never creates false drift."""
-    if any(marker in path.name for marker in _BACKUP_MARKERS):
-        return True
-    try:
-        rel = path.relative_to(root).as_posix().casefold()
-    except ValueError:
-        return False
-    return rel in _MANAGED_MCP_FILES
-
-
-def _roots(store, project: dict) -> list[Path]:
-    rows = db_find(store, "project_roots", {"project_id": project["id"]}, columns=("path",))
-    return list(dict.fromkeys([Path(project["root"]).resolve(), *[Path(r["path"]).resolve() for r in rows]]))
-
-
-class _NestedMemory:
-    """The memory directories of the projects registered below a root (#174), which are their memory.
-
-    Every such directory lies under a `.memory` directory, so the registered roots are only read once a
-    path below the root has a part of that name: a walk or a freshness check of a tree with none costs
-    no query, as before #174."""
-
-    def __init__(self, store, root: Path):
-        self.store, self.root, self._bases = store, root, None
-
-    def covers(self, path: Path) -> bool:
-        try:
-            parts = path.relative_to(self.root).parts
-        except ValueError:
-            return False
-        if ".memory" not in (part.casefold() for part in parts):
-            return False
-        if self._bases is None:
-            self._bases = nested_reserved(self.store, self.root)
-        return is_reserved_below(Path(*parts), self._bases)
-
-
-def _walk_args(store, root: Path, errors: list[OSError], links: list | None = None):
-    """(excluded, errors, nested, links) for _files: what a walk of a root leaves out besides its own reserved
-    memory, the data directory and the memory directories of the projects registered below it (#174)."""
-    return (store.data_dir,), errors, _NestedMemory(store, root), links
-
-
-def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | None = None,
-           nested: _NestedMemory | None = None, links: list | None = None):
-    """Walk with nested `.gitignore` and `.cairnmindignore` rules. Symlinks are deliberately not followed.
-
-    Inside a Git worktree, candidate files are verified in one batched `git check-ignore --stdin -z --no-index`
-    call so Git negations (e.g. `!important.env`) and `.git/info/exclude` are honoured canonically.
-
-    A directory that cannot be listed is appended to `errors`: the walk is then incomplete,
-    and its caller must not treat the files it did not see as deleted. `nested`: the memory
-    directories of projects registered below the root (#174), also left out. `links` receives
-    (path, what it says) of every symlink in the directories the walk lists and leaves out: resolving an import follows
-    them, so a link that is moved, added or removed moves an import (#451).
-    """
-    from cairnmind.scip.ignore_rules import CAIRNMINDIGNORE, git_check_ignore, is_git_worktree
-
-    git_rules: dict[Path, pathspec.GitIgnoreSpec] = {}
-    cm_rules: dict[Path, pathspec.GitIgnoreSpec] = {}
-    # Also by identity: on a file system that ignores case the root may be registered with other letter
-    # case than the data directory is spelled with, and no text comparison sees that one lies in the other (#230).
-    excluded_ids = {path_identity(base) for base in excluded} - {None}
-
-    def left_out(path: Path) -> bool:
-        return (any(path.is_relative_to(base) for base in excluded) or (nested is not None and nested.covers(path))
-                or (bool(excluded_ids) and path_identity(path) in excluded_ids))
-
-    def link(item: Path) -> bool:
-        if not item.is_symlink():
-            return False
-        if links is not None:
-            # What the link says, one call: a chain, a loop and a broken link need no more, as every link inside the
-            # root is noted too. (A link outside the root that leads back in is not: it is treated as today.)
-            try:
-                target = os.readlink(item)
-                if os.name == "nt" and target.startswith("\\\\?\\") and not target.startswith("\\\\?\\UNC\\"):
-                    target = target[4:]
-                links.append((str(item), target))
-            except OSError:  # replaced under the walk: noted as gone, the signature differs and a pass resolves again
-                links.append((str(item), None))
-        return True
-
-    def matches(rules_map: dict[Path, pathspec.GitIgnoreSpec], item: Path, is_dir: bool = False) -> bool:
-        answer = False
-        for base, spec in sorted(rules_map.items(), key=lambda row: len(row[0].parts)):
-            if item.is_relative_to(base):
-                relative = item.relative_to(base).as_posix() + ("/" if is_dir else "")
-                checked = spec.check_file(relative)
-                if checked.include is not None:
-                    answer = checked.include
-        return answer
-
-    use_git = is_git_worktree(root)
-    candidates: list[Path] = []
-    for directory, dirs, names in os.walk(root, followlinks=False,
-                                          onerror=errors.append if errors is not None else None):
-        folder = Path(directory)
-        if is_memory_path(folder, root) or left_out(folder):
-            dirs[:] = []
-            continue
-        ignore = folder / ".gitignore"
-        if ignore.is_file() and not ignore.is_symlink():
-            with suppress(OSError):
-                git_rules[folder] = pathspec.GitIgnoreSpec.from_lines(ignore.read_text(encoding="utf-8", errors="replace").splitlines())
-        cm_ignore = folder / CAIRNMINDIGNORE
-        if cm_ignore.is_file() and not cm_ignore.is_symlink():
-            with suppress(OSError):
-                cm_rules[folder] = pathspec.GitIgnoreSpec.from_lines(cm_ignore.read_text(encoding="utf-8", errors="replace").splitlines())
-
-        dirs[:] = sorted(
-            name for name in sorted(dirs)  # sorted before the links are noted: the same order every round
-            if not (link(folder / name) or excluded_directory(name)) and not is_memory_path(folder / name, root)
-            # A memory package kept deeper in the tree, such as a sample, is somebody's stored memory
-            # and not text of this project: its rows are not indexed as sources.
-            and not (folder.name.casefold() == ".memory" and name.casefold() in ("cairnmind", "devbrain"))
-            and not left_out(folder / name)
-            and not matches(cm_rules, folder / name, True)
-            and not matches(git_rules, folder / name, True)
-        )
-        for name in sorted(names):
-            path = folder / name
-            if link(path) or _is_secret(path) or _is_managed_mcp_config(path, root) or matches(cm_rules, path):
-                continue
-            if use_git:
-                candidates.append(path)
-            elif not matches(git_rules, path):
-                yield path
-
-    if use_git and candidates:
-        rel_map = [(path, path.relative_to(root).as_posix()) for path in candidates]
-        git_ignored = git_check_ignore(root, [rel for _, rel in rel_map], no_index=True)
-        for path, rel in rel_map:
-            if git_ignored is not None:
-                if rel not in git_ignored:
-                    yield path
-            elif not matches(git_rules, path):
-                yield path
-
-
-MANAGED_FILES = frozenset({"AGENTS.md", "CLAUDE.md", "cairnmind-recorder.md"})  # where `cairnmind install` writes its block; the recorder subagent's body (#376)
-
-
-def _indexed_spans(lines: list[str], uri: str) -> list[tuple[int, int]]:
-    """The [first, end) line ranges that are indexed: all of a file, except, in the managed files (AGENTS.md, CLAUDE.md and the recorder subagent's file), the lines of
-    Cairnmind's own block (#313), found as extraction finds it. An unclosed block is indexed as it is."""
-    if PurePosixPath(uri.replace("\\", "/")).name not in MANAGED_FILES:
-        return [(0, len(lines))]
-    from cairnmind.agents.extraction_input import OWN_BLOCK
-    text, spans, start = "\n".join(lines), [], 0
-    for match in OWN_BLOCK.finditer(text):
-        spans.append((start, text.count("\n", 0, match.start())))
-        start = text.count("\n", 0, match.end()) + 1
-    spans.append((start, len(lines)))
-    return [(first, end) for first, end in spans if end > first]
-
-
-def _chunks(text: str, uri: str = ""):
-    """The windows of a text as (content, first line, last line), numbered as the file is. ``uri`` names the file: the
-    managed block of AGENTS.md and CLAUDE.md is left out of it; the source text itself stays whole."""
-    lines = text.splitlines()
-    for first, stop in _indexed_spans(lines, uri):
-        start = first
-        while start < stop:
-            end = start
-            size = 0
-            while end < stop and end - start < 80:
-                length = len(lines[end]) + 1
-                if end > start and size + length > 6000:
-                    break
-                size += length
-                end += 1
-            if end == start:
-                end += 1
-            content = "\n".join(lines[start:end])
-            # A minified line still remains fully archived and searchable in pieces.
-            if len(content) > 6000:
-                for offset in range(0, len(content), 6000):
-                    yield content[offset:offset + 6000], start + 1, end
-            else:
-                yield content, start + 1, end
-            start = max(start + 1, end - 12) if end < stop else end
-
-
-def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: dict | None = None) -> int:
-    with _ingestion_lock(store, "chunks", source_id), store.transaction() as tx:
-        sources = db_find(
-            tx,
-            "sources",
-            {"id": source_id},
-            columns=("project_id", "is_current", "uri", "kind", "metadata"),
-        )
-        if not sources or sources[0]["project_id"] != project_id:
-            raise ValueError("Chunk source does not belong to the requested project")
-        if is_verdict_source(sources[0]) or is_mcp_source(sources[0]) or is_healing_audit_source(sources[0]):
-            return 0  # a person's verdict or healing audit note is never searchable text
-        if sources[0].get("is_current") is False:
-            return 0  # replaced meanwhile: its chunks were deleted with it and are not written again (#186)
-        existing = db_find(tx, "chunks", {"source_id": source_id}, columns=("id", "line_start", "line_end"))
-        uri = sources[0]["uri"]
-        if existing and PurePosixPath(uri.replace("\\", "/")).name in MANAGED_FILES and (
-                {(row["line_start"], row["line_end"]) for row in existing}
-                != {(first, last) for _, first, last in _chunks(text, uri)}):
-            # A block indexed before #313 leaves the index here, the next time the project is indexed.
-            store.drop_chunks(tx, [source_id])
-            store._delete_old_vectors(tx, [source_id])
-            existing = []
-        ids = []
-        if not existing:
-            for number, (content, first, last) in enumerate(_chunks(text, uri)):
-                chunk_id = _identifier(project_id, source_id, number, first, last, content)
-                db_insert_document(
-                    tx,
-                    "chunks",
-                    {
-                        "id": chunk_id,
-                        "project_id": project_id,
-                        "source_id": source_id,
-                        "text": content,
-                        "line_start": first,
-                        "line_end": last,
-                        "metadata": metadata or {},
-                        "is_current": sources[0]["is_current"],
-                    },
-                )
-                ids.append(chunk_id)
-        else:
-            ids = [row["id"] for row in existing]
-    # Replaying this is intentional: a crash after chunk commit but before
-    # enqueue must not leave permanently unindexed evidence.
-    queue_embed_jobs(store, project_id, ids)
-    return 0 if existing else len(ids)
-
+from cairnmind.scip.ingest_graph import (  # noqa: F401 - re-exported for callers and tests
+    GRAPH_EDGE_KINDS,
+    GRAPH_NODE_KINDS,
+    _code_nodes,
+    _graph_as_remembered,
+    _graph_markers,
+    _node_digest,
+    _resolve_import,
+    _stored_graph_is,
+    _union,
+)
+from cairnmind.scip.ingest_history import (  # noqa: F401 - re-exported for callers and tests
+    _CLAUDE_OPTIONAL_FIELDS,
+    _CLAUDE_TECHNICAL_FIELDS,
+    _POLLED,
+    CLAUDE_TECHNICAL_RECORDS,
+    CODEX_TECHNICAL_RECORDS,
+    TRANSCRIPT_PARSER_REVISION,
+    UNKNOWN_TRANSCRIPT_WARNING,
+    _at_end,
+    _claude_technical_metadata,
+    _codex_technical_metadata,
+    _event_cwd,
+    _event_text,
+    _fingerprint,
+    _save_cursor,
+    _source_project,
+    _technical_metadata_client,
+    _validate_reparse_options,
+)
+from cairnmind.scip.ingest_walk import (  # noqa: F401 - re-exported for callers and tests
+    _BACKUP_MARKERS,
+    _MANAGED_MCP_FILES,
+    EXCLUDED_DIRS,
+    MANAGED_FILES,
+    MAX_FILE_BYTES,
+    SECRET_NAMES,
+    SECRET_SUFFIXES,
+    _chunks,
+    _file_identity,
+    _files,
+    _git,
+    _identifier,
+    _indexed_spans,
+    _is_managed_mcp_config,
+    _is_secret,
+    _json,
+    _metadata,
+    _NestedMemory,
+    _now,
+    _roots,
+    _walk_args,
+    excluded_directory,
+)
+from cairnmind.scip.parsing import analyze_code, parser_identity
+from cairnmind.storage.graph_transactions import GraphTransactions, await_vertices  # noqa: F401
+from cairnmind.storage.journal import MAX_TRANSACTION_EVENTS
+from cairnmind.storage.storage_query import col, db_find, db_update_where
 
 FILES_PER_TRANSACTION = 8
 EVENTS_PER_TRANSACTION = 200  # far below the number at which the journal stops naming single rows
-_KEPT_NODE_KINDS = ("source", "decision", "task", "fact", "constraint", "question", "preference", "checkpoint")
-_KEPT_EDGE_KINDS = ("supported_by", "depends_on", "supersedes")
-
-
-class _TooManyEvents(Exception):
-    """A group wrote more journal events than EVENTS_PER_TRANSACTION; raised to roll it back."""
-
-
-def _deactivate_together(store, tx, source_ids: list[str]) -> None:
-    """What ``snapshot`` and ``_deactivate_source`` do to one replaced source, for several in one statement each."""
-    db_update_where(
-        tx,
-        "sources",
-        set_fields={"is_current": False, "current_key": None},
-        where=[is_in("id", source_ids)],
-    )
-    store.drop_chunks(tx, source_ids)
-    db_update_where(
-        tx,
-        "nodes",
-        set_fields={"is_current": False},
-        where=[is_in("source_id", source_ids), not_in("kind", _KEPT_NODE_KINDS)],
-    )
-    db_update_where(
-        tx,
-        "edges",
-        set_fields={"is_current": False},
-        where=[is_in("source_id", source_ids), not_in("kind", _KEPT_EDGE_KINDS)],
-    )
-    store._delete_old_vectors(tx, source_ids)
-
-
-def _within_limit(tx, limit: int = EVENTS_PER_TRANSACTION) -> None:
-    """What was counted before the write can be out of date by then: checked again, before the commit."""
-    if hasattr(tx, "pending") and len(tx.pending()) > limit:
-        raise _TooManyEvents
-
-
-def _vector_tables(store) -> int:
-    return sum(
-        1
-        for row in db_find(store, "vector_indexes", columns=("type_name",))
-        if str(row.get("type_name") or "").startswith("vector_")
-    )
-
-
-def _hanging_events(store, source_ids: list[str], vector_tables: int) -> dict[str, int]:
-    """The journal events that deactivating each of these sources writes, counted before anything is written.
-
-    One for the source, one per chunk it deletes, one per node and edge it deactivates, one per vector it
-    deletes. On real code the graph rows of the old source outweigh what the new one writes.
-    """
-    weights = dict.fromkeys(source_ids, 1)
-    if not source_ids:
-        return weights
-    live = any_of(eq("is_current", True), is_null("is_current"))
-    for table, extra_where, times in (
-            ("chunks", (), 1),
-            ("nodes", (live, not_in("kind", _KEPT_NODE_KINDS)), 1),
-            ("edges", (live, not_in("kind", _KEPT_EDGE_KINDS)), 1),
-            ("embeddings", (), 1 + vector_tables)):
-        for row in db_group_counts(
-            store,
-            table,
-            ("source_id",),
-            [is_in("source_id", source_ids), *extra_where],
-            count_alias="n",
-        ):
-            if row.get("source_id") in weights:
-                weights[row["source_id"]] += int(row.get("n") or 0) * times
-    return weights
-
-
-def _groups(items: list, cost) -> list[list]:
-    """Consecutive groups whose costs add up to at most EVENTS_PER_TRANSACTION; a costlier item stands alone."""
-    groups, total = [], 0
-    for item in items:
-        if not groups or total + cost(item) > EVENTS_PER_TRANSACTION:
-            groups.append([])
-            total = 0
-        groups[-1].append(item)
-        total += cost(item)
-    return groups
-
-
-def _deactivate_sources(store, source_ids: list[str]) -> None:
-    """Deactivate the sources of deleted files, up to FILES_PER_TRANSACTION in one transaction.
-
-    The rows and the journal events are those of ``_deactivate_source`` for each. What hangs on each source is
-    counted first, so that no group holds more than EVENTS_PER_TRANSACTION events; a source over it alone is
-    deactivated as before. A group that wrote more all the same is rolled back and written source by source.
-    """
-    vectors = _vector_tables(store) if source_ids else 0
-    for offset in range(0, len(source_ids), FILES_PER_TRANSACTION):
-        part = source_ids[offset:offset + FILES_PER_TRANSACTION]
-        weights = _hanging_events(store, part, vectors)
-        for group in _groups(part, weights.__getitem__):
-            if len(group) == 1:
-                _deactivate_source(store, group[0])
-                continue
-            try:
-                with store.transaction() as tx:
-                    _deactivate_together(store, tx, group)
-                    _within_limit(tx)
-            except _TooManyEvents:
-                for source_id in group:
-                    _deactivate_source(store, source_id)
-
-
-def _write_files(store, project_id: str, batch: list[dict]) -> list:
-    """Write the files of a group, source, chunks and jobs, in one transaction; return what was written.
-
-    A file without a current source is written as ``snapshot_new`` writes it. A file with ``replaces``
-    replaces that source as ``snapshot`` does: the old source and what hangs on it are deactivated and
-    their vectors deleted. The rows and the journal events are those of ``snapshot``, ``_write_chunks``
-    and ``enqueue``. A file is stored whole or not at all, so nothing is left for a later run to repair.
-
-    Returns one source per file for a leading part of the batch, possibly all of it. The caller sizes groups
-    from what it counted before; a group that wrote more journal events than EVENTS_PER_TRANSACTION all
-    the same is rolled back and its first half tried alone, and the caller sends the rest again. A file
-    alone may hold up to the journal's own limit, under which every event is still named, as it was when
-    the file took ``snapshot``. None for a file means nothing was written for it and the caller takes the
-    ordinary path: its URI had a current source other than the one it was to replace, or the file alone
-    writes more events than that.
-    """
-    try:
-        return _write_files_once(store, project_id, batch,
-                                 EVENTS_PER_TRANSACTION if len(batch) > 1 else MAX_TRANSACTION_EVENTS)
-    except _TooManyEvents:
-        if len(batch) == 1:
-            return [None]
-        return _write_files(store, project_id, batch[:len(batch) // 2])
-
-
-def _write_files_once(store, project_id: str, batch: list[dict], limit: int = EVENTS_PER_TRANSACTION) -> list:
-    sources = []
-    with store.transaction() as tx:
-        store._require_project(tx, project_id)
-        keys = {item["uri"]: _json_text([project_id, item["uri"]]) for item in batch if item.get("replaces")}
-        current = {
-            row["current_key"]: row["id"]
-            for row in db_find(
-                tx,
-                "sources",
-                [is_in("current_key", list(keys.values())), eq("is_current", True)],
-                columns=("id", "current_key"),
-            )
-        } if keys else {}
-        # Replaced only when the source read before the walk is still the current one.
-        replacing = {item["uri"]: item["replaces"] for item in batch
-                     if item.get("replaces") and current.get(keys[item["uri"]]) == item["replaces"]}
-        if replacing:
-            _deactivate_together(store, tx, list(replacing.values()))
-        for item in batch:
-            if item.get("replaces"):
-                source = (store.new_source(tx, project_id, item["uri"], item["content"], item["kind"], item["metadata"])
-                          if item["uri"] in replacing else None)
-            else:
-                source = store.snapshot_new(tx, project_id, item["uri"], item["content"], item["kind"], item["metadata"])
-            sources.append(source)
-            if source is None or is_verdict_source(source) or is_mcp_source(source) or is_healing_audit_source(source):
-                continue
-            for number, (content, first, last) in enumerate(item["chunks"]):
-                chunk_id = _identifier(project_id, source["id"], number, first, last, content)
-                db_insert_document(
-                    tx,
-                    "chunks",
-                    {
-                        "id": chunk_id,
-                        "project_id": project_id,
-                        "source_id": source["id"],
-                        "text": content,
-                        "line_start": first,
-                        "line_end": last,
-                        "metadata": item["chunk_metadata"],
-                        "is_current": True,
-                    },
-                )
-                store.enqueue_new(tx, "embed", project_id, {"chunk_id": chunk_id}, f"embed:{chunk_id}")
-            if item["extract"]:
-                store.enqueue_new(tx, "extract", project_id, {"source_id": source["id"]}, f"extract:{source['id']}")
-        _within_limit(tx, limit)
-    return sources
-
-
-def _source_before(store, project_id: str, uri: str):
-    return db_find_one(store, "sources", {"project_id": project_id, "uri": uri, "is_current": True})
-
-
-def _deactivate_source(store, source_id: str) -> None:
-    with store.transaction() as tx:
-        db_update_where(
-            tx,
-            "sources",
-            set_fields={"is_current": False, "current_key": None},
-            where={"id": source_id},
-        )
-        store.drop_chunks(tx, [source_id])
-        db_update_where(
-            tx,
-            "nodes",
-            set_fields={"is_current": False},
-            where=[eq("source_id", source_id), not_in("kind", _KEPT_NODE_KINDS)],
-        )
-        db_update_where(
-            tx,
-            "edges",
-            set_fields={"is_current": False},
-            where=[eq("source_id", source_id), not_in("kind", _KEPT_EDGE_KINDS)],
-        )
-        store._delete_old_vectors(tx, [source_id])
-
-
-def index_pending_sources(store, limit: int = 100) -> dict:
-    """Index archived memory/evidence sources created outside file importers.
-
-    CLI notes, verification evidence and checkpoints are already literal source
-    snapshots; their content must participate in semantic retrieval too. This
-    does not read their provenance paths or extract more facts from summaries.
-    Unknown custom source kinds are eligible only when they explicitly provide
-    a nonempty normalized text view and are not files/transcripts/generated
-    answers. Unassigned inbox data never enters a project's search index.
-    """
-    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 1000:
-        raise ValueError("Pending source batch limit must be between 1 and 1000")
-    known_kinds = ("manual", "checkpoint", "verification", "test_result", "plan")
-    excluded_kinds = ("code", "file", "transcript", "transcript_unknown", "agent_answer", "generated_answer")
-    removed_projects = sorted({
-        row["id"]
-        for row in db_find(store, "projects", [is_not_null("removed_at")], columns=("id",))
-        if row.get("id") is not None
-    })
-    source_where = [
-        eq("is_current", True),
-        is_not_null("project_id"),
-        not_in("kind", excluded_kinds),
-        any_of(is_in("kind", known_kinds), is_null("metadata.path")),
-        # Third-party MCP events (agent_memory.is_mcp_source) are never chunked: not even loaded here.
-        any_of(
-            ne("kind", "agent_transcript"),
-            is_null("metadata.origin_evidence"),
-            ne("metadata.origin_evidence", "degraded"),
-        ),
-    ]
-    if removed_projects:
-        source_where.append(not_in("project_id", removed_projects))
-    candidates = db_find(store, "sources", source_where, order_by=(asc("created_at"), asc("id")))  # #327
-    chunked: set[str] = set()
-    candidate_ids = [row["id"] for row in candidates if row.get("id") is not None]
-    for offset in range(0, len(candidate_ids), 400):
-        for chunk_row in db_find(
-            store,
-            "chunks",
-            [is_in("source_id", candidate_ids[offset:offset + 400])],
-            columns=("source_id",),
-            distinct=True,
-        ):
-            if chunk_row.get("source_id") is not None:
-                chunked.add(chunk_row["source_id"])
-    rows = [row for row in candidates if row.get("id") not in chunked]
-    counts = {"sources": 0, "chunks": 0, "errors": []}
-    for row in rows:
-        if is_verdict_source(row) or is_mcp_source(row) or is_healing_audit_source(row):
-            continue  # an audit note on an impact list or quote healing: kept and exported, never chunked
-        metadata = _metadata(row["metadata"])
-        normalized = metadata.get("normalized_text")
-        text = normalized if isinstance(normalized, str) and normalized.strip() else row["content"]
-        if row["kind"] not in known_kinds and (
-            not isinstance(normalized, str) or not normalized.strip() or metadata.get("derived")
-        ):
-            continue
-        if not text.strip():
-            continue
-        try:
-            added = _write_chunks(store, row["project_id"], row["id"], text, {
-                "source_kind": row["kind"], "role": metadata.get("role", "unknown"),
-                "derived": row["kind"] == "checkpoint" or bool(metadata.get("derived")),
-                "index_origin": "pending_sources",
-            })
-            counts["sources"] += 1
-            counts["chunks"] += added
-        except (OSError, ValueError, ArcadeError) as exc:
-            counts["errors"].append(f"{row['id']}: {exc}")
-        if counts["sources"] >= limit:
-            break
-    return counts
-
 
 # The tree signature of the last complete indexing done by this process, per store and project.
 _INDEXED: dict[tuple[str, str], str] = {}
@@ -742,41 +115,214 @@ RACY_WINDOW_NS = 2_000_000_000
 _REMEMBERED: dict[tuple[str, str], dict] = {}
 
 
-def _file_identity(status: os.stat_result, ctime_ns: int | None = None) -> tuple:
-    return (status.st_dev, status.st_ino, status.st_mode, status.st_size,
-            status.st_mtime_ns, status.st_ctime_ns if ctime_ns is None else ctime_ns)
+def _ingestion_lock(
+    store,
+    category: str,
+    identity: str,
+    *,
+    deadline: float | None = None,
+    waited: list | None = None,
+):
+    return _ingest_batch._ingestion_lock(
+        store,
+        category,
+        identity,
+        deadline=deadline,
+        waited=waited,
+        lock_exclusive_fn=lock_exclusive,
+        time_mod=time,
+    )
+
+
+def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: dict | None = None) -> int:
+    return _ingest_batch._write_chunks(
+        store,
+        project_id,
+        source_id,
+        text,
+        metadata,
+        ingestion_lock_fn=_ingestion_lock,
+        chunks_fn=_chunks,
+    )
+
+
+def _within_limit(tx, limit: int | None = None) -> None:
+    _ingest_batch._within_limit(tx, EVENTS_PER_TRANSACTION if limit is None else limit)
+
+
+def _groups(items: list, cost) -> list[list]:
+    return _ingest_batch._groups(items, cost, events_per_tx=EVENTS_PER_TRANSACTION)
+
+
+def _deactivate_sources(store, source_ids: list[str]) -> None:
+    _ingest_batch._deactivate_sources(
+        store,
+        source_ids,
+        files_per_tx=FILES_PER_TRANSACTION,
+        events_per_tx=EVENTS_PER_TRANSACTION,
+        hanging_events_fn=_hanging_events,
+        deactivate_source_fn=_deactivate_source,
+        within_limit_fn=_within_limit,
+    )
+
+
+def _write_files(store, project_id: str, batch: list[dict]) -> list:
+    return _ingest_batch._write_files(
+        store,
+        project_id,
+        batch,
+        events_per_tx=EVENTS_PER_TRANSACTION,
+        write_files_once_fn=_write_files_once,
+        write_files_fn=_write_files,
+    )
+
+
+def _write_files_once(store, project_id: str, batch: list[dict], limit: int | None = None) -> list:
+    return _ingest_batch._write_files_once(
+        store,
+        project_id,
+        batch,
+        EVENTS_PER_TRANSACTION if limit is None else limit,
+        within_limit_fn=_within_limit,
+    )
+
+
+def index_pending_sources(store, limit: int = 100) -> dict:
+    return _ingest_batch.index_pending_sources(store, limit, write_chunks_fn=_write_chunks)
 
 
 def _tree_state(store, project_id: str, listing: dict | None = None) -> tuple[str, int, bool, list[dict]]:
-    """The signature, the newest file time seen, whether every directory could be listed, and the folders
-    that are not available on this machine (#371): those are named in the signature and never walked.
-    `listing` receives what the walk found, so that the indexing that follows does not walk again (#409)."""
-    from cairnmind.pal.private_files import change_time_ns
-    project = store.resolve_project(project_id)
-    entries: list[Any] = [parser_identity()]
-    newest, errors, away = 0, [], []
-    links: list[tuple[str, str]] = []
-    if listing is not None:
-        listing.update(files={}, errors=errors, links=links)
-    for folder in project_folders.folder_states(store, project):
-        root = Path(folder["root"])
-        if folder["state"] != "available":
-            entries.append([folder["root"], folder["state"]])
-            away.append(folder)
-            continue
-        walked = [] if listing is None else listing["files"].setdefault(folder["root"], [])
-        for path in _files(root, *_walk_args(store, root, errors, links)):
-            walked.append(path)
-            try:
-                status = os.stat(path, follow_symlinks=False)
-            except OSError:
-                entries.append([str(path), None])
-                continue
-            ctime_ns = change_time_ns(path, status)
-            entries.append([str(path), status.st_size, status.st_mtime_ns, ctime_ns])
-            newest = max(newest, status.st_mtime_ns, ctime_ns)
-    entries.extend(links)  # a link moved, added or removed alone changes the signature, so a pass runs (#451)
-    return hashlib.sha256(_json(entries).encode()).hexdigest(), newest, not errors, away
+    return _ingest_walk._tree_state(
+        store,
+        project_id,
+        listing,
+        files_fn=_files,
+        parser_identity_fn=parser_identity,
+    )
+
+
+def _stored_analyses(store, source_ids: list[str]) -> dict[str, dict | None]:
+    return _ingest_graph._stored_analyses(store, source_ids, parser_identity_fn=parser_identity)
+
+
+def _graph_parts(project_id: str, indexed: dict[Path, dict], reuse: dict) -> tuple[dict, dict, dict]:
+    return _ingest_graph._graph_parts(project_id, indexed, reuse, node_digest_fn=_node_digest)
+
+
+def _build_graph(
+    store,
+    project_id: str,
+    indexed: dict[Path, dict],
+    remembered: dict | None = None,
+    state: dict | None = None,
+    retried: bool = False,
+    links: tuple = (),
+) -> dict:
+    return _ingest_graph._build_graph(
+        store,
+        project_id,
+        indexed,
+        remembered,
+        state,
+        retried,
+        links,
+        parser_identity_fn=parser_identity,
+        await_vertices_fn=await_vertices,
+        graph_parts_fn=_graph_parts,
+        stored_graph_is_fn=_stored_graph_is,
+        build_graph_fn=_build_graph,
+        time_mod=time,
+    )
+
+
+def reparse_history_sources(
+    store,
+    path: Path,
+    project_id: str,
+    client: str = "auto",
+    limit: int = 1000,
+    *,
+    deadline: float | None = None,
+) -> dict:
+    return _ingest_history.reparse_history_sources(
+        store,
+        path,
+        project_id,
+        client,
+        limit,
+        deadline=deadline,
+        ingestion_lock_fn=_ingestion_lock,
+        reparse_locked_fn=_reparse_history_sources_locked,
+    )
+
+
+def _reparse_history_sources_locked(
+    store,
+    path: Path,
+    project_id: str | None,
+    client: str = "auto",
+    limit: int = 1000,
+    *,
+    deadline: float | None = None,
+) -> dict:
+    return _ingest_history._reparse_history_sources_locked(
+        store,
+        path,
+        project_id,
+        client,
+        limit,
+        deadline=deadline,
+        technical_metadata_client_fn=_technical_metadata_client,
+        source_project_fn=_source_project,
+        chunks_fn=_chunks,
+        max_file_bytes=MAX_FILE_BYTES,
+        time_mod=time,
+    )
+
+
+def import_history(store, path: Path, project_id: str | None, client: str = "auto") -> dict:
+    return _ingest_history.import_history(
+        store,
+        path,
+        project_id,
+        client,
+        ingestion_lock_fn=_ingestion_lock,
+        import_locked_fn=_import_history_locked,
+    )
+
+
+def _import_history_locked(store, path: Path, project_id: str | None, client: str = "auto") -> dict:
+    return _ingest_history._import_history_locked(
+        store,
+        path,
+        project_id,
+        client,
+        import_history_fn=import_history,
+        ingest_masker_fn=ingest_masker,
+        reparse_locked_fn=_reparse_history_sources_locked,
+        source_project_fn=_source_project,
+        event_text_fn=_event_text,
+        write_chunks_fn=_write_chunks,
+        save_cursor_fn=_save_cursor,
+    )
+
+
+def poll_imports(store) -> dict:
+    return _ingest_history.poll_imports(
+        store,
+        polled=_POLLED,
+        ingest_masker_fn=ingest_masker,
+        import_history_fn=import_history,
+    )
+
+
+def register_default_histories(store, project_id: str, root: Path) -> dict:
+    return _ingest_history.register_default_histories(
+        store,
+        project_id,
+        root,
+        import_history_fn=import_history,
+    )
 
 
 def tree_signature(store, project_id: str) -> str:
@@ -965,6 +511,7 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                         path, root, name, identity, settled = item["place"]
                         finish(path, root, name, identity, settled, source, item["analysis"], len(item["chunks"]), False)
                 group = group[len(written):]  # what a group too large to commit left over
+
     for folder in folders:
         root = Path(folder["root"])
         if folder["state"] != "available":
@@ -1151,1090 +698,6 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
     if state is not None:
         state.update(parser=parser_identity(), files=files, graph=graph)
     return counts
-
-
-def _stored_analyses(store, source_ids: list[str]) -> dict[str, dict | None]:
-    """The analysis stored with each source, or None where it is of another parser version or missing."""
-    found: dict[str, dict | None] = {identifier: None for identifier in source_ids}
-    for offset in range(0, len(source_ids), 500):
-        for row in db_find(
-            store,
-            "sources",
-            [is_in("id", source_ids[offset:offset + 500])],
-            columns=("id", col("metadata.analysis", "analysis"), col("metadata.analysis_version", "version")),
-        ):
-            version = row.get("version")
-            if ((version == parser_identity() or (isinstance(version, str) and version.startswith("scip-v1:")))
-                    and isinstance(row.get("analysis"), dict)):
-                found[row["id"]] = row["analysis"]
-    return found
-
-
-def _graph_markers(store, project_id: str) -> dict:
-    """What the graph markers of the project say, for a run that left the graph as it was."""
-    marker = db_find_one(store, "projects", {"id": project_id}, columns=("graph_nodes", "graph_edges"))
-    return {"nodes": int((marker.get("graph_nodes") if marker else 0) or 0),
-            "edges": int((marker.get("graph_edges") if marker else 0) or 0), "graph_unchanged": True}
-
-
-def _resolve_import(path: Path, root: Path, module: str, indexed: dict[Path, dict]) -> Path | None:
-    if not module:
-        return None
-    if path.suffix in {".py", ".pyi"}:
-        dots = len(module) - len(module.lstrip("."))
-        if dots:
-            base = path.parent
-            for _ in range(dots - 1):
-                base = base.parent
-            target = base / module[dots:].replace(".", "/")
-        else:
-            target = root / module.replace(".", "/")
-        candidates = [target.with_suffix(".py"), target / "__init__.py"]
-    else:
-        if not module.startswith("."):
-            return None  # Package aliases need configuration, not a guess.
-        target = path.parent / module
-        candidates = [target]
-        for suffix in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"):
-            candidates.extend([Path(str(target) + suffix), target / f"index{suffix}"])
-        # TypeScript often names emitted .js while the source is .ts.
-        if target.suffix == ".js":
-            candidates.extend([target.with_suffix(".ts"), target.with_suffix(".tsx")])
-    def reached(candidate: Path) -> Path | None:
-        try:
-            return candidate.resolve()
-        except (RuntimeError, OSError):  # a loop of symlinks leads nowhere: the import stays unresolved (#451)
-            return None
-    return next((found for found in map(reached, candidates) if found in indexed), None)
-
-
-def _node_digest(item: dict) -> bytes:
-    return hashlib.blake2b(_json(item).encode(), digest_size=16).digest()
-
-
-def _graph_as_remembered(tx, project_id: str, remembered: dict | None) -> bool:
-    """Whether the graph in the database is still the one this process wrote last."""
-    if not remembered:
-        return False
-    marker = db_find_one(
-        tx,
-        "projects",
-        {"id": project_id},
-        columns=("graph_fingerprint", "graph_nodes", "graph_edges"),
-    )
-    if not marker or marker.get("graph_fingerprint") != remembered["fingerprint"]:
-        return False
-    if (int(marker.get("graph_nodes") or 0), int(marker.get("graph_edges") or 0)) != remembered["counts"]:
-        return False
-    if db_count(tx, "edges", [eq("project_id", project_id), is_in("kind", GRAPH_EDGE_KINDS)]) != remembered["counts"][1]:
-        return False
-    # The nodes that are not evidence nodes: counted, not read one by one, to know that none was added or taken (#426).
-    return (
-        db_count(tx, "nodes", [eq("project_id", project_id), is_in("kind", GRAPH_NODE_KINDS)])
-        == remembered["code_nodes"]
-    )
-
-
-def _code_nodes(digests: dict) -> int:
-    """The nodes of a graph that `_build_graph` may delete: every node but the evidence nodes of the sources."""
-    return sum(1 for identifier in digests if not identifier.startswith("source:"))
-
-
-def _union(parts: dict) -> tuple[dict[str, bytes], set[str]]:
-    """The digest of every node and the id of every edge of a graph, from its parts."""
-    nodes: dict[str, bytes] = {}
-    edges: set[str] = set()
-    for part in parts.values():
-        for digests, ids in (part["first"], part["second"]):
-            nodes.update(digests)
-            edges |= ids
-    return nodes, edges
-
-
-def _graph_parts(project_id: str, indexed: dict[Path, dict], reuse: dict) -> tuple[dict, dict, dict]:
-    """The graph that follows from `indexed`: its parts, and the rows (nodes, edges) that were computed for them.
-
-    A part is what one file adds: `first` is its own rows (the file, its source and its symbols), `second` the
-    rows of its imports and calls, which look at the symbols of the files it imports; each is the digests of the
-    nodes and the ids of the edges. `reuse` are the parts of the last graph of this process, for the very same
-    files: then only a file whose source changed is computed again, and the files that import a file whose
-    symbols changed (a name, or a line, is in the id of a symbol). Resolving an import looks only at which files
-    exist, and these are the same. The parts, and so the graph, are those of a computation of every file.
-    """
-    tables: dict[Path, dict[str, list[dict]]] = {}
-    firsts: dict[Path, tuple[dict, dict]] = {}
-
-    def emitters(nodes: dict, edges: dict):
-        def node(kind: str, label: str, source_id: str | None, metadata: dict, identity: str | None = None) -> str:
-            identifier = _identifier(project_id, kind, identity or label)
-            nodes[identifier] = {"id": identifier, "project_id": project_id, "kind": kind,
-                                 "label": label, "source_id": source_id, "metadata": metadata}
-            return identifier
-
-        def edge(first: str, second: str, kind: str, source_id: str, line: int = 0):
-            identifier = _identifier(project_id, first, second, kind, source_id, line)
-            edges[identifier] = {"id": identifier, "project_id": project_id, "from_id": first, "to_id": second,
-                                 "kind": kind, "source_id": source_id, "status": "observed"}
-        return node, edge
-
-    def file_node(path: Path) -> str:
-        return _identifier(project_id, "file", str(path))
-
-    def first(path: Path) -> tuple[dict, dict]:
-        if path not in firsts:
-            entry = indexed[path]
-            source = entry["source"]
-            nodes, edges = {}, {}
-            node, edge = emitters(nodes, edges)
-            identifier = node("file", str(path), source["id"], {"path": str(path)}, str(path))
-            # Store.remember uses exactly this evidence-node identity. Bridging the
-            # immutable snapshot to the file node connects decision/task provenance
-            # to real code dependencies without guessing a semantic relationship.
-            source_node = f"source:{source['id']}"
-            nodes[source_node] = {
-                "id": source_node, "project_id": project_id, "kind": "source", "label": source["uri"],
-                "source_id": source["id"], "metadata": {"source_id": source["id"], "source_kind": source["kind"]},
-            }
-            edge(source_node, identifier, "snapshot_of", source["id"])
-            tables[path] = {}
-            for item in entry["analysis"]["symbols"]:
-                symbol = node("symbol", item["name"], source["id"], {**item, "path": str(path)},
-                              f"{path}:{item['name']}:{item['line_start']}")
-                tables[path].setdefault(item["name"], []).append({**item, "id": symbol})
-                edge(identifier, symbol, "defines", source["id"], item["line_start"])
-            firsts[path] = nodes, edges
-        return firsts[path]
-
-    resolved: dict[tuple, Path | None] = {}
-
-    def lead(path: Path, root: Path, module: str) -> Path | None:
-        # What an import leads to depends on the kind of file, the folder it starts from and the module only; a
-        # standard module is looked for by many files.
-        key = path.suffix in {".py", ".pyi"}, path.parent if module.startswith(".") else root, module
-        if key not in resolved:
-            resolved[key] = _resolve_import(path, root, module, indexed)
-        return resolved[key]
-
-    def leads_to(path: Path) -> tuple:
-        entry = indexed[path]
-        if entry["analysis"].get("source") == "scip":
-            return tuple(
-                Path(item["target_path"]) for item in entry["analysis"].get("resolved_imports", ())
-                if Path(item["target_path"]) in indexed
-            )
-        return tuple(lead(path, entry["root"], item["module"]) for item in entry["analysis"]["imports"])
-
-    def _scip_symbol_id(target_path: Path, name: str, line_start: int) -> str | None:
-        if target_path not in indexed:
-            return None
-        first(target_path)
-        for cand in tables[target_path].get(name, ()):
-            if cand.get("line_start") == line_start:
-                return cand["id"]
-        return None
-
-    def second(path: Path) -> tuple[dict, dict, set[Path]]:
-        entry = indexed[path]
-        source_id = entry["source"]["id"]
-        nodes, edges, targets = {}, {}, set()
-        node, edge = emitters(nodes, edges)
-        first(path)
-        symbols = tables[path]
-        imported: dict[str, tuple[Path, str]] = {}
-        namespace: dict[str, Path] = {}
-        is_test = (
-            path.name.startswith("test_")
-            or bool(re.search(r"[._](test|spec)\.", path.name))
-            or bool(re.search(r"(Tests?|Spec)\.(java|kt|kts|cs|php)$", path.name))
-        )
-        if entry["analysis"].get("source") == "scip":
-            for item in entry["analysis"].get("resolved_imports", ()):
-                target = Path(item["target_path"])
-                if target not in indexed:
-                    continue
-                targets.add(target)
-                target_id = file_node(target)
-                edge(file_node(path), target_id, "imports", source_id, item["line"])
-                if is_test:
-                    edge(file_node(path), target_id, "test_imports", source_id, item["line"])
-            for item in entry["analysis"].get("external_imports", ()):
-                target_id = node("external_module", item["module"], None, {"unresolved": False, "source": "scip"})
-                edge(file_node(path), target_id, "imports", source_id, item["line"])
-            for edge_kind, key_name in (("calls", "resolved_calls"), ("references", "resolved_references")):
-                for item in entry["analysis"].get(key_name, ()):
-                    target_path = Path(item["target_path"])
-                    target_sym = _scip_symbol_id(target_path, item["target_name"], item["target_line"])
-                    if target_sym is None:
-                        continue
-                    if target_path != path:
-                        targets.add(target_path)
-                    owner_id = file_node(path)
-                    if item.get("owner_name") and item.get("owner_line"):
-                        resolved_owner = _scip_symbol_id(path, item["owner_name"], item["owner_line"])
-                        if resolved_owner is not None:
-                            owner_id = resolved_owner
-                    edge(owner_id, target_sym, edge_kind, source_id, item["line"])
-            return nodes, edges, targets
-        for item in entry["analysis"]["imports"]:
-            module = item["module"]
-            target = lead(path, entry["root"], module)
-            if target is None:
-                target_id = node("external_module", module, None, {"unresolved": True})
-            else:
-                targets.add(target)
-                target_id = file_node(target)
-                aliases = item.get("aliases", {})
-                for name in item.get("names", []):
-                    local = aliases.get(name, name)
-                    if name in {module, "*"}:
-                        namespace[local] = target
-                    else:
-                        imported[local] = (target, name)
-            edge(file_node(path), target_id, "imports", source_id, item["line"])
-            if is_test and target is not None:
-                edge(file_node(path), target_id, "test_imports", source_id, item["line"])
-        for item in entry["analysis"]["calls"]:
-            label = item["name"]
-            candidates = symbols.get(label, [])
-            if label in imported:
-                target, original = imported[label]
-                first(target)
-                candidates = tables[target].get(original, [])
-            if "." in label:
-                head, last = label.rsplit(".", 1)
-                if head in namespace:
-                    first(namespace[head])
-                    candidates = tables[namespace[head]].get(last, [])
-            # A call in a parameter's default belongs to the function, not to the parameter.
-            owner_candidates = [
-                symbol for group in symbols.values() for symbol in group
-                if symbol["line_start"] <= item["line"] <= symbol["line_end"] and symbol.get("kind") != "parameter"
-            ]
-            owner = min(owner_candidates, key=lambda s: s["line_end"] - s["line_start"])["id"] if owner_candidates else file_node(path)
-            if len(candidates) == 1:
-                edge(owner, candidates[0]["id"], "calls", source_id, item["line"])
-            else:
-                target_id = node(
-                    "unresolved_reference", label, source_id,
-                    {"path": str(path), "line": item["line"], "unresolved": True}, f"{path}:{label}:{item['line']}",
-                )
-                edge(owner, target_id, "references", source_id, item["line"])
-        return nodes, edges, targets
-
-    def part(rows: tuple[dict, dict]) -> tuple[dict, set]:
-        return {identifier: _node_digest(item) for identifier, item in rows[0].items()}, set(rows[1])
-
-    parts: dict[Path, dict] = dict(reuse)
-    nodes: dict[str, dict] = {}
-    edges: dict[str, dict] = {}
-    keys = {
-        path: (
-            entry["source"]["id"],
-            entry["source"]["uri"],
-            entry["source"]["kind"],
-            str(entry["root"]),
-            entry["analysis"].get("scip_version", ""),
-        )
-        for path, entry in indexed.items()
-    }
-    changed = [path for path in indexed if path not in reuse or reuse[path]["key"] != keys[path]]
-    moved: set[Path] = set()
-    for path in changed:
-        rows = first(path)
-        # With multiplicity: two symbols of one id make a call ambiguous, and one does not.
-        symbols = tuple(sorted(item["id"] for group in tables[path].values() for item in group))
-        if not reuse or reuse[path]["symbols"] != symbols:
-            moved.add(path)
-        parts[path] = {"key": keys[path], "symbols": symbols, "first": part(rows)}
-        nodes.update(rows[0])
-        edges.update(rows[1])
-    # Resolving an import follows a symlink, which the walk leaves out: where every import leads is asked again, and
-    # a file whose imports lead elsewhere is computed again though no file changed.
-    for path in set(changed) | {path for path, old in reuse.items() if old["deps"] & moved or old["leads"] != leads_to(path)}:
-        second_nodes, second_edges, targets = second(path)
-        parts[path] = {
-            **parts[path],
-            "deps": frozenset(targets),
-            "leads": leads_to(path),
-            "second": part((second_nodes, second_edges)),
-        }
-        nodes.update(second_nodes)
-        edges.update(second_edges)
-    return parts, nodes, edges
-
-
-def _stored_graph_is(store, project_id: str, nodes: dict[str, dict], edges: dict[str, dict]) -> bool:
-    """Whether the database holds these graph rows as a full replace would write them, read row by row.
-
-    The fingerprint does not cover everything the graph follows from (the root a file was
-    reached through steers import resolution), so a computed graph is remembered as the
-    stored one only after it was compared with what is stored.
-    """
-    stored_edges = db_find(
-        store,
-        "edges",
-        [eq("project_id", project_id), is_in("kind", GRAPH_EDGE_KINDS)],
-        columns=("id", "from_id", "to_id", "kind", "source_id", "status", "is_current"),
-    )
-    # Every computed row belongs to a current source or to none, so a full replace writes it as current.
-    if len(stored_edges) != len(edges) or any(
-            row["id"] not in edges or row.get("is_current") is not True
-            or any(row.get(key) != edges[row["id"]][key] for key in ("from_id", "to_id", "kind", "source_id", "status"))
-            for row in stored_edges):
-        return False
-    stored_nodes = {
-        row["id"]: row
-        for row in db_find(
-            store,
-            "nodes",
-            [eq("project_id", project_id), is_in("kind", (*GRAPH_NODE_KINDS, "source"))],
-            columns=("id", "kind", "label", "source_id", "metadata", "is_current"),
-        )
-    }
-    return all(
-        identifier in stored_nodes and stored_nodes[identifier].get("is_current") is True
-        and stored_nodes[identifier].get("kind") == item["kind"] and stored_nodes[identifier].get("label") == item["label"]
-        and stored_nodes[identifier].get("source_id") == item["source_id"]
-        and _metadata(stored_nodes[identifier].get("metadata")) == item["metadata"]
-        for identifier, item in nodes.items())
-
-
-def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: dict | None = None,
-                 state: dict | None = None, retried: bool = False, links: tuple = ()) -> dict:
-    """Write the graph that follows from `indexed`.
-
-    With `remembered`, the graph this process wrote last, only rows that differ are written,
-    provided the database still holds exactly that graph. Otherwise every row is replaced.
-    `state` receives what was written, for the next call. `links` are the symlinks the walk saw and where they
-    lead: resolving an import follows them, and the fingerprint, which holds only files, does not (#451).
-    """
-    fingerprint = _identifier(parser_identity(), *[
-        f"{path}:{indexed[path]['source']['id']}"
-        + (f":{indexed[path]['analysis']['scip_version']}" if indexed[path]["analysis"].get("scip_version") else "")
-        for path in sorted(indexed)
-    ])
-    marker = db_find_one(
-        store,
-        "projects",
-        {"id": project_id},
-        columns=("graph_fingerprint", "graph_nodes", "graph_edges"),
-    )
-    unchanged = marker is not None and marker.get("graph_fingerprint") == fingerprint
-    ours = unchanged and remembered is not None and remembered["fingerprint"] == fingerprint  # the stored graph is this process's
-    if unchanged and marker is not None and (state is None or (ours and remembered is not None and remembered.get("links", ()) == links)):
-        if state is not None and remembered is not None:
-            state.update(remembered)
-        return {"nodes": int(marker.get("graph_nodes") or 0),
-                "edges": int(marker.get("graph_edges") or 0), "graph_unchanged": True}
-    # The last graph of this process is the start only for the very same files, and when the stored fingerprint
-    # is not already ours (a graph that another writer made is compared row by row below).
-    last = remembered or {}
-    reuse = last.get("parts") or {}
-    if (unchanged and not ours) or last.get("parser") != parser_identity() or reuse.keys() != indexed.keys():
-        reuse = {}
-    parts, nodes, edges = _graph_parts(project_id, indexed, reuse)
-    digests, edge_ids = _union(parts)
-    written = {"fingerprint": fingerprint, "parser": parser_identity(), "parts": parts, "links": links,
-               "counts": (len(digests), len(edge_ids)), "code_nodes": _code_nodes(digests)}
-    # Not for a graph that is ours and only a link moved: the write below checks it against the remembered one
-    # by counts, and writes the rows that differ, as after a changed file.
-    if unchanged and marker is not None and not ours and _stored_graph_is(store, project_id, nodes, edges):
-        # The fingerprint said that the stored graph follows from these sources, and this
-        # process has now seen that it does, row for row. Otherwise it is replaced in full below.
-        if state is not None:
-            state.update(written)
-        return {"nodes": int(marker.get("graph_nodes") or 0),
-                "edges": int(marker.get("graph_edges") or 0), "graph_unchanged": True}
-
-    # One transaction for a graph that fits in one; else bounded ones, the fingerprint cleared first (graph_transactions.py).
-    batches = GraphTransactions(store, project_id)
-    try:
-        tx = batches.tx
-        if not db_find_one(tx, "projects", {"id": project_id}, columns=("id",)):
-            raise ValueError("Project no longer exists; graph was not rebuilt")
-        as_remembered = _graph_as_remembered(tx, project_id, remembered)  # reads the fingerprint: before it is cleared
-        if reuse and not as_remembered:
-            # Only the rows of the files that changed were computed, and the stored graph is not the remembered
-            # one: the rows of every file are needed to compare with it.
-            parts, nodes, edges = _graph_parts(project_id, indexed, {})
-            digests, edge_ids = _union(parts)
-            written.update(parts=parts, counts=(len(digests), len(edge_ids)), code_nodes=_code_nodes(digests))
-        db_update_where(tx, "projects", set_fields={"graph_fingerprint": None}, where={"id": project_id})
-        if as_remembered and remembered is not None:
-            before, kept = _union(remembered["parts"])
-            removed = sorted(kept - edge_ids)
-            changed_nodes = [item for identifier, item in nodes.items() if before.get(identifier) != digests[identifier]]
-            # The stored nodes are those the process wrote (counted above): the ones that go are known, not read.
-            doomed = sorted(identifier for identifier in before if identifier not in digests and not identifier.startswith("source:"))
-            carried = remembered.get("kept", frozenset()) - digests.keys()  # kept before, still not computed
-        else:
-            doomed = None
-            carried = frozenset()
-            # An edge's id names its ends, kind, source and line: a stored edge with a computed id and the marks a
-            # full replace gives it is that edge, and it stays. Deleting every edge and writing the same ids again
-            # left the engine's unique index holding entries of the deleted ones from about 40,000 edges on, and
-            # the write failed (#385). Only the stored edges that are not in the computed graph are deleted.
-            stored = db_find(
-                tx,
-                "edges",
-                [eq("project_id", project_id), is_in("kind", GRAPH_EDGE_KINDS)],
-                columns=("id", "from_id", "to_id", "kind", "source_id", "status", "is_current"),
-            )
-            kept = {row["id"] for row in stored
-                    if row["id"] in edges and row.get("is_current") is True
-                    and all(row.get(key) == edges[row["id"]][key] for key in ("from_id", "to_id", "kind", "source_id", "status"))}
-            removed = sorted(row["id"] for row in stored if row["id"] not in kept)
-            changed_nodes = list(nodes.values())
-        # A whole transaction's rows in one request: with the project in the condition the engine scans the project's
-        # index once per request, so groups of 500 made the scans, and the removal's cost, 80 times more (#385). By id
-        # alone it finds each edge in the index of its id (25 ms for 1,000 edges of 110,000, not 230, #426); the id
-        # holds the project, and the count below fails the write when a group is not deleted in full.
-        group = graph_transactions.ROWS_PER_TRANSACTION
-        for offset in range(0, len(removed), group):
-            part = removed[offset:offset + group]
-            deleted = store.backend.delete_graph_edges(batches.tx, project_id, part)
-            count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
-            if type(count) is int and count < len(part):
-                # The engine's index of ids missed rows (569 of 20,000 after two commits of the same write, the way
-                # it misses vertices committed a moment ago, graph_transactions.py): the project's index finds the rest.
-                rest = store.backend.delete_graph_edges(batches.tx, project_id, part, kinds=GRAPH_EDGE_KINDS)
-                more = rest[0].get("count") if isinstance(rest, list) and rest and isinstance(rest[0], dict) else None
-                count = count + more if type(more) is int else None
-            if type(count) is not int or count != len(part):
-                raise RuntimeError("The database did not delete every graph edge of a group")
-            batches.wrote(len(part))
-        new_edges = [item for identifier, item in edges.items() if identifier not in kept]
-        # The transaction reports the graph as reset, so its rows are written in groups (issue #167).
-        # What the upserts look up row by row is read in a few requests per group; the checks stay theirs.
-        step = min(1000, graph_transactions.ROWS_PER_TRANSACTION)
-        for offset in range(0, len(changed_nodes), step):
-            part = changed_nodes[offset:offset + step]
-            store.prefetch_graph(batches.tx, part, [])
-            store.write_graph(batches.tx, project_id, part, [])
-            batches.wrote(len(part))
-        if batches.commits and new_edges:  # the edges look their vertices up by the index of nodes.id
-            batches.commit()
-            await_vertices(store, [item["id"] for item in changed_nodes])
-            batches.open()
-        for offset in range(0, len(new_edges), step):
-            part = new_edges[offset:offset + step]
-            store.prefetch_graph(batches.tx, [], part)
-            store.write_graph(batches.tx, project_id, [], part)
-            batches.wrote(len(part))
-        tx = batches.tx
-        if hasattr(tx, "known"):
-            tx.known = None
-        if doomed is None:
-            previous_nodes = db_find(
-                tx,
-                "nodes",
-                [eq("project_id", project_id), is_in("kind", GRAPH_NODE_KINDS)],
-                columns=("id",),
-            )
-            doomed = [row["id"] for row in previous_nodes if row["id"] not in digests]
-        # Knowledge-record relationships referencing a removed code node must not silently
-        # become dangling: such a node is retained. The rest go in groups (issue #167).
-        kept_nodes = set(carried)
-        for offset in range(0, len(doomed), graph_transactions.ROWS_PER_TRANSACTION):
-            kept_nodes.update(store.remove_graph_nodes(batches.tx, project_id, doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION]) or ())
-            batches.wrote(len(doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION]))
-        # What the store holds is what was computed and what an edge keeps: the next pass counts exactly that.
-        written.update(kept=frozenset(kept_nodes), code_nodes=_code_nodes(digests) + len(kept_nodes))
-        # This marker commits with the last of the vertex/edge replacement, and until it does the graph is not built.
-        # An interrupted/failed graph write can never claim completion.
-        db_update_where(
-            batches.tx,
-            "projects",
-            set_fields={"graph_fingerprint": fingerprint, "graph_nodes": len(digests), "graph_edges": len(edge_ids)},
-            where={"id": project_id},
-        )
-        batches.commit()
-    except BaseException as exc:
-        batches.abandon()
-        if not graph_transactions.refused_by_id_index(exc):
-            raise
-        # The engine's index still holds the id of a vertex that an earlier pass deleted (a directory renamed and
-        # renamed back, #433) and the index cannot be asked about it: the commit was refused, or an edge found no
-        # endpoint, and the transaction was rolled back. The graph is written once more after a wait (the fingerprint
-        # is cleared if an earlier transaction committed, so it is the whole write); a second refusal fails by name.
-        if retried:
-            row = db_find_one(store, "projects", {"id": project_id}, columns=("graph_fingerprint",))
-            # Only a write of several transactions has committed anything: one that fits in one leaves the previous graph.
-            left = ("the code graph is marked not built" if not row or code_graph_pending(row) else
-                    "the previous code graph is kept, though it no longer matches the files")
-            raise RuntimeError(f"The database's index of vertex ids still refused a graph vertex whose id was deleted "
-                               f"shortly before, {graph_transactions.DUPLICATE_WAIT:g} s after the first refusal ({str(exc)[:300]}); "
-                               f"{left} and the next indexing writes the graph again") from exc
-        time.sleep(graph_transactions.DUPLICATE_WAIT)
-        return {**_build_graph(store, project_id, indexed, remembered, state, True, links), "graph_written_again": True}
-    if state is not None:
-        state.update(written)
-    return {"nodes": len(digests), "edges": len(edge_ids), "graph_unchanged": False,
-            "graph_written": {"nodes": len(changed_nodes), "edges": len(new_edges)}}
-
-
-def _save_cursor(store, path: Path, project_id: str | None, client: str, offset: int) -> None:
-    with store.transaction() as tx:
-        if project_id and not db_find_one(tx, "projects", {"id": project_id}, columns=("id",)):
-            raise ValueError("Project no longer exists; history cursor was not recreated")
-        db_upsert_document(
-            tx,
-            "import_cursors",
-            {"id": _identifier(path), "path": str(path), "project_id": project_id, "client": client,
-             "offset": offset, "fingerprint": _fingerprint(path, offset), "updated_at": _now()},
-            key_field="path",
-        )
-
-
-def _event_cwd(event: dict) -> str | None:
-    value = event.get("cwd")
-    if not value and isinstance(event.get("payload"), dict):
-        value = event["payload"].get("cwd")
-    return value if isinstance(value, str) else None
-
-
-def _codex_technical_metadata(event: dict) -> bool:
-    """Validate the two Codex 0.166 technical rollout payloads we understand.
-
-    These payloads carry accounting/state metadata, never user decisions. Keep
-    the original JSONL record rather than turning arbitrary state into text.
-    Unknown fields follow serde's forward-compatible handling; required fields
-    and their actual wire types must still match the official schema.
-    """
-    kind, payload = event.get("type"), event.get("payload")
-    if not isinstance(payload, dict):
-        return False
-    if kind == "world_state":
-        return type(payload.get("full")) is bool and isinstance(payload.get("state"), dict)
-    if kind != "token_usage_record":
-        return False
-    for key in ("thread_id", "session_id"):
-        if not isinstance(payload.get(key), str):
-            return False
-        try:
-            UUID(payload[key])
-        except ValueError:
-            return False
-    if not all(isinstance(payload.get(key), str) for key in ("turn_id", "root_turn_id", "response_id")):
-        return False
-    required = ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens")
-    for name in ("usage", "turn_token_usage", "thread_token_usage"):
-        usage = payload.get(name)
-        if not isinstance(usage, dict):
-            return False
-        for key in (*required, *(("cache_write_input_tokens",) if "cache_write_input_tokens" in usage else ())):
-            value = usage.get(key)
-            if type(value) is not int or not -(2**63) <= value < 2**63:
-                return False
-        budget = usage.get("codex_rollout_budget_units")
-        if budget is not None and (type(budget) not in {int, float}
-                                   or (isinstance(budget, float) and not math.isfinite(budget))):
-            return False
-    return True
-
-
-def _claude_technical_metadata(event: dict) -> bool:
-    """Validate the observed Claude bookkeeping envelopes, retaining opaque raw JSON.
-
-    These records are searchable source evidence, not independently authored
-    user decisions. Required wire fields and their types are checked; extra
-    fields and nested attachment/request/accounting payloads remain untouched.
-    """
-    kind = event.get("type")
-    if not isinstance(kind, str):
-        return False
-    fields = _CLAUDE_TECHNICAL_FIELDS.get(kind)
-    if fields is None or not isinstance(event.get("sessionId"), str):
-        return False
-    optional = _CLAUDE_OPTIONAL_FIELDS.get(kind, {})
-    for key, expected in (*fields.items(), *((k, v) for k, v in optional.items() if k in event)):
-        allowed = expected if isinstance(expected, tuple) else (expected,)
-        if key not in event or type(event[key]) not in allowed:
-            return False
-        if type(event[key]) is float and not math.isfinite(event[key]):
-            return False
-    return True
-
-
-def _technical_metadata_client(event: dict) -> str | None:
-    if _codex_technical_metadata(event):
-        return "codex"
-    if _claude_technical_metadata(event):
-        return "claude"
-    return None
-
-
-def _event_text(event: dict, client: str) -> tuple[str, str, str, bool]:
-    """Return normalized text, role, detected client, and schema recognition."""
-    kind = event.get("type", "")
-    if not isinstance(kind, str):
-        return "", "unknown", client, False
-    payload = event.get("payload")
-    if kind in CODEX_TECHNICAL_RECORDS:
-        return ("", "metadata", "codex", True) if _codex_technical_metadata(event) else ("", "unknown", client, False)
-    if kind in CLAUDE_TECHNICAL_RECORDS:
-        return ("", "metadata", "claude", True) if _claude_technical_metadata(event) else ("", "unknown", client, False)
-    if isinstance(payload, dict) and kind in {"session_meta", "turn_context"}:
-        return "", "metadata", "codex", True
-    if kind == "event_msg" and isinstance(payload, dict):
-        subkind = payload.get("type")
-        if subkind in {"user_message", "agent_message"}:
-            return str(payload.get("message", "")), "user" if subkind == "user_message" else "assistant", "codex", True
-        return "", "metadata", "codex", True
-    message = event.get("message")
-    if kind == "response_item" and isinstance(payload, dict):
-        client = "codex"
-        message = payload
-    elif isinstance(message, dict) and (kind in {"user", "assistant"} or "sessionId" in event):
-        client = "claude"
-    elif "role" in event and "content" in event:
-        message = event
-    elif kind in {"progress", "system", "summary", "file-history-snapshot", "queue-operation"}:
-        return str(event.get("summary", "")), "metadata", "claude" if client == "auto" else client, True
-    if isinstance(message, dict):
-        role = message.get("role", "tool" if message.get("type") in {"function_call", "function_call_output"} else "unknown")
-        content = message.get("content", message.get("output", ""))
-        if message.get("type") == "function_call":
-            content = f"Tool: {message.get('name', '')}\n{message.get('arguments', '')}"
-        if isinstance(content, list):
-            blocks = []
-            if content and all(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
-                # Claude represents tool responses inside role=user messages.
-                # They are not decisions or instructions authored by the user.
-                role = "tool"
-            for block in content:
-                if not isinstance(block, dict):
-                    continue
-                if isinstance(block.get("text"), str):
-                    blocks.append(block["text"])
-                elif block.get("type") == "tool_result":
-                    result = block.get("content", "")
-                    blocks.append(result if isinstance(result, str) else _json(result))
-                elif block.get("type") == "tool_use":
-                    blocks.append(f"Tool: {block.get('name', '')}\n{_json(block.get('input', {}))}")
-            content = "\n".join(blocks)
-        return str(content) if content is not None else "", str(role), client, True
-    return "", "unknown", client, False
-
-
-def _fingerprint(path: Path, offset: int = 0) -> str:
-    stat = path.stat()
-    # A prefix and the last committed bytes detect in-place rewrites as well as
-    # replacement/truncation, while remaining stable under ordinary appends.
-    with path.open("rb") as handle:
-        head = handle.readline(4096)
-        handle.seek(max(0, offset - 256))
-        tail = handle.read(min(256, offset))
-    return f"{stat.st_dev}:{stat.st_ino}:{hashlib.sha256(head).hexdigest()}:{hashlib.sha256(tail).hexdigest()}"
-
-
-def _source_project(store, requested: str | None, cwd: str | None) -> tuple[str | None, str | None]:
-    inferred = None
-    if cwd:
-        with suppress(ValueError):
-            inferred = store.resolve_project(cwd, recorded=True)["id"]
-    if requested and cwd and requested != inferred:
-        return None, (
-            "Declared working directory belongs to another project" if inferred
-            else "Declared working directory is outside the requested project's registered roots"
-        )
-    return requested or inferred, None
-
-
-def reparse_history_sources(store, path: Path, project_id: str, client: str = "auto", limit: int = 1000,
-                            *, deadline: float | None = None) -> dict:
-    """Repair only previously unknown, now understood technical client records.
-
-    The stored raw snapshot is the authority, including when its original file
-    has gone away. This does not replay cursors, replace evidence, extract
-    decisions, or change project attribution. Normal archive proof still has to
-    independently establish the captured transcript horizon.
-    """
-    path = Path(path).expanduser().resolve()
-    project_id = store.resolve_project(project_id)["id"]
-    _validate_reparse_options(client, limit, deadline)
-    with _ingestion_lock(store, "history", str(path), deadline=deadline):
-        return _reparse_history_sources_locked(store, path, project_id, client, limit, deadline=deadline)
-
-
-def _validate_reparse_options(client: str, limit: int, deadline: float | None) -> None:
-    if client not in {"auto", "codex", "claude"}:
-        raise ValueError("client must be auto, codex, or claude")
-    if type(limit) is not int or not 1 <= limit <= 1000:
-        raise ValueError("Transcript reparse limit must be between 1 and 1000")
-    if deadline is not None and (type(deadline) not in {int, float} or not math.isfinite(deadline)):
-        raise ValueError("Transcript reparse deadline must be a finite monotonic timestamp")
-
-
-def _reparse_history_sources_locked(store, path: Path, project_id: str | None, client: str = "auto",
-                                    limit: int = 1000, *, deadline: float | None = None) -> dict:
-    _validate_reparse_options(client, limit, deadline)
-    counts = {"repaired": 0, "unchanged": 0, "errors": []}
-    where = [
-        eq("is_current", True),
-        eq("kind", "transcript_unknown"),
-        eq("metadata.import_path", str(path)),
-        eq("metadata.schema_warning", UNKNOWN_TRANSCRIPT_WARNING),
-    ]
-    if project_id:
-        where.append(eq("project_id", project_id))
-    sources = db_find(
-        store,
-        "sources",
-        where,
-        order_by=(asc("metadata.byte_offset"), asc("id")),
-        limit=limit,
-    )
-    for source in sources:
-        if deadline is not None and time.monotonic() >= deadline:
-            raise TimeoutError("Transcript reparse deadline exceeded")
-        counts["unchanged"] += 1
-        metadata = _metadata(source.get("metadata"))
-        content = source.get("content")
-        if not isinstance(content, str) or len(content.encode("utf-8")) > MAX_FILE_BYTES:
-            counts["errors"].append(f"Transcript source {source['id']}: raw record exceeds the reparse budget")
-            continue
-        try:
-            event = json.loads(content)
-        except ValueError:
-            continue
-        detected = _technical_metadata_client(event) if isinstance(event, dict) else None
-        if detected is None:
-            continue
-        offset, session_id, original_client = (metadata.get("byte_offset"), metadata.get("session_id"),
-                                                metadata.get("client"))
-        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        if (source.get("sha256") != digest or not content.endswith("\n")
-                or type(offset) is not int or offset < 0 or not isinstance(session_id, str) or not session_id
-                or original_client not in {"auto", detected}
-                or client not in {"auto", detected}
-                or (detected == "claude" and event.get("sessionId") != session_id)
-                or source.get("uri") != f"transcript://{original_client}/{_identifier(path, session_id)}/{offset}/{digest}"
-                or metadata.get("role") != "unknown" or metadata.get("normalized_text") != ""):
-            counts["errors"].append(f"Transcript source {source['id']}: original provenance or raw hash does not match")
-            continue
-        cwd, event_cwd = metadata.get("cwd"), _event_cwd(event)
-        if ((cwd is not None and not isinstance(cwd, str)) or (event_cwd and event_cwd != cwd)
-                or _source_project(store, source["project_id"], cwd)[0] != source["project_id"]):
-            counts["errors"].append(f"Transcript source {source['id']}: working directory conflicts with its project")
-            continue
-        # Old unknown records were indexed as their raw JSON. Understood
-        # metadata schemas have the same raw text view, so retain every chunk
-        # identity and embedding. Only their derived role changes. A raw view
-        # whose known secrets were replaced (#182) was chunked from the masked
-        # view kept beside it.
-        view = metadata.get("indexed_text") if metadata.get("masked") else content
-        if not isinstance(view, str):
-            counts["errors"].append(f"Transcript source {source['id']}: raw chunk projection does not match")
-            continue
-        expected = {
-            _identifier(source["project_id"], source["id"], number, first, last, text): (text, first, last)
-            for number, (text, first, last) in enumerate(_chunks(view))
-        }
-        with store.transaction() as tx:
-            store._require_project(tx, source["project_id"])
-            current = db_find(
-                tx,
-                "sources",
-                {"id": source["id"], "project_id": source["project_id"], "is_current": True},
-            )
-            if (not current or current[0].get("kind") != "transcript_unknown"
-                    or current[0].get("sha256") != digest or current[0].get("content") != content
-                    or _metadata(current[0].get("metadata")) != metadata):
-                counts["errors"].append(f"Transcript source {source['id']}: source changed during reparse")
-                continue
-            chunks = db_find(tx, "chunks", {"source_id": source["id"]})
-            if (set(expected) != {chunk["id"] for chunk in chunks}
-                    or any(chunk.get("project_id") != source["project_id"]
-                           or not chunk.get("is_current")
-                           or (chunk.get("text"), chunk.get("line_start"), chunk.get("line_end")) != expected[chunk["id"]]
-                           for chunk in chunks)):
-                counts["errors"].append(f"Transcript source {source['id']}: raw chunk projection does not match")
-                continue
-            updated = {**metadata, "role": "metadata", "normalized_text": "", "schema_warning": None,
-                       "transcript_parser_revision": TRANSCRIPT_PARSER_REVISION,
-                       "transcript_reparse": {"previous_kind": "transcript_unknown",
-                                              "previous_schema_warning": metadata["schema_warning"],
-                                              "previous_parser_revision": metadata.get("transcript_parser_revision")}}
-            db_update_where(
-                tx,
-                "sources",
-                set_fields={"kind": "transcript", "metadata": updated},
-                where={"id": source["id"]},
-            )
-            for chunk in chunks:
-                db_update_where(
-                    tx,
-                    "chunks",
-                    set_fields={"metadata": {**_metadata(chunk.get("metadata")), "role": "metadata"}},
-                    where={"id": chunk["id"]},
-                )
-        counts["repaired"] += 1
-        counts["unchanged"] -= 1
-    return counts
-
-
-def import_history(store, path: Path, project_id: str | None, client: str = "auto") -> dict:
-    """Durably import complete JSONL records; unfinished tails are retried later."""
-    path = Path(path).expanduser().resolve()
-    if path.is_dir():
-        # Directories delegate to per-file locks below, allowing unrelated
-        # transcripts to be imported concurrently without nested lock cycles.
-        return _import_history_locked(store, path, project_id, client)
-    with _ingestion_lock(store, "history", str(path)):
-        return _import_history_locked(store, path, project_id, client)
-
-
-def _import_history_locked(store, path: Path, project_id: str | None, client: str = "auto") -> dict:
-    path = Path(path).expanduser().resolve()
-    if project_id:
-        project_id = store.resolve_project(project_id)["id"]
-    if client not in {"auto", "codex", "claude"}:
-        raise ValueError("client must be auto, codex, or claude")
-    counts: dict[str, Any] = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "repaired": 0,
-                              "errors": []}
-    if path.is_dir():
-        for candidate in sorted(path.rglob("*.jsonl")):
-            if candidate.is_symlink():
-                continue
-            result = import_history(store, candidate, project_id, client)
-            for key in counts:
-                if key == "errors":
-                    counts[key].extend(result[key])
-                else:
-                    counts[key] += result[key]
-        return counts
-    if not path.is_file():
-        raise ValueError(f"History does not exist: {path}")
-    # Secrets that cannot be read cannot be kept out: nothing is imported then, and the cursor stays.
-    try:
-        masker = ingest_masker(store.settings)
-    except ValueError as exc:
-        raise ValueError(f"Transcript import refused: {exc}") from None
-    # The cursor may already be at EOF, and snapshot() intentionally returns
-    # the same immutable source for identical raw bytes. Repair the narrow
-    # known metadata compatibility gap independently of append ingestion.
-    reparsed = _reparse_history_sources_locked(store, path, project_id, client)
-    counts["errors"].extend(reparsed["errors"])
-    counts["repaired"] = reparsed["repaired"]
-    row = db_find_one(store, "import_cursors", {"path": str(path)})
-    offset = int(row["offset"]) if row else 0
-    if row and row["fingerprint"] != _fingerprint(path, offset):
-        offset = 0
-    # Explicit reassignment replays sources from the inbox without losing originals.
-    if row and project_id and row["project_id"] != project_id:
-        offset = 0
-    if path.stat().st_size < offset:
-        offset = 0
-    cwd = None
-    session_id = path.stem
-    # Discover session metadata even when resuming beyond its first record.
-    with path.open("rb") as probe:
-        for _ in range(30):
-            line = probe.readline(MAX_FILE_BYTES)
-            if not line:
-                break
-            try:
-                event = json.loads(line)
-            except (ValueError, UnicodeDecodeError):
-                continue
-            if isinstance(event, dict):
-                cwd = _event_cwd(event) or cwd
-                session_id = str(event.get("sessionId") or (event.get("payload") or {}).get("id", session_id)) if isinstance(event.get("payload", {}), dict) else session_id
-                if cwd:
-                    break
-    counts["files"] = 1
-    with path.open("rb") as handle:
-        handle.seek(offset)
-        while True:
-            event_offset = handle.tell()
-            raw = handle.readline()
-            if not raw:
-                break
-            if not raw.endswith(b"\n"):
-                break
-            end = handle.tell()
-            text = raw.decode("utf-8", "replace")
-            reason = None
-            event: dict = {}
-            try:
-                decoded = json.loads(text)
-                if not isinstance(decoded, dict):
-                    reason = "JSONL event is not an object"
-                else:
-                    event = decoded
-            except ValueError:
-                reason = "Invalid complete JSONL record"
-            cwd = _event_cwd(event) or cwd
-            if isinstance(event.get("sessionId"), str):
-                session_id = event["sessionId"]
-            if event.get("type") == "session_meta" and isinstance(event.get("payload"), dict):
-                session_id = str(event["payload"].get("id", session_id))
-            resolved, conflict = _source_project(store, project_id, cwd)
-            reason = reason or conflict
-            normalized, role, detected, recognized = _event_text(event, client)
-            if not recognized:
-                counts["unknown"] += 1
-                reason = reason or UNKNOWN_TRANSCRIPT_WARNING
-            if not resolved:
-                with store.transaction() as inbox_tx:
-                    db_upsert_document(
-                        inbox_tx,
-                        "ingestion_inbox",
-                        {"id": _identifier(path, event_offset, text), "path": str(path), "source_offset": event_offset,
-                         "sha256": hashlib.sha256(raw).hexdigest(), "raw": text, "client": detected, "cwd": cwd,
-                         "reason": reason or "No registered project matches working directory", "created_at": _now()},
-                        key_field="id",
-                    )
-                counts["inbox"] += 1
-            else:
-                # Every complete source event is archived, including unrecognized records.
-                # Immutable event URIs keep old evidence valid when a client
-                # rotates/replaces a file and reuses its byte offsets.
-                event_hash = hashlib.sha256(raw).hexdigest()
-                # Known secrets are replaced in the readable view and in the chunks written from it (#182).
-                # A line without a normalized view is chunked from its raw text, so that text is masked too.
-                # The raw line is archived as received: its hash, URI and identity do not change. That masked
-                # raw view is kept as metadata.indexed_text, which every reader of the readable view uses
-                # (extraction_input.source_text); normalized_text stays empty, so the line is still not extracted.
-                normalized, kinds = masker.mask(normalized)
-                indexed, raw_kinds = (normalized, []) if normalized else masker.mask(text)
-                event_metadata = {"client": detected, "role": role, "session_id": session_id, "cwd": cwd,
-                                  "import_path": str(path), "byte_offset": event_offset, "normalized_text": normalized,
-                                  "schema_warning": reason, "source_timestamp": event.get("timestamp"),
-                                  "transcript_parser_revision": TRANSCRIPT_PARSER_REVISION}
-                if raw_kinds:
-                    event_metadata["indexed_text"] = indexed
-                source = store.snapshot(
-                    resolved, f"transcript://{detected}/{_identifier(path, session_id)}/{event_offset}/{event_hash}", text,
-                    kind="transcript" if recognized else "transcript_unknown",
-                    metadata=masked_metadata(event_metadata, kinds or raw_kinds),
-                )
-                counts["archived"] += 1
-                counts["chunks"] += _write_chunks(store, resolved, source["id"], indexed, {"role": role})
-                if normalized and role in {"user", "assistant"}:
-                    store.enqueue("extract", resolved, {"source_id": source["id"]}, f"extract:{source['id']}")
-                # Assignment moves this exact event into the project's archive.
-                # Only remove its inbox copy after source/chunks/jobs are durable;
-                # a crash before this point safely replays without losing bytes.
-                db_delete_where(
-                    store,
-                    "ingestion_inbox",
-                    {"path": str(path), "source_offset": event_offset, "sha256": event_hash},
-                )
-            if reason:
-                counts["errors"].append(f"{path}:{event_offset}: {reason}")
-            # A crash before cursor commit is safe: sources and jobs are idempotent.
-            _save_cursor(store, path, project_id, detected, end)
-            offset = end
-    # Register even empty or currently partial files so polling notices appends.
-    if not db_find_one(store, "import_cursors", {"path": str(path)}, columns=("path",)):
-        _save_cursor(store, path, project_id, client, offset)
-    return counts
-
-
-# Per store and path, the transcript files whose last import in this process read no line, repaired no record
-# and reported no error (#363). While the cursor in the database stands at the end of the file and the file is
-# the one the cursor describes, importing it again would do nothing, so the poll skips it. A file that read,
-# repaired or reported anything is imported again by every poll, as before.
-_POLLED: set[tuple[str, str]] = set()
-
-
-def _at_end(path: Path, cursor: dict) -> bool:
-    """Whether the cursor stands at the end of this very file: nothing new can be read from it."""
-    try:
-        offset = int(cursor.get("offset") or 0)
-        return path.is_file() and path.stat().st_size == offset and _fingerprint(path, offset) == cursor.get("fingerprint")
-    except (OSError, ValueError, TypeError):
-        return False  # an identity that cannot be established is imported in full
-
-
-def poll_imports(store) -> dict:
-    from cairnmind.memory.project_removal import removed_ids
-    rows = db_find(store, "import_cursors", columns=("path", "project_id", "client", "offset", "fingerprint"))
-    result = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "errors": []}
-    removed = removed_ids(store)  # a removed project's conversations are not archived until it is back (#327)
-    try:  # local files only; when the secrets cannot be read no file is skipped, so each import refuses and says so
-        ingest_masker(store.settings)
-        secrets_readable = True
-    except (OSError, ValueError):  # an OSError too: each import then raises it and the loop reports it per file, as on main
-        secrets_readable = False
-    for row in rows:
-        if row["project_id"] in removed:
-            continue
-        key = (str(store.data_dir), row["path"])
-        if secrets_readable and key in _POLLED and _at_end(Path(row["path"]), row):
-            continue
-        try:
-            item = import_history(store, Path(row["path"]), row["project_id"], row["client"])
-            for name, value in item.items():
-                if name == "errors":
-                    result[name].extend(value)
-                elif name in result:
-                    result[name] += value
-            # Remembered only when the import changed and reported nothing; a line appended after the look
-            # makes _at_end false at the next skip check.
-            if not (item["archived"] or item["inbox"] or item["repaired"] or item["errors"]):
-                _POLLED.add(key)
-            else:
-                _POLLED.discard(key)
-        except (OSError, ValueError) as exc:
-            result["errors"].append(f"{row['path']}: {exc}")
-            _POLLED.discard(key)
-    return result
-
-
-def register_default_histories(store, project_id: str, root: Path) -> dict:
-    project = store.resolve_project(project_id)
-    roots = _roots(store, project)
-    root = Path(root).resolve()
-    if root not in roots:
-        from cairnmind.storage.sql import unregistered_root
-        raise ValueError(unregistered_root(root, project))
-    codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
-    claude_home = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
-    locations = [(codex_home / "sessions", "codex"), (codex_home / "archived_sessions", "codex"), (claude_home / "projects", "claude")]
-    result = {"discovered": 0, "registered": 0, "archived": 0, "errors": []}
-    for base, client in locations:
-        try:
-            if not base.is_dir():
-                continue
-            candidates = sorted(base.rglob("*.jsonl"))
-        except OSError:
-            continue
-        for path in candidates:
-            if path.is_symlink():
-                continue
-            result["discovered"] += 1
-            declared = None
-            try:
-                with path.open("rb") as handle:
-                    for _ in range(30):
-                        line = handle.readline(MAX_FILE_BYTES)
-                        if not line:
-                            break
-                        try:
-                            event = json.loads(line)
-                        except ValueError:
-                            continue
-                        if isinstance(event, dict):
-                            declared = _event_cwd(event)
-                            if declared:
-                                break
-                if not declared:
-                    continue
-                try:
-                    belongs = store.resolve_project(declared, recorded=True)["id"] == project["id"]
-                except ValueError:
-                    belongs = False
-                if belongs:
-                    counts = import_history(store, path, project["id"], client)
-                    result["registered"] += 1
-                    result["archived"] += counts["archived"]
-                    result["errors"].extend(counts["errors"])
-            except OSError as exc:
-                result["errors"].append(f"{path}: {exc}")
-    return result
 
 
 def current_source(store, source_id: str) -> dict:

@@ -33,13 +33,13 @@ def _platform() -> str:
 _PID_MAX = 2**31 - 1  # pid_t is a 32-bit int on Linux and macOS
 
 
-def _pid(pid) -> int | None:
+def _pid(pid: Any) -> int | None:
     # 0 and negative ids name the kernel or a group on macOS, never one process; a larger one would be
     # masked to another id by a C int.
     return pid if type(pid) is int and 0 < pid <= _PID_MAX else None
 
 
-def start(pid, *, running: bool = False) -> str | None:
+def start(pid: Any, *, running: bool = False) -> str | None:
     """The birth of process pid, or None when there is no such process or it cannot be read.
 
     With running=True a zombie (ended, waiting to be reaped) has no birth either.
@@ -62,7 +62,7 @@ def start(pid, *, running: bool = False) -> str | None:
     return None
 
 
-def command_line(pid) -> list[str] | None:
+def command_line(pid: Any) -> list[str] | None:
     """The argument vector of process pid as it was executed, or None when it cannot be read."""
     pid = _pid(pid)
     if pid is None:
@@ -85,7 +85,7 @@ def command_line(pid) -> list[str] | None:
     return None
 
 
-def executable(pid) -> str | None:
+def executable(pid: Any) -> str | None:
     """The resolved path of the program process pid runs, or None when it cannot be read."""
     pid = _pid(pid)
     if pid is None:
@@ -103,7 +103,7 @@ def executable(pid) -> str | None:
     return None
 
 
-def recorded(pid, birth) -> bool | None:
+def recorded(pid: Any, birth: str | None) -> bool | None:
     """Whether pid may still be signalled as the process recorded with birth.
 
     True when it still has that birth or no process has that id any more (what is left of its group is still
@@ -118,7 +118,7 @@ def recorded(pid, birth) -> bool | None:
     return None if alive(pid) else True
 
 
-def alive(pid) -> bool:
+def alive(pid: Any) -> bool:
     """Whether process pid exists (a zombie still does); an id this user may not signal exists too."""
     pid = _pid(pid)
     if pid is None:
@@ -135,7 +135,7 @@ def alive(pid) -> bool:
     return True
 
 
-def group_running(pgid) -> bool | None:
+def group_running(pgid: Any) -> bool | None:
     """Whether a process of group pgid still runs: None when that cannot be told.
 
     A zombie has ended and only waits to be reaped. It reads every process of the machine (Linux) or asks the
@@ -152,7 +152,7 @@ def group_running(pgid) -> bool | None:
     return None
 
 
-def _linux_group_running(pgid):
+def _linux_group_running(pgid: int) -> bool | None:
     try:
         names = os.listdir("/proc")
     except OSError:
@@ -183,7 +183,7 @@ def _linux_group_running(pgid):
 
 # --- macOS: the parsing is plain Python and tested everywhere; the calls below it run only on a Mac --------
 
-def _darwin_birth(record, pid, running):
+def _darwin_birth(record: bytes | None, pid: int, running: bool) -> str | None:
     """p_starttime of one struct kinfo_proc, checked to be the record of pid."""
     if not record or len(record) != _KINFO_PROC_SIZE:
         return None
@@ -194,7 +194,7 @@ def _darwin_birth(record, pid, running):
     return f"{seconds}.{micros:06d}"
 
 
-def _darwin_group_running(records):
+def _darwin_group_running(records: bytes | None) -> bool | None:
     """Whether one of a group's struct kinfo_proc records is not a zombie; None when they cannot be read."""
     if records is None or len(records) % _KINFO_PROC_SIZE:
         return None
@@ -206,7 +206,7 @@ def _darwin_group_running(records):
     return False
 
 
-def _darwin_arguments(buffer):
+def _darwin_arguments(buffer: bytes | None) -> list[str] | None:
     """argv from a KERN_PROCARGS2 buffer: argc, the executable path, NUL padding, then argc strings."""
     if not buffer or len(buffer) < 4:
         return None
@@ -227,7 +227,7 @@ def _darwin_arguments(buffer):
 
 
 @functools.cache
-def _libc():
+def _libc() -> Any:
     import ctypes
 
     library = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
@@ -239,7 +239,7 @@ def _libc():
     return library
 
 
-def _sysctl(mib, size):
+def _sysctl(mib: list[int], size: int) -> bytes | None:
     """The answer of sysctl(3) to mib in a buffer of size bytes; b"" for no answer, None on failure."""
     import ctypes
 
@@ -255,11 +255,11 @@ def _sysctl(mib, size):
         return None
 
 
-def _darwin_kinfo(pid):
+def _darwin_kinfo(pid: int) -> bytes | None:
     return _sysctl([_CTL_KERN, _KERN_PROC, _KERN_PROC_PID, pid], _KINFO_PROC_SIZE)
 
 
-def _darwin_group(pgid):
+def _darwin_group(pgid: int) -> bytes | None:
     # The group can grow between the two calls: room for more, and a retry if it still did not fit.
     import ctypes
 
@@ -277,7 +277,7 @@ def _darwin_group(pgid):
     return None
 
 
-def _darwin_procargs(pid):
+def _darwin_procargs(pid: int) -> bytes | None:
     limit = _sysctl([_CTL_KERN, _KERN_ARGMAX], 4)
     if not limit or len(limit) != 4:
         return None
@@ -285,7 +285,7 @@ def _darwin_procargs(pid):
     return _sysctl([_CTL_KERN, _KERN_PROCARGS2, pid], size) if 0 < size <= 64 * 1024 * 1024 else None
 
 
-def _darwin_path(pid):
+def _darwin_path(pid: int) -> str | None:
     import ctypes
 
     try:
@@ -352,7 +352,7 @@ def _win32_libs() -> tuple[Any, Any, Any]:
     return kernel32, ntdll, shell32
 
 
-def _win32_open(pid: int):
+def _win32_open(pid: int) -> Any:
     kernel32, _, _ = _win32_libs()
     return kernel32.OpenProcess(_WIN_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
 

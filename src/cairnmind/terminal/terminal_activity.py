@@ -23,10 +23,12 @@ from typing import Any
 
 from rich.cells import cell_len
 from textual import on, work
-from textual.app import ComposeResult
+from textual.app import ComposeResult, ScreenStackError
 from textual.containers import Container, Horizontal, Vertical
+from textual.css.query import QueryError
+from textual.dom import NoScreen
 from textual.widgets import OptionList, Static
-from textual.widgets.option_list import Option
+from textual.widgets.option_list import Option, OptionDoesNotExist
 
 from cairnmind.terminal import terminal_notice_feed, terminal_theme
 from cairnmind.terminal.terminal_activity_data import (
@@ -390,7 +392,7 @@ class ActivityApp(BasePanel):
         self.render_notices()
 
     def render_header(self):
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError, KeyError, TypeError):
             project, folder = self._scope or (None, None)
             width = max(10, self.query_one("#activity").content_region.width - 1)  # the rows' left padding
             name = first_line(self.workspace_data.get("project_name") or project or "")
@@ -411,7 +413,10 @@ class ActivityApp(BasePanel):
             self.query_one("#activity-keys", Static).update(styled(fit(keys, width), "muted"))
 
     def _fill(self, identifier, build):
-        with suppress(Exception):
+        with suppress(
+            QueryError, ScreenStackError, NoScreen, OptionDoesNotExist,
+            AttributeError, RuntimeError, ValueError, KeyError, TypeError,
+        ):
             widget = self.query_one("#" + identifier, ActivityList)
             width = widget.scrollable_content_region.width  # the scrollbar gutter is always kept
             if width < 8:
@@ -447,7 +452,10 @@ class ActivityApp(BasePanel):
 
     def size_lists(self):
         """One column: Notices follow the other sections, both lists scroll, and a notice is never cut in two."""
-        with suppress(Exception):
+        with suppress(
+            QueryError, ScreenStackError, NoScreen, OptionDoesNotExist,
+            AttributeError, RuntimeError, ValueError, KeyError, TypeError,
+        ):
             main, notes = self.query_one("#activity-main", ActivityList), self.query_one("#activity-notices", ActivityList)
             if self.has_class("-columns"):
                 main.styles.max_height = notes.styles.max_height = None

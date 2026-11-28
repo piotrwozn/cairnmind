@@ -480,7 +480,7 @@ def main():
             # Duration is a hard safety bound even for an attached terminal.
             def expire():
                 stopped.wait(args.duration)
-                with suppress(Exception):
+                with suppress(OSError, RuntimeError, subprocess.SubprocessError):
                     manager.tmux("detach-client", "-s", "cairnmind-ui", check=False)
                 stopped.set()
             threading.Thread(target=expire, daemon=True).start()
@@ -503,7 +503,7 @@ def main():
             supervisor.join(5)
         if terminal is not None:
             terminal.close()
-        with suppress(Exception):
+        with suppress(OSError, RuntimeError, subprocess.SubprocessError):
             manager.tmux("kill-server", check=False)
         manager.close()
         try:

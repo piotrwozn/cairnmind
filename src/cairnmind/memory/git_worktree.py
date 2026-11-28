@@ -20,8 +20,13 @@ def _root(store, project_id, worktree=None) -> Path:
 
 
 def _git(root, *args) -> bytes:
-    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True,
-                            timeout=20, env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
+    result = subprocess.run(
+        ["git", "-C", str(root), *args],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=20,
+        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"},
+    )
     if result.returncode:
         raise ValueError("Cannot inspect Git worktree")
     return result.stdout
@@ -62,8 +67,13 @@ def require_git_tree(root: Path, *, git_fn=None) -> bool:
         return False
     if not root.is_relative_to(top):
         raise ValueError("Registered root is not inside its Git worktree")
-    ignored = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "."], capture_output=True,
-                             timeout=20, env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
+    ignored = subprocess.run(
+        ["git", "-C", str(root), "check-ignore", "-q", "."],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=20,
+        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"},
+    )
     if ignored.returncode == 0:
         raise ValueError("Registered root is ignored by Git, which lists none of its files")
     if ignored.returncode != 1:

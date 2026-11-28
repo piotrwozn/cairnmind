@@ -74,8 +74,9 @@ class _Connections:
             if client is not None and self._pid == os.getpid():
                 client.close()
 
-    def __del__(self):
-        with suppress(Exception):  # nothing useful can be done while an object is collected
+    def __del__(self) -> None:
+        with suppress(OSError, RuntimeError, AttributeError, TypeError, httpx.HTTPError):
+            # nothing useful can be done while an object is collected
             self.close()
 
 

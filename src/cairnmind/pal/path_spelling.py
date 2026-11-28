@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 
-def identity(info) -> tuple[int, int]:
+def identity(info: os.stat_result) -> tuple[int, int]:
     return info.st_dev, info.st_ino
 
 
@@ -78,13 +78,13 @@ def same_or_below(path: Path, directory: tuple[int, int] | None) -> bool:
     return False
 
 
-def lies_in(path, directory) -> bool:
+def lies_in(path: Path | str, directory: Path | str) -> bool:
     """`path.is_relative_to(directory)` that also sees the two spelled differently (both resolved)."""
     path, directory = Path(path), Path(directory)
     return path.is_relative_to(directory) or same_or_below(path, path_identity(directory))
 
 
-def path_identity(path) -> tuple[int, int] | None:
+def path_identity(path: Path | str) -> tuple[int, int] | None:
     try:
         return identity(os.stat(path))
     except OSError:
@@ -103,7 +103,7 @@ def ignores_case(directory: Path) -> bool:
     return False
 
 
-def relative_on_disk(path, base) -> Path | None:
+def relative_on_disk(path: Path | str, base: Path | str) -> Path | None:
     """`path` relative to `base`, both resolved, each name spelled as the directory lists it; None when `path`
     does not lie strictly below `base`. On a file system that ignores case `REPO/Services/Alpha` below `Repo`
     is `services/alpha`, the names a walk of `Repo` sees. A name that cannot be read is kept as given."""

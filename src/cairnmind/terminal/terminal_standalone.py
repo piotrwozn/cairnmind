@@ -18,8 +18,10 @@ import sys
 from contextlib import suppress
 
 from textual import on, work
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, ScreenStackError
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import QueryError
+from textual.dom import NoScreen
 from textual.widgets import Button, DataTable, Footer, Header, Input, Select, Static, TabbedContent, TabPane
 
 from cairnmind.cli_cmds import topology
@@ -94,7 +96,7 @@ class StandaloneWorkspaceApp(App[int]):
 
     def notice(self, message) -> None:
         text = safe_text(str(message), limit=220)
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError):
             self.query_one("#notice-bar", Static).update(plain(text))
 
     def compose(self) -> ComposeResult:
@@ -156,11 +158,11 @@ class StandaloneWorkspaceApp(App[int]):
             lines.extend(topo.get("lines", []))
         except Exception as exc:
             lines.append(f"Topology unavailable: {exc}")
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError):
             self.query_one("#settings-summary", Static).update(plain("\n".join(lines)))
 
     def action_tab(self, tab_id: str) -> None:
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError):
             self.query_one("#workspace-tabs", TabbedContent).active = tab_id
 
     def action_refresh_all(self) -> None:
@@ -232,7 +234,7 @@ class StandaloneWorkspaceApp(App[int]):
 
     def _populate_inspector_table(self) -> None:
         query = ""
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError):
             query = self.query_one("#inspector-filter", Input).value.strip().lower()
         table = self.query_one("#inspector-table", DataTable)
         table.clear()
@@ -257,12 +259,12 @@ class StandaloneWorkspaceApp(App[int]):
             self.selected_row = selected
             self._show_row_detail(selected)
         else:
-            with suppress(Exception):
+            with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError):
                 self.query_one("#inspector-detail", Static).update("")
 
     def _show_row_detail(self, row: dict) -> None:
         lines = [f"{k}: {safe_text(str(v), limit=400)}" for k, v in row.items() if v is not None]
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError):
             self.query_one("#inspector-detail", Static).update(plain("\n".join(lines)))
 
     async def _load_activity(self, pid: str) -> None:
@@ -286,7 +288,7 @@ class StandaloneWorkspaceApp(App[int]):
                 lines.append(f"  - [{state}] {safe_text(str(task.get('content', task.get('id', ''))), limit=100)}")
         except (BrokerError, OSError, ValueError):
             lines.append("Tasks: unavailable")
-        with suppress(Exception):
+        with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError):
             self.query_one("#activity-text", Static).update(plain("\n".join(lines)))
 
     async def _load_graph(self, pid: str) -> None:
@@ -304,10 +306,10 @@ class StandaloneWorkspaceApp(App[int]):
                 kind = node.get("kind") or node.get("type") or "node"
                 lbl = safe_text(str(node.get("label") or node.get("id") or ""), limit=80)
                 lines.append(f"  [{kind}] {lbl}")
-            with suppress(Exception):
+            with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError):
                 self.query_one("#graph-text", Static).update(plain("\n".join(lines)))
         except (BrokerError, OSError, ValueError) as exc:
-            with suppress(Exception):
+            with suppress(QueryError, ScreenStackError, NoScreen, AttributeError, RuntimeError, ValueError):
                 self.query_one("#graph-text", Static).update(plain(broker_error_text(exc, self.t)))
 
     @on(DataTable.RowSelected, "#projects-table")

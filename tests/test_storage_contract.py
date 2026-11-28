@@ -52,7 +52,7 @@ def contract_store(request, tmp_path: Path):
     """Yield a fresh ``Store`` for each supported ``StorageBackend`` implementation."""
     kind = request.param
     if kind == "arcade":
-        store = Store(tmp_path / "arcade_data")
+        store = Store(tmp_path / "arcade_data", backend="arcade")
         assert isinstance(store.backend, StorageBackend)
         assert store.backend.backend_kind == "arcade"
         try:

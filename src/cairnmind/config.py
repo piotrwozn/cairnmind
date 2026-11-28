@@ -320,6 +320,7 @@ class Settings:
         kept = {}
         environment = {}  # field -> the spelling of the variable that supplied it (topology.py names it)
         for name, variable in (("storage_backend", "BACKEND"),
+                               ("storage_backend", "STORAGE_BACKEND"),
                                ("db_path", "DB_PATH"),
                                ("arcade_url", "ARCADE_URL"),
                                ("arcade_user", "ARCADE_USER"),

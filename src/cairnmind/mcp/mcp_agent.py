@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import inspect
 import json
+from collections.abc import Callable, Iterable
 from copy import deepcopy
+from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from cairnmind.agents.agent_write_guard import ChangeLedger, without_changed_files
@@ -27,15 +30,15 @@ PROJECTION_TEXT_CHARS = 10_000
 _HOST_KEYS = ("ok", "server_id", "tool", "third_party_untrusted", "is_error", "error_code", "notice")
 
 
-def approval_text(request) -> str:
+def approval_text(request: dict[str, Any]) -> str:
     """The request exactly as the approval dialog prints it; the list of changed files is shown apart (#176)."""
     return safe_text(json.dumps(without_changed_files(request), ensure_ascii=False, indent=2))
 
 
-def projection(result: dict) -> dict:
+def projection(result: dict[str, Any]) -> dict[str, Any]:
     """A large third-party result for the model's context: the host's marking always kept, server text
     only inside ``content``, cut to a bound. The complete result is in the journal and the archive."""
-    value = {key: result[key] for key in _HOST_KEYS if key in result}
+    value: dict[str, Any] = {key: result[key] for key in _HOST_KEYS if key in result}
     value["third_party_untrusted"] = True
     budget, content = PROJECTION_TEXT_CHARS, []
     for block in result.get("content") or []:
@@ -54,28 +57,38 @@ def projection(result: dict) -> dict:
 
 
 class McpTools:
-    def __init__(self, servers, *, run, journal, worktree, reserved, approve=None, changes=None):
+    def __init__(
+        self,
+        servers: Iterable[dict[str, Any]] | None,
+        *,
+        run: dict[str, Any],
+        journal: Any,
+        worktree: Path | str,
+        reserved: Iterable[str],
+        approve: Callable[[dict[str, Any]], Any] | None = None,
+        changes: ChangeLedger | None = None,
+    ) -> None:
         self.run, self.journal, self.approve = run, journal, approve
         # The executor's list of files changed since the last approval, shared so either approval resets it.
         self.changes = changes if changes is not None else ChangeLedger()
         self.results = 0  # third-party results journaled in this run
-        self.withdrawn = set()  # tools whose argument check ran out of time
+        self.withdrawn: set[str] = set()  # tools whose argument check ran out of time
         redact = getattr(journal, "redact", None)
         self.host = McpHost(servers, worktree=worktree, reserved=reserved, redact=redact)
 
     @property
-    def catalogue(self):
+    def catalogue(self) -> dict[str, dict[str, Any]]:
         return self.host.catalogue
 
-    def schemas(self):
+    def schemas(self) -> list[dict[str, Any]]:
         return self.host.schemas()
 
-    async def start(self, record):
+    async def start(self, record: Callable[[str, dict[str, Any]], Any]) -> list[tuple[str, str]]:
         """Start the servers once; returns the failures as (server_id, code) for the status line.
 
         A server whose start cannot be journaled is stopped and reported, the others keep their tools.
         """
-        failures = []
+        failures: list[tuple[str, str]] = []
         for event_type, data in await self.host.start():
             try:
                 record(event_type, data)
@@ -89,11 +102,17 @@ class McpTools:
                 failures.append((data["server_id"], data["code"]))
         return failures
 
-    def _binding(self, call_id):
+    def _binding(self, call_id: str) -> dict[str, Any]:
         return {"session_id": self.run["session_id"], "run_id": self.run["id"],
                 "generation": self.run["generation"], "tool_call_id": call_id}
 
-    async def call(self, name, arguments, call_id, timeout):  # noqa: ASYNC109 - protocol method takes per-call timeout
+    async def call(
+        self,
+        name: str,
+        arguments: Any,
+        call_id: str,
+        timeout: float,  # noqa: ASYNC109 - protocol method takes per-call timeout
+    ) -> dict[str, Any]:
         entry = self.catalogue[name]
         base = {"server_id": entry["server_id"], "tool": entry["tool"], "third_party_untrusted": True}
         try:
@@ -150,6 +169,6 @@ class McpTools:
         self.results += 1
         return result
 
-    async def close(self, record):
+    async def close(self, record: Callable[[str, dict[str, Any]], Any]) -> None:
         for server_id in await self.host.close():
             record("mcp_server_stopped", {"server_id": server_id, "reason": "run_ended"})

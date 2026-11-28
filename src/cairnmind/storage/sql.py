@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from cairnmind.storage.domain_types import ProjectRecord
 
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PROFILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -27,11 +32,11 @@ def _arcade_ident(name: str) -> str:
     return f"`{name}`" if name.lower() in _ARCADE_RESERVED else name
 
 
-def utc_now():
+def utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
-def parse_utc(value):
+def parse_utc(value: Any) -> datetime | None:
     """Timezone-aware ISO 8601 text as UTC; naive or invalid values are unusable."""
     if not isinstance(value, str) or not value.strip():
         return None
@@ -47,7 +52,12 @@ def parse_utc(value):
 ACT_NOTE_ORIGINS = ("local_user_review", "publication_review", "cli_person", "evaluation_seed", "quote_self_healing")
 
 
-def evidence_time(tx, source_ids, *, source_rows: dict | None = None):
+def evidence_time(
+    tx: Any,
+    source_ids: Iterable[str],
+    *,
+    source_rows: Mapping[str, Any] | None = None,
+) -> dict[str, str | None]:
     """When the record's evidence existed, from its immutable sources.
 
     A transcript's own timestamp is when the statement was made (`stated`). Any other
@@ -95,15 +105,17 @@ def evidence_time(tx, source_ids, *, source_rows: dict | None = None):
             "basis": bases.pop() if len(bases) == 1 else "mixed"}
 
 
-def json_text(value):
+def json_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True, allow_nan=False)
 
 
-def clean_row(row):
+def clean_row(row: Mapping[str, Any] | None) -> dict[str, Any]:
+    if row is None:
+        raise ValueError("Database row is missing")
     return {key: value for key, value in row.items() if not key.startswith("@")}
 
 
-def quote_name(name):
+def quote_name(name: Any) -> str:
     if not isinstance(name, str) or not IDENTIFIER.fullmatch(name):
         raise ValueError("Invalid database type/property name")
     return f"`{name}`"
@@ -120,7 +132,7 @@ def missing_row_text(text: str) -> bool:
     return text in {f"{kind} does not exist" for kind in (*MISSING_KIND.values(), "Record")}
 
 
-def unregistered_root(root, project: dict) -> str:
+def unregistered_root(root: Path | str, project: ProjectRecord | Mapping[str, Any]) -> str:
     """The refusal for a folder that is not a registered root of `project`, with the command that registers it
     (#244). The project name and the path come from the user; they are quoted for the shell and made printable.
     The sentence stays bounded without losing the command: the shown folder and project keep their head and
@@ -139,7 +151,12 @@ def unregistered_root(root, project: dict) -> str:
             f"register it with `{command}`.")
 
 
-def one_row(tx, sql, params=None, required=True):
+def one_row(
+    tx: Any,
+    sql: str,
+    params: dict[str, Any] | None = None,
+    required: bool = True,
+) -> dict[str, Any] | None:
     rows = tx.query(sql, params)
     if not rows:
         if required:
@@ -149,14 +166,14 @@ def one_row(tx, sql, params=None, required=True):
     return clean_row(rows[0])
 
 
-def insert_document(tx, collection, data):
+def insert_document(tx: Any, collection: str, data: Mapping[str, Any]) -> None:
     if hasattr(tx, "insert_document"):
         tx.insert_document(collection, data)
         return
     tx.command(f"INSERT INTO {quote_name(collection)} CONTENT {json_text(data)}")
 
 
-def insert_documents(tx, collection, rows):
+def insert_documents(tx: Any, collection: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Insert ``rows`` into one type with one request, the statement the journal stores its events with.
 
     The engine returns each row it stored; fewer than were sent fails the transaction instead of losing rows.
@@ -170,7 +187,13 @@ def insert_documents(tx, collection, rows):
     return stored
 
 
-def update_document(tx, collection, data, where, params):
+def update_document(
+    tx: Any,
+    collection: str,
+    data: Mapping[str, Any],
+    where: str,
+    params: dict[str, Any],
+) -> list[dict[str, Any]]:
     if hasattr(tx, "update_document"):
         return tx.update_document(collection, data, where, params)
     assignments = ",".join(f"{quote_name(key)}=:value_{key}" for key in data)

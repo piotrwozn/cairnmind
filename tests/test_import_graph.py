@@ -186,3 +186,53 @@ def test_ui_live_modules_never_import_mock_state_at_top_level():
             assert mock_mod not in top_graph[mod], f"{mod} eagerly imports {mock_mod} at top level"
     if "cairnmind.ui.live_adapter" in all_graph:
         assert mock_mod not in all_graph["cairnmind.ui.live_adapter"], "live_adapter must never import mock_state"
+
+
+def test_zero_broad_suppress_exception_in_src():
+    """Never use bare `contextlib.suppress(Exception)` in production modules; narrow to concrete types."""
+    hits: list[str] = []
+    for path in sorted(SRC_DIR.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            is_suppress = (
+                (isinstance(fn, ast.Name) and fn.id == "suppress")
+                or (isinstance(fn, ast.Attribute) and fn.attr == "suppress")
+            )
+            if is_suppress and any(isinstance(arg, ast.Name) and arg.id == "Exception" for arg in node.args):
+                hits.append(f"{path.relative_to(SRC_DIR).as_posix()}:{node.lineno}")
+    assert not hits, "Found bare suppress(Exception) calls:\n" + "\n".join(hits)
+
+
+def test_zero_production_classes_over_1000_loc():
+    """Production classes (outside lazy mock fixtures) must remain decomposed below 1,000 LOC."""
+    oversized: list[str] = []
+    for path in sorted(SRC_DIR.rglob("*.py")):
+        rel = path.relative_to(SRC_DIR).as_posix()
+        if rel == "ui/mock_state.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                span = (getattr(node, "end_lineno", node.lineno) or node.lineno) - node.lineno + 1
+                if span > 1000:
+                    oversized.append(f"{rel}:{node.name} ({span} LOC)")
+    assert not oversized, "Production classes exceed 1,000 LOC:\n" + "\n".join(oversized)
+
+
+def test_pyright_standard_config_and_ci_wired():
+    """Pyright `standard` mode must cover pal/, storage/, and mcp/ and be enforced in CI."""
+    import json
+
+    repo = SRC_DIR.parents[1]
+    cfg_path = repo / "pyrightconfig.standard.json"
+    assert cfg_path.is_file(), "Missing pyrightconfig.standard.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert cfg.get("typeCheckingMode") == "standard"
+    includes = set(cfg.get("include") or ())
+    assert {"src/cairnmind/pal", "src/cairnmind/storage", "src/cairnmind/mcp"} <= includes
+    ci_text = (repo / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "uv run pyright -p pyrightconfig.standard.json" in ci_text
+

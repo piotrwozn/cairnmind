@@ -5,8 +5,11 @@ import hashlib
 import math
 import re
 import time
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 from uuid import uuid4
 
+from cairnmind.storage.domain_types import JobRecord, ResumePacketRecord
 from cairnmind.storage.sql import clean_row, json_text, utc_now
 from cairnmind.storage.storage_query import (
     FilterNode,
@@ -36,11 +39,11 @@ class JobNotFoundError(ValueError):
     """No job is visible in the requested project."""
 
 
-def job_diagnostics(value):
+def job_diagnostics(value: Any) -> dict[str, Any]:
     """Retain bounded operational codes/counts, never model/source text."""
     if not isinstance(value, dict):
         return {}
-    result = {}
+    result: dict[str, Any] = {}
     for key in ("stage", "code", "repair_outcome", "failure_reason", "persistence_stage"):
         candidate = value.get(key)
         if isinstance(candidate, str) and _DIAGNOSTIC_CODE.fullmatch(candidate):
@@ -80,7 +83,7 @@ def job_diagnostics(value):
         for call in calls[-2:]:
             if not isinstance(call, dict):
                 continue
-            item = {
+            item: dict[str, Any] = {
                 key: call[key]
                 for key in ("phase", "done_reason")
                 if isinstance(call.get(key), str) and _DIAGNOSTIC_CODE.fullmatch(call[key])
@@ -94,7 +97,14 @@ def job_diagnostics(value):
     return result
 
 
-def enqueue_new(store, tx, kind, project_id, payload, dedupe_key):
+def enqueue_new(
+    store: Any,
+    tx: Any,
+    kind: str,
+    project_id: str | None,
+    payload: Any,
+    dedupe_key: str,
+) -> str:
     """A job whose key cannot exist yet, because it names a row created in this same transaction.
 
     The row is the one ``enqueue`` writes. The unique index on the key still refuses a second one.
@@ -125,7 +135,13 @@ def enqueue_new(store, tx, kind, project_id, payload, dedupe_key):
     return job_id
 
 
-def enqueue(store, kind, project_id, payload, dedupe_key):
+def enqueue(
+    store: Any,
+    kind: str,
+    project_id: str | None,
+    payload: Any,
+    dedupe_key: str,
+) -> str:
     if not kind or not isinstance(dedupe_key, str) or not dedupe_key:
         raise ValueError("A job requires a kind and deduplication key")
     with store.transaction() as tx:
@@ -157,7 +173,14 @@ def enqueue(store, kind, project_id, payload, dedupe_key):
         return job_id
 
 
-def claim_job(store, worker, lease_seconds=60, kinds=None, *, project_ids=None):
+def claim_job(
+    store: Any,
+    worker: str,
+    lease_seconds: float = 60,
+    kinds: Iterable[str] | None = None,
+    *,
+    project_ids: Sequence[str] | None = None,
+) -> dict[str, Any] | None:
     if lease_seconds <= 0 or not worker:
         raise ValueError("Worker and positive lease duration are required")
     if kinds is not None and not kinds:
@@ -201,7 +224,13 @@ def claim_job(store, worker, lease_seconds=60, kinds=None, *, project_ids=None):
         return job
 
 
-def job_event(job, event, *, state=None, error=_JOB_UNSET):
+def job_event(
+    job: JobRecord | Mapping[str, Any],
+    event: str,
+    *,
+    state: str | None = None,
+    error: Any = _JOB_UNSET,
+) -> list[dict[str, Any]]:
     history = list(job.get("attempt_history") or [])
     history.append({
         "event": event,
@@ -215,7 +244,14 @@ def job_event(job, event, *, state=None, error=_JOB_UNSET):
     return history
 
 
-def set_job_diagnostics(store, job_id, diagnostics, *, expected_attempts=None, worker=None):
+def set_job_diagnostics(
+    store: Any,
+    job_id: str,
+    diagnostics: Any,
+    *,
+    expected_attempts: int | None = None,
+    worker: str | None = None,
+) -> bool:
     """Publish sanitized attempt diagnostics without completing/reclaiming a job."""
     cleaned = job_diagnostics(diagnostics)
     with store.transaction() as tx:
@@ -235,7 +271,14 @@ def set_job_diagnostics(store, job_id, diagnostics, *, expected_attempts=None, w
     return True
 
 
-def finish_job(store, job_id, error=None, *, worker=None, expected_attempts=None):
+def finish_job(
+    store: Any,
+    job_id: str,
+    error: str | None = None,
+    *,
+    worker: str | None = None,
+    expected_attempts: int | None = None,
+) -> None:
     with store.transaction() as tx:
         job = db_find_one(tx, "jobs", {"id": job_id})
         if (
@@ -248,7 +291,7 @@ def finish_job(store, job_id, error=None, *, worker=None, expected_attempts=None
         ):
             raise ValueError("Unknown job or stale job lease")
         state = "failed" if error else "completed"
-        updates = {
+        updates: dict[str, Any] = {
             "state": state,
             "error": error,
             "lease_until": None,
@@ -260,7 +303,7 @@ def finish_job(store, job_id, error=None, *, worker=None, expected_attempts=None
         db_update_where(tx, "jobs", set_fields=updates, where={"id": job_id})
 
 
-def job_summary(store, project_id=None):
+def job_summary(store: Any, project_id: str | None = None) -> dict[str, dict[str, int]]:
     store._require_project(store, project_id)
     summary = {
         name: {state: 0 for state in sorted(JOB_STATES)}
@@ -275,7 +318,13 @@ def job_summary(store, project_id=None):
     return summary
 
 
-def list_jobs(store, project_id, state=None, kind=None, limit=50):
+def list_jobs(
+    store: Any,
+    project_id: str,
+    state: str | None = None,
+    kind: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
     store._require_project(store, project_id)
     if state is not None and state not in JOB_STATES:
         raise ValueError("Unknown job state")
@@ -293,7 +342,7 @@ def list_jobs(store, project_id, state=None, kind=None, limit=50):
     return [store._public_job(clean_row(row), packets=packets) for row in rows]
 
 
-def job_status(store, project_id, job_id):
+def job_status(store: Any, project_id: str, job_id: str) -> dict[str, Any]:
     store._require_project(store, project_id)
     job = store.find_one("jobs", {"id": job_id, "project_id": project_id})
     if not job:
@@ -305,7 +354,7 @@ def job_status(store, project_id, job_id):
     )
 
 
-def job_proofs(store, project_id):
+def job_proofs(store: Any, project_id: str) -> list[dict[str, Any]]:
     # Read already published bounded evidence; never prepare, repair or
     # recapture a transcript merely to display operational diagnostics.
     return store.find(
@@ -317,7 +366,11 @@ def job_proofs(store, project_id):
     )
 
 
-def import_job_coverage(store, job, packets):
+def import_job_coverage(
+    store: Any,
+    job: JobRecord | Mapping[str, Any],
+    packets: Iterable[ResumePacketRecord | Mapping[str, Any]],
+) -> dict[str, Any]:
     unknown = {"status": "scope_unknown", "scope": "requested_capture"}
     payload = job.get("payload") or {}
     if not isinstance(payload, dict):
@@ -364,7 +417,7 @@ def import_job_coverage(store, job, packets):
                 or row.get("captured_tail_start", row["size"]) != capture["size"]
             ):
                 continue
-            proof = {"packet_id": packet["id"], "at": packet["created_at"], "captured_size": row["size"]}
+            proof = {"packet_id": packet["id"], "at": packet.get("created_at"), "captured_size": row["size"]}
             if (
                 row.get("status") == "complete"
                 and row.get("archived_offset", -1) >= row["size"]
@@ -390,8 +443,14 @@ def import_job_coverage(store, job, packets):
     return {**unknown, "reason": "no_matching_published_proof"}
 
 
-def public_job(store, job, *, detail=False, packets=()):
-    result = {
+def public_job(
+    store: Any,
+    job: JobRecord | Mapping[str, Any],
+    *,
+    detail: bool = False,
+    packets: Iterable[ResumePacketRecord | Mapping[str, Any]] = (),
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
         key: job.get(key)
         for key in (
             "id",
@@ -413,7 +472,8 @@ def public_job(store, job, *, detail=False, packets=()):
     result.update(store._job_error(job.get("error"), result["diagnostics"]))
     history = job.get("attempt_history") or []
     # Events an old completed job no longer keeps (store_prune.compact_old_jobs, #190) still count.
-    pruned = job.get("attempt_history_pruned") if type(job.get("attempt_history_pruned")) is int else 0
+    raw_pruned = job.get("attempt_history_pruned")
+    pruned = raw_pruned if type(raw_pruned) is int else 0
     result["attempt_history_count"] = len(history) + pruned
     if detail:
         result["attempt_history"] = [
@@ -442,7 +502,7 @@ def public_job(store, job, *, detail=False, packets=()):
     return result
 
 
-def public_job_error(error, diagnostics):
+def public_job_error(error: Any, diagnostics: Mapping[str, Any]) -> dict[str, str | None]:
     """Expose actionable fixed categories; keep original exceptions in storage/export."""
     if not error:
         return {"error_code": None, "error": None}
@@ -482,7 +542,14 @@ def public_job_error(error, diagnostics):
     }
 
 
-def retry_job(store, project_id, job_id, expected_attempts, *, include_omissions=False):
+def retry_job(
+    store: Any,
+    project_id: str,
+    job_id: str,
+    expected_attempts: int,
+    *,
+    include_omissions: bool = False,
+) -> dict[str, Any]:
     if type(expected_attempts) is not int or expected_attempts < 0:
         raise ValueError("Expected attempts must be a nonnegative integer")
     if type(include_omissions) is not bool:
@@ -499,7 +566,7 @@ def retry_job(store, project_id, job_id, expected_attempts, *, include_omissions
     return store.job_status(project_id, job_id)
 
 
-def all_proposals_rejected(job):
+def all_proposals_rejected(job: JobRecord | Mapping[str, Any]) -> bool:
     diagnostics = job.get("diagnostics")
     if not isinstance(diagnostics, dict):
         return False
@@ -523,9 +590,9 @@ def all_proposals_rejected(job):
     )
 
 
-def retry_job_locked(store, tx, job):
+def retry_job_locked(store: Any, tx: Any, job: JobRecord | Mapping[str, Any]) -> None:
     now = utc_now()
-    updates = {
+    updates: dict[str, Any] = {
         "state": "pending",
         "error": None,
         "lease_until": None,
@@ -535,12 +602,18 @@ def retry_job_locked(store, tx, job):
         "retry_count": job.get("retry_count", 0) + 1,
         "attempt_history": store._job_event(job, "retry_requested"),
     }
-    if job.get("error"):
-        updates.update(last_error=job["error"], last_error_at=job.get("updated_at"))
+    error = job.get("error")
+    if error:
+        updates.update(last_error=error, last_error_at=job.get("updated_at"))
     db_update_where(tx, "jobs", set_fields=updates, where={"id": job["id"], "state": job["state"]})
 
 
-def count_rows(store, collection, project_id=None, extra=()):
+def count_rows(
+    store: Any,
+    collection: str,
+    project_id: str | None = None,
+    extra: Any = (),
+) -> int:
     conds = []
     if project_id:
         conds.append(eq("project_id", project_id))
@@ -549,9 +622,9 @@ def count_rows(store, collection, project_id=None, extra=()):
     return store.count(collection, conds)
 
 
-def status(store, project_id=None):
+def status(store: Any, project_id: str | None = None) -> dict[str, Any]:
     store._require_project(store, project_id)
-    counts = {
+    counts: dict[str, Any] = {
         key: store._count(key, project_id)
         for key in ("sources", "chunks", "records", "nodes", "edges", "embeddings")
     }
@@ -575,7 +648,11 @@ def status(store, project_id=None):
     return counts
 
 
-def recent_job_errors(store, project_id=None, limit=10):
+def recent_job_errors(
+    store: Any,
+    project_id: str | None = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
     conds = [eq("state", "failed")]
     if project_id:
         conds.append(eq("project_id", project_id))
@@ -587,7 +664,7 @@ def recent_job_errors(store, project_id=None, limit=10):
     return [store._public_job(clean_row(row), packets=proofs.get(row["project_id"], ())) for row in rows]
 
 
-def retry_jobs(store):
+def retry_jobs(store: Any) -> dict[str, Any]:
     """Explicit legacy global compatibility; every requeue retains its audit."""
     with store.transaction() as tx:
         rows = db_find(tx, "jobs", {"state": "failed"})
@@ -596,7 +673,11 @@ def retry_jobs(store):
     return {"retried": len(rows), "job_ids": [row["id"] for row in rows]}
 
 
-def missing_embeddings(store, namespace, project_id=None):
+def missing_embeddings(
+    store: Any,
+    namespace: str,
+    project_id: str | None = None,
+) -> list[dict[str, Any]]:
     conds = [eq("is_current", True)]
     if project_id:
         conds.append(eq("project_id", project_id))

@@ -9,9 +9,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -23,26 +24,36 @@ from cairnmind.cli_cmds.upgrade_mark import BRIDGE_UPGRADE, CODE_REPLACED, CODE_
 from cairnmind.config import Settings, env_names, session_value, tls_verify
 from cairnmind.pal.service_token import foreign_service_text, refused_token
 
+if TYPE_CHECKING:
+    from cairnmind.storage.domain_types import (
+        MemoryRecord,
+        PlanRecord,
+        ProjectRecord,
+        ResumePacketRecord,
+        TaskRecord,
+    )
+
 # store.ORIGIN_METADATA, repeated so the stdio bridge does not import the store: an external session's mark.
 ORIGIN_KEYS = ("origin_client", "origin_session_id", "origin_history", "origin_evidence")
 
 
-def _plan_header(plan: Any) -> dict[str, Any] | None:
+def _plan_header(plan: PlanRecord | Mapping[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(plan, dict):
         return None
-    return {"id": plan.get("id"), "version": plan.get("version"),
-            "title": str(plan.get("title", ""))[:300],
-            "step_count": len(plan.get("step_ids", [])),
-            "source_ids": plan.get("source_ids", [])[-8:],
+    plan_map = cast(Mapping[str, Any], plan)
+    return {"id": plan_map.get("id"), "version": plan_map.get("version"),
+            "title": str(plan_map.get("title", ""))[:300],
+            "step_count": len(plan_map.get("step_ids", [])),
+            "source_ids": plan_map.get("source_ids", [])[-8:],
             # Only an external session's plan has these; a native plan's header is unchanged.
-            **{key: plan[key] for key in ORIGIN_KEYS if key in plan}}
+            **{key: plan_map[key] for key in ORIGIN_KEYS if key in plan_map}}
 
 
 def _saved_plan_view(result: dict[str, Any]) -> dict[str, Any]:
     """Don't echo the entire just-submitted plan and every task's metadata."""
     if "tasks" not in result or "plan" not in result:
         return result
-    tasks = result.get("tasks") or []
+    tasks: list[TaskRecord | dict[str, Any]] = result.get("tasks") or []
     previews = [{"id": row.get("id"), "version": row.get("version"),
                  "step_key": str(row.get("metadata", {}).get("step_key", ""))[:300],
                  "step_key_truncated": len(str(row.get("metadata", {}).get("step_key", ""))) > 300,
@@ -56,25 +67,29 @@ def _saved_plan_view(result: dict[str, Any]) -> dict[str, Any]:
             "replayed": result.get("replayed", False)}
 
 
-def _saved_record_view(result: dict[str, Any], sent: Any) -> dict[str, Any]:
+def _saved_record_view(result: MemoryRecord | dict[str, Any], sent: Any) -> dict[str, Any]:
     """What the service stored and decided, not an echo of what the client just sent (#325).
 
     ``sent`` is the metadata the client sent (remember: the record's; checkpoint: the state).
     """
     if not isinstance(result, dict) or not {"id", "version", "status"} <= set(result):
-        return result
-    raw_metadata = result.get("metadata")
+        return cast(dict[str, Any], result)
+    record: Mapping[str, Any] = result
+    raw_metadata = record.get("metadata")
     metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
-    view = {"id": result["id"], "version": result["version"], "status": result["status"],
-            "kind": result.get("kind"), "key": str(result.get("key", ""))[:300],
-            "source_ids": list(result.get("source_ids") or [])[-8:]}
-    if len(result.get("source_ids") or []) > 8:
-        view["omitted_source_ids"] = len(result["source_ids"]) - 8
-    if isinstance(result.get("metadata_dropped"), list) and result["metadata_dropped"]:
+    source_ids = list(record.get("source_ids") or [])
+    view: dict[str, Any] = {"id": record["id"], "version": record["version"], "status": record["status"],
+            "kind": record.get("kind"), "key": str(record.get("key", ""))[:300],
+            "source_ids": source_ids[-8:]}
+    if len(source_ids) > 8:
+        view["omitted_source_ids"] = len(source_ids) - 8
+    dropped = record.get("metadata_dropped")
+    if isinstance(dropped, list) and dropped:
         # Only in the service's answer to this bridge (name_dropped), never in the store's result (#325).
-        view["metadata_dropped"] = [str(name)[:100] for name in result["metadata_dropped"][:50]]
-    if result.get("supersedes"):
-        view["supersedes"] = result["supersedes"]
+        view["metadata_dropped"] = [str(name)[:100] for name in dropped[:50]]
+    supersedes = record.get("supersedes")
+    if supersedes:
+        view["supersedes"] = supersedes
     for name in (*ORIGIN_KEYS, "supersede_warning", "supersede_replaced_evidence_latest"):
         if name in metadata:
             view[name] = metadata[name]
@@ -262,8 +277,14 @@ class ServiceClient:
     BOOTSTRAP = {"/sessions/context", "/sessions/ack"}
     SCOPED_READS = {"/ask", "/plans/next", "/checks", "/context"}
 
-    def __init__(self, settings: Settings, session_id: str | None = None,
-                 packet_id: str | None = None, *, external: dict[str, str | None] | None = None):
+    def __init__(
+        self,
+        settings: Settings,
+        session_id: str | None = None,
+        packet_id: str | None = None,
+        *,
+        external: dict[str, str | None] | None = None,
+    ) -> None:
         self.settings = settings
         # Matched only when this process itself started or matched the service: the launcher's earlier match
         # does not hold if another directory's service took the port since (the workspace panels follow the same rule).
@@ -352,7 +373,9 @@ class ServiceClient:
         """A name wins over a local folder; a relative path is read from this process's working directory."""
         if os.path.isabs(project):
             return project
-        listed = (await self._send("GET", "/projects", None, {}, allow_list=True)).get("items") or []
+        listed: list[ProjectRecord | dict[str, Any]] = (
+            await self._send("GET", "/projects", None, {}, allow_list=True)
+        ).get("items") or []
         if any(isinstance(row, dict) and project in (row.get("id"), row.get("name")) for row in listed):
             return project
         return await asyncio.to_thread(_resolve_local_project, project)
@@ -367,7 +390,7 @@ class ServiceClient:
     def _adopt(self, result: dict[str, Any]) -> dict[str, Any]:
         if result.get("session_id") != self.session_id:
             raise RuntimeError("Session mismatch in the returned resume packet")
-        packet = result.get("packet") or {}
+        packet: ResumePacketRecord | dict[str, Any] = result.get("packet") or {}
         if packet:
             if not isinstance(packet.get("id"), str) or not isinstance(packet.get("hash"), str):
                 raise ValueError("Invalid resume packet identity")
@@ -475,7 +498,7 @@ class StrictFastMCP(FastMCP):
     FastMCP drops such an argument: `remember` with `state` beside `record` saved the task as todo.
     """
 
-    async def call_tool(self, name, arguments, *args, **kwargs):
+    async def call_tool(self, name: str, arguments: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
         declared = next((set(tool.inputSchema.get("properties", {})) for tool in await self.list_tools()
                          if tool.name == name), None)
         extra = sorted(str(key)[:40] for key in arguments or {} if declared is not None and key not in declared)
@@ -492,7 +515,7 @@ def create_server(settings: Settings, service: ServiceClient | None = None, *,
     degraded = getattr(bridge, "external", None) is not None
 
     @asynccontextmanager
-    async def lifespan(_):
+    async def lifespan(_: FastMCP) -> AsyncIterator[None]:
         try:
             yield
         finally:

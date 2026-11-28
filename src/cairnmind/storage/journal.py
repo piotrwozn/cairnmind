@@ -7,10 +7,13 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
+from cairnmind.storage.domain_types import JournalCursor
 from cairnmind.storage.sql import _arcade_ident, json_text, quote_name
 
 JOURNAL_TYPES = ("journal_state", "journal_events")
@@ -31,15 +34,15 @@ _MUTATION = re.compile(r"^\s*(INSERT\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+VERTEX
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
-def _json(value):
+def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
-def _clean(row):
+def _clean(row: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in row.items() if not key.startswith("@") and key not in {"in", "out"}}
 
 
-def mutation(sql):
+def mutation(sql: str) -> tuple[str, str] | None:
     match = _MUTATION.match(sql)
     if not match:
         return None
@@ -49,7 +52,7 @@ def mutation(sql):
     return operation, table
 
 
-def _where(sql):
+def _where(sql: str) -> str:
     quote, depth, index = None, 0, 0
     while index < len(sql):
         char = sql[index]
@@ -76,7 +79,7 @@ def _where(sql):
     return ""
 
 
-def _inserted(sql, params, result):
+def _inserted(sql: str, params: dict[str, Any], result: list[Any]) -> list[dict[str, Any]]:
     # These forms cover both the helper DAL and the direct importer statements.
     content = re.search(r"\bCONTENT\s+(.*)$", sql, re.I | re.S)
     if content:
@@ -98,7 +101,7 @@ def _inserted(sql, params, result):
     return [row] if isinstance(row.get("id"), str) else []
 
 
-def _event_key(table, row):
+def _event_key(table: str, row: Mapping[str, Any]) -> tuple[str | None, str, str | None]:
     entity_type = TABLE_TYPES.get(table, "embedding")
     identifier = row.get("id")
     project = identifier if table == "projects" else row.get("project_id")
@@ -126,37 +129,43 @@ class JournalTransaction:
     ``command(sql, params)`` remains supported for backward compatibility.
     """
 
-    def __init__(self, native, *, writer=None, check=None):
+    def __init__(
+        self,
+        native: Any,
+        *,
+        writer: str | None = None,
+        check: Callable[[dict[str, Any] | None, Any], Any] | None = None,
+    ) -> None:
         self.native = native
         # The writing installation (#70): carried into a recreated journal head, and ``check(head, native)``
         # refuses the commit when the head read in flush names another writer (store_writer.check_head).
         self.writer = writer
         self.check = check
-        self.changes = {}
-        self.explicit = {}
-        self.graph_resets = set()
-        self.reset_reason = None
+        self.changes: dict[tuple[str, str], list[dict[str, Any] | None]] = {}
+        self.explicit: dict[tuple[str | None, str, str | None], str] = {}
+        self.graph_resets: set[str | None] = set()
+        self.reset_reason: str | None = None
         # Facts read earlier in this transaction (Store.prefetch_graph). None means nothing is remembered.
         # Any write to these tables that is not made by the code that keeps them current forgets them all.
-        self.known = None
+        self.known: dict[str, Any] | None = None
         self.keeps_known = False
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         return getattr(self.native, name)
 
-    def query(self, sql, params=None):
+    def query(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         return self.native.query(sql, params)
 
     def find(
         self,
         collection: str,
-        where=(),
+        where: Any = (),
         *,
-        columns=None,
-        order_by=(),
+        columns: Any = None,
+        order_by: Any = (),
         limit: int | None = None,
         distinct: bool = False,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         from cairnmind.storage.storage_query import _build_arcade_select
         if hasattr(self.native, "find"):
             return self.native.find(
@@ -170,12 +179,12 @@ class JournalTransaction:
     def find_one(
         self,
         collection: str,
-        where=(),
+        where: Any = (),
         *,
-        columns=None,
-        order_by=(),
+        columns: Any = None,
+        order_by: Any = (),
         required: bool = False,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         from cairnmind.storage.storage_query import missing_row_message
         rows = self.find(collection, where, columns=columns, order_by=order_by, limit=1)
         if not rows:
@@ -184,7 +193,7 @@ class JournalTransaction:
             return None
         return rows[0]
 
-    def count(self, collection: str, where=()) -> int:
+    def count(self, collection: str, where: Any = ()) -> int:
         from cairnmind.storage.storage_query import compile_arcade_where
         if hasattr(self.native, "count"):
             return int(self.native.count(collection, where))
@@ -193,7 +202,14 @@ class JournalTransaction:
         rows = self.query(f"SELECT count(*) AS total FROM {_arcade_ident(collection)}{clause}", params)
         return int(rows[0]["total"]) if rows and rows[0].get("total") is not None else 0
 
-    def group_counts(self, collection: str, group_by, where=(), *, count_alias: str = "total") -> list[dict]:
+    def group_counts(
+        self,
+        collection: str,
+        group_by: Any,
+        where: Any = (),
+        *,
+        count_alias: str = "total",
+    ) -> list[dict[str, Any]]:
         from cairnmind.storage.storage_query import compile_arcade_where, quote_arcade_field
         if hasattr(self.native, "group_counts"):
             return self.native.group_counts(collection, group_by, where, count_alias=count_alias)
@@ -212,10 +228,10 @@ class JournalTransaction:
         self,
         collection: str,
         *,
-        set_fields: dict | None = None,
-        remove_fields=(),
-        where=(),
-    ) -> list[dict]:
+        set_fields: dict[str, Any] | None = None,
+        remove_fields: Any = (),
+        where: Any = (),
+    ) -> list[dict[str, Any]]:
         from cairnmind.storage.storage_query import (
             FieldCondition,
             compile_arcade_where,
@@ -272,7 +288,13 @@ class JournalTransaction:
             self._record(collection, before, after)
         return result
 
-    def delete_where(self, collection: str, where=(), *, limit: int | None = None) -> list[dict]:
+    def delete_where(
+        self,
+        collection: str,
+        where: Any = (),
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
         from cairnmind.storage.storage_query import FieldCondition, compile_arcade_where, normalize_where
         self._invalidate_known(collection)
         project = None
@@ -308,7 +330,13 @@ class JournalTransaction:
         from cairnmind.storage.storage_query import db_list_collections
         return db_list_collections(self.native)
 
-    def iter_backup_pages(self, collection: str, *, page_rows: int = 1000, page_bytes: int = 2 * 1024 * 1024):
+    def iter_backup_pages(
+        self,
+        collection: str,
+        *,
+        page_rows: int = 1000,
+        page_bytes: int = 2 * 1024 * 1024,
+    ) -> Any:
         return self.native.iter_backup_pages(collection, page_rows=page_rows, page_bytes=page_bytes)
 
     @staticmethod
@@ -319,10 +347,15 @@ class JournalTransaction:
         if self.known is not None and not self.keeps_known and table in {"projects", "sources", "nodes", "edges"}:
             self.known = None
 
-    def _skip_graph_row_tracking(self, table: str, project) -> bool:
+    def _skip_graph_row_tracking(self, table: str, project: Any) -> bool:
         return table in {"nodes", "edges"} and project in self.graph_resets
 
-    def _record(self, table, before, after):
+    def _record(
+        self,
+        table: str,
+        before: list[dict[str, Any]],
+        after: list[dict[str, Any]],
+    ) -> None:
         first = {row["id"]: _clean(row) for row in before if isinstance(row.get("id"), str)}
         last = {row["id"]: _clean(row) for row in after if isinstance(row.get("id"), str)}
         for identifier in first.keys() | last.keys():
@@ -331,7 +364,14 @@ class JournalTransaction:
                 self.changes[key] = [deepcopy(first.get(identifier)), None]
             self.changes[key][1] = deepcopy(last.get(identifier))
 
-    def record_mutation(self, table: str, before: list[dict], after: list[dict], *, project=None) -> None:
+    def record_mutation(
+        self,
+        table: str,
+        before: list[dict[str, Any]],
+        after: list[dict[str, Any]],
+        *,
+        project: Any = None,
+    ) -> None:
         """Explicitly record a structured mutation without regex SQL parsing."""
         self._invalidate_known(table)
         if not self._is_tracked(table) or self.reset_reason is not None:
@@ -340,7 +380,7 @@ class JournalTransaction:
             return
         self._record(table, before, after)
 
-    def insert_document(self, collection: str, data: dict) -> dict:
+    def insert_document(self, collection: str, data: dict[str, Any]) -> dict[str, Any]:
         self._invalidate_known(collection)
         if hasattr(self.native, "insert_document"):
             self.native.insert_document(collection, data)
@@ -355,7 +395,7 @@ class JournalTransaction:
                     self.touch(project, TABLE_TYPES.get(collection, "embedding"), op="reset")
         return data
 
-    def insert_documents(self, collection: str, rows: list[dict]) -> list[dict]:
+    def insert_documents(self, collection: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         self._invalidate_known(collection)
         if hasattr(self.native, "insert_documents"):
             stored = self.native.insert_documents(collection, rows)
@@ -373,7 +413,13 @@ class JournalTransaction:
             raise RuntimeError(f"The database did not store every row of a group in {collection}")
         return stored
 
-    def update_document(self, collection: str, data: dict, where: str, params: dict) -> list[dict]:
+    def update_document(
+        self,
+        collection: str,
+        data: dict[str, Any],
+        where: str,
+        params: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         self._invalidate_known(collection)
         params = params or {}
         project = params.get("project_id", params.get("project"))
@@ -408,7 +454,7 @@ class JournalTransaction:
             self._record(collection, before, after)
         return result
 
-    def upsert_document(self, collection: str, data: dict, key_field: str = "id") -> dict:
+    def upsert_document(self, collection: str, data: dict[str, Any], key_field: str = "id") -> dict[str, Any]:
         from cairnmind.storage.storage_query import db_find
         self._invalidate_known(collection)
         key_val = data[key_field]
@@ -434,7 +480,12 @@ class JournalTransaction:
             self._record(collection, before, after or [_clean(data)])
         return data
 
-    def delete_documents(self, collection: str, where: str = "", params: dict | None = None) -> list[dict]:
+    def delete_documents(
+        self,
+        collection: str,
+        where: str = "",
+        params: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         self._invalidate_known(collection)
         params = params or {}
         project = params.get("project_id", params.get("project"))
@@ -457,7 +508,7 @@ class JournalTransaction:
             self._record(collection, before, [])
         return result
 
-    def create_vertex(self, collection: str, node: dict) -> dict:
+    def create_vertex(self, collection: str, node: dict[str, Any]) -> dict[str, Any]:
         self._invalidate_known(collection)
         if hasattr(self.native, "create_vertex"):
             self.native.create_vertex(collection, node)
@@ -469,7 +520,7 @@ class JournalTransaction:
                 self._record(collection, [], [_clean(node)])
         return node
 
-    def create_edge(self, collection: str, edge: dict) -> dict:
+    def create_edge(self, collection: str, edge: dict[str, Any]) -> dict[str, Any]:
         self._invalidate_known(collection)
         if hasattr(self.native, "create_edge"):
             self.native.create_edge(collection, edge)
@@ -485,7 +536,7 @@ class JournalTransaction:
                 self._record(collection, [], [_clean(edge)])
         return edge
 
-    def command(self, sql, params=None):
+    def command(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         params = params or {}
         parsed = mutation(sql)
         if self.known is not None and not self.keeps_known and parsed is not None \
@@ -524,7 +575,12 @@ class JournalTransaction:
         self._record(table, before, after)
         return result
 
-    def script(self, statements, params, project_id):
+    def script(
+        self,
+        statements: list[str],
+        params: dict[str, Any] | None,
+        project_id: str | None,
+    ) -> list[dict[str, Any]]:
         """Graph statements of one project sent in one request, the last of which may be a SELECT that checks them.
 
         Only in a transaction that reports that project's graph as reset: the journal then names no single
@@ -543,7 +599,13 @@ class JournalTransaction:
             self.known = None
         return self.native.script(";\n".join(statements), params)
 
-    def touch(self, project_id, entity_type, entity_id=None, op="upsert"):
+    def touch(
+        self,
+        project_id: str | None,
+        entity_type: str,
+        entity_id: str | None = None,
+        op: str = "upsert",
+    ) -> None:
         if (not isinstance(entity_type, str) or not _IDENTIFIER.fullmatch(entity_type)
                 or op not in {"upsert", "delete", "reset"}
                 or (project_id is not None and not isinstance(project_id, str))
@@ -553,16 +615,16 @@ class JournalTransaction:
         if entity_type == "graph" and op == "reset":
             self.graph_resets.add(project_id)
 
-    def reset(self, reason="reset"):
+    def reset(self, reason: str = "reset") -> None:
         if not isinstance(reason, str) or not _IDENTIFIER.fullmatch(reason):
             raise ValueError("Invalid journal reset reason")
         self.reset_reason = reason
         self.changes.clear()
         self.explicit.clear()
 
-    def pending(self):
+    def pending(self) -> dict[tuple[str | None, str, str | None], str]:
         """The events this transaction would write now, before a fold into resets; empty after a reset."""
-        events = {}
+        events: dict[tuple[str | None, str, str | None], str] = {}
         if self.reset_reason is None:
             for (table, _), (before, after) in self.changes.items():
                 if before == after:
@@ -577,7 +639,7 @@ class JournalTransaction:
             events.update(self.explicit)
         return events
 
-    def flush(self):
+    def flush(self) -> None:
         from cairnmind.storage.storage_query import (
             db_delete_where,
             db_find,
@@ -600,7 +662,7 @@ class JournalTransaction:
             sequence = 0
             db_delete_where(self.native, "journal_events")
             db_delete_where(self.native, "journal_state")
-            head = {"id": "current", "epoch": epoch, "seq": 0, "first_seq": 1}
+            head: dict[str, Any] = {"id": "current", "epoch": epoch, "seq": 0, "first_seq": 1}
             if self.writer is not None:
                 head["writer"] = self.writer
             db_insert_document(self.native, "journal_state", head)
@@ -631,10 +693,10 @@ class JournalTransaction:
 
 
 class Journal:
-    def __init__(self, store):
+    def __init__(self, store: Any) -> None:
         self.store = store
 
-    def cursor(self, reader=None):
+    def cursor(self, reader: Any = None) -> JournalCursor:
         from cairnmind.storage.storage_query import db_find_one
         row = db_find_one(reader or self.store, "journal_state", {"id": "current"}, columns=("epoch", "seq"))
         if not row:
@@ -642,18 +704,29 @@ class Journal:
         return {"epoch": row["epoch"], "seq": row["seq"]}
 
     @staticmethod
-    def touch(tx, project_id, entity_type, entity_id=None, op="upsert"):
+    def touch(
+        tx: Any,
+        project_id: str | None,
+        entity_type: str,
+        entity_id: str | None = None,
+        op: str = "upsert",
+    ) -> None:
         if not isinstance(tx, JournalTransaction):
             raise ValueError("Journal changes require a Store transaction")
         tx.touch(project_id, entity_type, entity_id, op)
 
     @staticmethod
-    def reset(tx, project_id=None, reason="reset"):
+    def reset(tx: Any, project_id: str | None = None, reason: str = "reset") -> None:
         if not isinstance(tx, JournalTransaction):
             raise ValueError("Journal reset requires a Store transaction")
         tx.reset(reason)
 
-    def read(self, after=None, project_id=None, limit=200):
+    def read(
+        self,
+        after: JournalCursor | Mapping[str, Any] | str | None = None,
+        project_id: str | None = None,
+        limit: int = 200,
+    ) -> dict[str, Any]:
         from cairnmind.storage.storage_query import (
             FilterNode,
             any_of,
@@ -668,18 +741,23 @@ class Journal:
             raise ValueError("Journal limit must be between 1 and 1000")
         if project_id is not None and not isinstance(project_id, str):
             raise ValueError("Invalid journal project")
+        parsed_after: dict[str, Any] | None = None
         if isinstance(after, str):
             try:
                 epoch, sequence = after.rsplit(":", 1)
-                after = {"epoch": epoch, "seq": int(sequence)}
+                parsed_after = {"epoch": epoch, "seq": int(sequence)}
             except (ValueError, TypeError) as exc:
                 raise ValueError("Invalid journal cursor") from exc
-        if after is not None:
-            if (not isinstance(after, dict) or set(after) != {"epoch", "seq"}
-                    or type(after.get("seq")) is not int or after["seq"] < 0):
+        elif after is not None:
+            if not isinstance(after, Mapping):
+                raise ValueError("Invalid journal cursor")
+            parsed_after = dict(after)
+        if parsed_after is not None:
+            if (set(parsed_after) != {"epoch", "seq"}
+                    or type(parsed_after.get("seq")) is not int or parsed_after["seq"] < 0):
                 raise ValueError("Invalid journal cursor")
             try:
-                if str(UUID(after["epoch"])) != after["epoch"]:
+                if str(UUID(parsed_after["epoch"])) != parsed_after["epoch"]:
                     raise ValueError("Noncanonical journal epoch")
             except (ValueError, TypeError, AttributeError) as exc:
                 raise ValueError("Invalid journal epoch") from exc
@@ -687,16 +765,18 @@ class Journal:
             state = db_find_one(tx, "journal_state", {"id": "current"}, required=True)
             if state is None:
                 raise ValueError("Journal state is unavailable")
-            head = {"epoch": state["epoch"], "seq": state["seq"]}
-            if (after is None or after["epoch"] != head["epoch"] or after["seq"] > head["seq"]
-                    or after["seq"] < state.get("first_seq", 1) - 1):
+            head: JournalCursor = {"epoch": state["epoch"], "seq": state["seq"]}
+            if (parsed_after is None or parsed_after["epoch"] != head["epoch"] or parsed_after["seq"] > head["seq"]
+                    or parsed_after["seq"] < state.get("first_seq", 1) - 1):
                 return {"epoch": head["epoch"], "cursor": head, "events": [], "reset_required": True}
-            conds: list[FilterNode] = [eq("epoch", head["epoch"]), gt("seq", after["seq"])]
+            conds: list[FilterNode] = [eq("epoch", head["epoch"]), gt("seq", parsed_after["seq"])]
             if project_id is not None:
                 conds.append(any_of(eq("project_id", project_id), is_null("project_id")))
             rows = db_find(tx, "journal_events", conds, order_by=(asc("seq"),), limit=limit + 1)
             more = len(rows) > limit
             events = [{key: row.get(key) for key in ("epoch", "seq", "project_id", "entity_type", "entity_id", "op", "at")}
                       for row in rows[:limit]]
-            cursor = {"epoch": head["epoch"], "seq": events[-1]["seq"] if more else head["seq"]}
+            last_seq = events[-1]["seq"] if more and events else None
+            next_seq: int = last_seq if isinstance(last_seq, int) else head["seq"]
+            cursor: JournalCursor = {"epoch": head["epoch"], "seq": next_seq}
             return {"epoch": head["epoch"], "cursor": cursor, "events": events, "reset_required": False}

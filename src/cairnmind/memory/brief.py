@@ -12,11 +12,14 @@ import json
 import os
 import shlex
 import subprocess
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from cairnmind.cli_cmds.first_start import BRIEF_REVIEW, BRIEF_START
 from cairnmind.pal.terminal_safe import _line
+from cairnmind.storage.domain_types import MemoryRecord, ProjectRecord, TaskRecord
 from cairnmind.storage.storage_query import db_find
 from cairnmind.store import DERIVED_RECORD_METADATA, degraded_origin
 
@@ -28,11 +31,11 @@ _LEGEND = {"machine": "[machine] = measured now by Cairnmind", "reported": "[rep
            "person, not verified", "|": "text after | is a stored title"}
 
 
-def _title(record):
+def _title(record: MemoryRecord | Mapping[str, Any]) -> str:
     return _line(str(record.get("content", "")).strip().split("\n", 1)[0], 90)
 
 
-def _time(value):
+def _time(value: Any) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
     except ValueError:
@@ -40,7 +43,7 @@ def _time(value):
     return parsed.astimezone(UTC) if parsed.tzinfo else None
 
 
-def _age(then, now):
+def _age(then: datetime, now: datetime) -> str:
     seconds = max(0, int((now - then).total_seconds()))
     for size, unit in ((86400, "day"), (3600, "hour"), (60, "minute")):
         if seconds >= size:
@@ -49,7 +52,7 @@ def _age(then, now):
     return "less than a minute ago"
 
 
-def _flat(value):
+def _flat(value: Any) -> str:
     if isinstance(value, (list, tuple)):
         return "; ".join(_flat(item) for item in value)
     if isinstance(value, dict):
@@ -57,7 +60,7 @@ def _flat(value):
     return str(value)
 
 
-def _git_out(root, *args):
+def _git_out(root: Path | str, *args: str) -> str | None:
     """Git's output, or None when Git could not be run or failed; a failure is never an empty answer."""
     try:
         result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=15, check=False,
@@ -67,31 +70,39 @@ def _git_out(root, *args):
     return result.stdout.decode("utf-8", "replace").strip() if result.returncode == 0 else None
 
 
-def _checkpoint_saved(store, checkpoint):
+def _checkpoint_saved(
+    store: Any,
+    checkpoint: MemoryRecord | Mapping[str, Any],
+) -> tuple[datetime | None, str | None]:
     """When the latest checkpoint was saved, and who left it unverified: None, "external" (an external
     client's session) or "third_party" (the built-in agent after a third-party tool result)."""
     from cairnmind.memory.evidence import third_party_origin
 
-    def cause(metadata):
+    def cause(metadata: Any) -> str | None:
         if not degraded_origin(metadata):
             return None
         return "third_party" if third_party_origin(metadata) else "external"
     # A later edit of the record (a review, for example) moves updated_at; the snapshot
     # written by the checkpoint itself keeps the time the checkpoint was really saved.
-    times = []
+    times: list[tuple[datetime, str | None]] = []
     for source_id in checkpoint.get("source_ids") or []:
         try:
             source = store.get_source(source_id)
         except ValueError:
             continue
-        if str(source.get("uri", "")).startswith("checkpoint://") and _time(source.get("created_at")):
-            times.append((_time(source.get("created_at")), cause(source.get("metadata"))))
+        created = _time(source.get("created_at"))
+        if str(source.get("uri", "")).startswith("checkpoint://") and created is not None:
+            times.append((created, cause(source.get("metadata"))))
     if not times:
         return _time(checkpoint.get("updated_at")), cause(checkpoint.get("metadata"))
     return max(times, key=lambda item: item[0])
 
 
-def _checkpoint(store, records, now):
+def _checkpoint(
+    store: Any,
+    records: Sequence[MemoryRecord | Mapping[str, Any]],
+    now: datetime,
+) -> tuple[datetime | None, list[tuple[str, str]]]:
     checkpoint = next((r for r in records if r["kind"] == "checkpoint" and r.get("key") == "latest"), None)
     if checkpoint is None:
         return None, [("machine", "No checkpoint has been saved for this project.")]
@@ -122,7 +133,12 @@ def _checkpoint(store, records, now):
     return saved, lines
 
 
-def _plan(plans, project_id, root, by_id):
+def _plan(
+    plans: Any,
+    project_id: str,
+    root: str,
+    by_id: Mapping[str, TaskRecord | MemoryRecord | Mapping[str, Any]],
+) -> list[tuple[str, str]]:
     result = plans.next_task(project_id, worktree=root)
     plan, task = result.get("plan"), result.get("task")
     if plan is None:
@@ -149,14 +165,23 @@ def _plan(plans, project_id, root, by_id):
     return lines
 
 
-def _verification(store, tasks, root):
+def _verification(
+    store: Any,
+    tasks: Sequence[TaskRecord | MemoryRecord | Mapping[str, Any]],
+    root: str,
+) -> list[tuple[str, str]]:
     from cairnmind.memory.verification import capture_code_state, verification_status
-    active = [task for task in tasks if task["metadata"].get("state", "todo") in ACTIVE_STATES]
+    active = [task for task in tasks if (task.get("metadata") or {}).get("state", "todo") in ACTIVE_STATES]
     if not active:
         return [("machine", "No task is in progress, waiting for a test or waiting for a review.")]
-    observed = {}
+    observed: dict[tuple[str, ...], dict[str, Any]] = {}
 
-    def capture(store, project_id, worktree=None, extra_inputs=None):
+    def capture(
+        store: Any,
+        project_id: str,
+        worktree: Path | str | None = None,
+        extra_inputs: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
         # One observation of the tree serves every task of this brief; hashing it per task would be slow.
         key = tuple(sorted(extra_inputs or ()))
         if key not in observed:
@@ -169,7 +194,7 @@ def _verification(store, tasks, root):
         reason = f" ({_line(status['reasons'][0], 100)})" if status.get("reasons") else ""
         # "reported" is a claim carried from an agent or another machine, never a measurement.
         basis = "reported" if status["status"] == "reported" else "machine"
-        state = _line(task["metadata"].get("state", "todo"), 20)
+        state = _line((task.get("metadata") or {}).get("state", "todo"), 20)
         lines.append((basis, f"Checks {_line(status['status'], 20)}{reason}, task state {state} | task: {_title(task)}"))
         from cairnmind.memory.scope import drift_warning
         warning = drift_warning(status.get("scope_drift"))
@@ -180,7 +205,7 @@ def _verification(store, tasks, root):
     return lines
 
 
-def _commits(root, saved):
+def _commits(root: Path | str, saved: datetime | None) -> list[tuple[str, str]]:
     if saved is None:
         return []
     if _git_out(root, "rev-parse", "--is-inside-work-tree") is None:
@@ -202,19 +227,22 @@ def _commits(root, saved):
     return lines
 
 
-def _waiting(records):
+def _waiting(records: Sequence[MemoryRecord | Mapping[str, Any]]) -> list[MemoryRecord | Mapping[str, Any]]:
     # Tasks move through their own states and a checkpoint is not a finding, so neither waits for this review.
     return [r for r in records if r.get("status") == "proposed" and r["kind"] not in ("checkpoint", "task")]
 
 
-def _next(project, records):
+def _next(
+    project: ProjectRecord | Mapping[str, Any],
+    records: Sequence[MemoryRecord | Mapping[str, Any]],
+) -> str | None:
     """The next step for a person (#287): a first finding for an empty project, a review for waiting ones."""
     if not records:
         return BRIEF_START.format(project=shlex.quote(_line(project["name"], 60)))
     return BRIEF_REVIEW if _waiting(records) else None
 
 
-def _proposed(records):
+def _proposed(records: Sequence[MemoryRecord | Mapping[str, Any]]) -> list[tuple[str, str]]:
     waiting = _waiting(records)
     if not waiting:
         return [("machine", "No proposed findings are waiting for review.")]
@@ -225,7 +253,7 @@ def _proposed(records):
     return lines
 
 
-def _scoped_records(store, project_id, root):
+def _scoped_records(store: Any, project_id: str, root: Path) -> list[dict[str, Any]]:
     """The same worktree rule as `context`: a record bound to another root is not part of this brief."""
     from cairnmind.agents.retrieval import Retriever
     from cairnmind.memory.memory_paths import bound_metadata, memory_bindings
@@ -236,7 +264,13 @@ def _scoped_records(store, project_id, root):
         bound_metadata(store, project_id, record.get("metadata"), bindings=bindings), root, roots)]
 
 
-def build_brief(store, project_id, worktree=None, *, now=None):
+def build_brief(
+    store: Any,
+    project_id: str,
+    worktree: Path | str | None = None,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     """Return the brief as marked lines plus ready text; reads only, asks no model."""
     from cairnmind.memory.plans import PlanManager
     from cairnmind.memory.verification import _root

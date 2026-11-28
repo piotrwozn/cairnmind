@@ -106,6 +106,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_project_clone", "test_quote_healing",
     "test_pulse", "test_mcp_presets", "test_doctor_preflight",
     "test_ui_packaging", "test_storage_dal_guard", "test_import_graph",
+    "test_sqlite_vec_ann",
 })
 
 TMUX_MODULES = frozenset({
@@ -1058,6 +1059,10 @@ def server_mode_keeps_the_address_to_the_engine_tests(request, monkeypatch):
 def release_test_databases(request, run_slot):
     """Start the engine for ``arcade`` tests and drop their databases afterwards, inside the slot."""
     if request.node.get_closest_marker("arcade") is None:
+        yield
+        return
+    selected_backend = (env_value("STORAGE_BACKEND") or env_value("BACKEND") or "").strip().lower()
+    if selected_backend == "sqlite":
         yield
         return
     require_slot(request.config, "Starting the engine")

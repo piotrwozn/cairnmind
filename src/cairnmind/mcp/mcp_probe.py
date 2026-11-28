@@ -16,7 +16,7 @@ import threading
 import time
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from cairnmind import __version__
 from cairnmind.config import Settings, env_names
@@ -87,7 +87,10 @@ def _terminate_process(proc: subprocess.Popen[bytes]) -> None:
         proc.wait(timeout=2.0)
 
 
-def _reader_thread(stream, out_queue: queue.Queue[bytes | None]) -> None:
+def _reader_thread(stream: IO[bytes] | None, out_queue: queue.Queue[bytes | None]) -> None:
+    if stream is None:
+        out_queue.put(None)
+        return
     try:
         while True:
             line = stream.readline()
@@ -179,7 +182,9 @@ def probe_mcp_stdio(
     proc: subprocess.Popen[bytes] | None = None
     stderr_lines: list[bytes] = []
 
-    def _collect_stderr(stream) -> None:
+    def _collect_stderr(stream: IO[bytes] | None) -> None:
+        if stream is None:
+            return
         try:
             total = 0
             while total < 8192:

@@ -47,7 +47,7 @@ class DocumentGroups:
     def flush(self):
         rows, size = self.rows, self.size
         self.rows, self.size = [], 0
-        if rows:
+        if rows and self.collection is not None:
             insert_documents(self.batches.tx, self.collection, rows)
             self.batches.wrote(len(rows), size)
 
