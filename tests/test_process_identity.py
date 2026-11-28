@@ -16,10 +16,11 @@ import subprocess
 import sys
 import time
 from types import SimpleNamespace
+import warnings
 
 import pytest
 
-from cairnmind import cockpit, engine, process_identity, verification
+from cairnmind import cockpit, engine, engine_docker, process_identity, verification
 from cairnmind.agent_tools import ToolExecutor
 from cairnmind.arcade import ArcadeError
 from cairnmind.config import Settings
@@ -64,6 +65,20 @@ def mac(monkeypatch):
     return Mac(monkeypatch)
 
 
+def exec_done(pid, program):
+    """Wait until process pid has finished executing program, by what procfs shows and not by a clock (#460).
+
+    Popen returns when the exec has begun, not when the kernel has recorded the new arguments: for a moment
+    /proc/<pid>/cmdline is empty. Only Linux has the window; elsewhere there is nothing to wait for.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    deadline = time.monotonic() + 10
+    while Path(f"/proc/{pid}/cmdline").read_bytes().partition(b"\0")[0] != program.encode():
+        assert time.monotonic() < deadline, f"process {pid} did not become {program}"
+        time.sleep(.0005)
+
+
 @pytest.fixture
 def sleeper():
     if sys.platform == "win32":
@@ -71,6 +86,7 @@ def sleeper():
     else:
         process = subprocess.Popen(["sleep", "30"], start_new_session=True)
     try:
+        exec_done(process.pid, "sleep")
         yield process
     finally:
         process.kill()
@@ -113,6 +129,81 @@ def test_linux_a_zombie_has_a_birth_but_does_not_run():
         process.wait()
     assert process_identity.start(process.pid) is None and process_identity.command_line(process.pid) is None
     assert not process_identity.alive(process.pid)
+
+
+def empty_reads(monkeypatch, pid, count=None):
+    """/proc/<pid>/cmdline reads empty `count` times (always when None), as it does inside the exec of pid."""
+    real, seen = Path.read_bytes, []
+
+    def read_bytes(self):
+        if str(self) == f"/proc/{pid}/cmdline" and (count is None or len(seen) < count):
+            seen.append(self)
+            return b""
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    return seen
+
+
+@linux
+def test_linux_a_child_held_before_its_exec_has_its_parents_identity_and_the_same_birth():
+    # The deterministic form of the window: a forked child that waits for a byte before it executes sleep.
+    # Before the exec its command line and program are the parent's; its own birth is the same after the exec as
+    # before it, so "same birth, another command line" is what a process that has just started looks like.
+    release, wake = os.pipe()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)  # fork with threads: this child only reads and execs
+        pid = os.fork()
+    if pid == 0:
+        try:
+            os.read(release, 1)
+            os.execvp("sleep", ["sleep", "30"])
+        finally:
+            os._exit(127)
+    os.close(release)
+    try:
+        birth = process_identity.start(pid)
+        assert birth and process_identity.command_line(pid) == process_identity.command_line(os.getpid())
+        assert process_identity.executable(pid) == process_identity.executable(os.getpid())
+        os.write(wake, b"x")
+        exec_done(pid, "sleep")
+        assert process_identity.command_line(pid) == ["sleep", "30"]
+        assert process_identity.start(pid) == birth
+    finally:
+        os.close(wake)
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+
+
+@linux
+def test_linux_a_live_process_inside_its_exec_is_read_again_until_it_has_a_command_line(monkeypatch, sleeper):
+    reads = empty_reads(monkeypatch, sleeper.pid, 5)
+    assert process_identity.command_line(sleeper.pid) == ["sleep", "30"]
+    assert len(reads) == 5
+
+
+@linux
+def test_linux_a_live_process_that_never_shows_a_command_line_has_none_after_a_bounded_wait(monkeypatch, sleeper):
+    monkeypatch.setattr(process_identity, "SETTLE_SECONDS", .05)
+    reads = empty_reads(monkeypatch, sleeper.pid)
+    assert process_identity.command_line(sleeper.pid) is None
+    assert len(reads) > 1 and process_identity.alive(sleeper.pid)
+
+
+def test_mac_a_process_whose_arguments_cannot_be_read_around_its_exec_is_read_again(mac, monkeypatch):
+    mac.births[4321] = (1_763_400_000, 123)
+    mac.argv[4321] = ["/bin/sleep", "30"]
+    real, answers = process_identity._darwin_procargs, []
+    monkeypatch.setattr(process_identity, "_darwin_procargs",
+                        lambda pid: real(pid) if len(answers) >= 3 else answers.append(pid))
+    assert process_identity.command_line(4321) == ["/bin/sleep", "30"] and len(answers) == 3
+    monkeypatch.setattr(process_identity, "SETTLE_SECONDS", .05)
+    answers.clear()
+    monkeypatch.setattr(process_identity, "_darwin_procargs", lambda pid: answers.append(pid))
+    assert process_identity.command_line(4321) is None and len(answers) > 1  # still unreadable: bounded, no guess
+    answers.clear()
+    mac.births[4321] = (1_763_400_000, 123, ZOMBIE)
+    assert process_identity.command_line(4321) is None and len(answers) == 1  # an ended process is not waited for
 
 
 @pytest.mark.parametrize("system", ["darwin", sys.platform])
@@ -201,8 +292,8 @@ def test_mac_engine_stop_refuses_a_reused_id_and_stops_its_own_engine(mac, engin
     with pytest.raises(ArcadeError, match="no longer belongs"):
         engine.stop_engine(settings)
     assert not ended(sleeper, .3) and (state / "process.json").exists()
-    del mac.argv[sleeper.pid]  # alive, but its command line cannot be read: refused too
-    with pytest.raises(ArcadeError, match="no longer belongs"):
+    del mac.argv[sleeper.pid]  # alive, but its command line cannot be read: refused too, and named as that (#460)
+    with pytest.raises(ArcadeError, match="command line cannot be read"):
         engine.stop_engine(settings)
     assert not ended(sleeper, .3)
     mac.argv[sleeper.pid] = engine_argv(state)
@@ -227,6 +318,52 @@ def test_linux_engine_stop_refuses_a_process_that_is_not_its_engine(engine_recor
         engine.stop_engine(settings)
     assert not ended(sleeper, .3)
     assert engine.managed_java_executable(settings) is None
+
+
+@pytest.fixture
+def own_engine(tmp_path, monkeypatch):
+    """A process that looks like this data directory's engine, recorded the way start_engine records it (#460)."""
+    settings = Settings(tmp_path)
+    state = tmp_path / "arcade"
+    state.mkdir()
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", f"-Darcadedb.server.rootPath={state}",
+                                "com.arcadedb.server.ArcadeDBServer"], start_new_session=True)
+    try:
+        exec_done(process.pid, sys.executable)
+        (state / "process.json").write_text(json.dumps({"pid": process.pid}))
+        monkeypatch.setattr(engine, "engine_status", lambda settings: {"available": False})
+        yield settings, state, process
+    finally:
+        process.kill()
+        process.wait()
+
+
+@linux
+def test_linux_an_engine_read_inside_its_exec_is_still_this_data_directorys_own(own_engine, monkeypatch):
+    # A command line read empty a moment after the start made stop refuse its own engine ("no longer belongs"),
+    # native_engine_pid raise, and the managed Java vanish from the status.
+    settings, state, process = own_engine
+    empty_reads(monkeypatch, process.pid, 5)
+    assert engine.native_engine_pid(settings) == process.pid
+    empty_reads(monkeypatch, process.pid, 5)
+    assert engine.managed_java_executable(settings) == str(Path(sys.executable).resolve())
+    empty_reads(monkeypatch, process.pid, 5)
+    assert engine.stop_engine(settings) == {"stopping": True}
+    assert ended(process) and process.returncode == -signal.SIGTERM
+
+
+@linux
+def test_linux_a_live_engine_whose_command_line_never_shows_is_named_and_not_stopped(own_engine, monkeypatch):
+    settings, state, process = own_engine
+    monkeypatch.setattr(process_identity, "SETTLE_SECONDS", .05)
+    empty_reads(monkeypatch, process.pid)
+    with pytest.raises(ArcadeError) as unreadable:
+        engine.stop_engine(settings)
+    assert str(unreadable.value) == engine_docker.NATIVE_STOP_UNKNOWN.format(pid=process.pid)
+    assert "no longer belongs" not in str(unreadable.value) and not ended(process, .3)
+    assert (state / "process.json").exists()
+    with pytest.raises(ArcadeError, match="command line cannot be read"):
+        engine.native_engine_pid(settings)
 
 
 @pytest.mark.parametrize("system", ["linux", "darwin"])
