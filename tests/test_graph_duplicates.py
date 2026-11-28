@@ -307,7 +307,8 @@ def test_a_graph_without_a_duplicate_is_not_changed_by_the_check(tmp_path):
 
 def test_a_sqlite_store_cannot_hold_an_id_twice_so_the_check_finds_nothing_and_repairs_nothing(tmp_path):
     """The schema of the embedded backend makes `id` the primary key of every collection: a second row of an id is refused
-    by the database itself, so the lag of ArcadeDB's index (#456) has no counterpart, and the check is a plain count."""
+    by the database itself, so the lag of ArcadeDB's index (#456) has no counterpart; the backend runs no raw SQL, so the
+    check answers without a request (a request would raise NotImplementedError here)."""
     store = Store.open_memory(tmp_path / "mem")
     try:
         repo = tmp_path / "repo"
@@ -321,9 +322,8 @@ def test_a_sqlite_store_cannot_hold_an_id_twice_so_the_check_finds_nothing_and_r
             store.upsert_node(node, tx)
             store.upsert_edge(edge, tx)
         for collection, row in (("nodes", node), ("edges", edge)):
-            with pytest.raises(ValueError, match="Duplicate key"):
-                with store.transaction() as tx:
-                    store.backend.insert_document(tx, collection, row)
+            with pytest.raises(ValueError, match="Duplicate key"), store.transaction() as tx:
+                store.backend.insert_document(tx, collection, row)
         assert graph_duplicates.surplus(store, project) == graph_duplicates.surplus(store, project, "edges") == 0
         assert graph_duplicates.by_project(store) == [] and graph_duplicates.repair(store, project) == (0, 0)
     finally:
