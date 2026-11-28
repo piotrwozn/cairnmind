@@ -14,6 +14,9 @@ import os
 from pathlib import Path
 import struct
 import sys
+import time
+
+SETTLE_SECONDS = .5  # the longest command_line waits for a live process to show its command line
 
 # <sys/sysctl.h> of macOS: the names of the queries and the layout of struct kinfo_proc, whose first member
 # is struct extern_proc: p_un (its p_starttime, a struct timeval, at offset 0), p_vmspace, p_sigacts,
@@ -62,10 +65,28 @@ def start(pid, *, running: bool = False) -> str | None:
 
 
 def command_line(pid) -> list[str] | None:
-    """The argument vector of process pid as it was executed, or None when it cannot be read."""
+    """The argument vector of process pid as it was executed, or None when it cannot be read.
+
+    A process that has just executed its program can show no command line for a moment (Linux: the kernel
+    closes the descriptors marked close-on-exec, which is what tells a parent that the exec succeeded, before it
+    records the arguments; macOS fails the read around exec). A process that is alive, not a zombie, with a program
+    but no command line yet is therefore read again until it has one, at most SETTLE_SECONDS: the wait is on that
+    fact, never a pause first. Before the exec of a forked child the command line is still its parent's and its
+    birth is the same after it; a caller that did not start the process itself cannot tell those two apart.
+    """
     pid = _pid(pid)
     if pid is None:
         return None
+    deadline = time.monotonic() + SETTLE_SECONDS
+    while True:
+        found = _command_line(pid)
+        if (found is not None or time.monotonic() >= deadline
+                or start(pid, running=True) is None or executable(pid) is None):
+            return found
+        time.sleep(.001)
+
+
+def _command_line(pid) -> list[str] | None:
     system = _platform()
     if system.startswith("linux"):
         try:

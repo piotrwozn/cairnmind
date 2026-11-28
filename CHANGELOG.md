@@ -293,6 +293,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - A memory package that names a vertex of a record, plan or source that is not in the package is refused (#450).
 - The sentence that tells how an act of yours ended (a review, a verdict, a plan confirmation, a conflict decision, a memory import, accepting a kind, replacing a record, deleting a project's memory) stays on the workspace's notice line for 12 seconds or until your next key, click, button or typing. What a background refresh, the workspace's own unavailable state, the inspector's count line or a failed inspector reload tells meanwhile waits in Notices, counted once while it repeats, and shows when the hold ends, unless the refresh has recovered by then (#430).
 - With the database in Docker or on a server (production mode), a directory renamed and renamed back is indexed again after one wait, as with the engine the product starts itself, instead of failing with 'Found duplicate key in index' (#455).
+- The command line of a process read right after its start is read again until the kernel has recorded it, so `engine stop`, the engine check and the status no longer fail or lose the managed Java on that moment; an engine process whose command line cannot be read is named as unreadable when stopping, instead of being called foreign, and nothing is stopped (#460).
 
 ### Development and CI
 
@@ -313,6 +314,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - A test's fake client writes its capture file whole, and the tests that read it wait, bounded, for a complete JSON document; the terminal-reading threads of two workspace tests are stopped before their descriptor is closed, so a reused descriptor number can no longer read `state.json` away from its reader (#419).
 - `scripts/measure_service_memory.py` repeats the memory measurement of the service and of the cockpit broker: any block size, allocation sites at chosen requests, groups and neighbors requests, a second registered root (#410, #450).
 - The release gate and the pull request guide say that a branch touching the store, the engine's errors or the graph write gets `server-tests` and `restore-size` started on it by hand by a maintainer, and green, before its pull request is merged (#455).
+- The process identity test waits for the exec of its child by what procfs shows, and a child held before its exec tests that moment every time (#460).
 
 ## 0.12.0
 
