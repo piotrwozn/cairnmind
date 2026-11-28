@@ -292,8 +292,9 @@ def _preflight(settings: Settings, measured, report: dict) -> bool:
 
 
 def _drop(isolated: Settings, measured, report: dict) -> None:
+    from cairnmind.storage.database_credentials import require_safe_database
     try:
-        ArcadeClient(isolated).server_command("drop database " + isolated.arcade_database)
+        ArcadeClient(isolated).server_command("drop database " + require_safe_database(isolated.arcade_database))
         report["isolation"]["database_dropped"] = True
     except (ArcadeError, OSError) as exc:
         report["isolation"]["database_dropped"] = False

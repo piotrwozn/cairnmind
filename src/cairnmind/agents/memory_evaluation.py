@@ -317,10 +317,11 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
         report.update(status="failed", failure_stage=report.get("failure_stage", report.get("stage", "evaluation")),
                       error=measured._error(exc))
     finally:
+        from cairnmind.storage.database_credentials import require_safe_database
         cleanup_errors = []
         for isolated in owned_settings:
             try:
-                ArcadeClient(isolated).server_command("drop database " + isolated.arcade_database)
+                ArcadeClient(isolated).server_command("drop database " + require_safe_database(isolated.arcade_database))
             except ArcadeError as exc:
                 cleanup_errors.append(measured._error(exc))
         report["isolation"]["databases_cleaned"] = not cleanup_errors

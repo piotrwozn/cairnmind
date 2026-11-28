@@ -34,8 +34,23 @@ LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 # The longest password file read: a password is one line, and a larger file is not one.
 FILE_LIMIT = 4096
 USER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
+DATABASE_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,100}$")
 PASSWORD_HELP = ("set CAIRNMIND_ARCADE_PASSWORD, or name a private file (mode 0600) with "  # noqa: S105 - user guidance text, not a secret
                  "arcade_password_file in config.json")
+
+
+def require_safe_user(name: str) -> str:
+    """Validate an ArcadeDB user identifier directly before server command interpolation."""
+    if not isinstance(name, str) or not USER_NAME.fullmatch(name):
+        raise ValueError(f"Unsafe ArcadeDB user identifier: {name!r}")
+    return name
+
+
+def require_safe_database(name: str) -> str:
+    """Validate an ArcadeDB database identifier directly before server command interpolation."""
+    if not isinstance(name, str) or not DATABASE_NAME.fullmatch(name):
+        raise ValueError(f"Unsafe ArcadeDB database identifier: {name!r}")
+    return name
 
 
 def is_loopback(url: str) -> bool:
@@ -452,7 +467,7 @@ def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[st
                     admin.ensure_database()
                 except ArcadeError:
                     with suppress(ArcadeError):  # the user made a moment ago, for a database that is not there
-                        admin.server_command(f"drop user {name}")
+                        admin.server_command(f"drop user {require_safe_user(name)}")
                     raise
             elif not admin.database_exists():
                 # A user left without its database: a rollback above that failed too, or a database deleted on
@@ -472,7 +487,7 @@ def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[st
             # for the same pair. Rights on a second database are never added to a user of another one.
             if database_created:
                 with suppress(ArcadeError):  # empty, made a moment ago by this run
-                    admin.server_command(f"drop database {settings.arcade_database}")
+                    admin.server_command(f"drop database {require_safe_database(settings.arcade_database)}")
             raise ArcadeError(
                 f"The user {name} already exists, and it cannot use the database {settings.arcade_database} with "
                 f"the password this installation reads. Each database gets its own user: set arcade_user to a new "

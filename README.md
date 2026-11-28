@@ -111,7 +111,7 @@ On Linux, WSL2 and macOS, with tmux 3.4+ (`sudo apt install tmux`, or `brew inst
 
 ### Local web UI inspector (`cairnmind ui`)
 
-An optional loopback-only browser inspector (`http://127.0.0.1:4310`) for viewing OCC session alignment, task test gates, verbatim quote provenance with SHA-256 fingerprint diffs, the 4-column dependency & blast-radius graph, and the MCP guardrail audit log alongside a running Cairnmind workspace or service. Build the static frontend bundle once (requires Node.js 20+):
+An optional loopback-only browser inspector (`http://127.0.0.1:4310`) for viewing OCC session alignment, task test gates, verbatim quote provenance with SHA-256 fingerprint diffs, the 4-column dependency & blast-radius graph, and the MCP guardrail audit log alongside a running Cairnmind workspace or service. Release wheels bundle the pre-built frontend (`cairnmind/ui_dist/`), so `uv tool install cairnmind` requires no Node.js. When running directly from a source checkout without a built `ui/dist/`, build the frontend once (Node.js 22+):
 
 ```bash
 cd ui && npm install && npm run build
@@ -122,10 +122,11 @@ Then run `cairnmind ui` in a separate terminal alongside Cairnmind:
 ```bash
 cairnmind ui --port 4310                    # live mode against your local Cairnmind store (latest project)
 cairnmind ui --port 4310 --project my-app   # inspect a specific registered project
+cairnmind ui --port 4310 --read-only        # strictly read-only inspection (disables all UI writes)
 cairnmind ui --port 4310 --mock             # preview all states with deterministic sample data (no database needed)
 ```
 
-Pass `--no-open` to skip opening a browser tab automatically. The server binds strictly to loopback (`127.0.0.1`, `localhost`, or `::1`), streams live updates over SSE (`/api/ui/events`), and provides `Ctrl+K` search and `j`/`k`/`1`–`4`/`Esc` keyboard navigation.
+Pass `--no-open` to skip opening a browser tab automatically. Each launch generates a fresh 256-bit bootstrap URL (`/auth/bootstrap?token=...`) that issues an `HttpOnly; SameSite=Strict` session cookie and a per-session CSRF token (`X-Cairnmind-UI-Token`), enforces strict loopback `Host`/`Origin`/`Sec-Fetch-Site` validation, respects `person_proof` for confirmed acts, streams live updates over SSE (`/api/ui/events`), and provides `Ctrl+K` search and `j`/`k`/`1`–`4`/`Esc` keyboard navigation.
 
 ## How it compares
 
@@ -135,7 +136,7 @@ Pass `--no-open` to skip opening a browser tab automatically. The server binds s
 | Checked against the source | No | Usually no | Usually no | Every cited quote must occur literally in a current source |
 | Works across assistants | Each assistant reads its own file | No | Depends on the plugin | Codex CLI, Claude Code, Copilot, API agents; external MCP clients |
 | "Done" needs proof | No | No | Usually no | Fresh local check run bound to the current code fingerprint |
-| Setup | None | None | Usually one command | Java 21 or Docker + `uv`; Ollama and `tmux` are optional |
+| Setup | None | None | Usually one command | `uv` + embedded SQLite (or Java 21 / Docker for ArcadeDB); Ollama and `tmux` are optional |
 
 For the complete guarantees-vs-non-guarantees table and known limits, see [docs/CONTRACTS.md](docs/CONTRACTS.md#what-it-guarantees-and-what-it-does-not). Shared team memory works through Git ([Team memory](docs/MEMORY.md#team-memory)).
 

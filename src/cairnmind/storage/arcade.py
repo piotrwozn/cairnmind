@@ -17,7 +17,7 @@ from urllib.parse import quote
 import httpx
 
 from cairnmind.config import Settings
-from cairnmind.storage.database_credentials import problem, tls_context
+from cairnmind.storage.database_credentials import problem, require_safe_database, tls_context
 from cairnmind.storage.database_mode import connect_only, missing_database, sign_in_refused, unavailable
 
 REQUEST_TIMEOUT = 30  # seconds the client waits for the answer to one request
@@ -294,7 +294,7 @@ class ArcadeClient:
             # A connect-only installation creates no database (#68): `cairnmind db create-user` does, once.
             raise ArcadeError(missing_database(self.settings))
         try:
-            self.server_command(f"create database {self.database}")
+            self.server_command(f"create database {require_safe_database(self.database)}")
         except ArcadeError:
             if self._request("GET", f"/api/v1/exists/{quote(self.database)}").json().get("result") is not True:
                 raise

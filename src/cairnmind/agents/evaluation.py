@@ -717,7 +717,8 @@ def run_evaluation(settings: Settings, *, clients: bool = False, skip_claude: bo
             # loaded back from environment or supplied by a model/client.
             server_command = getattr(store.client, "server_command", None)
             if server_command is not None:
-                server_command("drop database " + isolated.arcade_database)
+                from cairnmind.storage.database_credentials import require_safe_database
+                server_command("drop database " + require_safe_database(isolated.arcade_database))
     path = output / ("recall-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid4().hex[:8] + ".json")
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     make_private(path)

@@ -543,3 +543,64 @@ def test_an_unreachable_remote_server_is_reported_and_nothing_is_started_or_writ
     assert SECRET not in str(refused.value)
     assert not (tmp_path / "arcade").exists()
     assert not any(SECRET in path.read_text(errors="replace") for path in tmp_path.rglob("*") if path.is_file())
+
+
+# --- Defense-in-depth identifier validation before DDL commands ---------------------------------------
+
+@pytest.mark.parametrize("good", ["cairnmind", "cairnmind_a1b2c3", "devbrain_0123", "tls_test", "my-db_1", "A" * 64])
+def test_safe_database_and_user_identifiers_accept_valid_names(good):
+    from cairnmind.storage.database_credentials import require_safe_database, require_safe_user
+
+    assert require_safe_database(good) == good
+    assert require_safe_user(good) == good
+
+
+@pytest.mark.parametrize("bad", [
+    "",
+    "1starts_with_digit",
+    "foo bar",
+    "foo; drop database bar",
+    "foo'bar",
+    "foo\nbar",
+    "foo/bar",
+    "a" * 102,
+])
+def test_safe_database_and_user_identifiers_reject_injection_payloads(bad, tmp_path):
+    from cairnmind.storage.database_credentials import create_user, require_safe_database, require_safe_user
+
+    with pytest.raises(ValueError, match="Unsafe ArcadeDB database identifier"):
+        require_safe_database(bad)
+    with pytest.raises(ValueError, match="Unsafe ArcadeDB user identifier"):
+        require_safe_user(bad)
+
+    # ensure_database validates directly at the DDL boundary even if client.database is mutated
+    sent: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and "/api/v1/exists/" in request.url.path:
+            return httpx.Response(200, json={"result": False})
+        sent.append(request.content.decode("utf-8", errors="replace"))
+        return httpx.Response(200, json={"result": "ok"})
+
+    client = ArcadeClient(
+        Settings(data_dir=tmp_path, arcade_password=SECRET, arcade_database="safe_db"),
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        client.database = bad
+        with pytest.raises(ValueError, match="Unsafe ArcadeDB database identifier"):
+            client.ensure_database()
+        assert sent == []
+    finally:
+        client.close()
+
+    # create_user rejects an unsafe database name before opening any admin session
+    settings = Settings(
+        data_dir=tmp_path,
+        arcade_user="cairnmind_user",
+        arcade_password=SECRET,
+        arcade_database=bad,
+        _origin={"password": "environment"},
+    )
+    with pytest.raises(ValueError, match="Invalid ArcadeDB database name|Unsafe ArcadeDB database identifier"):
+        create_user(settings, admin_secret="Admin-secret-1")
