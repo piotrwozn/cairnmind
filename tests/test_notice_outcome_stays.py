@@ -16,6 +16,7 @@ import pytest
 from consent_steps import consent_drawn
 from test_person_acts_consent import ACTS
 from test_terminal_panels import setup
+from test_workspace_setup_screen import without_the_poll
 from test_workspace_stage_scope import wait_until
 from textual.widgets import Button
 
@@ -68,6 +69,13 @@ def line(app):
 async def journal_down(*args, **kwargs):
     raise OSError(DOWN)
     yield
+
+
+@pytest.fixture(autouse=True)
+def only_the_tests_own_refreshes(monkeypatch):
+    """The sidebar's own 3 s refresh starts paused: these tests count what their own refreshes tell, and on a
+    slow run a tick of the panel's timer was counted with them (#459 had the same cause)."""
+    without_the_poll(monkeypatch)
 
 
 def refresh(app, how):

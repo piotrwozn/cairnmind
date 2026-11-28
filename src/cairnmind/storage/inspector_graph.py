@@ -456,8 +456,9 @@ def neighbors(store, pid, node_id, after, limit, groups, sessions, held=None):
     # The nodes they join: the node, the other end of each native edge, each revision and the owner of the revision.
     ids = {node_id}
     for identifier in selected:
-        if candidates[identifier] is not None:
-            ids.update((candidates[identifier]["from_id"], candidates[identifier]["to_id"]))
+        row = candidates[identifier]
+        if row is not None:
+            ids.update((row["from_id"], row["to_id"]))
         elif identifier.startswith("history:"):
             ids.add(identifier.removeprefix("history:"))
     if node_id.startswith("revision:"):
